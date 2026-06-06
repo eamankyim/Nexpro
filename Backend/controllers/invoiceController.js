@@ -5,14 +5,11 @@ const {
   JobItem,
   Payment,
   Sale,
-  SaleItem,
   Prescription,
-  SaleActivity,
   Tenant,
   Setting,
   Quote,
   QuoteItem,
-  Product,
   Shop,
   StudioLocation,
   User,
@@ -34,6 +31,7 @@ const {
 const { invalidateInvoiceListCache, invalidateAfterMutation } = require('../middleware/cache');
 const activityLogger = require('../services/activityLogger');
 const { updateCustomerBalance } = require('../services/customerBalanceService');
+const { ensureSaleFromPaidInvoice } = require('../services/invoiceSaleService');
 const sabitoWebhookService = require('../services/sabitoWebhookService');
 const mobileMoneyService = require('../services/mobileMoneyService');
 const { getResolvedMtnConfigForTenant } = require('../services/tenantMomoCollectionService');
@@ -1069,33 +1067,11 @@ exports.recordPayment = async (req, res, next) => {
       include: invoiceResponseIncludes()
     });
 
-    // Update sale status if invoice is linked to a sale and payment covers the full amount
-    if (invoice.saleId && newAmountPaid >= parseFloat(invoice.totalAmount)) {
-      try {
-        const sale = await Sale.findByPk(invoice.saleId);
-        if (sale && sale.status === 'pending') {
-          await sale.update({ status: 'completed' });
-          
-          // Create sale activity for payment received
-          await SaleActivity.create({
-            saleId: sale.id,
-            tenantId: req.tenantId,
-            type: 'payment',
-            subject: 'Payment Received',
-            notes: `Full payment received for invoice ${invoice.invoiceNumber}`,
-            createdBy: req.user?.id || null,
-            metadata: {
-              invoiceId: invoice.id,
-              invoiceNumber: invoice.invoiceNumber,
-              paymentAmount: paymentAmount
-            }
-          });
-        }
-      } catch (saleError) {
-        console.error('Error updating sale status from payment:', saleError);
-        // Don't fail the payment if sale update fails
-      }
-    }
+    await ensureSaleFromPaidInvoice(invoice.id, payment.id, {
+      tenantId: req.tenantId,
+      userId: req.user?.id || null,
+      paymentMethod: paymentMethod || 'cash'
+    });
 
     try {
       await createInvoicePaymentJournal({
@@ -1127,17 +1103,6 @@ exports.recordPayment = async (req, res, next) => {
       }
 
       setImmediate(() => sendInvoicePaidConfirmationToCustomer(req.tenantId, updatedInvoice));
-
-      // Shop quote flow: when quote-sourced invoice is paid, create sale from it
-      if (updatedInvoice.quoteId) {
-        setImmediate(async () => {
-          try {
-            await createSaleFromQuoteInvoiceInternal(req.tenantId, updatedInvoice, req.user?.id || null);
-          } catch (e) {
-            console.error('[Invoice] createSaleFromQuoteInvoice failed:', e?.message);
-          }
-        });
-      }
 
       // Send paid webhook to Sabito (async)
       try {
@@ -1265,6 +1230,12 @@ exports.markInvoicePaid = async (req, res, next) => {
     const updatedInvoice = await Invoice.findOne({
       where: applyTenantFilter(req.tenantId, { id: invoice.id }),
       include: invoiceResponseIncludes()
+    });
+
+    await ensureSaleFromPaidInvoice(invoice.id, manualPayment?.id || null, {
+      tenantId: req.tenantId,
+      userId: req.user?.id || null,
+      paymentMethod: manualPayment?.paymentMethod || 'other'
     });
 
     if (outstanding > 0 && manualPayment) {
@@ -1752,71 +1723,6 @@ async function createInvoiceFromQuoteInternal(tenantId, quoteId, userId = null) 
 }
 
 /**
- * When a quote-sourced invoice is paid, create a sale from it (shop flow: invoice paid → sale).
- * @param {string} tenantId
- * @param {Object} invoice - Invoice with items (JSON array; items may have productId)
- * @param {string|null} userId
- * @returns {Promise<Object|null>} Created sale or null
- */
-async function createSaleFromQuoteInvoiceInternal(tenantId, invoice, userId = null) {
-  if (!invoice.quoteId || !invoice.items || !Array.isArray(invoice.items)) return null;
-  const itemsWithProduct = invoice.items.filter((i) => i.productId);
-  if (itemsWithProduct.length === 0) return null;
-
-  const { Op } = require('sequelize');
-  const prefix = 'SALE';
-  const today = new Date();
-  const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
-  const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
-  const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
-  const count = await Sale.count({
-    where: {
-      tenantId,
-      createdAt: { [Op.between]: [startOfDay, endOfDay] }
-    }
-  });
-  const saleNumber = `${prefix}-${dateStr}-${String(count + 1).padStart(4, '0')}`;
-
-  const subtotal = itemsWithProduct.reduce((s, i) => s + (parseFloat(i.quantity || 0) * parseFloat(i.unitPrice || 0)), 0);
-  const sale = await Sale.create({
-    tenantId,
-    saleNumber,
-    customerId: invoice.customerId,
-    subtotal,
-    discount: 0,
-    tax: 0,
-    total: subtotal,
-    paymentMethod: 'invoice',
-    amountPaid: parseFloat(invoice.totalAmount || 0),
-    change: 0,
-    status: 'completed',
-    soldBy: userId,
-    notes: `Sale from paid invoice ${invoice.invoiceNumber} (quote)`,
-    metadata: { quoteId: invoice.quoteId, invoiceId: invoice.id }
-  });
-
-  for (const it of itemsWithProduct) {
-    const qty = parseFloat(it.quantity || 0);
-    const unitPrice = parseFloat(it.unitPrice || 0);
-    const itemSubtotal = qty * unitPrice;
-    await SaleItem.create({
-      saleId: sale.id,
-      productId: it.productId,
-      name: it.description || 'Product',
-      quantity: qty,
-      unitPrice,
-      discount: 0,
-      tax: 0,
-      subtotal: itemSubtotal,
-      total: itemSubtotal
-    });
-  }
-
-  await invoice.update({ saleId: sale.id });
-  return sale;
-}
-
-/**
  * Send invoice to customer via configured channels (internal use). Marks invoice as sent and sends email/WhatsApp/SMS.
  * @param {string} tenantId - Tenant ID
  * @param {Object} invoice - Invoice with customer loaded
@@ -2163,32 +2069,6 @@ async function recordPublicInvoicePaymentCore(invoice, {
   if (invoice.saleId) paymentData.saleId = invoice.saleId;
   if (invoice.prescriptionId) paymentData.prescriptionId = invoice.prescriptionId;
 
-  if (invoice.saleId && newAmountPaid >= parseFloat(invoice.totalAmount)) {
-    try {
-      const sale = await Sale.findByPk(invoice.saleId);
-      if (sale && sale.status === 'pending') {
-        await sale.update({ status: 'completed' });
-
-        await SaleActivity.create({
-          saleId: sale.id,
-          tenantId: invoice.tenantId,
-          type: 'payment',
-          subject: 'Payment Received',
-          notes: `Full payment received for invoice ${invoice.invoiceNumber}`,
-          createdBy: null,
-          metadata: {
-            invoiceId: invoice.id,
-            invoiceNumber: invoice.invoiceNumber,
-            paymentAmount: paymentAmount,
-            publicPayment: true
-          }
-        });
-      }
-    } catch (saleError) {
-      console.error('Error updating sale status from public payment:', saleError);
-    }
-  }
-
   try {
     paymentData.metadata = {
       publicPayment: true,
@@ -2206,6 +2086,11 @@ async function recordPublicInvoicePaymentCore(invoice, {
     include: invoiceResponseIncludes()
   });
 
+  await ensureSaleFromPaidInvoice(invoice.id, payment.id, {
+    tenantId: invoice.tenantId,
+    paymentMethod: paymentMethod || 'online'
+  });
+
   try {
     await activityLogger.logPaymentReceived(updatedInvoice, paymentAmount, null);
   } catch (error) {
@@ -2218,15 +2103,6 @@ async function recordPublicInvoicePaymentCore(invoice, {
       console.error('Failed to log payment activity:', error);
     }
     setImmediate(() => sendInvoicePaidConfirmationToCustomer(invoice.tenantId, updatedInvoice));
-    if (updatedInvoice.quoteId) {
-      setImmediate(async () => {
-        try {
-          await createSaleFromQuoteInvoiceInternal(invoice.tenantId, updatedInvoice, null);
-        } catch (e) {
-          console.error('[Invoice] createSaleFromQuoteInvoice (public) failed:', e?.message);
-        }
-      });
-    }
   }
 
   try {

@@ -145,10 +145,17 @@ const productService = {
    */
   searchProducts: async (query, options = {}) => {
     const params = new URLSearchParams();
-    params.append('search', query);
-    params.append('limit', options.limit || 50);
-    params.append('isActive', true);
-    params.append('includeVariants', true);
+    const scoped = withActiveShopScope({
+      search: query,
+      limit: options.limit || 50,
+      isActive: options.isActive ?? true,
+      includeVariants: options.includeVariants ?? true,
+      ...(options.shopId ? { shopId: options.shopId } : {}),
+    });
+    Object.entries(scoped).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') return;
+      params.append(key, value);
+    });
     return api.get(`/products?${params.toString()}`);
   },
 

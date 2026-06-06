@@ -11,7 +11,6 @@ jest.mock('../../../models', () => ({
   Customer: {},
   JobItem: {},
   Payment: { create: jest.fn() },
-  Sale: {},
   SaleItem: {},
   Prescription: {},
   SaleActivity: {},
@@ -39,12 +38,19 @@ jest.mock('../../../services/customerBalanceService', () => ({
   updateCustomerBalance: jest.fn(),
 }));
 
+jest.mock('../../../services/invoiceSaleService', () => ({
+  ensureSaleFromPaidInvoice: jest.fn().mockResolvedValue({ sale: null, created: false, updated: false }),
+}));
+
 jest.mock('../../../services/sabitoWebhookService', () => ({
   sendInvoiceWebhook: jest.fn(),
   sendInvoicePaidWebhook: jest.fn(),
 }));
 
 jest.mock('../../../services/mobileMoneyService', () => ({}));
+jest.mock('../../../services/tenantMomoCollectionService', () => ({
+  getResolvedMtnConfigForTenant: jest.fn(),
+}));
 
 jest.mock('../../../services/invoiceAccountingService', () => ({
   createInvoicePaymentJournal: jest.fn(),
@@ -99,6 +105,7 @@ jest.mock('../../../services/emailService', () => ({
 
 const { Invoice, Payment, Setting, Job, Sale } = require('../../../models');
 const { updateCustomerBalance } = require('../../../services/customerBalanceService');
+const { ensureSaleFromPaidInvoice } = require('../../../services/invoiceSaleService');
 const emailService = require('../../../services/emailService');
 const { createInvoicePaymentJournal } = require('../../../services/invoiceAccountingService');
 const invoiceController = require('../../../controllers/invoiceController');
@@ -300,6 +307,11 @@ describe('invoiceController markInvoicePaid payment date', () => {
     expect(Payment.create).toHaveBeenCalledWith(expect.objectContaining({
       amount: 200,
       paymentDate: expectedDate,
+    }));
+    expect(ensureSaleFromPaidInvoice).toHaveBeenCalledWith('invoice-1', 'payment-1', expect.objectContaining({
+      tenantId: 'tenant-1',
+      userId: 'user-1',
+      paymentMethod: 'other',
     }));
     expect(createInvoicePaymentJournal).toHaveBeenCalledWith(expect.objectContaining({
       amount: 200,

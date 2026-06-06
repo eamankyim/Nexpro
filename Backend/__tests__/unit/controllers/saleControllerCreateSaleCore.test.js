@@ -195,6 +195,42 @@ describe('saleController createSaleCore', () => {
     }));
   });
 
+  it('requires a customer for credit sales before creating the sale', async () => {
+    await expect(saleController.createSaleCore(transaction, tenantId, userId, {
+      paymentMethod: 'credit',
+      amountPaid: 0,
+      items: [{ name: 'Custom credit order', quantity: 1, unitPrice: 50 }]
+    })).rejects.toThrow('Customer is required for credit or partially unpaid sales');
+
+    expect(Sale.create).not.toHaveBeenCalled();
+    expect(SaleItem.bulkCreate).not.toHaveBeenCalled();
+  });
+
+  it('allows credit sales with a customer so an invoice can be linked after commit', async () => {
+    const { sale } = await saleController.createSaleCore(transaction, tenantId, userId, {
+      customerId: 'customer-1',
+      paymentMethod: 'credit',
+      amountPaid: 0,
+      items: [{ name: 'Custom credit order', quantity: 1, unitPrice: 50 }]
+    });
+
+    expect(Sale.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customerId: 'customer-1',
+        paymentMethod: 'credit',
+        amountPaid: 0,
+        total: 50
+      }),
+      { transaction }
+    );
+    expect(sale).toEqual(expect.objectContaining({
+      customerId: 'customer-1',
+      paymentMethod: 'credit',
+      amountPaid: 0,
+      total: 50
+    }));
+  });
+
   it('rejects an invalid delivery band', async () => {
     Setting.findOne.mockResolvedValue({
       value: {

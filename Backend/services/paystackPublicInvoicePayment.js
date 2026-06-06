@@ -3,9 +3,10 @@
  * Shared by Paystack webhooks and POST /api/public/invoices/:token/verify-paystack (return URL fallback).
  */
 
-const { Invoice, Customer, Payment, Sale, SaleActivity } = require('../models');
+const { Invoice, Customer, Payment } = require('../models');
 const activityLogger = require('./activityLogger');
 const { updateCustomerBalance } = require('./customerBalanceService');
+const { ensureSaleFromPaidInvoice } = require('./invoiceSaleService');
 
 /**
  * @param {Record<string, unknown>} metadata
@@ -87,7 +88,7 @@ async function applyPaystackChargeToInvoiceFromTx(reference, tx) {
     return { applied: false, reason: 'invoice_not_found' };
   }
 
-  if (invoice.status === 'cancelled' || invoice.status === 'paid') {
+  if (invoice.status === 'cancelled') {
     return { applied: false, reason: 'invoice_terminal_state', invoiceId: invoice.id };
   }
 
@@ -95,8 +96,20 @@ async function applyPaystackChargeToInvoiceFromTx(reference, tx) {
     where: { referenceNumber: reference, tenantId: invoice.tenantId }
   });
   if (existingPayment) {
+    await ensureSaleFromPaidInvoice(invoice.id, existingPayment.id, {
+      tenantId: invoice.tenantId,
+      paymentMethod: existingPayment.paymentMethod
+    });
     console.log('[PaystackInvoice] Payment already recorded for reference:', reference);
     return { applied: false, duplicate: true, invoiceId: invoice.id };
+  }
+
+  if (invoice.status === 'paid') {
+    await ensureSaleFromPaidInvoice(invoice.id, null, {
+      tenantId: invoice.tenantId,
+      paymentMethod: 'credit_card'
+    });
+    return { applied: false, reason: 'invoice_terminal_state', invoiceId: invoice.id };
   }
 
   const paymentAmount = parseFloat(tx.amount || 0) / 100;
@@ -137,28 +150,11 @@ async function applyPaystackChargeToInvoiceFromTx(reference, tx) {
   if (invoice.jobId) paymentData.jobId = invoice.jobId;
   if (invoice.saleId) paymentData.saleId = invoice.saleId;
   if (invoice.prescriptionId) paymentData.prescriptionId = invoice.prescriptionId;
-  await Payment.create(paymentData);
-
-  if (invoice.saleId && newAmountPaid >= totalAmount) {
-    const sale = await Sale.findByPk(invoice.saleId);
-    if (sale && sale.status === 'pending') {
-      await sale.update({ status: 'completed' });
-      await SaleActivity.create({
-        saleId: sale.id,
-        tenantId: invoice.tenantId,
-        type: 'payment',
-        subject: 'Payment Received',
-        notes: `Paystack payment for invoice ${invoice.invoiceNumber}`,
-        createdBy: null,
-        metadata: {
-          invoiceId: invoice.id,
-          invoiceNumber: invoice.invoiceNumber,
-          paymentAmount: appliedPaymentAmount,
-          paystackRef: reference
-        }
-      });
-    }
-  }
+  const payment = await Payment.create(paymentData);
+  await ensureSaleFromPaidInvoice(invoice.id, payment.id, {
+    tenantId: invoice.tenantId,
+    paymentMethod: 'credit_card'
+  });
 
   try {
     await activityLogger.logInvoicePaid(invoice, null);

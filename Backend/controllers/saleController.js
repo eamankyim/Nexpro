@@ -8,7 +8,6 @@ const { getPagination } = require('../utils/paginationUtils');
 const { invalidateSaleListCache } = require('../middleware/cache');
 const { sequelize } = require('../config/database');
 const config = require('../config/config');
-const crypto = require('crypto');
 const { emitNewSale, emitSaleStatusChange, emitInventoryAlert } = require('../services/websocketService');
 const { notifyOrderStatusChanged, notifyNewOrder } = require('../services/notificationService');
 const { getTaxConfigForTenant, hasTaxConfigCache } = require('../utils/taxConfig');
@@ -419,6 +418,7 @@ const SALE_RESPONSE_ATTRIBUTES = [
   'deliveryBandId',
   'amountPaid',
   'change',
+  'invoiceId',
   'soldBy',
   'createdAt',
   'updatedAt'
@@ -588,6 +588,7 @@ const buildLightweightSaleResponse = (sale, items = []) => {
     deliveryBandId: plainSale.deliveryBandId || null,
     amountPaid: plainSale.amountPaid,
     change: plainSale.change,
+    invoiceId: plainSale.invoiceId || null,
     balance: plainSale.balance,
     soldBy: plainSale.soldBy,
     createdAt: plainSale.createdAt,
@@ -1033,6 +1034,10 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
   const change = amountPaid > total ? Math.round((amountPaid - total) * 100) / 100 : 0;
   const isRestaurant = isRestaurantTenant(tenant);
   const saleStatus = saleData.status || 'completed';
+  const paymentMethod = saleData.paymentMethod || 'cash';
+  if (isCreditInvoiceRequiredForSale({ paymentMethod, status: saleStatus, total, amountPaid }) && !saleData.customerId) {
+    throw new Error('Customer is required for credit or partially unpaid sales');
+  }
   const sendToKitchen = saleData.sendToKitchen !== false;
   const orderStatus = isRestaurant && sendToKitchen ? 'received' : null;
 
@@ -1150,6 +1155,43 @@ const createSaleCreatedActivity = async ({ sale, tenantId, userId }) => {
   });
 };
 
+const getSaleOutstandingBalance = (sale) => {
+  const total = parseFloat(sale?.total || 0);
+  const amountPaid = parseFloat(sale?.amountPaid || 0);
+  return Math.max(total - amountPaid, 0);
+};
+
+const isCreditInvoiceRequiredForSale = (sale) => {
+  if (!sale) return false;
+  const paymentMethod = String(sale.paymentMethod || 'cash').toLowerCase();
+  const status = String(sale.status || '').toLowerCase();
+  const outstandingBalance = getSaleOutstandingBalance(sale);
+
+  return (
+    paymentMethod === 'credit' ||
+    status === 'partially_paid' ||
+    (status === 'completed' && outstandingBalance > 0.01)
+  );
+};
+
+const ensureRequiredCreditSaleInvoice = async (sale, tenantId, logPrefix = 'Sale') => {
+  if (!isCreditInvoiceRequiredForSale(sale)) return null;
+
+  const invoice = await autoCreateInvoiceFromSale(sale.id, tenantId);
+  if (!invoice) {
+    throw new Error('Failed to create invoice for credit sale');
+  }
+
+  if (typeof sale.set === 'function') {
+    sale.set('invoiceId', invoice.id);
+  } else {
+    sale.invoiceId = invoice.id;
+  }
+
+  console.log(`[${logPrefix}] Required credit invoice ready: ${invoice.invoiceNumber}`);
+  return invoice;
+};
+
 // @desc    Create new sale (POS transaction)
 // @route   POST /api/sales
 // @access  Private
@@ -1177,6 +1219,12 @@ exports.createSale = async (req, res, next) => {
     await transaction.commit();
     transactionCommitted = true;
     timer.mark('commit:end');
+
+    if (isCreditInvoiceRequiredForSale(sale)) {
+      timer.mark('required-invoice:start');
+      await ensureRequiredCreditSaleInvoice(sale, req.tenantId, 'CreateSale');
+      timer.mark('required-invoice:end', { invoiceId: sale.invoiceId || null });
+    }
 
     timer.mark('response-build:start');
     const saleResponse = buildLightweightSaleResponse(sale, items);
@@ -1259,6 +1307,7 @@ exports.batchSyncSales = async (req, res, next) => {
     }
 
     const transaction = await sequelize.transaction();
+    let transactionCommitted = false;
     try {
       const { sale } = await createSaleCore(
         transaction,
@@ -1269,6 +1318,8 @@ exports.batchSyncSales = async (req, res, next) => {
         req.tenant
       );
       await transaction.commit();
+      transactionCommitted = true;
+      await ensureRequiredCreditSaleInvoice(sale, req.tenantId, 'BatchSyncSales');
       try {
         if (sale.status === 'completed') {
           if (sale.customerId) {
@@ -1287,7 +1338,9 @@ exports.batchSyncSales = async (req, res, next) => {
       }
       results.push({ clientId: clientId || null, id: sale.id });
     } catch (err) {
-      await transaction.rollback();
+      if (!transactionCommitted) {
+        await transaction.rollback();
+      }
       if (clientId && err?.name === 'SequelizeUniqueConstraintError') {
         const existing = await findExistingSaleByClientId(req.tenantId, clientId);
         if (existing) {
@@ -1392,6 +1445,20 @@ exports.updateSale = async (req, res, next) => {
           message: `Cannot change status from '${previousStatus}' to '${updateData.status}'. Status changes must be incremental (forward progression only).`
         });
       }
+
+      const candidateSale = {
+        paymentMethod: sale.paymentMethod,
+        status: updateData.status,
+        total: sale.total,
+        amountPaid: sale.amountPaid
+      };
+      if (isCreditInvoiceRequiredForSale(candidateSale) && !sale.customerId) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: 'Customer is required for credit or partially unpaid sales'
+        });
+      }
     }
 
     await sale.update(updateData, { transaction });
@@ -1482,6 +1549,15 @@ exports.updateSale = async (req, res, next) => {
     await transaction.commit();
 
     // Auto-create invoice and send receipt after transaction commit (outside transaction)
+    if (isCreditInvoiceRequiredForSale(sale)) {
+      try {
+        await ensureRequiredCreditSaleInvoice(sale, req.tenantId, 'UpdateSale');
+      } catch (invoiceError) {
+        console.error('[UpdateSale] Failed to ensure required credit invoice:', invoiceError?.message);
+        throw invoiceError;
+      }
+    }
+
     if (updateData.status === 'completed') {
       if (!sale.invoiceId) {
         try {
@@ -1615,6 +1691,18 @@ exports.recordPayment = async (req, res, next) => {
       updatePayload.status = 'partially_paid';
     }
 
+    if (isCreditInvoiceRequiredForSale({
+      paymentMethod: paymentMethod || sale.paymentMethod,
+      status: updatePayload.status,
+      total: totalAmount,
+      amountPaid: newAmountPaid
+    }) && !sale.customerId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Customer is required for credit or partially unpaid sales'
+      });
+    }
+
     await sale.update(updatePayload);
 
     const paymentNumber = `PAY-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -1646,6 +1734,15 @@ exports.recordPayment = async (req, res, next) => {
         completed: isNowCompleted
       }
     });
+
+    if (isCreditInvoiceRequiredForSale(sale)) {
+      try {
+        await ensureRequiredCreditSaleInvoice(sale, req.tenantId, 'RecordPayment');
+      } catch (invoiceError) {
+        console.error('[RecordPayment] Failed to ensure required credit invoice:', invoiceError?.message);
+        throw invoiceError;
+      }
+    }
 
     if (isNowCompleted && (previousStatus === 'pending' || previousStatus === 'partially_paid')) {
       if (!sale.invoiceId) {
@@ -1812,35 +1909,20 @@ exports.generateInvoice = async (req, res, next) => {
       });
     }
 
-    const invoiceNumber = await generateInvoiceNumber(req.tenantId);
-    const items = sale.items.map(item => ({
-      description: item.name || item.product?.name || 'Product',
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      total: item.total || (item.quantity * item.unitPrice)
-    }));
+    if (!sale.customerId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Customer is required to generate an invoice for a sale'
+      });
+    }
 
-    const balance = sale.total - (sale.amountPaid || 0);
-    const invoiceStatus = balance <= 0 ? 'paid' : (sale.amountPaid > 0 ? 'partial' : 'sent');
-
-    const invoice = await Invoice.create({
-      invoiceNumber,
-      tenantId: req.tenantId,
-      customerId: sale.customerId,
-      saleId: sale.id,
-      shopId: sale.shopId || req.shopFilterId || null,
-      sourceType: 'sale',
-      invoiceDate: new Date(),
-      dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days default
-      subtotal: sale.subtotal || sale.total,
-      totalAmount: sale.total,
-      amountPaid: sale.amountPaid || 0,
-      balance: balance,
-      status: invoiceStatus,
-      items,
-      notes: `Invoice for Sale ${sale.saleNumber || sale.id}`,
-      paymentToken: crypto.randomBytes(32).toString('hex')
-    });
+    const invoice = await autoCreateInvoiceFromSale(sale.id, req.tenantId);
+    if (!invoice) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to generate invoice for this sale'
+      });
+    }
 
     const updatedInvoice = await Invoice.findOne({
       where: applyTenantFilter(req.tenantId, { id: invoice.id }),

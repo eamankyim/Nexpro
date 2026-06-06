@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { forwardRef, useEffect, useState, useMemo, useCallback } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -23,7 +23,9 @@ import {
   MessageSquare,
   Send,
   Pencil,
-  Trash2
+  Trash2,
+  Search,
+  ChevronDown
 } from 'lucide-react';
 import { generatePDF } from '../utils/pdfUtils';
 import dayjs from 'dayjs';
@@ -78,6 +80,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Dialog,
   DialogBody,
@@ -179,6 +183,166 @@ const convertToJobSchema = z.object({
   dueDate: z.date().optional().nullable(),
   assignedTo: z.string().optional().nullable(),
 });
+
+const QUOTE_PRODUCT_PICKER_LIMIT = 100;
+
+function normalizeProductsList(res) {
+  if (!res) return [];
+  if (Array.isArray(res)) return res;
+  if (Array.isArray(res.data)) return res.data;
+  if (res.data && Array.isArray(res.data.data)) return res.data.data;
+  if (Array.isArray(res.products)) return res.products;
+  return [];
+}
+
+const QuoteProductPicker = forwardRef(({
+  value,
+  disabled,
+  activeTenantId,
+  activeShopId,
+  onChange,
+  onProductSelect,
+  ...triggerProps
+}, ref) => {
+  const [open, setOpen] = useState(false);
+  const [searchText, setSearchText] = useState('');
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const debouncedProductSearch = useDebounce(searchText, DEBOUNCE_DELAYS.SEARCH);
+
+  const { data: productResponse, isFetching } = useQuery({
+    queryKey: ['products', 'quote-picker', activeTenantId, activeShopId, debouncedProductSearch],
+    queryFn: () => productService.searchProducts(debouncedProductSearch, {
+      limit: QUOTE_PRODUCT_PICKER_LIMIT,
+      includeVariants: true,
+    }),
+    enabled: !disabled && !!activeTenantId,
+    staleTime: 60 * 1000,
+  });
+
+  const { data: selectedProductResponse } = useQuery({
+    queryKey: ['products', 'quote-picker-selected', activeTenantId, activeShopId, value],
+    queryFn: () => productService.getProductById(value),
+    enabled: !disabled && !!activeTenantId && !!value && !selectedProduct,
+    staleTime: 2 * 60 * 1000,
+  });
+
+  const products = useMemo(() => normalizeProductsList(productResponse), [productResponse]);
+  const selectedProductFromResponse = useMemo(() => {
+    const product = selectedProductResponse?.data?.data
+      ?? selectedProductResponse?.data
+      ?? selectedProductResponse?.product
+      ?? selectedProductResponse;
+    return product?.id ? product : null;
+  }, [selectedProductResponse]);
+  const currentProduct = useMemo(() => {
+    if (!value) return null;
+    return products.find((product) => product.id === value)
+      || (selectedProduct?.id === value ? selectedProduct : null)
+      || (selectedProductFromResponse?.id === value ? selectedProductFromResponse : null);
+  }, [products, selectedProduct, selectedProductFromResponse, value]);
+
+  useEffect(() => {
+    if (!value) {
+      setSelectedProduct(null);
+    } else if (selectedProduct && selectedProduct.id !== value) {
+      setSelectedProduct(null);
+    }
+  }, [selectedProduct, value]);
+
+  const handleSelectProduct = useCallback((product) => {
+    setSelectedProduct(product);
+    onChange(product.id);
+    onProductSelect(product);
+    setOpen(false);
+  }, [onChange, onProductSelect]);
+
+  const handleClear = useCallback(() => {
+    setSelectedProduct(null);
+    onChange('');
+    setOpen(false);
+  }, [onChange]);
+
+  const triggerLabel = currentProduct
+    ? `${currentProduct.name} — ₵${parseFloat(currentProduct.sellingPrice || 0).toFixed(2)}`
+    : 'Search or select product';
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          ref={ref}
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          disabled={disabled}
+          className="w-full justify-between font-normal"
+          {...triggerProps}
+        >
+          <span className={currentProduct ? 'truncate text-foreground' : 'truncate text-muted-foreground'}>
+            {triggerLabel}
+          </span>
+          <ChevronDown className={`ml-2 h-4 w-4 shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`} />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+        <div className="border-b border-border p-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchText}
+              onChange={(event) => setSearchText(event.target.value)}
+              placeholder="Search product name, SKU, or barcode"
+              className="h-9 pl-9"
+              autoFocus
+            />
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Searches the full active shop catalog.
+          </p>
+        </div>
+        <ScrollArea className="max-h-64">
+          <div className="p-1">
+            <button
+              type="button"
+              className="flex w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+              onClick={handleClear}
+            >
+              None
+            </button>
+            {isFetching ? (
+              <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Searching products...
+              </div>
+            ) : products.length ? (
+              products.map((product) => (
+                <button
+                  key={product.id}
+                  type="button"
+                  className="flex w-full flex-col rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+                  onClick={() => handleSelectProduct(product)}
+                >
+                  <span className="truncate font-medium text-foreground">{product.name}</span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {product.sku ? `SKU: ${product.sku} · ` : ''}
+                    ₵{parseFloat(product.sellingPrice || 0).toFixed(2)}
+                    {product.trackStock !== false ? ` · Stock: ${Number(product.quantityOnHand || 0)}` : ''}
+                  </span>
+                </button>
+              ))
+            ) : (
+              <div className="py-6 text-center text-sm text-muted-foreground">
+                {searchText ? 'No products found' : 'No active products found'}
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+      </PopoverContent>
+    </Popover>
+  );
+});
+QuoteProductPicker.displayName = 'QuoteProductPicker';
 
 const Quotes = () => {
   const { searchValue, setPageSearchConfig } = useSmartSearch();
@@ -696,22 +860,7 @@ const Quotes = () => {
   const isShop = businessType === 'shop';
   const isPharmacy = businessType === 'pharmacy';
   const isRetailQuote = isShop || isPharmacy;
-
-  const { data: quoteProducts = [], isLoading: quoteProductsLoading } = useQuery({
-    queryKey: ['products', 'quote-picker', activeTenantId, activeShopId],
-    queryFn: async () => {
-      return productService.getAllActiveProducts();
-    },
-    enabled: isRetailQuote && !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId),
-    staleTime: 2 * 60 * 1000,
-  });
-  const products = useMemo(() => {
-    const d = quoteProducts?.data ?? quoteProducts;
-    if (Array.isArray(d)) return d;
-    if (Array.isArray(d?.data)) return d.data;
-    if (Array.isArray(d?.products)) return d.products;
-    return [];
-  }, [quoteProducts]);
+  const quoteProductPickerDisabled = !isRetailQuote || !activeTenantId || (shopContext?.isShopWorkspace && !activeShopId);
 
   const openConvertToJobModal = useCallback((quote) => {
     if (!quote) return;
@@ -1586,37 +1735,22 @@ const Quotes = () => {
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>Product (optional)</FormLabel>
-                            <Select
-                              value={field.value || '__NONE__'}
-                              disabled={quoteProductsLoading || products.length === 0}
-                              onValueChange={(val) => {
-                                const next = val === '__NONE__' ? '' : val;
-                                field.onChange(next);
-                                if (next) {
-                                  const p = products.find((x) => x.id === next);
-                                  if (p) {
-                                    form.setValue(`items.${index}.description`, p.name || '');
-                                    form.setValue(`items.${index}.unitPrice`, parseFloat(p.sellingPrice || 0));
-                                  }
-                                }
-                              }}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder={quoteProductsLoading ? 'Loading products...' : products.length === 0 ? 'No products found' : 'Select product'} />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="__NONE__">None</SelectItem>
-                                {products.map((p) => (
-                                  <SelectItem key={p.id} value={p.id}>
-                                    {p.name} — ₵{parseFloat(p.sellingPrice || 0).toFixed(2)}
-                                    {p.trackStock !== false ? ` · Stock: ${Number(p.quantityOnHand || 0)}` : ''}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            {products.length === 0 && !quoteProductsLoading && (
+                            <FormControl>
+                              <QuoteProductPicker
+                                value={field.value || ''}
+                                disabled={quoteProductPickerDisabled}
+                                activeTenantId={activeTenantId}
+                                activeShopId={activeShopId}
+                                onChange={field.onChange}
+                                onProductSelect={(product) => {
+                                  form.setValue(`items.${index}.description`, product.name || '');
+                                  form.setValue(`items.${index}.unitPrice`, parseFloat(product.sellingPrice || 0));
+                                }}
+                              />
+                            </FormControl>
+                            {quoteProductPickerDisabled && shopContext?.isShopWorkspace && !activeShopId && (
                               <p className="text-xs text-muted-foreground">
-                                Add products first to pick them on quotes.
+                                Select a shop first to pick products on quotes.
                               </p>
                             )}
                             <FormMessage />
