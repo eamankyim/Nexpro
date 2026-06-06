@@ -1,5 +1,6 @@
 const { Op } = require('sequelize');
 const { Invoice, Payment, Sale, SaleItem, SaleActivity } = require('../models');
+const { updateCustomerBalance } = require('./customerBalanceService');
 
 const PAID_TOLERANCE = 0.01;
 
@@ -219,7 +220,68 @@ async function ensureSaleFromPaidInvoice(invoiceId, paymentId = null, options = 
   return { sale, created: true, updated: false };
 }
 
+/**
+ * Sync linked invoice payment state from a POS sale (shop credit/partial payments).
+ * Invoice balance hooks derive status from amountPaid.
+ *
+ * @param {object} sale - Sale instance or plain object with id, invoiceId, customerId, amountPaid
+ * @param {{ tenantId?: string, transaction?: object }} [options]
+ * @returns {Promise<object|null>}
+ */
+async function syncLinkedInvoiceFromSale(sale, options = {}) {
+  if (!sale?.id) return null;
+
+  const tenantId = options.tenantId || sale.tenantId;
+  if (!tenantId) return null;
+
+  const transaction = options.transaction || null;
+  let invoice = null;
+
+  if (sale.invoiceId) {
+    invoice = await Invoice.findOne({
+      where: { id: sale.invoiceId, tenantId },
+      transaction,
+    });
+  }
+  if (!invoice) {
+    invoice = await Invoice.findOne({
+      where: { saleId: sale.id, tenantId },
+      transaction,
+    });
+  }
+  if (!invoice || invoice.status === 'cancelled') return null;
+
+  const amountPaid = toNumber(sale.amountPaid);
+  const totalAmount = toNumber(invoice.totalAmount);
+  const updatePayload = { amountPaid };
+
+  if (totalAmount > 0 && amountPaid >= totalAmount - PAID_TOLERANCE) {
+    updatePayload.paidDate = invoice.paidDate || new Date();
+  }
+
+  await invoice.update(updatePayload, { transaction });
+  return invoice;
+}
+
+/**
+ * Sync sale-linked invoice payment state and refresh customer balance from invoices.
+ *
+ * @param {object} sale
+ * @param {{ tenantId?: string, transaction?: object }} [options]
+ * @returns {Promise<object|null>}
+ */
+async function syncSaleInvoiceAndRefreshCustomerBalance(sale, options = {}) {
+  const invoice = await syncLinkedInvoiceFromSale(sale, options);
+  const customerId = sale?.customerId || invoice?.customerId;
+  if (customerId) {
+    await updateCustomerBalance(customerId, options.transaction || null);
+  }
+  return invoice;
+}
+
 module.exports = {
   ensureSaleFromPaidInvoice,
   normalizeSalePaymentMethod,
+  syncLinkedInvoiceFromSale,
+  syncSaleInvoiceAndRefreshCustomerBalance,
 };

@@ -15,6 +15,12 @@ const getAlerts = async () => api.get('/admin/alerts');
 
 const getTenantDetail = async (tenantId) => api.get(`/admin/tenants/${tenantId}`);
 const getTenantAccessAudit = async (tenantId) => api.get(`/admin/tenants/${tenantId}/access-audit`);
+const getTenantCleanupRecords = async (tenantId, params = {}) =>
+  api.get(`/admin/tenants/${tenantId}/cleanup`, { params });
+const cleanupTenantProducts = async (tenantId, payload) =>
+  api.delete(`/admin/tenants/${tenantId}/cleanup/products`, { data: payload });
+const cleanupTenantInvoices = async (tenantId, payload) =>
+  api.delete(`/admin/tenants/${tenantId}/cleanup/invoices`, { data: payload });
 
 const getSupportTickets = async (params = {}) => api.get('/admin/support-tickets', { params });
 const getSupportTicket = async (id) => api.get(`/admin/support-tickets/${id}`);
@@ -195,6 +201,9 @@ export default {
   getAlerts,
   getTenantDetail,
   getTenantAccessAudit,
+  getTenantCleanupRecords,
+  cleanupTenantProducts,
+  cleanupTenantInvoices,
   getSupportTickets,
   getSupportTicket,
   createSupportTicket,

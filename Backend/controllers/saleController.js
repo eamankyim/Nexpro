@@ -1,5 +1,7 @@
 const { Sale, SaleItem, Product, ProductVariant, Barcode, Customer, Shop, Invoice, User, SaleActivity, Tenant, Payment, Setting } = require('../models');
 const { createInvoiceRevenueJournal } = require('../services/invoiceAccountingService');
+const { updateCustomerBalance } = require('../services/customerBalanceService');
+const { syncSaleInvoiceAndRefreshCustomerBalance } = require('../services/invoiceSaleService');
 const { createSaleCogsJournal, createSaleRevenueJournal } = require('../services/saleAccountingService');
 const { Op } = require('sequelize');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
@@ -237,11 +239,6 @@ const autoCreateInvoiceFromSale = async (saleId, tenantId) => {
       where: { saleId, tenantId }
     });
 
-    if (existingInvoice) {
-      console.log(`[AutoInvoice] Invoice already exists for sale ${saleId}, skipping creation`);
-      return existingInvoice;
-    }
-
     const sale = await Sale.findByPk(saleId, {
       include: [
         { model: Customer, as: 'customer' },
@@ -252,6 +249,21 @@ const autoCreateInvoiceFromSale = async (saleId, tenantId) => {
     if (!sale) {
       console.log(`[AutoInvoice] Sale ${saleId} not found, cannot create invoice`);
       return null;
+    }
+
+    if (existingInvoice) {
+      console.log(`[AutoInvoice] Invoice already exists for sale ${saleId}, syncing payment state`);
+      if (sale.customerId) {
+        try {
+          await syncSaleInvoiceAndRefreshCustomerBalance(
+            { ...sale.toJSON(), invoiceId: existingInvoice.id, tenantId },
+            { tenantId }
+          );
+        } catch (balanceError) {
+          console.error('[AutoInvoice] Failed to sync existing invoice/customer balance:', balanceError?.message);
+        }
+      }
+      return existingInvoice;
     }
 
     const totalAmount = parseFloat(sale.total || 0);
@@ -356,6 +368,15 @@ const autoCreateInvoiceFromSale = async (saleId, tenantId) => {
     }
 
     console.log(`[AutoInvoice] ✅ Invoice created successfully: ${invoice.invoiceNumber} (ID: ${invoice.id}), status: ${invoiceStatus}`);
+
+    if (sale.customerId) {
+      try {
+        await updateCustomerBalance(sale.customerId);
+      } catch (balanceError) {
+        console.error('[AutoInvoice] Failed to update customer balance:', balanceError?.message);
+      }
+    }
+
     try {
       const prefsSetting = await Setting.findOne({ where: { tenantId, key: 'customer-notification-preferences' } });
       const prefValue = prefsSetting?.value?.autoSendInvoiceToCustomer;
@@ -1741,6 +1762,14 @@ exports.recordPayment = async (req, res, next) => {
       } catch (invoiceError) {
         console.error('[RecordPayment] Failed to ensure required credit invoice:', invoiceError?.message);
         throw invoiceError;
+      }
+    }
+
+    if (sale.customerId) {
+      try {
+        await syncSaleInvoiceAndRefreshCustomerBalance(sale, { tenantId: req.tenantId });
+      } catch (balanceError) {
+        console.error('[RecordPayment] Failed to sync invoice/customer balance:', balanceError?.message);
       }
     }
 

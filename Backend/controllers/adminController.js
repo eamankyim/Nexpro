@@ -24,7 +24,21 @@ const {
   SubscriptionPlan,
   SubscriptionPayment,
   TenantAccessAudit,
-  Setting
+  Setting,
+  Product,
+  ProductVariant,
+  ProductCategory,
+  SaleItem,
+  Invoice,
+  Customer,
+  Shop,
+  Sale,
+  JournalEntry,
+  Barcode,
+  OnlineProductListing,
+  StockTransfer,
+  StockCountItem,
+  QuoteItem,
 } = require('../models');
 const {
   resolveBillingStatus,
@@ -52,6 +66,8 @@ const { ENTERPRISE_TIER_IDS, getEnterpriseTier } = require('../config/enterprise
 const { buildEnterprisePaymentMetadata } = require('../services/subscriptionPlanCatalogService');
 const { getSeatUsageSummary } = require('../utils/seatLimitHelper');
 const { getStorageUsageSummary } = require('../utils/storageLimitHelper');
+const { invalidateProductListCache, invalidateInvoiceListCache, invalidateAfterMutation } = require('../middleware/cache');
+const { updateCustomerBalance } = require('../services/customerBalanceService');
 
 const PLAN_PRICING = {
   trial: 0,
@@ -68,6 +84,309 @@ const PLAN_ALIASES = {
   scale: 'professional',
 };
 
+const TENANT_CLEANUP_MAX_BATCH = 50;
+
+const normalizeCleanupIds = (ids) => (
+  Array.isArray(ids)
+    ? Array.from(new Set(ids.map((id) => String(id || '').trim()).filter(Boolean)))
+    : []
+).slice(0, TENANT_CLEANUP_MAX_BATCH);
+
+const ensureTenantCleanupConfirmed = (req, tenant) => {
+  const confirmSlug = String(req.body?.confirmSlug || '').trim();
+  if (!confirmSlug || confirmSlug !== tenant.slug) {
+    const error = new Error('Type the tenant slug exactly to confirm cleanup.');
+    error.statusCode = 400;
+    error.code = 'CONFIRM_SLUG_REQUIRED';
+    throw error;
+  }
+};
+
+const createTenantCleanupAudit = async ({
+  tenantId,
+  actorUserId,
+  action,
+  before,
+  after,
+  reason,
+  transaction
+}) => TenantAccessAudit.create({
+  tenantId,
+  actorUserId: actorUserId || null,
+  action,
+  before,
+  after,
+  reason: reason || null
+}, { transaction });
+
+const archiveProductForCleanup = async ({ product, actorUserId, reason, linkCounts, transaction }) => {
+  const existingMetadata = product.metadata || {};
+  await product.update({
+    isActive: false,
+    metadata: {
+      ...existingMetadata,
+      superadminCleanup: {
+        action: 'archived',
+        archivedAt: new Date().toISOString(),
+        archivedBy: actorUserId || null,
+        reason: reason || null,
+        linkCounts
+      }
+    }
+  }, { transaction });
+};
+
+const getProductCleanupLinkCounts = async (tenantId, productId, transaction) => {
+  const variants = await ProductVariant.findAll({
+    where: { productId },
+    attributes: ['id'],
+    transaction
+  });
+  const variantIds = variants.map((variant) => variant.id);
+  const [
+    saleItems,
+    stockTransfers,
+    stockCountItems,
+    quoteItems
+  ] = await Promise.all([
+    SaleItem.count({
+      where: {
+        [Op.or]: [
+          { productId },
+          ...(variantIds.length ? [{ productVariantId: { [Op.in]: variantIds } }] : [])
+        ]
+      },
+      transaction
+    }),
+    StockTransfer
+      ? StockTransfer.count({
+          where: {
+            tenantId,
+            [Op.or]: [
+              { sourceProductId: productId },
+              { destinationProductId: productId },
+              ...(variantIds.length ? [
+                { sourceVariantId: { [Op.in]: variantIds } },
+                { destinationVariantId: { [Op.in]: variantIds } }
+              ] : [])
+            ]
+          },
+          transaction
+        })
+      : Promise.resolve(0),
+    StockCountItem
+      ? StockCountItem.count({
+          where: {
+            tenantId,
+            [Op.or]: [
+              { productId },
+              ...(variantIds.length ? [{ productVariantId: { [Op.in]: variantIds } }] : [])
+            ]
+          },
+          transaction
+        })
+      : Promise.resolve(0),
+    QuoteItem ? QuoteItem.count({ where: { productId }, transaction }) : Promise.resolve(0)
+  ]);
+
+  return {
+    variants: variantIds.length,
+    saleItems,
+    stockTransfers,
+    stockCountItems,
+    quoteItems,
+    hasHistoricalLinks: saleItems > 0 || stockTransfers > 0 || stockCountItems > 0 || quoteItems > 0
+  };
+};
+
+const cleanupProductRecord = async ({ tenant, productId, actorUserId, reason, transaction }) => {
+  const product = await Product.findOne({
+    where: { tenantId: tenant.id, id: productId },
+    transaction
+  });
+
+  if (!product) {
+    return { id: productId, status: 'not_found', message: 'Product not found for tenant' };
+  }
+
+  const before = {
+    id: product.id,
+    name: product.name,
+    sku: product.sku,
+    barcode: product.barcode,
+    shopId: product.shopId,
+    isActive: product.isActive
+  };
+  const linkCounts = await getProductCleanupLinkCounts(tenant.id, product.id, transaction);
+
+  if (linkCounts.hasHistoricalLinks) {
+    await archiveProductForCleanup({ product, actorUserId, reason, linkCounts, transaction });
+    await createTenantCleanupAudit({
+      tenantId: tenant.id,
+      actorUserId,
+      action: 'tenant_product_archived_by_superadmin',
+      before,
+      after: { id: product.id, isActive: false, linkCounts },
+      reason,
+      transaction
+    });
+    return {
+      id: product.id,
+      name: product.name,
+      status: 'archived',
+      message: 'Product was archived because it has sales, stock, or quote history.',
+      linkCounts
+    };
+  }
+
+  try {
+    const variants = await ProductVariant.findAll({
+      where: { productId: product.id },
+      attributes: ['id'],
+      transaction
+    });
+    const variantIds = variants.map((variant) => variant.id);
+    if (variantIds.length > 0) {
+      await Barcode.destroy({
+        where: { tenantId: tenant.id, productVariantId: { [Op.in]: variantIds } },
+        transaction
+      });
+      await OnlineProductListing.destroy({
+        where: { tenantId: tenant.id, productVariantId: { [Op.in]: variantIds } },
+        transaction
+      });
+      await ProductVariant.destroy({
+        where: { productId: product.id },
+        transaction
+      });
+    }
+    await Barcode.destroy({ where: { tenantId: tenant.id, productId: product.id }, transaction });
+    await OnlineProductListing.destroy({ where: { tenantId: tenant.id, productId: product.id }, transaction });
+    await product.destroy({ transaction });
+    await createTenantCleanupAudit({
+      tenantId: tenant.id,
+      actorUserId,
+      action: 'tenant_product_deleted_by_superadmin',
+      before,
+      after: { id: product.id, deleted: true, linkCounts },
+      reason,
+      transaction
+    });
+    return {
+      id: product.id,
+      name: product.name,
+      status: 'deleted',
+      message: 'Product was permanently deleted.'
+    };
+  } catch (error) {
+    await archiveProductForCleanup({ product, actorUserId, reason, linkCounts, transaction });
+    await createTenantCleanupAudit({
+      tenantId: tenant.id,
+      actorUserId,
+      action: 'tenant_product_archived_by_superadmin',
+      before,
+      after: {
+        id: product.id,
+        isActive: false,
+        linkCounts,
+        fallbackFromDeleteError: error?.name || error?.message || 'delete_failed'
+      },
+      reason,
+      transaction
+    });
+    return {
+      id: product.id,
+      name: product.name,
+      status: 'archived',
+      message: 'Product delete was blocked by related data, so it was archived instead.',
+      linkCounts
+    };
+  }
+};
+
+const invoiceHasPayments = (invoice) => (
+  ['paid', 'partial'].includes(String(invoice.status || '').toLowerCase()) ||
+  parseFloat(invoice.amountPaid || 0) > 0
+);
+
+const archiveInvoiceForCleanup = async ({ invoice, actorUserId, reason, transaction }) => {
+  await invoice.update({
+    status: 'cancelled',
+    notes: [
+      invoice.notes,
+      `Superadmin archived this invoice on ${new Date().toISOString()}${actorUserId ? ` by ${actorUserId}` : ''}${reason ? `: ${reason}` : ''}.`
+    ].filter(Boolean).join('\n\n')
+  }, { transaction });
+};
+
+const cleanupInvoiceRecord = async ({ tenant, invoiceId, actorUserId, reason, transaction }) => {
+  const invoice = await Invoice.findOne({
+    where: { tenantId: tenant.id, id: invoiceId },
+    transaction
+  });
+
+  if (!invoice) {
+    return { id: invoiceId, status: 'not_found', message: 'Invoice not found for tenant' };
+  }
+
+  const before = {
+    id: invoice.id,
+    invoiceNumber: invoice.invoiceNumber,
+    status: invoice.status,
+    amountPaid: invoice.amountPaid,
+    totalAmount: invoice.totalAmount,
+    customerId: invoice.customerId,
+    saleId: invoice.saleId,
+    jobId: invoice.jobId,
+    prescriptionId: invoice.prescriptionId
+  };
+
+  if (invoiceHasPayments(invoice)) {
+    await archiveInvoiceForCleanup({ invoice, actorUserId, reason, transaction });
+    await createTenantCleanupAudit({
+      tenantId: tenant.id,
+      actorUserId,
+      action: 'tenant_invoice_archived_by_superadmin',
+      before,
+      after: { id: invoice.id, status: 'cancelled', archived: true },
+      reason,
+      transaction
+    });
+    return {
+      id: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      status: 'archived',
+      message: 'Paid or partially paid invoice was cancelled and archived instead of hard-deleted.'
+    };
+  }
+
+  await JournalEntry.destroy({
+    where: {
+      tenantId: tenant.id,
+      sourceId: invoice.id,
+      source: { [Op.in]: ['invoice_revenue', 'invoice_payment'] }
+    },
+    transaction
+  });
+  await invoice.destroy({ transaction });
+  await createTenantCleanupAudit({
+    tenantId: tenant.id,
+    actorUserId,
+    action: 'tenant_invoice_deleted_by_superadmin',
+    before,
+    after: { id: invoice.id, deleted: true },
+    reason,
+    transaction
+  });
+
+  return {
+    id: invoice.id,
+    invoiceNumber: invoice.invoiceNumber,
+    status: 'deleted',
+    message: 'Unpaid invoice was permanently deleted.'
+  };
+};
+
 const normalizePlanId = (plan = '') => PLAN_ALIASES[String(plan).trim().toLowerCase()] || String(plan).trim().toLowerCase();
 const MANUAL_PAYMENT_METHODS = new Set(['bank_transfer', 'mobile_money', 'card', 'cash', 'cheque', 'other']);
 const TRIAL_PLAN_IDS = ['trial', 'free'];
@@ -75,7 +394,17 @@ const TRIAL_PLAN_IDS = ['trial', 'free'];
 const roundCurrency = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 const pesewasToGhs = (amount) => roundCurrency((Number(amount) || 0) / 100);
 
+const isEnterpriseCloudRenewalPayment = (payment) =>
+  normalizePlanId(payment?.plan) === 'enterprise' &&
+  payment?.metadata?.paymentType === 'enterprise_cloud_renewal';
+
+const isRecurringRevenuePayment = (payment) => {
+  if (normalizePlanId(payment?.plan) !== 'enterprise') return true;
+  return isEnterpriseCloudRenewalPayment(payment);
+};
+
 const getPaymentEstimatedMrrGhs = (payment) => {
+  if (!isRecurringRevenuePayment(payment)) return 0;
   const amountGhs = pesewasToGhs(payment?.amount);
   return payment?.billingPeriod === 'yearly' ? roundCurrency(amountGhs / 12) : amountGhs;
 };
@@ -1249,6 +1578,193 @@ exports.getTenantAccessAudit = async (req, res, next) => {
   }
 };
 
+exports.getTenantCleanupRecords = async (req, res, next) => {
+  try {
+    const tenant = await Tenant.findByPk(req.params.id, {
+      attributes: ['id', 'name', 'slug']
+    });
+    if (!tenant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tenant not found'
+      });
+    }
+
+    const limit = Math.min(Number(req.query.limit) || 25, 50);
+    const [products, invoices] = await Promise.all([
+      Product.findAll({
+        where: { tenantId: tenant.id },
+        attributes: ['id', 'name', 'sku', 'barcode', 'shopId', 'quantityOnHand', 'isActive', 'createdAt'],
+        include: [
+          { model: Shop, as: 'shop', attributes: ['id', 'name'], required: false },
+          { model: ProductCategory, as: 'category', attributes: ['id', 'name'], required: false }
+        ],
+        order: [['createdAt', 'DESC']],
+        limit
+      }),
+      Invoice.findAll({
+        where: { tenantId: tenant.id },
+        attributes: ['id', 'invoiceNumber', 'status', 'amountPaid', 'totalAmount', 'customerId', 'saleId', 'jobId', 'createdAt'],
+        include: [
+          { model: Customer, as: 'customer', attributes: ['id', 'name', 'company'], required: false },
+          { model: Shop, as: 'shop', attributes: ['id', 'name'], required: false },
+          { model: Sale, as: 'sale', attributes: ['id', 'saleNumber'], required: false }
+        ],
+        order: [['createdAt', 'DESC']],
+        limit
+      })
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        tenant,
+        products,
+        invoices,
+        limits: { maxBatchSize: TENANT_CLEANUP_MAX_BATCH, listLimit: limit }
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.cleanupTenantProducts = async (req, res, next) => {
+  try {
+    const tenant = await Tenant.findByPk(req.params.id, {
+      attributes: ['id', 'name', 'slug']
+    });
+    if (!tenant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tenant not found'
+      });
+    }
+
+    ensureTenantCleanupConfirmed(req, tenant);
+
+    const productIds = normalizeCleanupIds(req.body?.productIds || req.body?.ids);
+    if (productIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Select at least one product to clean up.'
+      });
+    }
+
+    const reason = String(req.body?.reason || 'Superadmin tenant cleanup').trim();
+    const results = await sequelize.transaction(async (transaction) => {
+      const output = [];
+      for (const productId of productIds) {
+        output.push(await cleanupProductRecord({
+          tenant,
+          productId,
+          actorUserId: req.user?.id || null,
+          reason,
+          transaction
+        }));
+      }
+      return output;
+    });
+
+    invalidateProductListCache(tenant.id);
+    invalidateAfterMutation(tenant.id);
+
+    console.log('[AdminCleanup] products tenantId=%s actor=%s results=%j', tenant.id, req.user?.id, results);
+
+    res.status(200).json({
+      success: true,
+      message: 'Product cleanup completed.',
+      data: {
+        tenant: { id: tenant.id, name: tenant.name, slug: tenant.slug },
+        results
+      }
+    });
+  } catch (error) {
+    if (error.code === 'CONFIRM_SLUG_REQUIRED') {
+      return res.status(error.statusCode || 400).json({
+        success: false,
+        message: error.message,
+        code: error.code
+      });
+    }
+    next(error);
+  }
+};
+
+exports.cleanupTenantInvoices = async (req, res, next) => {
+  try {
+    const tenant = await Tenant.findByPk(req.params.id, {
+      attributes: ['id', 'name', 'slug']
+    });
+    if (!tenant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tenant not found'
+      });
+    }
+
+    ensureTenantCleanupConfirmed(req, tenant);
+
+    const invoiceIds = normalizeCleanupIds(req.body?.invoiceIds || req.body?.ids);
+    if (invoiceIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Select at least one invoice to clean up.'
+      });
+    }
+
+    const reason = String(req.body?.reason || 'Superadmin tenant cleanup').trim();
+    const affectedCustomers = await Invoice.findAll({
+      where: { tenantId: tenant.id, id: invoiceIds },
+      attributes: ['customerId'],
+      raw: true
+    });
+    const results = await sequelize.transaction(async (transaction) => {
+      const output = [];
+      for (const invoiceId of invoiceIds) {
+        output.push(await cleanupInvoiceRecord({
+          tenant,
+          invoiceId,
+          actorUserId: req.user?.id || null,
+          reason,
+          transaction
+        }));
+      }
+      return output;
+    });
+
+    await Promise.all(
+      Array.from(new Set(affectedCustomers.map((row) => row.customerId).filter(Boolean)))
+        .map((customerId) => updateCustomerBalance(customerId).catch((err) => {
+          console.error('[AdminCleanup] Failed to update customer balance', { customerId, error: err?.message });
+        }))
+    );
+
+    invalidateInvoiceListCache(tenant.id);
+    invalidateAfterMutation(tenant.id);
+
+    console.log('[AdminCleanup] invoices tenantId=%s actor=%s results=%j', tenant.id, req.user?.id, results);
+
+    res.status(200).json({
+      success: true,
+      message: 'Invoice cleanup completed.',
+      data: {
+        tenant: { id: tenant.id, name: tenant.name, slug: tenant.slug },
+        results
+      }
+    });
+  } catch (error) {
+    if (error.code === 'CONFIRM_SLUG_REQUIRED') {
+      return res.status(error.statusCode || 400).json({
+        success: false,
+        message: error.message,
+        code: error.code
+      });
+    }
+    next(error);
+  }
+};
+
 // @desc    Permanently delete a tenant and all workspace data
 // @route   DELETE /api/admin/tenants/:id
 // @access  Platform admin (tenants.delete)
@@ -1430,6 +1946,16 @@ exports.getBillingSummary = async (req, res, next) => {
       (sum, payment) => roundCurrency(sum + getPaymentEstimatedMrrGhs(payment)),
       0
     );
+    const enterpriseOneTimeRevenue = roundCurrency(
+      enterpriseRevenuePayments
+        .filter((payment) => !isRecurringRevenuePayment(payment))
+        .reduce((sum, payment) => sum + pesewasToGhs(payment.amount), 0)
+    );
+    const enterpriseRecurringRevenue = roundCurrency(
+      enterpriseRevenuePayments
+        .filter(isRecurringRevenuePayment)
+        .reduce((sum, payment) => sum + pesewasToGhs(payment.amount), 0)
+    );
     if (enterpriseMrr > 0 || planBreakdownByPlan.has('enterprise')) {
       const enterpriseBreakdown = planBreakdownByPlan.get('enterprise') || {
         plan: 'enterprise',
@@ -1441,11 +1967,15 @@ exports.getBillingSummary = async (req, res, next) => {
       enterpriseBreakdown.recordedRevenue = roundCurrency(
         enterpriseRevenuePayments.reduce((sum, payment) => sum + pesewasToGhs(payment.amount), 0)
       );
+      enterpriseBreakdown.oneTimeRevenue = enterpriseOneTimeRevenue;
+      enterpriseBreakdown.recurringRevenue = enterpriseRecurringRevenue;
       planBreakdownByPlan.set('enterprise', enterpriseBreakdown);
     }
 
     const planBreakdown = Array.from(planBreakdownByPlan.values());
-    const estimatedMRR = planBreakdown.reduce((acc, item) => acc + item.mrr, 0);
+    const estimatedMRR = roundCurrency(planBreakdown.reduce((acc, item) => acc + item.mrr, 0));
+    const oneTimeRevenue = roundCurrency(planBreakdown.reduce((acc, item) => acc + (item.oneTimeRevenue || 0), 0));
+    const recordedRevenue = roundCurrency(planBreakdown.reduce((acc, item) => acc + (item.recordedRevenue || 0), 0));
     const payingTenants = planBreakdown.reduce((acc, item) => acc + item.count, 0);
 
     const upcomingRenewals = await Tenant.findAll({
@@ -1465,6 +1995,8 @@ exports.getBillingSummary = async (req, res, next) => {
       data: {
         planBreakdown,
         estimatedMRR,
+        oneTimeRevenue,
+        recordedRevenue,
         payingTenants,
         trialingTenants: trialingCount,
         upcomingRenewals
@@ -1530,6 +2062,8 @@ exports.getBillingTenants = async (req, res, next) => {
               periodStart: latestPayment.periodStart,
               periodEnd: latestPayment.periodEnd,
               paymentDate: latestPayment.metadata?.paymentDate || latestPayment.createdAt,
+              metadata: latestPayment.metadata || {},
+              notes: latestPayment.notes,
               createdAt: latestPayment.createdAt,
             }
           : null,

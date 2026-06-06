@@ -40,7 +40,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Currency, Users, CreditCard, Receipt } from 'lucide-react';
+import { Currency, Users, CreditCard, Receipt, Eye } from 'lucide-react';
 
 dayjs.extend(relativeTime);
 
@@ -99,6 +99,48 @@ const getTenantBillingMethodLabel = (tenant) => {
 const getTenantBillingUpdatedAt = (tenant) =>
   tenant?.lastSubscriptionPayment?.paymentDate || tenant?.lastSubscriptionPayment?.createdAt || tenant?.updatedAt;
 
+const formatCurrency = (amount, currency = 'GHS') => {
+  const value = Number(amount) || 0;
+  return `${currency === 'GHS' ? '₵' : currency} ${value.toFixed(2)}`;
+};
+
+const getPaymentAmountGhs = (payment) => {
+  if (payment?.amountGhs != null) return Number(payment.amountGhs) || 0;
+  return (Number(payment?.amount) || 0) / 100;
+};
+
+const formatDate = (date) => (date ? dayjs(date).format('MMM D, YYYY') : 'Not set');
+
+const getEnterprisePaymentTypeLabel = (paymentType) => {
+  switch (paymentType) {
+    case 'enterprise_cloud_renewal':
+      return 'Cloud renewal';
+    case 'enterprise_license':
+      return 'One-time license fee';
+    default:
+      return 'Enterprise payment';
+  }
+};
+
+const getPaymentTypeLabel = (payment) => {
+  if (normalizePlanId(payment?.plan) === 'enterprise') {
+    return getEnterprisePaymentTypeLabel(payment?.metadata?.paymentType);
+  }
+  return payment?.billingPeriod === 'yearly' ? 'Annual recurring' : 'Monthly recurring';
+};
+
+const getPaymentMonthlyRecurringGhs = (payment) => {
+  if (!payment) return null;
+  if (
+    normalizePlanId(payment.plan) === 'enterprise' &&
+    payment?.metadata?.paymentType !== 'enterprise_cloud_renewal'
+  ) {
+    return null;
+  }
+  const amountGhs = getPaymentAmountGhs(payment);
+  return payment.billingPeriod === 'yearly' ? amountGhs / 12 : amountGhs;
+};
+
 const getPlanLabel = (plan) => {
   const normalized = normalizePlanId(plan);
   switch (normalized) {
@@ -121,6 +163,11 @@ const AdminBilling = () => {
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState(null);
   const [tenants, setTenants] = useState([]);
+  const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
+  const [viewingTenant, setViewingTenant] = useState(null);
+  const [tenantPayments, setTenantPayments] = useState([]);
+  const [tenantBilling, setTenantBilling] = useState(null);
+  const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
   const [selectedTenant, setSelectedTenant] = useState(null);
   const [paymentForm, setPaymentForm] = useState(getInitialPaymentForm());
@@ -142,17 +189,50 @@ const AdminBilling = () => {
     }
   }, []);
 
+  const loadTenantPayments = useCallback(async (tenantId) => {
+    if (!tenantId) return;
+    setPaymentsLoading(true);
+    try {
+      const res = await adminService.getTenantSubscriptionPayments(tenantId, { limit: 10 });
+      if (res?.success) {
+        setTenantPayments(res.data?.payments || []);
+        setTenantBilling(res.data?.billing || null);
+      }
+    } catch (error) {
+      handleApiError(error, { context: 'load tenant billing details' });
+    } finally {
+      setPaymentsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  const openPaymentDialog = (tenant) => {
+  const openDetailsDialog = useCallback((tenant) => {
+    setViewingTenant(tenant);
+    setTenantPayments([]);
+    setTenantBilling(null);
+    setDetailsDialogOpen(true);
+    loadTenantPayments(tenant.id);
+  }, [loadTenantPayments]);
+
+  const handleDetailsDialogOpenChange = useCallback((open) => {
+    setDetailsDialogOpen(open);
+    if (!open) {
+      setViewingTenant(null);
+      setTenantPayments([]);
+      setTenantBilling(null);
+    }
+  }, []);
+
+  const openPaymentDialog = useCallback((tenant) => {
     setSelectedTenant(tenant);
     setPaymentForm(getInitialPaymentForm(tenant));
     setPaymentDialogOpen(true);
-  };
+  }, []);
 
-  const handlePaymentFormChange = (key, value) => {
+  const handlePaymentFormChange = useCallback((key, value) => {
     setPaymentForm((prev) => {
       const next = { ...prev, [key]: value };
       if (key === 'plan') {
@@ -169,7 +249,7 @@ const AdminBilling = () => {
       }
       return next;
     });
-  };
+  }, []);
 
   const handleRecordPayment = async (event) => {
     event.preventDefault();
@@ -190,6 +270,9 @@ const AdminBilling = () => {
       setPaymentDialogOpen(false);
       setSelectedTenant(null);
       await loadData();
+      if (viewingTenant?.id) {
+        await loadTenantPayments(viewingTenant.id);
+      }
     } catch (error) {
       handleApiError(error, { context: 'record tenant billing payment' });
     } finally {
@@ -217,6 +300,11 @@ const AdminBilling = () => {
     );
   }
 
+  const latestPayment = tenantPayments[0] || viewingTenant?.lastSubscriptionPayment || null;
+  const enterpriseBilling = viewingTenant?.metadata?.entitlements?.enterpriseBilling || {};
+  const recurringAmount = getPaymentMonthlyRecurringGhs(latestPayment);
+  const billingStatus = tenantBilling?.billingStatus || viewingTenant?.status;
+
   return (
     <div>
       <div className="mb-6">
@@ -226,9 +314,9 @@ const AdminBilling = () => {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <DashboardStatsCard
-          title="Estimated MRR (₵)"
+          title="Estimated recurring MRR (₵)"
           value={
             typeof summary?.estimatedMRR === 'number'
               ? summary.estimatedMRR.toFixed(2)
@@ -237,6 +325,17 @@ const AdminBilling = () => {
           icon={Currency}
           iconBgColor="#dcfce7"
           iconColor="#166534"
+        />
+        <DashboardStatsCard
+          title="One-time license revenue (₵)"
+          value={
+            typeof summary?.oneTimeRevenue === 'number'
+              ? summary.oneTimeRevenue.toFixed(2)
+              : summary?.oneTimeRevenue ?? 0
+          }
+          icon={Receipt}
+          iconBgColor="#f3e8ff"
+          iconColor="#7e22ce"
         />
         <DashboardStatsCard
           title="Paying tenants"
@@ -298,17 +397,15 @@ const AdminBilling = () => {
                         {dayjs(getTenantBillingUpdatedAt(tenant)).fromNow()}
                       </span>
                     </div>
-                    {hasPermission('billing.manage') && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="mt-3 w-full"
-                        onClick={() => openPaymentDialog(tenant)}
-                      >
-                        <Receipt className="mr-2 h-4 w-4" />
-                        Record payment
-                      </Button>
-                    )}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="mt-3 w-full"
+                      onClick={() => openDetailsDialog(tenant)}
+                    >
+                      <Eye className="mr-2 h-4 w-4" />
+                      View
+                    </Button>
                   </Card>
                 ))
               )}
@@ -326,7 +423,7 @@ const AdminBilling = () => {
                       <TableHead>Status</TableHead>
                       <TableHead>Billing Method</TableHead>
                       <TableHead>Last Update</TableHead>
-                      {hasPermission('billing.manage') && <TableHead className="text-right">Action</TableHead>}
+                      <TableHead className="text-right">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -352,13 +449,11 @@ const AdminBilling = () => {
                           {getTenantBillingMethodLabel(tenant)}
                         </TableCell>
                         <TableCell>{dayjs(getTenantBillingUpdatedAt(tenant)).fromNow()}</TableCell>
-                        {hasPermission('billing.manage') && (
-                          <TableCell className="text-right">
-                            <Button type="button" variant="outline" size="sm" onClick={() => openPaymentDialog(tenant)}>
-                              Record payment
-                            </Button>
-                          </TableCell>
-                        )}
+                        <TableCell className="text-right">
+                          <Button type="button" variant="outline" size="sm" onClick={() => openDetailsDialog(tenant)}>
+                            View
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -368,6 +463,159 @@ const AdminBilling = () => {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={detailsDialogOpen} onOpenChange={handleDetailsDialogOpenChange}>
+        <DialogContent className="sm:max-w-3xl [--modal-w:min(94vw,48rem)]">
+          <DialogHeader>
+            <DialogTitle>Tenant billing details</DialogTitle>
+            <DialogDescription>
+              Review billing status, license details, renewal metadata, and recent payments for{' '}
+              {viewingTenant?.name || 'this tenant'}.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody>
+            {viewingTenant && (
+              <div className="space-y-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Card className="border border-gray-200">
+                    <CardContent className="p-4 space-y-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Organization</p>
+                        <p className="font-semibold text-foreground">{viewingTenant.name}</p>
+                        <p className="text-xs text-muted-foreground">{viewingTenant.slug}</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Badge variant={normalizePlanId(viewingTenant.plan) === 'professional' ? 'default' : 'secondary'}>
+                          {getPlanLabel(viewingTenant.plan)}
+                        </Badge>
+                        <StatusChip status={billingStatus} />
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Billing method</p>
+                        <p className="text-sm text-foreground">{getTenantBillingMethodLabel(viewingTenant)}</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border border-gray-200">
+                    <CardContent className="p-4 space-y-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Recurring amount</p>
+                        <p className="font-semibold text-foreground">
+                          {recurringAmount == null ? 'Not recurring' : `${formatCurrency(recurringAmount)} / month`}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Current period ends</p>
+                        <p className="text-sm text-foreground">
+                          {formatDate(tenantBilling?.currentPeriodEnd || latestPayment?.periodEnd)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Last update</p>
+                        <p className="text-sm text-foreground">{formatDate(getTenantBillingUpdatedAt(viewingTenant))}</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {normalizePlanId(viewingTenant.plan) === 'enterprise' && (
+                  <Card className="border border-gray-200">
+                    <CardHeader>
+                      <CardTitle className="text-base">Enterprise license and renewal</CardTitle>
+                    </CardHeader>
+                    <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Tier</p>
+                        <p className="font-medium text-foreground">
+                          {getEnterpriseTier(
+                            enterpriseBilling.enterpriseTier || viewingTenant.metadata?.entitlements?.enterpriseTier
+                          )?.name || 'Enterprise'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">License fee</p>
+                        <p className="font-medium text-foreground">
+                          {enterpriseBilling.licenseFeeGhs != null
+                            ? formatCurrency(Number(enterpriseBilling.licenseFeeGhs))
+                            : 'Not recorded'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Cloud annual renewal</p>
+                        <p className="font-medium text-foreground">
+                          {enterpriseBilling.cloudPlanAnnualGhs != null
+                            ? formatCurrency(Number(enterpriseBilling.cloudPlanAnnualGhs))
+                            : 'Not set'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Next cloud due date</p>
+                        <p className="font-medium text-foreground">{formatDate(enterpriseBilling.cloudNextDueAt)}</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                <Card className="border border-gray-200">
+                  <CardHeader>
+                    <CardTitle className="text-base">Payment history</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {paymentsLoading ? (
+                      <div className="space-y-2">
+                        <Skeleton className="h-10 w-full" />
+                        <Skeleton className="h-10 w-full" />
+                      </div>
+                    ) : tenantPayments.length === 0 ? (
+                      <Empty description="No subscription payments recorded" />
+                    ) : (
+                      <div className="space-y-3">
+                        {tenantPayments.map((payment) => (
+                          <div
+                            key={payment.id}
+                            className="flex flex-col gap-2 rounded-lg border border-gray-200 p-3 sm:flex-row sm:items-center sm:justify-between"
+                          >
+                            <div>
+                              <p className="font-medium text-foreground">{getPaymentTypeLabel(payment)}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {formatDate(payment.metadata?.paymentDate || payment.createdAt)}
+                                {payment.providerReference ? ` - Ref: ${payment.providerReference}` : ''}
+                              </p>
+                              {payment.notes && (
+                                <p className="mt-1 text-xs text-muted-foreground">{payment.notes}</p>
+                              )}
+                            </div>
+                            <div className="text-left sm:text-right">
+                              <p className="font-semibold text-foreground">
+                                {formatCurrency(getPaymentAmountGhs(payment), payment.currency)}
+                              </p>
+                              <Badge variant={payment.status === 'success' ? 'default' : 'secondary'}>
+                                {payment.status}
+                              </Badge>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => handleDetailsDialogOpenChange(false)}>
+              Close
+            </Button>
+            {hasPermission('billing.manage') && (
+              <Button type="button" onClick={() => openPaymentDialog(viewingTenant)} disabled={!viewingTenant}>
+                <Receipt className="mr-2 h-4 w-4" />
+                Record payment
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
         <DialogContent className="sm:max-w-2xl [--modal-w:min(92vw,42rem)]">

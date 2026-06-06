@@ -11,7 +11,10 @@ const updateCustomerBalance = async (customerId, transaction = null) => {
   try {
     // Get all invoices for this customer
     const invoices = await Invoice.findAll({
-      where: { customerId },
+      where: {
+        customerId,
+        status: { [Op.ne]: 'cancelled' },
+      },
       attributes: ['balance', 'status'],
       transaction
     });

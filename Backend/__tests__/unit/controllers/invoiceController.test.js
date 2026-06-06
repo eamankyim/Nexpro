@@ -32,6 +32,7 @@ jest.mock('../../../middleware/cache', () => ({
 jest.mock('../../../services/activityLogger', () => ({
   logInvoiceSent: jest.fn(),
   logInvoicePaid: jest.fn(),
+  logPaymentReceived: jest.fn(),
 }));
 
 jest.mock('../../../services/customerBalanceService', () => ({
@@ -228,6 +229,94 @@ describe('invoiceController sendInvoiceToCustomer logging', () => {
   });
 });
 
+describe('invoiceController recordPayment notes', () => {
+  const buildRes = () => ({
+    status: jest.fn().mockReturnThis(),
+    json: jest.fn().mockReturnThis(),
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    updateCustomerBalance.mockResolvedValue(undefined);
+  });
+
+  it('persists optional notes on the created payment and returns the payment payload', async () => {
+    const invoice = {
+      id: 'invoice-1',
+      tenantId: 'tenant-1',
+      invoiceNumber: 'INV-001',
+      customerId: 'customer-1',
+      jobId: 'job-1',
+      totalAmount: 250,
+      amountPaid: 50,
+      status: 'sent',
+      update: jest.fn().mockResolvedValue(undefined),
+    };
+    const updatedInvoice = {
+      ...invoice,
+      amountPaid: 125,
+      balance: 125,
+      toJSON() {
+        return {
+          id: this.id,
+          tenantId: this.tenantId,
+          invoiceNumber: this.invoiceNumber,
+          amountPaid: this.amountPaid,
+          balance: this.balance,
+        };
+      },
+    };
+    const payment = {
+      id: 'payment-1',
+      paymentNumber: 'PAY-1',
+      notes: 'Customer paid at front desk',
+      toJSON() {
+        return {
+          id: this.id,
+          paymentNumber: this.paymentNumber,
+          notes: this.notes,
+        };
+      },
+    };
+
+    Invoice.findOne
+      .mockResolvedValueOnce(invoice)
+      .mockResolvedValueOnce(updatedInvoice);
+    Payment.create.mockResolvedValue(payment);
+
+    const req = {
+      params: { id: 'invoice-1' },
+      body: {
+        amount: 75,
+        paymentMethod: 'cash',
+        paymentDate: '2026-05-15',
+        notes: 'Customer paid at front desk',
+      },
+      tenantId: 'tenant-1',
+      user: { id: 'user-1' },
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    await invoiceController.recordPayment(req, res, next);
+
+    expect(Payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      amount: 75,
+      notes: 'Customer paid at front desk',
+    }));
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      success: true,
+      data: expect.objectContaining({ id: 'invoice-1' }),
+      payment: expect.objectContaining({
+        id: 'payment-1',
+        notes: 'Customer paid at front desk',
+      }),
+    }));
+    expect(next).not.toHaveBeenCalled();
+  });
+});
+
 describe('invoiceController markInvoicePaid payment date', () => {
   let errorSpy;
   let setImmediateSpy;
@@ -288,7 +377,7 @@ describe('invoiceController markInvoicePaid payment date', () => {
 
     const req = {
       params: { id: 'invoice-1' },
-      body: { paymentDate: '2026-05-15' },
+      body: { paymentDate: '2026-05-15', notes: 'Paid by bank transfer' },
       tenantId: 'tenant-1',
       user: { id: 'user-1' },
     };
@@ -307,6 +396,7 @@ describe('invoiceController markInvoicePaid payment date', () => {
     expect(Payment.create).toHaveBeenCalledWith(expect.objectContaining({
       amount: 200,
       paymentDate: expectedDate,
+      notes: 'Paid by bank transfer',
     }));
     expect(ensureSaleFromPaidInvoice).toHaveBeenCalledWith('invoice-1', 'payment-1', expect.objectContaining({
       tenantId: 'tenant-1',

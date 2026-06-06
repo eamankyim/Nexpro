@@ -18,8 +18,17 @@ jest.mock('../../../models', () => ({
   },
 }));
 
+jest.mock('../../../services/customerBalanceService', () => ({
+  updateCustomerBalance: jest.fn(),
+}));
+
 const { Invoice, Payment, Sale, SaleItem, SaleActivity } = require('../../../models');
-const { ensureSaleFromPaidInvoice } = require('../../../services/invoiceSaleService');
+const { updateCustomerBalance } = require('../../../services/customerBalanceService');
+const {
+  ensureSaleFromPaidInvoice,
+  syncLinkedInvoiceFromSale,
+  syncSaleInvoiceAndRefreshCustomerBalance,
+} = require('../../../services/invoiceSaleService');
 
 const buildInvoice = (overrides = {}) => ({
   id: 'invoice-1',
@@ -155,5 +164,71 @@ describe('invoiceSaleService.ensureSaleFromPaidInvoice', () => {
     expect(result.reason).toBe('invoice_not_paid');
     expect(Sale.create).not.toHaveBeenCalled();
     expect(SaleItem.bulkCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe('invoiceSaleService.syncLinkedInvoiceFromSale', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('updates linked invoice amountPaid from sale payment state', async () => {
+    const invoice = buildInvoice({
+      saleId: 'sale-1',
+      amountPaid: 0,
+      status: 'sent',
+      paidDate: null,
+    });
+    Invoice.findOne.mockResolvedValue(invoice);
+
+    const result = await syncLinkedInvoiceFromSale({
+      id: 'sale-1',
+      tenantId: 'tenant-1',
+      customerId: 'customer-1',
+      invoiceId: 'invoice-1',
+      amountPaid: 40,
+    }, { tenantId: 'tenant-1' });
+
+    expect(invoice.update).toHaveBeenCalledWith(
+      expect.objectContaining({ amountPaid: 40 }),
+      { transaction: null }
+    );
+    expect(result).toBe(invoice);
+  });
+
+  it('skips cancelled invoices', async () => {
+    Invoice.findOne.mockResolvedValue(buildInvoice({ status: 'cancelled' }));
+
+    const result = await syncLinkedInvoiceFromSale({
+      id: 'sale-1',
+      tenantId: 'tenant-1',
+      customerId: 'customer-1',
+      invoiceId: 'invoice-1',
+      amountPaid: 40,
+    }, { tenantId: 'tenant-1' });
+
+    expect(result).toBeNull();
+  });
+});
+
+describe('invoiceSaleService.syncSaleInvoiceAndRefreshCustomerBalance', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    updateCustomerBalance.mockResolvedValue(40);
+  });
+
+  it('refreshes customer balance after syncing invoice from sale', async () => {
+    const invoice = buildInvoice({ saleId: 'sale-1', amountPaid: 0, status: 'sent' });
+    Invoice.findOne.mockResolvedValue(invoice);
+
+    await syncSaleInvoiceAndRefreshCustomerBalance({
+      id: 'sale-1',
+      tenantId: 'tenant-1',
+      customerId: 'customer-1',
+      invoiceId: 'invoice-1',
+      amountPaid: 40,
+    }, { tenantId: 'tenant-1' });
+
+    expect(updateCustomerBalance).toHaveBeenCalledWith('customer-1', null);
   });
 });

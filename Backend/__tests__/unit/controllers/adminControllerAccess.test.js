@@ -166,7 +166,7 @@ describe('adminController.getBillingSummary', () => {
     jest.clearAllMocks();
   });
 
-  it('uses current successful Enterprise ledger payments for estimated MRR', async () => {
+  it('separates Enterprise license payments from estimated MRR', async () => {
     const now = new Date('2026-06-06T12:00:00.000Z');
     jest.useFakeTimers().setSystemTime(now);
 
@@ -185,6 +185,7 @@ describe('adminController.getBillingSummary', () => {
         billingPeriod: 'yearly',
         periodStart: new Date('2026-01-01T00:00:00.000Z'),
         periodEnd: new Date('2027-01-01T00:00:00.000Z'),
+        metadata: { paymentType: 'enterprise_license' },
       },
       {
         tenantId: 'enterprise-tenant-1',
@@ -192,6 +193,7 @@ describe('adminController.getBillingSummary', () => {
         billingPeriod: 'monthly',
         periodStart: new Date('2026-06-01T00:00:00.000Z'),
         periodEnd: new Date('2026-07-01T00:00:00.000Z'),
+        metadata: { paymentType: 'enterprise_cloud_renewal' },
       },
     ]);
 
@@ -211,15 +213,19 @@ describe('adminController.getBillingSummary', () => {
     );
     expect(res.status).toHaveBeenCalledWith(200);
     const data = res.json.mock.calls[0][0].data;
-    expect(data.estimatedMRR).toBe(3458);
+    expect(data.estimatedMRR).toBe(1458);
+    expect(data.oneTimeRevenue).toBe(24000);
+    expect(data.recordedRevenue).toBe(25200);
     expect(data.planBreakdown).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ plan: 'starter', count: 2, mrr: 258 }),
         expect.objectContaining({
           plan: 'enterprise',
           count: 1,
-          mrr: 3200,
+          mrr: 1200,
           recordedRevenue: 25200,
+          oneTimeRevenue: 24000,
+          recurringRevenue: 1200,
         }),
       ])
     );
@@ -227,7 +233,7 @@ describe('adminController.getBillingSummary', () => {
     jest.useRealTimers();
   });
 
-  it('falls back to the latest successful Enterprise payment when no current-period payment exists', async () => {
+  it('keeps fallback Enterprise license payments out of estimated MRR', async () => {
     const now = new Date('2028-06-06T12:00:00.000Z');
     jest.useFakeTimers().setSystemTime(now);
 
@@ -244,6 +250,7 @@ describe('adminController.getBillingSummary', () => {
         periodStart: new Date('2026-01-01T00:00:00.000Z'),
         periodEnd: new Date('2027-01-01T00:00:00.000Z'),
         createdAt: new Date('2026-01-02T00:00:00.000Z'),
+        metadata: { paymentType: 'enterprise_license' },
       },
     ]);
 
@@ -253,14 +260,16 @@ describe('adminController.getBillingSummary', () => {
     await adminController.getBillingSummary({}, res, next);
 
     const data = res.json.mock.calls[0][0].data;
-    expect(data.estimatedMRR).toBe(2000);
+    expect(data.estimatedMRR).toBe(0);
+    expect(data.oneTimeRevenue).toBe(24000);
     expect(data.planBreakdown).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           plan: 'enterprise',
           count: 1,
-          mrr: 2000,
+          mrr: 0,
           recordedRevenue: 24000,
+          oneTimeRevenue: 24000,
         }),
       ])
     );

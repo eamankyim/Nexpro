@@ -29,6 +29,7 @@ import dayjs from 'dayjs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
@@ -104,12 +105,14 @@ const paymentSchema = z.object({
   paymentMethod: z.string().min(1, 'Payment method is required'),
   paymentDate: z.date(),
   referenceNumber: z.string().optional(),
+  notes: z.string().optional(),
 });
 
 const markAsPaidSchema = z.object({
   paymentType: z.enum(['full', 'partial']),
   paymentDate: z.date(),
   partialAmount: numberOrEmptySchema(z).optional(),
+  notes: z.string().optional(),
 }).superRefine((values, ctx) => {
   if (values.paymentType === 'partial') {
     if (values.partialAmount == null || values.partialAmount < 0.01) {
@@ -187,6 +190,7 @@ const Invoices = () => {
       paymentMethod: 'cash',
       paymentDate: new Date(),
       referenceNumber: '',
+      notes: '',
     },
   });
 
@@ -196,6 +200,7 @@ const Invoices = () => {
       paymentType: 'full',
       paymentDate: new Date(),
       partialAmount: 0,
+      notes: '',
     },
   });
 
@@ -495,6 +500,7 @@ const Invoices = () => {
       paymentMethod: 'cash',
       paymentDate: new Date(),
       referenceNumber: '',
+      notes: '',
     });
     setPaymentModalVisible(true);
   };
@@ -506,6 +512,7 @@ const Invoices = () => {
       paymentType: 'full',
       paymentDate: new Date(),
       partialAmount: balance > 0 ? balance : 0,
+      notes: '',
     });
     setMarkAsPaidModalVisible(true);
   };
@@ -527,10 +534,12 @@ const Invoices = () => {
           amount: partialAmount,
           paymentMethod: 'cash',
           paymentDate: selectedPaymentDate,
+          notes: values.notes?.trim() || undefined,
         });
       } else {
         response = await invoiceService.markAsPaid(viewingInvoice.id, {
           paymentDate: selectedPaymentDate,
+          notes: values.notes?.trim() || undefined,
         });
       }
       const updatedInvoice = response?.data;
@@ -562,7 +571,8 @@ const Invoices = () => {
     try {
       await invoiceService.recordPayment(viewingInvoice.id, {
         ...values,
-        paymentDate: dayjs(values.paymentDate).format('YYYY-MM-DD')
+        paymentDate: dayjs(values.paymentDate).format('YYYY-MM-DD'),
+        notes: values.notes?.trim() || undefined,
       });
       showSuccess('Payment recorded successfully');
       setPaymentModalVisible(false);
@@ -1195,6 +1205,24 @@ const Invoices = () => {
                   )}
                 />
               )}
+
+              <FormField
+                control={markAsPaidForm.control}
+                name="notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Payment note (optional)</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        {...field}
+                        placeholder="Add an internal note about this payment"
+                        rows={3}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </form>
           </Form>
         )}
@@ -1332,6 +1360,24 @@ const Invoices = () => {
                     )}
                   />
                 </div>
+
+                <FormField
+                  control={paymentForm.control}
+                  name="notes"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Payment note (optional)</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          {...field}
+                          placeholder="Add an internal note about this payment"
+                          rows={3}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </form>
             </Form>
           </>

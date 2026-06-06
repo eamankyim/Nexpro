@@ -142,6 +142,11 @@ const parsePaymentDateInput = (value) => {
   return Number.isNaN(paymentDate.getTime()) ? null : paymentDate;
 };
 
+const normalizePaymentNotes = (value) => {
+  if (value == null) return '';
+  return String(value).trim().slice(0, 1000);
+};
+
 const maskEmailForLogs = (email) => {
   if (!email || typeof email !== 'string') return null;
   const [localPart, domainPart] = email.trim().split('@');
@@ -991,7 +996,8 @@ exports.deleteCancelledInvoice = async (req, res, next) => {
 // @access  Private
 exports.recordPayment = async (req, res, next) => {
   try {
-    const { amount, paymentMethod, referenceNumber, paymentDate } = sanitizePayload(req.body);
+    const { amount, paymentMethod, referenceNumber, paymentDate, notes } = sanitizePayload(req.body);
+    const paymentNotes = normalizePaymentNotes(notes);
 
     const invoice = await Invoice.findOne({
       where: invoiceReadWhere(req, { id: req.params.id })
@@ -1059,7 +1065,7 @@ exports.recordPayment = async (req, res, next) => {
       paymentDate: effectivePaymentDate,
       referenceNumber,
       status: 'completed',
-      notes: `Payment for invoice ${invoice.invoiceNumber}`
+      notes: paymentNotes || `Payment for invoice ${invoice.invoiceNumber}`
     });
 
     const updatedInvoice = await Invoice.findOne({
@@ -1147,7 +1153,8 @@ exports.recordPayment = async (req, res, next) => {
     invalidateInvoiceListCache(req.tenantId);
     res.status(200).json({
       success: true,
-      data: await invoiceToResponsePayload(updatedInvoice)
+      data: await invoiceToResponsePayload(updatedInvoice),
+      payment: typeof payment.toJSON === 'function' ? payment.toJSON() : payment
     });
   } catch (error) {
     next(error);
@@ -1159,7 +1166,8 @@ exports.recordPayment = async (req, res, next) => {
 // @access  Private
 exports.markInvoicePaid = async (req, res, next) => {
   try {
-    const { paymentDate, paidAt } = sanitizePayload(req.body || {});
+    const { paymentDate, paidAt, notes } = sanitizePayload(req.body || {});
+    const paymentNotes = normalizePaymentNotes(notes);
     const effectivePaymentDate = parsePaymentDateInput(paymentDate || paidAt);
     if (!effectivePaymentDate) {
       return res.status(400).json({
@@ -1223,7 +1231,7 @@ exports.markInvoicePaid = async (req, res, next) => {
         paymentMethod: 'other',
         paymentDate: effectivePaymentDate,
         status: 'completed',
-        notes: `Invoice ${invoice.invoiceNumber} manually marked as paid`
+        notes: paymentNotes || `Invoice ${invoice.invoiceNumber} manually marked as paid`
       });
     }
 
@@ -1275,7 +1283,8 @@ exports.markInvoicePaid = async (req, res, next) => {
     res.status(200).json({
       success: true,
       message: 'Invoice marked as paid successfully',
-      data: await invoiceToResponsePayload(updatedInvoice)
+      data: await invoiceToResponsePayload(updatedInvoice),
+      payment: manualPayment ? (typeof manualPayment.toJSON === 'function' ? manualPayment.toJSON() : manualPayment) : null
     });
   } catch (error) {
     next(error);
@@ -2768,6 +2777,12 @@ exports.cancelInvoice = async (req, res, next) => {
       where: applyTenantFilter(req.tenantId, { id: invoice.id }),
       include: invoiceResponseIncludes()
     });
+
+    try {
+      await updateCustomerBalance(invoice.customerId);
+    } catch (error) {
+      console.error('Failed to update customer balance after invoice cancel:', error);
+    }
 
     invalidateAfterMutation(req.tenantId);
     invalidateInvoiceListCache(req.tenantId);

@@ -19,6 +19,9 @@ const {
   getTenantJobs,
   updateTenantStatus,
   deleteTenant,
+  getTenantCleanupRecords,
+  cleanupTenantProducts,
+  cleanupTenantInvoices,
   getBillingSummary,
   getBillingTenants,
   getSystemHealth,
@@ -212,6 +215,9 @@ router.get('/alerts', getPlatformAlerts);
  */
 router.get('/tenants/:id/vendors', requirePlatformAdminPermission('expenses.manage'), getTenantVendors);
 router.get('/tenants/:id/jobs', requirePlatformAdminPermission('expenses.manage'), getTenantJobs);
+router.get('/tenants/:id/cleanup', requirePlatformAdminPermission('tenants.delete'), getTenantCleanupRecords);
+router.delete('/tenants/:id/cleanup/products', requirePlatformAdminPermission('tenants.delete'), cleanupTenantProducts);
+router.delete('/tenants/:id/cleanup/invoices', requirePlatformAdminPermission('tenants.delete'), cleanupTenantInvoices);
 router.get('/tenants/:id', requirePlatformAdminPermission('tenants.view'), getTenantById);
 router.get('/tenants/:id/access-audit', requirePlatformAdminPermission('tenants.view'), getTenantAccessAudit);
 

@@ -22,7 +22,7 @@ export default function AdminBillingCharts({ summary, getPlanLabel }) {
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
       <Card className="border border-gray-200">
         <CardHeader>
-          <CardTitle className="text-base">Revenue by plan (₵)</CardTitle>
+          <CardTitle className="text-base">MRR and one-time revenue by plan (₵)</CardTitle>
         </CardHeader>
         <CardContent>
           {summary?.planBreakdown?.length ? (
@@ -31,8 +31,14 @@ export default function AdminBillingCharts({ summary, getPlanLabel }) {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="plan" tickFormatter={getPlanLabel} />
                 <YAxis allowDecimals={false} />
-                <Tooltip formatter={(value) => `₵ ${value}`} />
+                <Tooltip
+                  formatter={(value, name) => [
+                    `₵ ${value}`,
+                    name === 'oneTimeRevenue' ? 'One-time license revenue' : 'Recurring MRR',
+                  ]}
+                />
                 <Bar dataKey="mrr" fill="var(--color-primary)" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="oneTimeRevenue" fill="#7e22ce" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
