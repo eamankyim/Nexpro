@@ -140,10 +140,133 @@ function filterByBrand(products, rowBrand) {
   return filtered.length ? filtered : products;
 }
 
+function hasCode(value) {
+  return Boolean(normalizeText(value));
+}
+
+function productHasNoCodes(product) {
+  return !hasCode(product.sku) && !hasCode(product.barcode);
+}
+
+function rowHasNoCodes(row) {
+  return !hasCode(row.sku) && !hasCode(row.barcode);
+}
+
 function collectRowCodes(row) {
   const codes = uniqueValues([row.sku, row.barcode, row.partNo]);
   const baseParts = codes.map((code) => skuBasePart(code)).filter(Boolean);
   return uniqueValues([...codes, ...baseParts]);
+}
+
+function rowPrimaryCode(row) {
+  return normalizeText(row.sku) || normalizeText(row.barcode) || normalizeText(row.partNo);
+}
+
+function isBarePartLookupCode(code, row, rowCodes) {
+  const normalized = normalizeText(code);
+  if (!normalized) return false;
+
+  const primaryCode = rowPrimaryCode(row);
+  if (primaryCode && normalized === primaryCode) return false;
+
+  if (primaryCode && primaryCode.includes('-')) {
+    const base = skuBasePart(primaryCode);
+    if (normalized === base) return true;
+  }
+
+  const partNo = normalizeText(row.partNo);
+  if (partNo && normalized === partNo && primaryCode && primaryCode !== partNo) {
+    return true;
+  }
+
+  const explicitCodes = new Set(rowCodes.map((rowCode) => normalizeText(rowCode)).filter(Boolean));
+  if (explicitCodes.has(normalized)) return false;
+
+  return rowCodes.some((rowCode) => skuBasePart(rowCode) === normalized);
+}
+
+function collectCodeMatches(rowCodes, indexes) {
+  return rowCodes
+    .map((code) => {
+      const match = indexes.productsByCode.get(code);
+      return match ? { code, product: match.product, source: match.source } : null;
+    })
+    .filter(Boolean);
+}
+
+function priceProximityScore(product, row) {
+  if (row.costPrice == null && row.sellingPrice == null) return Infinity;
+
+  let score = 0;
+  if (row.costPrice != null) {
+    const currentCost = toMoney(product.costPrice);
+    score += currentCost == null ? 1000 : Math.abs(currentCost - row.costPrice);
+  }
+  if (row.sellingPrice != null) {
+    const currentSelling = toMoney(product.sellingPrice);
+    score += currentSelling == null ? 1000 : Math.abs(currentSelling - row.sellingPrice);
+  }
+  return score;
+}
+
+function reconcileCodeMatches(row, codeMatches, rowCodes) {
+  if (!codeMatches.length) return null;
+
+  const productsById = new Map();
+  for (const match of codeMatches) {
+    const existing = productsById.get(match.product.id) || { product: match.product, matches: [] };
+    existing.matches.push(match);
+    productsById.set(match.product.id, existing);
+  }
+
+  if (productsById.size === 1) {
+    const [group] = productsById.values();
+    return { product: group.product, matchedBy: group.matches[0].source };
+  }
+
+  const primaryCode = rowPrimaryCode(row);
+
+  const exactPrimaryMatches = codeMatches.filter((match) => normalizeText(match.code) === primaryCode);
+  const exactPrimaryProducts = uniqueProducts(exactPrimaryMatches.map((match) => match.product));
+  if (exactPrimaryProducts.length === 1) {
+    const best = exactPrimaryMatches.find((match) => match.product.id === exactPrimaryProducts[0].id);
+    return { product: exactPrimaryProducts[0], matchedBy: best.source };
+  }
+
+  const specificMatches = codeMatches.filter((match) => !isBarePartLookupCode(match.code, row, rowCodes));
+  const specificProducts = uniqueProducts(specificMatches.map((match) => match.product));
+  if (specificProducts.length === 1) {
+    const best = specificMatches.find((match) => match.product.id === specificProducts[0].id);
+    return { product: specificProducts[0], matchedBy: best.source };
+  }
+
+  let candidates = uniqueProducts(codeMatches.map((match) => match.product));
+  const brandFiltered = uniqueProducts(filterByBrand(candidates, row.brand));
+  if (brandFiltered.length === 1) {
+    const best = codeMatches.find((match) => match.product.id === brandFiltered[0].id);
+    return { product: brandFiltered[0], matchedBy: best?.source || 'code.brand' };
+  }
+  if (row.brand && brandFiltered.length > 1) candidates = brandFiltered;
+
+  if (primaryCode) {
+    const related = candidates.filter((product) =>
+      codesAreRelated(primaryCode, product.sku) || codesAreRelated(primaryCode, product.barcode)
+    );
+    if (related.length === 1) {
+      const best = codeMatches.find((match) => match.product.id === related[0].id);
+      return { product: related[0], matchedBy: best?.source || 'code.related' };
+    }
+    if (related.length > 1) candidates = related;
+  }
+
+  const nameKey = normalizedKey(row.name);
+  const nameMatched = candidates.filter((product) => normalizedKey(product.name) === nameKey);
+  if (nameMatched.length === 1) {
+    const best = codeMatches.find((match) => match.product.id === nameMatched[0].id);
+    return { product: nameMatched[0], matchedBy: best?.source || 'code.name' };
+  }
+
+  return null;
 }
 
 function disambiguateNameMatches(row, candidates) {
@@ -165,8 +288,8 @@ function disambiguateNameMatches(row, candidates) {
     if (nonLocal.length > 1) matches = nonLocal;
   }
 
-  if (!row.sku && !row.barcode) {
-    const withoutCodes = matches.filter((product) => !product.sku && !product.barcode);
+  if (rowHasNoCodes(row)) {
+    const withoutCodes = matches.filter((product) => productHasNoCodes(product));
     if (withoutCodes.length === 1) return withoutCodes;
     if (withoutCodes.length > 1) matches = withoutCodes;
   }
@@ -174,9 +297,19 @@ function disambiguateNameMatches(row, candidates) {
   if (!row.brand && matches.length > 1) {
     const withoutCategory = matches.filter((product) => !normalizeText(product.category?.name));
     if (withoutCategory.length === 1) return withoutCategory;
+    if (withoutCategory.length > 1) matches = withoutCategory;
   }
 
-  if (matches.length > 1 && matches.every((product) => !product.sku && !product.barcode)) {
+  if (matches.length > 1 && (row.costPrice != null || row.sellingPrice != null)) {
+    const scored = matches
+      .map((product) => ({ product, score: priceProximityScore(product, row) }))
+      .sort((left, right) => left.score - right.score);
+    if (scored.length === 1 || scored[0].score < scored[1].score) {
+      return [scored[0].product];
+    }
+  }
+
+  if (matches.length > 1 && matches.every((product) => productHasNoCodes(product))) {
     const [oldest] = [...matches].sort((left, right) => {
       const leftCreated = left.createdAt ? new Date(left.createdAt).getTime() : 0;
       const rightCreated = right.createdAt ? new Date(right.createdAt).getTime() : 0;
@@ -391,15 +524,13 @@ function resolveProductForRow(row, indexes) {
   const rowCodes = collectRowCodes(row);
 
   if (rowCodes.length) {
-    const codeMatches = rowCodes
-      .map((code) => indexes.productsByCode.get(code))
-      .filter(Boolean);
-    const codeProductIds = new Set(codeMatches.map((match) => match.product.id));
-    if (codeProductIds.size > 1) {
-      return { status: 'ambiguous', reason: 'SKU and barcode matched different products' };
-    }
+    const codeMatches = collectCodeMatches(rowCodes, indexes);
     if (codeMatches.length) {
-      return { status: 'matched', product: codeMatches[0].product, matchedBy: codeMatches[0].source };
+      const reconciled = reconcileCodeMatches(row, codeMatches, rowCodes);
+      if (reconciled) {
+        return { status: 'matched', product: reconciled.product, matchedBy: reconciled.matchedBy };
+      }
+      return { status: 'ambiguous', reason: 'SKU and barcode matched different products' };
     }
 
     const prefixCandidates = [];
@@ -565,14 +696,22 @@ async function main() {
   printRows('Update examples', plan.toUpdate, (item) => `${item.product.sku || item.product.barcode || item.product.name}: cost ${item.currentCost} -> ${item.nextCost}, sell ${item.currentSelling} -> ${item.nextSelling} via ${item.matchedBy}`);
 
   if (blockingCount) {
-    const message = allowPartial && plan.toUpdate.length
-      ? `Blocking rows found; ${plan.toUpdate.length} matched products can still be updated with --allow-partial`
+    const canPartialUpdate = allowPartial && plan.toUpdate.length > 0;
+    const message = canPartialUpdate
+      ? (allowPartial
+        ? `Blocking rows found; ${plan.toUpdate.length} matched products will be updated and ${blockingCount} row(s) skipped`
+        : `Blocking rows found; ${plan.toUpdate.length} matched products can still be updated with --allow-partial`)
       : 'Blocking rows found; no prices were updated';
-    if (isExecute && !(allowPartial && plan.toUpdate.length)) fail(message);
-    if (isDryRun || !(allowPartial && plan.toUpdate.length)) {
+    if (isExecute && !canPartialUpdate) fail(message);
+    if (isDryRun || !canPartialUpdate) {
       console.log(`\nDry run warning: ${message}. Resolve these before execute.`);
       if (isDryRun || !allowPartial) return;
     }
+    printRows('Rows skipped in partial update', [
+      ...plan.ambiguousRows,
+      ...plan.unmatchedRows,
+      ...plan.duplicateInputRows.map((row) => ({ row: row.row, name: row.name, reason: `duplicate of row ${row.firstRow}` })),
+    ], (row) => `row ${row.row}: ${row.name}${row.reason ? ` - ${row.reason}` : ''}`);
     console.log(`\nProceeding with partial update for ${plan.toUpdate.length} matched products.`);
   }
 
@@ -617,7 +756,13 @@ module.exports = {
   skuBasePart,
   codesAreRelated,
   collectRowCodes,
+  collectCodeMatches,
+  reconcileCodeMatches,
+  isBarePartLookupCode,
   disambiguateNameMatches,
   resolveProductForRow,
   brandMatches,
+  hasCode,
+  productHasNoCodes,
+  priceProximityScore,
 };

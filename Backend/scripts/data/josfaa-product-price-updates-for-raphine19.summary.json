@@ -104,7 +104,7 @@
   },
   "blockerResolution": {
     "unmatchedRows": "Ten rows used composite CSV SKUs while warehouse products imported via import-josfaa-products.js kept short PART NO. SKUs for first duplicate part numbers, or truncated slug suffixes. Fixed by prefix/base-part matching in update-product-prices-csv-for-tenant.js.",
-    "ambiguousRows": "Two name-only rows (SLIDER BLOCK KIT BS6, INNER TUBE 400*8) hit duplicate product names in the shop. Fixed by brand/category disambiguation and oldest codeless duplicate tiebreak."
+    "ambiguousRows": "Six code rows conflicted because CSV part numbers matched the first-imported short SKU while composite SKU/barcode matched the correct branded variant; resolved by preferring exact composite match over bare part-number lookup. Two name-only rows (SLIDER BLOCK KIT BS6, INNER TUBE 400*8) hit duplicate product names; resolved by LOCAL-category exclusion, empty-string code handling, and price-proximity/oldest tiebreak."
   },
   "caveats": [
     "CSV generation does not update stock quantities.",
