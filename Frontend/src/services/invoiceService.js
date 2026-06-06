@@ -28,7 +28,7 @@ const invoiceService = {
   },
 
   recordPayment: async (id, paymentData) => {
-    return await api.post(`/invoices/${id}/payment`, paymentData);
+    return await api.post(`/invoices/${id}/payment`, paymentData, { skipRetry: true });
   },
 
   send: async (id) => {
@@ -40,11 +40,11 @@ const invoiceService = {
   },
 
   markPaid: async (id, paymentData = {}) => {
-    return await api.post(`/invoices/${id}/mark-paid`, paymentData);
+    return await api.post(`/invoices/${id}/mark-paid`, paymentData, { skipRetry: true });
   },
 
   markAsPaid: async (id, paymentData = {}) => {
-    return await api.post(`/invoices/${id}/mark-paid`, paymentData);
+    return await api.post(`/invoices/${id}/mark-paid`, paymentData, { skipRetry: true });
   },
 
   getStats: async (params = {}) => {

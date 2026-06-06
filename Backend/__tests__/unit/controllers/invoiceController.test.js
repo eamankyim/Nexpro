@@ -10,7 +10,7 @@ jest.mock('../../../models', () => ({
   Sale: { findAll: jest.fn().mockResolvedValue([]) },
   Customer: {},
   JobItem: {},
-  Payment: { create: jest.fn() },
+  Payment: { create: jest.fn(), findOne: jest.fn(), findAll: jest.fn().mockResolvedValue([]) },
   SaleItem: {},
   Prescription: {},
   SaleActivity: {},
@@ -105,6 +105,7 @@ jest.mock('../../../services/emailService', () => ({
 }));
 
 const { Invoice, Payment, Setting, Job, Sale } = require('../../../models');
+const { Op } = require('sequelize');
 const { updateCustomerBalance } = require('../../../services/customerBalanceService');
 const { ensureSaleFromPaidInvoice } = require('../../../services/invoiceSaleService');
 const emailService = require('../../../services/emailService');
@@ -329,7 +330,10 @@ describe('invoiceController markInvoicePaid payment date', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    setImmediateSpy = jest.spyOn(global, 'setImmediate').mockImplementation(() => 1);
+    setImmediateSpy = jest.spyOn(global, 'setImmediate').mockImplementation((callback) => {
+      if (typeof callback === 'function') callback();
+      return 1;
+    });
   });
 
   afterEach(() => {
@@ -495,6 +499,58 @@ describe('invoiceController cancelled invoice access', () => {
       success: true,
       data: expect.objectContaining({ id: 'inv-cancelled' }),
     }));
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('lets shop-scoped staff view sale-linked invoices from the same shop', async () => {
+    const invoice = {
+      id: 'inv-sale',
+      tenantId: 'tenant-1',
+      status: 'sent',
+      jobId: null,
+      saleId: 'sale-1',
+      prescriptionId: null,
+      shopId: 'shop-a',
+      job: null,
+      sale: { soldBy: 'other-staff' },
+      shop: null,
+      studioLocation: null,
+      customer: { id: 'customer-1', name: 'Alex' },
+      toJSON() {
+        return { id: this.id, saleId: this.saleId, shopId: this.shopId };
+      },
+    };
+
+    Invoice.findOne.mockResolvedValue(invoice);
+
+    const req = {
+      params: { id: 'inv-sale' },
+      tenantId: 'tenant-1',
+      tenant: { businessType: 'shop' },
+      shopScoped: true,
+      shopFilterId: 'shop-a',
+      user: { id: 'staff-1', role: 'admin' },
+      tenantRole: 'staff',
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    await invoiceController.getInvoice(req, res, next);
+
+    expect(Sale.findAll).not.toHaveBeenCalled();
+    expect(Job.findAll).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ tenantId: 'tenant-1', createdBy: 'staff-1' }),
+    }));
+    expect(Invoice.findOne).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        id: 'inv-sale',
+        tenantId: 'tenant-1',
+        [Op.and]: expect.arrayContaining([
+          { [Op.or]: expect.arrayContaining([{ saleId: { [Op.ne]: null } }]) },
+        ]),
+      }),
+    }));
+    expect(res.status).toHaveBeenCalledWith(200);
     expect(next).not.toHaveBeenCalled();
   });
 

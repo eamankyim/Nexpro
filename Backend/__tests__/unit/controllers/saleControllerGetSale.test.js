@@ -73,11 +73,13 @@ jest.mock('../../../config/config', () => ({
 }));
 
 const { Sale } = require('../../../models');
+const { assertShopRecordAccess } = require('../../../utils/shopUtils');
 const saleController = require('../../../controllers/saleController');
 
 describe('saleController getSale', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    assertShopRecordAccess.mockImplementation(() => undefined);
     Sale.findOne.mockResolvedValue({
       id: 'sale-1',
       soldBy: 'user-1',
@@ -114,5 +116,62 @@ describe('saleController getSale', () => {
       ]),
     }));
     expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('allows shop-scoped staff to view another staff sale in the same shop', async () => {
+    Sale.findOne.mockResolvedValue({
+      id: 'sale-1',
+      shopId: 'shop-a',
+      soldBy: 'other-staff',
+      toJSON: () => ({ id: 'sale-1', shopId: 'shop-a' }),
+    });
+    const req = {
+      params: { id: 'sale-1' },
+      tenantId: 'tenant-1',
+      tenantRole: 'staff',
+      user: { id: 'staff-1', role: 'admin' },
+      shopScoped: true,
+      shopFilterId: 'shop-a',
+    };
+    const res = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn(),
+    };
+    const next = jest.fn();
+
+    await saleController.getSale(req, res, next);
+
+    expect(assertShopRecordAccess).toHaveBeenCalledWith(req, expect.objectContaining({ shopId: 'shop-a' }));
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('keeps non-shop-scoped staff limited to their own sales using tenantRole', async () => {
+    Sale.findOne.mockResolvedValue({
+      id: 'sale-1',
+      soldBy: 'other-staff',
+      toJSON: () => ({ id: 'sale-1' }),
+    });
+    const req = {
+      params: { id: 'sale-1' },
+      tenantId: 'tenant-1',
+      tenantRole: 'staff',
+      user: { id: 'staff-1', role: 'admin' },
+      shopScoped: false,
+    };
+    const res = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn(),
+    };
+    const next = jest.fn();
+
+    await saleController.getSale(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      success: false,
+      message: 'Not authorized to view this sale',
+    }));
+    expect(next).not.toHaveBeenCalled();
   });
 });

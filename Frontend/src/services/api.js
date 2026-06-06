@@ -192,6 +192,10 @@ const getRetryDelay = (attempt) => {
  * @returns {boolean} Whether to retry
  */
 const shouldRetry = (error) => {
+  if (error.config?.skipRetry) {
+    return false;
+  }
+
   // Don't retry if request was cancelled
   if (axios.isCancel(error)) {
     return false;

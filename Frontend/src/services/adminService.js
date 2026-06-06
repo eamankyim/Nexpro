@@ -21,6 +21,10 @@ const cleanupTenantProducts = async (tenantId, payload) =>
   api.delete(`/admin/tenants/${tenantId}/cleanup/products`, { data: payload });
 const cleanupTenantInvoices = async (tenantId, payload) =>
   api.delete(`/admin/tenants/${tenantId}/cleanup/invoices`, { data: payload });
+const cleanupTenantSales = async (tenantId, payload) =>
+  api.delete(`/admin/tenants/${tenantId}/cleanup/sales`, { data: payload });
+const cleanupTenantQuotes = async (tenantId, payload) =>
+  api.delete(`/admin/tenants/${tenantId}/cleanup/quotes`, { data: payload });
 
 const getSupportTickets = async (params = {}) => api.get('/admin/support-tickets', { params });
 const getSupportTicket = async (id) => api.get(`/admin/support-tickets/${id}`);
@@ -204,6 +208,8 @@ export default {
   getTenantCleanupRecords,
   cleanupTenantProducts,
   cleanupTenantInvoices,
+  cleanupTenantSales,
+  cleanupTenantQuotes,
   getSupportTickets,
   getSupportTicket,
   createSupportTicket,

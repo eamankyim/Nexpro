@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, useCallback } from 'react';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Building2, CreditCard, Zap, Crown, Eye, EyeOff, UserPlus, Trash2, Copy, Shield, Package, Receipt } from 'lucide-react';
+import { Loader2, Building2, CreditCard, Zap, Crown, Eye, EyeOff, UserPlus, Trash2, Copy, Shield, Package, Receipt, ShoppingCart, FileText } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { Textarea } from '@/components/ui/textarea';
 import { useDebounce } from '../../hooks/useDebounce';
@@ -72,6 +72,42 @@ const PLAN_ALIASES = {
   scale: 'professional',
 };
 const CANONICAL_PLAN_ORDER = ['trial', 'starter', 'professional', 'enterprise'];
+const CLEANUP_RECORD_TYPES = {
+  products: {
+    label: 'Products',
+    singular: 'product',
+    idsKey: 'productIds',
+    icon: Package,
+    emptyLabel: 'products',
+    confirmCopy: 'Unlinked products may be permanently deleted. Products with sales, stock transfers, stock counts, or quote history will be archived to preserve tenant history.',
+  },
+  invoices: {
+    label: 'Invoices',
+    singular: 'invoice',
+    idsKey: 'invoiceIds',
+    icon: Receipt,
+    emptyLabel: 'invoices',
+    confirmCopy: 'Unpaid invoices may be permanently deleted. Paid or partially paid invoices will be cancelled and archived to avoid unsafe payment/accounting reversal.',
+  },
+  sales: {
+    label: 'Sales / Orders',
+    singular: 'sale/order',
+    idsKey: 'saleIds',
+    icon: ShoppingCart,
+    emptyLabel: 'sales or orders',
+    confirmCopy: 'Sales and kitchen orders with payments, invoices, or item history are cancelled and archived. Only unlinked empty records can be permanently deleted.',
+  },
+  quotes: {
+    label: 'Quotes',
+    singular: 'quote',
+    idsKey: 'quoteIds',
+    icon: FileText,
+    emptyLabel: 'quotes',
+    confirmCopy: 'Unlinked quotes may be permanently deleted. Accepted quotes or quotes linked to jobs, invoices, or sales are archived instead.',
+  },
+};
+const CLEANUP_RECORD_TYPE_KEYS = Object.keys(CLEANUP_RECORD_TYPES);
+const EMPTY_CLEANUP_SELECTIONS = CLEANUP_RECORD_TYPE_KEYS.reduce((acc, type) => ({ ...acc, [type]: [] }), {});
 
 const normalizePlanId = (plan = '') => PLAN_ALIASES[String(plan).trim().toLowerCase()] || String(plan).trim().toLowerCase();
 const formatPlanLabel = (name = '') =>
@@ -157,14 +193,17 @@ const AdminTenants = () => {
     notes: '',
   });
   const [cleanupLoading, setCleanupLoading] = useState(false);
-  const [cleanupRecords, setCleanupRecords] = useState({ products: [], invoices: [] });
-  const [selectedCleanupProducts, setSelectedCleanupProducts] = useState([]);
-  const [selectedCleanupInvoices, setSelectedCleanupInvoices] = useState([]);
+  const [cleanupRecords, setCleanupRecords] = useState({ products: [], invoices: [], sales: [], quotes: [] });
+  const [cleanupMeta, setCleanupMeta] = useState({ counts: {}, hasMore: {}, limits: {} });
+  const [cleanupSearch, setCleanupSearch] = useState('');
+  const [cleanupLimit, setCleanupLimit] = useState(50);
+  const [selectedCleanupRecords, setSelectedCleanupRecords] = useState(EMPTY_CLEANUP_SELECTIONS);
   const [cleanupDialog, setCleanupDialog] = useState({ open: false, type: null });
   const [cleanupConfirmSlug, setCleanupConfirmSlug] = useState('');
   const [cleanupSubmitting, setCleanupSubmitting] = useState(false);
 
   const canDeleteTenants = hasPermission('tenants.delete');
+  const debouncedCleanupSearch = useDebounce(cleanupSearch, DEBOUNCE_DELAYS.SEARCH);
 
   const canonicalPlanCatalog = useMemo(() => {
     const fallbackLabels = {
@@ -325,20 +364,31 @@ const AdminTenants = () => {
     if (!tenantId || !canDeleteTenants) return;
     setCleanupLoading(true);
     try {
-      const response = await adminService.getTenantCleanupRecords(tenantId);
+      const response = await adminService.getTenantCleanupRecords(tenantId, {
+        limit: cleanupLimit,
+        search: debouncedCleanupSearch || undefined,
+      });
       if (response?.success) {
         setCleanupRecords({
           products: response.data?.products || [],
           invoices: response.data?.invoices || [],
+          sales: response.data?.sales || [],
+          quotes: response.data?.quotes || [],
+        });
+        setCleanupMeta({
+          counts: response.data?.counts || {},
+          hasMore: response.data?.hasMore || {},
+          limits: response.data?.limits || {},
         });
       }
     } catch (error) {
-      setCleanupRecords({ products: [], invoices: [] });
+      setCleanupRecords({ products: [], invoices: [], sales: [], quotes: [] });
+      setCleanupMeta({ counts: {}, hasMore: {}, limits: {} });
       handleApiError(error, { context: 'load tenant cleanup records' });
     } finally {
       setCleanupLoading(false);
     }
-  }, [canDeleteTenants]);
+  }, [canDeleteTenants, cleanupLimit, debouncedCleanupSearch]);
 
   useEffect(() => {
     setPageSearchConfig({ scope: 'admin_tenants', placeholder: SEARCH_PLACEHOLDERS.ADMIN_TENANTS });
@@ -404,6 +454,11 @@ const AdminTenants = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pagination.current, pagination.pageSize, filters.plan, filters.status, debouncedSearch]);
 
+  useEffect(() => {
+    if (!drawerVisible || !selectedTenant?.id || !canDeleteTenants) return;
+    fetchTenantCleanupRecords(selectedTenant.id);
+  }, [drawerVisible, selectedTenant?.id, canDeleteTenants, fetchTenantCleanupRecords]);
+
   // Check permission after all hooks
   if (!permissionsLoading && !hasPermission('tenants.view')) {
     return (
@@ -424,15 +479,16 @@ const AdminTenants = () => {
   const handleViewTenant = useCallback((record) => {
     setSelectedTenant(record);
     setTenantDetailTab('overview');
-    setSelectedCleanupProducts([]);
-    setSelectedCleanupInvoices([]);
-    setCleanupRecords({ products: [], invoices: [] });
+    setSelectedCleanupRecords(EMPTY_CLEANUP_SELECTIONS);
+    setCleanupRecords({ products: [], invoices: [], sales: [], quotes: [] });
+    setCleanupMeta({ counts: {}, hasMore: {}, limits: {} });
+    setCleanupSearch('');
+    setCleanupLimit(50);
     setDrawerVisible(true);
     fetchTenantDetail(record.id);
     fetchTenantAccessAudit(record.id);
     fetchTenantSubscriptionPayments(record.id);
-    fetchTenantCleanupRecords(record.id);
-  }, [fetchTenantDetail, fetchTenantAccessAudit, fetchTenantSubscriptionPayments, fetchTenantCleanupRecords]);
+  }, [fetchTenantDetail, fetchTenantAccessAudit, fetchTenantSubscriptionPayments]);
 
   const handleRecordManualPayment = async () => {
     if (!selectedTenant?.id) return;
@@ -586,16 +642,26 @@ const AdminTenants = () => {
   };
 
   const toggleCleanupSelection = (type, id) => {
-    const setter = type === 'products' ? setSelectedCleanupProducts : setSelectedCleanupInvoices;
-    setter((prev) => (
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-    ));
+    const selectedForType = selectedCleanupRecords[type] || [];
+    const maxBatchSize = cleanupMeta.limits?.maxBatchSize || 50;
+    if (!selectedForType.includes(id) && selectedForType.length >= maxBatchSize) {
+      showError(`Cleanup can process up to ${maxBatchSize} ${CLEANUP_RECORD_TYPES[type]?.emptyLabel || 'records'} at a time.`);
+      return;
+    }
+
+    setSelectedCleanupRecords((prev) => {
+      const selected = prev[type] || [];
+      return {
+        ...prev,
+        [type]: selected.includes(id) ? selected.filter((item) => item !== id) : [...selected, id],
+      };
+    });
   };
 
   const openCleanupConfirm = (type) => {
-    const selectedCount = type === 'products' ? selectedCleanupProducts.length : selectedCleanupInvoices.length;
+    const selectedCount = selectedCleanupRecords[type]?.length || 0;
     if (selectedCount === 0) {
-      showError(`Select at least one ${type === 'products' ? 'product' : 'invoice'} first.`);
+      showError(`Select at least one ${CLEANUP_RECORD_TYPES[type]?.singular || 'record'} first.`);
       return;
     }
     setCleanupConfirmSlug('');
@@ -610,35 +676,35 @@ const AdminTenants = () => {
       return;
     }
 
-    const isProducts = cleanupDialog.type === 'products';
-    const ids = isProducts ? selectedCleanupProducts : selectedCleanupInvoices;
+    const typeConfig = CLEANUP_RECORD_TYPES[cleanupDialog.type];
+    const ids = selectedCleanupRecords[cleanupDialog.type] || [];
     setCleanupSubmitting(true);
     try {
       const payload = {
         confirmSlug: slug,
         reason: 'Superadmin tenant cleanup from Control Center',
-        [isProducts ? 'productIds' : 'invoiceIds']: ids,
+        [typeConfig.idsKey]: ids,
       };
-      const response = isProducts
-        ? await adminService.cleanupTenantProducts(selectedTenant.id, payload)
-        : await adminService.cleanupTenantInvoices(selectedTenant.id, payload);
+      const cleanupRequestByType = {
+        products: adminService.cleanupTenantProducts,
+        invoices: adminService.cleanupTenantInvoices,
+        sales: adminService.cleanupTenantSales,
+        quotes: adminService.cleanupTenantQuotes,
+      };
+      const response = await cleanupRequestByType[cleanupDialog.type](selectedTenant.id, payload);
       const results = response?.data?.results || [];
       const deleted = results.filter((item) => item.status === 'deleted').length;
       const archived = results.filter((item) => item.status === 'archived').length;
       const missing = results.filter((item) => item.status === 'not_found').length;
       showSuccess(`Cleanup complete: ${deleted} deleted, ${archived} archived${missing ? `, ${missing} not found` : ''}.`);
-      if (isProducts) {
-        setSelectedCleanupProducts([]);
-      } else {
-        setSelectedCleanupInvoices([]);
-      }
+      setSelectedCleanupRecords((prev) => ({ ...prev, [cleanupDialog.type]: [] }));
       setCleanupDialog({ open: false, type: null });
       setCleanupConfirmSlug('');
       await fetchTenantCleanupRecords(selectedTenant.id);
       await fetchTenantAccessAudit(selectedTenant.id);
       await fetchTenants(pagination.current, pagination.pageSize);
     } catch (error) {
-      handleApiError(error, { context: isProducts ? 'cleanup products' : 'cleanup invoices' });
+      handleApiError(error, { context: `cleanup ${cleanupDialog.type}` });
     } finally {
       setCleanupSubmitting(false);
     }
@@ -724,10 +790,103 @@ const AdminTenants = () => {
       },
     ];
 
-  const cleanupTypeLabel = cleanupDialog.type === 'products' ? 'products' : 'invoices';
-  const cleanupSelectedCount = cleanupDialog.type === 'products'
-    ? selectedCleanupProducts.length
-    : selectedCleanupInvoices.length;
+  const cleanupTypeConfig = CLEANUP_RECORD_TYPES[cleanupDialog.type] || {};
+  const cleanupTypeLabel = cleanupTypeConfig.label || 'records';
+  const cleanupSelectedCount = selectedCleanupRecords[cleanupDialog.type]?.length || 0;
+
+  const renderCleanupRecordSummary = (type, record) => {
+    if (type === 'products') {
+      return `SKU ${record.sku || '—'} · Stock ${record.quantityOnHand ?? '—'} · ${record.shop?.name || 'No shop'} · ${record.isActive ? 'Active' : 'Inactive'}`;
+    }
+    if (type === 'invoices') {
+      return `${record.customer?.company || record.customer?.name || 'No customer'} · ${record.status} · Paid ₵${Number(record.amountPaid || 0).toFixed(2)} / ₵${Number(record.totalAmount || 0).toFixed(2)}`;
+    }
+    if (type === 'sales') {
+      return `${record.customer?.company || record.customer?.name || 'No customer'} · ${record.status}${record.orderStatus ? ` / ${record.orderStatus}` : ''} · Paid ₵${Number(record.amountPaid || 0).toFixed(2)} / ₵${Number(record.total || 0).toFixed(2)}`;
+    }
+    return `${record.customer?.company || record.customer?.name || 'No customer'} · ${record.status} · Total ₵${Number(record.totalAmount || 0).toFixed(2)}`;
+  };
+
+  const renderCleanupRecordTitle = (type, record) => {
+    if (type === 'products') return record.name;
+    if (type === 'invoices') return record.invoiceNumber;
+    if (type === 'sales') return record.saleNumber;
+    return `${record.quoteNumber}${record.title ? ` · ${record.title}` : ''}`;
+  };
+
+  const renderCleanupSection = (type) => {
+    const config = CLEANUP_RECORD_TYPES[type];
+    const Icon = config.icon;
+    const records = cleanupRecords[type] || [];
+    const selected = selectedCleanupRecords[type] || [];
+    const total = cleanupMeta.counts?.[type] ?? records.length;
+    const hasSearch = Boolean(cleanupSearch.trim());
+
+    return (
+      <Card key={type}>
+        <CardHeader>
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Icon className="h-4 w-4" />
+              {config.label}
+              <Badge variant="outline">{total}</Badge>
+            </CardTitle>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => openCleanupConfirm(type)}
+              disabled={selected.length === 0}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Cleanup selected ({selected.length})
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {cleanupLoading ? (
+            <div className="flex items-center justify-center py-6">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : records.length > 0 ? (
+            <div className="space-y-3">
+              <div className="space-y-2">
+                {records.map((record) => (
+                  <label key={record.id} className="flex cursor-pointer items-start gap-3 rounded-md border border-border p-3 hover:bg-muted/30">
+                    <Checkbox
+                      className="mt-1"
+                      checked={selected.includes(record.id)}
+                      onCheckedChange={() => toggleCleanupSelection(type, record.id)}
+                      aria-label={`Select ${renderCleanupRecordTitle(type, record)}`}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-medium text-foreground">{renderCleanupRecordTitle(type, record)}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {renderCleanupRecordSummary(type, record)}
+                      </span>
+                      <span className="block text-xs text-muted-foreground break-all">{record.id}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              {cleanupMeta.hasMore?.[type] && (
+                <div className="rounded-md border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
+                  Showing {records.length} of {total} matching {config.emptyLabel}. Use search to narrow results or load more below.
+                </div>
+              )}
+            </div>
+          ) : (
+            <Empty
+              description={
+                hasSearch
+                  ? `No ${config.emptyLabel} matched "${cleanupSearch.trim()}". Try a number, status, SKU, or title.`
+                  : `No ${config.emptyLabel} found for this tenant. Use search if you are looking for a specific older record.`
+              }
+            />
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
 
   return (
     <>
@@ -1412,109 +1571,55 @@ const AdminTenants = () => {
                     </CardHeader>
                     <CardContent className="space-y-3">
                       <p className="text-sm text-muted-foreground">
-                        Select tenant records that need superadmin cleanup. Products with historical sales, stock counts, transfers, or quotes are archived. Paid or partially paid invoices are cancelled and archived instead of hard-deleted.
+                        Search and select tenant records that need superadmin cleanup. Linked or historically important records are archived or cancelled instead of hard-deleted.
                       </p>
                       <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
-                        Confirmation requires typing <span className="font-mono text-foreground">{selectedTenant.slug}</span> before any cleanup runs.
+                        Confirmation requires typing <span className="font-mono text-foreground">{selectedTenant.slug}</span> before any cleanup runs. Up to {cleanupMeta.limits?.maxBatchSize || 50} records can be selected per cleanup action.
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="tenant-cleanup-search">Find records</Label>
+                          <Input
+                            id="tenant-cleanup-search"
+                            value={cleanupSearch}
+                            onChange={(e) => {
+                              setCleanupSearch(e.target.value);
+                              setCleanupLimit(50);
+                              setSelectedCleanupRecords(EMPTY_CLEANUP_SELECTIONS);
+                            }}
+                            placeholder="Search number, SKU, title, or status"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Results include the newest matches first. Selected records clear when the search changes.
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => fetchTenantCleanupRecords(selectedTenant.id)}
+                          disabled={cleanupLoading}
+                        >
+                          {cleanupLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                          Refresh
+                        </Button>
                       </div>
                     </CardContent>
                   </Card>
 
-                  <Card>
-                    <CardHeader>
-                      <div className="flex items-center justify-between gap-3">
-                        <CardTitle className="text-base flex items-center gap-2">
-                          <Package className="h-4 w-4" />
-                          Products
-                        </CardTitle>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openCleanupConfirm('products')}
-                          disabled={selectedCleanupProducts.length === 0}
-                        >
-                          <Trash2 className="h-4 w-4 mr-2" />
-                          Cleanup selected ({selectedCleanupProducts.length})
-                        </Button>
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      {cleanupLoading ? (
-                        <div className="flex items-center justify-center py-6">
-                          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                        </div>
-                      ) : cleanupRecords.products.length > 0 ? (
-                        <div className="space-y-2">
-                          {cleanupRecords.products.map((product) => (
-                            <label key={product.id} className="flex items-start gap-3 rounded-md border border-border p-3">
-                              <Checkbox
-                                className="mt-1"
-                                checked={selectedCleanupProducts.includes(product.id)}
-                                onCheckedChange={() => toggleCleanupSelection('products', product.id)}
-                              />
-                              <span className="min-w-0 flex-1">
-                                <span className="block text-sm font-medium text-foreground">{product.name}</span>
-                                <span className="block text-xs text-muted-foreground">
-                                  SKU {product.sku || '—'} · Stock {product.quantityOnHand ?? '—'} · {product.shop?.name || 'No shop'} · {product.isActive ? 'Active' : 'Inactive'}
-                                </span>
-                                <span className="block text-xs text-muted-foreground break-all">{product.id}</span>
-                              </span>
-                            </label>
-                          ))}
-                        </div>
-                      ) : (
-                        <Empty description="No recent products found for cleanup" />
-                      )}
-                    </CardContent>
-                  </Card>
+                  {CLEANUP_RECORD_TYPE_KEYS.map((type) => renderCleanupSection(type))}
 
-                  <Card>
-                    <CardHeader>
-                      <div className="flex items-center justify-between gap-3">
-                        <CardTitle className="text-base flex items-center gap-2">
-                          <Receipt className="h-4 w-4" />
-                          Invoices
-                        </CardTitle>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openCleanupConfirm('invoices')}
-                          disabled={selectedCleanupInvoices.length === 0}
-                        >
-                          <Trash2 className="h-4 w-4 mr-2" />
-                          Cleanup selected ({selectedCleanupInvoices.length})
-                        </Button>
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      {cleanupLoading ? (
-                        <div className="flex items-center justify-center py-6">
-                          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                        </div>
-                      ) : cleanupRecords.invoices.length > 0 ? (
-                        <div className="space-y-2">
-                          {cleanupRecords.invoices.map((invoice) => (
-                            <label key={invoice.id} className="flex items-start gap-3 rounded-md border border-border p-3">
-                              <Checkbox
-                                className="mt-1"
-                                checked={selectedCleanupInvoices.includes(invoice.id)}
-                                onCheckedChange={() => toggleCleanupSelection('invoices', invoice.id)}
-                              />
-                              <span className="min-w-0 flex-1">
-                                <span className="block text-sm font-medium text-foreground">{invoice.invoiceNumber}</span>
-                                <span className="block text-xs text-muted-foreground">
-                                  {invoice.customer?.company || invoice.customer?.name || 'No customer'} · {invoice.status} · Paid ₵{Number(invoice.amountPaid || 0).toFixed(2)} / ₵{Number(invoice.totalAmount || 0).toFixed(2)}
-                                </span>
-                                <span className="block text-xs text-muted-foreground break-all">{invoice.id}</span>
-                              </span>
-                            </label>
-                          ))}
-                        </div>
-                      ) : (
-                        <Empty description="No recent invoices found for cleanup" />
-                      )}
-                    </CardContent>
-                  </Card>
+                  {Object.values(cleanupMeta.hasMore || {}).some(Boolean) && (
+                    <div className="flex justify-center">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setCleanupLimit((prev) => Math.min(prev + 50, 100))}
+                        disabled={cleanupLoading || cleanupLimit >= 100}
+                      >
+                        {cleanupLimit >= 100 ? 'Showing maximum results' : 'Load more matches'}
+                      </Button>
+                    </div>
+                  )}
                 </TabsContent>
               )}
 
@@ -1675,12 +1780,10 @@ const AdminTenants = () => {
               <div className="space-y-3 text-sm text-muted-foreground">
                 <p>
                   This will clean up <strong className="text-foreground">{cleanupSelectedCount}</strong>{' '}
-                  selected {cleanupTypeLabel} for <strong className="text-foreground">{selectedTenant?.name}</strong>.
+                  selected {cleanupTypeLabel.toLowerCase()} for <strong className="text-foreground">{selectedTenant?.name}</strong>.
                 </p>
                 <p>
-                  {cleanupDialog.type === 'products'
-                    ? 'Unlinked products may be permanently deleted. Products with sales, stock transfers, stock counts, or quote history will be archived to preserve tenant history.'
-                    : 'Unpaid invoices may be permanently deleted. Paid or partially paid invoices will be cancelled and archived to avoid unsafe payment/accounting reversal.'}
+                  {cleanupTypeConfig.confirmCopy}
                 </p>
                 <p>
                   Type <strong className="text-foreground">{selectedTenant?.slug}</strong> below to confirm this tenant-scoped action.
@@ -1713,7 +1816,7 @@ const AdminTenants = () => {
               }
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {cleanupSubmitting ? 'Cleaning up...' : `Cleanup ${cleanupTypeLabel}`}
+              {cleanupSubmitting ? 'Cleaning up...' : `Cleanup ${cleanupTypeLabel.toLowerCase()}`}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

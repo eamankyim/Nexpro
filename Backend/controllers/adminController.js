@@ -39,6 +39,9 @@ const {
   StockTransfer,
   StockCountItem,
   QuoteItem,
+  Quote,
+  QuoteActivity,
+  SaleActivity,
 } = require('../models');
 const {
   resolveBillingStatus,
@@ -66,7 +69,7 @@ const { ENTERPRISE_TIER_IDS, getEnterpriseTier } = require('../config/enterprise
 const { buildEnterprisePaymentMetadata } = require('../services/subscriptionPlanCatalogService');
 const { getSeatUsageSummary } = require('../utils/seatLimitHelper');
 const { getStorageUsageSummary } = require('../utils/storageLimitHelper');
-const { invalidateProductListCache, invalidateInvoiceListCache, invalidateAfterMutation } = require('../middleware/cache');
+const { invalidateProductListCache, invalidateInvoiceListCache, invalidateSaleListCache, invalidateAfterMutation } = require('../middleware/cache');
 const { updateCustomerBalance } = require('../services/customerBalanceService');
 
 const PLAN_PRICING = {
@@ -385,6 +388,232 @@ const cleanupInvoiceRecord = async ({ tenant, invoiceId, actorUserId, reason, tr
     status: 'deleted',
     message: 'Unpaid invoice was permanently deleted.'
   };
+};
+
+const appendCleanupNote = (existingNotes, recordType, actorUserId, reason) => [
+  existingNotes,
+  `Superadmin archived this ${recordType} on ${new Date().toISOString()}${actorUserId ? ` by ${actorUserId}` : ''}${reason ? `: ${reason}` : ''}.`
+].filter(Boolean).join('\n\n');
+
+const restoreSaleStockForCleanup = async (sale, transaction) => {
+  if (['cancelled', 'refunded'].includes(String(sale.status || '').toLowerCase())) {
+    return false;
+  }
+
+  for (const item of sale.items || []) {
+    if (!item.productId && !item.productVariantId) {
+      continue;
+    }
+
+    const product = item.productId ? await Product.findByPk(item.productId, { transaction }) : null;
+    if (!item.productVariantId && product && product.trackStock !== false) {
+      const newQuantity = parseFloat(product.quantityOnHand || 0) + parseFloat(item.quantity || 0);
+      await product.update({ quantityOnHand: newQuantity }, { transaction });
+    }
+
+    if (item.productVariantId) {
+      const variant = await ProductVariant.findByPk(item.productVariantId, { transaction });
+      const parent = product || (item.productId ? await Product.findByPk(item.productId, { transaction }) : null);
+      if (variant && parent?.trackStock !== false && variant.trackStock !== false) {
+        const newVariantQuantity = parseFloat(variant.quantityOnHand || 0) + parseFloat(item.quantity || 0);
+        await variant.update({ quantityOnHand: newVariantQuantity }, { transaction });
+      }
+    }
+  }
+
+  return true;
+};
+
+const cleanupSaleRecord = async ({ tenant, saleId, actorUserId, reason, transaction }) => {
+  const sale = await Sale.findOne({
+    where: { tenantId: tenant.id, id: saleId },
+    include: [
+      { model: SaleItem, as: 'items', required: false },
+      { model: Invoice, as: 'invoice', required: false }
+    ],
+    transaction
+  });
+
+  if (!sale) {
+    return { id: saleId, status: 'not_found', message: 'Sale/order not found for tenant' };
+  }
+
+  const before = {
+    id: sale.id,
+    saleNumber: sale.saleNumber,
+    status: sale.status,
+    orderStatus: sale.orderStatus,
+    amountPaid: sale.amountPaid,
+    total: sale.total,
+    customerId: sale.customerId,
+    invoiceId: sale.invoiceId
+  };
+  const hasHistoricalLinks = (sale.items || []).length > 0 || !!sale.invoice || parseFloat(sale.amountPaid || 0) > 0;
+
+  if (!hasHistoricalLinks) {
+    await SaleActivity.destroy({ where: { tenantId: tenant.id, saleId: sale.id }, transaction });
+    await SaleItem.destroy({ where: { saleId: sale.id }, transaction });
+    await sale.destroy({ transaction });
+    await createTenantCleanupAudit({
+      tenantId: tenant.id,
+      actorUserId,
+      action: 'tenant_sale_deleted_by_superadmin',
+      before,
+      after: { id: sale.id, deleted: true },
+      reason,
+      transaction
+    });
+    return {
+      id: sale.id,
+      saleNumber: sale.saleNumber,
+      status: 'deleted',
+      message: 'Unlinked sale/order was permanently deleted.'
+    };
+  }
+
+  const stockRestored = await restoreSaleStockForCleanup(sale, transaction);
+  await sale.update({
+    status: 'cancelled',
+    orderStatus: sale.orderStatus ? 'cancelled' : sale.orderStatus,
+    notes: appendCleanupNote(sale.notes, 'sale/order', actorUserId, reason),
+    metadata: {
+      ...(sale.metadata || {}),
+      superadminCleanup: {
+        action: 'archived',
+        archivedAt: new Date().toISOString(),
+        archivedBy: actorUserId || null,
+        reason: reason || null,
+        stockRestored,
+        invoiceId: sale.invoiceId || null,
+        itemCount: (sale.items || []).length
+      }
+    }
+  }, { transaction });
+  await createTenantCleanupAudit({
+    tenantId: tenant.id,
+    actorUserId,
+    action: 'tenant_sale_archived_by_superadmin',
+    before,
+    after: {
+      id: sale.id,
+      status: 'cancelled',
+      orderStatus: sale.orderStatus ? 'cancelled' : sale.orderStatus,
+      archived: true,
+      stockRestored
+    },
+    reason,
+    transaction
+  });
+
+  return {
+    id: sale.id,
+    saleNumber: sale.saleNumber,
+    status: 'archived',
+    message: stockRestored
+      ? 'Sale/order was cancelled, archived, and stock was restored.'
+      : 'Sale/order was archived as cancelled without changing stock again.'
+  };
+};
+
+const getQuoteCleanupLinkCounts = async (tenantId, quoteId, transaction) => {
+  const [jobs, invoices, sales] = await Promise.all([
+    Job.count({ where: { tenantId, quoteId }, transaction }),
+    Invoice.count({ where: { tenantId, quoteId }, transaction }),
+    Sale.count({ where: { tenantId, metadata: { quoteId } }, transaction })
+  ]);
+
+  return {
+    jobs,
+    invoices,
+    sales,
+    hasHistoricalLinks: jobs > 0 || invoices > 0 || sales > 0
+  };
+};
+
+const cleanupQuoteRecord = async ({ tenant, quoteId, actorUserId, reason, transaction }) => {
+  const quote = await Quote.findOne({
+    where: { tenantId: tenant.id, id: quoteId },
+    transaction
+  });
+
+  if (!quote) {
+    return { id: quoteId, status: 'not_found', message: 'Quote not found for tenant' };
+  }
+
+  const before = {
+    id: quote.id,
+    quoteNumber: quote.quoteNumber,
+    title: quote.title,
+    status: quote.status,
+    customerId: quote.customerId
+  };
+  const linkCounts = await getQuoteCleanupLinkCounts(tenant.id, quote.id, transaction);
+
+  if (quote.status === 'accepted' || linkCounts.hasHistoricalLinks) {
+    const targetStatus = quote.status === 'draft' ? 'expired' : 'declined';
+    await quote.update({
+      status: targetStatus,
+      notes: appendCleanupNote(quote.notes, 'quote', actorUserId, reason)
+    }, { transaction });
+    await QuoteActivity.create({
+      tenantId: tenant.id,
+      quoteId: quote.id,
+      type: 'status_change',
+      subject: 'Superadmin cleanup',
+      notes: 'Quote was archived by superadmin cleanup because it has linked jobs, invoices, sales, or accepted history.',
+      createdBy: actorUserId || null,
+      metadata: {
+        superadminCleanup: true,
+        reason: reason || null,
+        linkCounts
+      }
+    }, { transaction });
+    await createTenantCleanupAudit({
+      tenantId: tenant.id,
+      actorUserId,
+      action: 'tenant_quote_archived_by_superadmin',
+      before,
+      after: { id: quote.id, status: targetStatus, archived: true, linkCounts },
+      reason,
+      transaction
+    });
+    return {
+      id: quote.id,
+      quoteNumber: quote.quoteNumber,
+      status: 'archived',
+      message: 'Quote was archived because it has linked jobs, invoices, sales, or accepted history.',
+      linkCounts
+    };
+  }
+
+  await QuoteActivity.destroy({ where: { tenantId: tenant.id, quoteId: quote.id }, transaction });
+  await QuoteItem.destroy({ where: { tenantId: tenant.id, quoteId: quote.id }, transaction });
+  await quote.destroy({ transaction });
+  await createTenantCleanupAudit({
+    tenantId: tenant.id,
+    actorUserId,
+    action: 'tenant_quote_deleted_by_superadmin',
+    before,
+    after: { id: quote.id, deleted: true, linkCounts },
+    reason,
+    transaction
+  });
+
+  return {
+    id: quote.id,
+    quoteNumber: quote.quoteNumber,
+    status: 'deleted',
+    message: 'Unlinked quote was permanently deleted.'
+  };
+};
+
+const buildCleanupSearchWhere = (tenantId, search, fields) => {
+  const where = { tenantId };
+  const term = String(search || '').trim();
+  if (term) {
+    where[Op.or] = fields.map((field) => ({ [field]: { [Op.iLike]: `%${term}%` } }));
+  }
+  return where;
 };
 
 const normalizePlanId = (plan = '') => PLAN_ALIASES[String(plan).trim().toLowerCase()] || String(plan).trim().toLowerCase();
@@ -1590,10 +1819,24 @@ exports.getTenantCleanupRecords = async (req, res, next) => {
       });
     }
 
-    const limit = Math.min(Number(req.query.limit) || 25, 50);
-    const [products, invoices] = await Promise.all([
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
+    const search = String(req.query.search || req.query.q || '').trim();
+    const productWhere = buildCleanupSearchWhere(tenant.id, search, ['name', 'sku', 'barcode']);
+    const invoiceWhere = buildCleanupSearchWhere(tenant.id, search, ['invoiceNumber', 'status']);
+    const saleWhere = buildCleanupSearchWhere(tenant.id, search, ['saleNumber', 'status', 'orderStatus']);
+    const quoteWhere = buildCleanupSearchWhere(tenant.id, search, ['quoteNumber', 'title', 'status']);
+    const [
+      products,
+      invoices,
+      sales,
+      quotes,
+      productCount,
+      invoiceCount,
+      saleCount,
+      quoteCount
+    ] = await Promise.all([
       Product.findAll({
-        where: { tenantId: tenant.id },
+        where: productWhere,
         attributes: ['id', 'name', 'sku', 'barcode', 'shopId', 'quantityOnHand', 'isActive', 'createdAt'],
         include: [
           { model: Shop, as: 'shop', attributes: ['id', 'name'], required: false },
@@ -1603,7 +1846,7 @@ exports.getTenantCleanupRecords = async (req, res, next) => {
         limit
       }),
       Invoice.findAll({
-        where: { tenantId: tenant.id },
+        where: invoiceWhere,
         attributes: ['id', 'invoiceNumber', 'status', 'amountPaid', 'totalAmount', 'customerId', 'saleId', 'jobId', 'createdAt'],
         include: [
           { model: Customer, as: 'customer', attributes: ['id', 'name', 'company'], required: false },
@@ -1612,7 +1855,32 @@ exports.getTenantCleanupRecords = async (req, res, next) => {
         ],
         order: [['createdAt', 'DESC']],
         limit
-      })
+      }),
+      Sale.findAll({
+        where: saleWhere,
+        attributes: ['id', 'saleNumber', 'status', 'orderStatus', 'amountPaid', 'total', 'customerId', 'invoiceId', 'shopId', 'createdAt'],
+        include: [
+          { model: Customer, as: 'customer', attributes: ['id', 'name', 'company'], required: false },
+          { model: Shop, as: 'shop', attributes: ['id', 'name'], required: false },
+          { model: Invoice, as: 'invoice', attributes: ['id', 'invoiceNumber', 'status', 'amountPaid', 'totalAmount'], required: false }
+        ],
+        order: [['createdAt', 'DESC']],
+        limit
+      }),
+      Quote.findAll({
+        where: quoteWhere,
+        attributes: ['id', 'quoteNumber', 'title', 'status', 'totalAmount', 'customerId', 'shopId', 'createdAt'],
+        include: [
+          { model: Customer, as: 'customer', attributes: ['id', 'name', 'company'], required: false },
+          { model: Shop, as: 'shop', attributes: ['id', 'name'], required: false }
+        ],
+        order: [['createdAt', 'DESC']],
+        limit
+      }),
+      Product.count({ where: productWhere }),
+      Invoice.count({ where: invoiceWhere }),
+      Sale.count({ where: saleWhere }),
+      Quote.count({ where: quoteWhere })
     ]);
 
     res.status(200).json({
@@ -1621,6 +1889,21 @@ exports.getTenantCleanupRecords = async (req, res, next) => {
         tenant,
         products,
         invoices,
+        sales,
+        quotes,
+        counts: {
+          products: productCount,
+          invoices: invoiceCount,
+          sales: saleCount,
+          quotes: quoteCount
+        },
+        hasMore: {
+          products: productCount > products.length,
+          invoices: invoiceCount > invoices.length,
+          sales: saleCount > sales.length,
+          quotes: quoteCount > quotes.length
+        },
+        filters: { search },
         limits: { maxBatchSize: TENANT_CLEANUP_MAX_BATCH, listLimit: limit }
       }
     });
@@ -1748,6 +2031,141 @@ exports.cleanupTenantInvoices = async (req, res, next) => {
     res.status(200).json({
       success: true,
       message: 'Invoice cleanup completed.',
+      data: {
+        tenant: { id: tenant.id, name: tenant.name, slug: tenant.slug },
+        results
+      }
+    });
+  } catch (error) {
+    if (error.code === 'CONFIRM_SLUG_REQUIRED') {
+      return res.status(error.statusCode || 400).json({
+        success: false,
+        message: error.message,
+        code: error.code
+      });
+    }
+    next(error);
+  }
+};
+
+exports.cleanupTenantSales = async (req, res, next) => {
+  try {
+    const tenant = await Tenant.findByPk(req.params.id, {
+      attributes: ['id', 'name', 'slug']
+    });
+    if (!tenant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tenant not found'
+      });
+    }
+
+    ensureTenantCleanupConfirmed(req, tenant);
+
+    const saleIds = normalizeCleanupIds(req.body?.saleIds || req.body?.ids);
+    if (saleIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Select at least one sale/order to clean up.'
+      });
+    }
+
+    const reason = String(req.body?.reason || 'Superadmin tenant cleanup').trim();
+    const affectedCustomers = await Sale.findAll({
+      where: { tenantId: tenant.id, id: saleIds },
+      attributes: ['customerId'],
+      raw: true
+    });
+    const results = await sequelize.transaction(async (transaction) => {
+      const output = [];
+      for (const saleId of saleIds) {
+        output.push(await cleanupSaleRecord({
+          tenant,
+          saleId,
+          actorUserId: req.user?.id || null,
+          reason,
+          transaction
+        }));
+      }
+      return output;
+    });
+
+    await Promise.all(
+      Array.from(new Set(affectedCustomers.map((row) => row.customerId).filter(Boolean)))
+        .map((customerId) => updateCustomerBalance(customerId).catch((err) => {
+          console.error('[AdminCleanup] Failed to update customer balance after sale cleanup', { customerId, error: err?.message });
+        }))
+    );
+
+    invalidateSaleListCache(tenant.id);
+    invalidateAfterMutation(tenant.id);
+
+    console.log('[AdminCleanup] sales tenantId=%s actor=%s results=%j', tenant.id, req.user?.id, results);
+
+    res.status(200).json({
+      success: true,
+      message: 'Sale/order cleanup completed.',
+      data: {
+        tenant: { id: tenant.id, name: tenant.name, slug: tenant.slug },
+        results
+      }
+    });
+  } catch (error) {
+    if (error.code === 'CONFIRM_SLUG_REQUIRED') {
+      return res.status(error.statusCode || 400).json({
+        success: false,
+        message: error.message,
+        code: error.code
+      });
+    }
+    next(error);
+  }
+};
+
+exports.cleanupTenantQuotes = async (req, res, next) => {
+  try {
+    const tenant = await Tenant.findByPk(req.params.id, {
+      attributes: ['id', 'name', 'slug']
+    });
+    if (!tenant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tenant not found'
+      });
+    }
+
+    ensureTenantCleanupConfirmed(req, tenant);
+
+    const quoteIds = normalizeCleanupIds(req.body?.quoteIds || req.body?.ids);
+    if (quoteIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Select at least one quote to clean up.'
+      });
+    }
+
+    const reason = String(req.body?.reason || 'Superadmin tenant cleanup').trim();
+    const results = await sequelize.transaction(async (transaction) => {
+      const output = [];
+      for (const quoteId of quoteIds) {
+        output.push(await cleanupQuoteRecord({
+          tenant,
+          quoteId,
+          actorUserId: req.user?.id || null,
+          reason,
+          transaction
+        }));
+      }
+      return output;
+    });
+
+    invalidateAfterMutation(tenant.id);
+
+    console.log('[AdminCleanup] quotes tenantId=%s actor=%s results=%j', tenant.id, req.user?.id, results);
+
+    res.status(200).json({
+      success: true,
+      message: 'Quote cleanup completed.',
       data: {
         tenant: { id: tenant.id, name: tenant.name, slug: tenant.slug },
         results

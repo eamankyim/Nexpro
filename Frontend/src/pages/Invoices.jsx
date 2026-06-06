@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -125,6 +125,13 @@ const markAsPaidSchema = z.object({
   }
 });
 
+const createInvoicePaymentClientRequestId = (prefix, invoiceId) => {
+  const randomId = typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${prefix}-${invoiceId}-${randomId}`;
+};
+
 const Invoices = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -164,6 +171,10 @@ const Invoices = () => {
     notes: '',
   });
   const [lineItemDescriptionOptions, setLineItemDescriptionOptions] = useState([]);
+  const paymentSubmitInFlightRef = useRef(false);
+  const markAsPaidSubmitInFlightRef = useRef(false);
+  const paymentClientRequestIdRef = useRef(null);
+  const markAsPaidClientRequestIdRef = useRef(null);
   const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
 
@@ -495,6 +506,7 @@ const Invoices = () => {
 
   const handleRecordPayment = (invoice) => {
     setViewingInvoice(invoice);
+    paymentClientRequestIdRef.current = null;
     paymentForm.reset({
       amount: parseFloat(invoice.balance),
       paymentMethod: 'cash',
@@ -507,6 +519,7 @@ const Invoices = () => {
 
   const handleOpenMarkAsPaid = (invoice) => {
     setViewingInvoice(invoice);
+    markAsPaidClientRequestIdRef.current = null;
     const balance = parseFloat(invoice?.balance || 0);
     markAsPaidForm.reset({
       paymentType: 'full',
@@ -519,6 +532,8 @@ const Invoices = () => {
 
   const handleMarkAsPaid = async (values) => {
     if (!viewingInvoice) return;
+    if (markAsPaidSubmitInFlightRef.current) return;
+    markAsPaidSubmitInFlightRef.current = true;
     try {
       setMarkingAsPaid(true);
       let response;
@@ -530,15 +545,23 @@ const Invoices = () => {
           showError(null, 'Part payment cannot be greater than the current balance');
           return;
         }
+        if (!markAsPaidClientRequestIdRef.current) {
+          markAsPaidClientRequestIdRef.current = createInvoicePaymentClientRequestId('INV-PAY', viewingInvoice.id);
+        }
         response = await invoiceService.recordPayment(viewingInvoice.id, {
           amount: partialAmount,
           paymentMethod: 'cash',
           paymentDate: selectedPaymentDate,
+          clientRequestId: markAsPaidClientRequestIdRef.current,
           notes: values.notes?.trim() || undefined,
         });
       } else {
+        if (!markAsPaidClientRequestIdRef.current) {
+          markAsPaidClientRequestIdRef.current = createInvoicePaymentClientRequestId('INV-MARK-PAID', viewingInvoice.id);
+        }
         response = await invoiceService.markAsPaid(viewingInvoice.id, {
           paymentDate: selectedPaymentDate,
+          clientRequestId: markAsPaidClientRequestIdRef.current,
           notes: values.notes?.trim() || undefined,
         });
       }
@@ -553,6 +576,7 @@ const Invoices = () => {
           ? 'Part payment recorded successfully'
           : (response?.message || 'Invoice marked as paid')
       );
+      markAsPaidClientRequestIdRef.current = null;
       setMarkAsPaidModalVisible(false);
       setRefreshTrigger(prev => prev + 1);
     } catch (error) {
@@ -563,22 +587,37 @@ const Invoices = () => {
         'Failed to mark invoice as paid';
       showError(error, errorMessage);
     } finally {
+      markAsPaidSubmitInFlightRef.current = false;
       setMarkingAsPaid(false);
     }
   };
 
   const onPaymentSubmit = async (values) => {
+    if (!viewingInvoice) return;
+    if (paymentSubmitInFlightRef.current) return;
+    paymentSubmitInFlightRef.current = true;
     try {
-      await invoiceService.recordPayment(viewingInvoice.id, {
+      if (!paymentClientRequestIdRef.current) {
+        paymentClientRequestIdRef.current = createInvoicePaymentClientRequestId('INV-PAY', viewingInvoice.id);
+      }
+      const response = await invoiceService.recordPayment(viewingInvoice.id, {
         ...values,
         paymentDate: dayjs(values.paymentDate).format('YYYY-MM-DD'),
+        clientRequestId: paymentClientRequestIdRef.current,
         notes: values.notes?.trim() || undefined,
       });
+      const updatedInvoice = response?.data;
+      if (updatedInvoice && viewingInvoice?.id === updatedInvoice.id) {
+        setViewingInvoice(updatedInvoice);
+      }
       showSuccess('Payment recorded successfully');
+      paymentClientRequestIdRef.current = null;
       setPaymentModalVisible(false);
       setRefreshTrigger(prev => prev + 1);
     } catch (error) {
       showError(error, error.error || 'Failed to record payment');
+    } finally {
+      paymentSubmitInFlightRef.current = false;
     }
   };
 

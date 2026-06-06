@@ -1,4 +1,4 @@
-const { Sale, SaleItem, Product, ProductVariant, Barcode, Customer, Shop, Invoice, User, SaleActivity, Tenant, Payment, Setting } = require('../models');
+const { Sale, SaleItem, Product, ProductVariant, Customer, Shop, Invoice, User, SaleActivity, Tenant, Payment, Setting } = require('../models');
 const { createInvoiceRevenueJournal } = require('../services/invoiceAccountingService');
 const { updateCustomerBalance } = require('../services/customerBalanceService');
 const { syncSaleInvoiceAndRefreshCustomerBalance } = require('../services/invoiceSaleService');
@@ -29,17 +29,11 @@ const {
 const paystackCheckLastBySaleId = new Map();
 const PAYSTACK_CHECK_THROTTLE_MS = 4000;
 
-const saleItemBarcodeInclude = {
-  model: Barcode,
-  as: 'barcodes',
-  where: { isActive: true },
-  required: false,
-};
 const saleItemCatalogIncludes = [
-  { model: Product, as: 'product', required: false, include: [saleItemBarcodeInclude] },
-  { model: ProductVariant, as: 'variant', required: false, include: [saleItemBarcodeInclude] },
+  { model: Product, as: 'product', required: false },
+  { model: ProductVariant, as: 'variant', required: false },
 ];
-/** Separate query avoids Sequelize join alias errors (items->variant) on nested barcode includes. */
+/** Separate query avoids Sequelize join alias errors when loading product + variant on sale items. */
 const saleItemDetailInclude = {
   model: SaleItem,
   as: 'items',
@@ -48,6 +42,9 @@ const saleItemDetailInclude = {
 };
 const ACTIVE_KITCHEN_ORDER_STATUSES = ['received', 'preparing', 'ready'];
 const isRestaurantTenant = (tenant) => getTenantShopType(tenant) === 'restaurant';
+const getEffectiveTenantRole = (req) => req.tenantRole || req.user?.role || null;
+const shouldRestrictStaffToOwnSales = (req) =>
+  getEffectiveTenantRole(req) === 'staff' && !req.shopScoped;
 
 const getTodayDateRange = () => {
   const start = new Date();
@@ -65,8 +62,7 @@ const getTodayDateRange = () => {
  */
 const buildActiveKitchenOrderScopeWhere = (req, listWhere = {}) => {
   let where = applyTenantFilter(req.tenantId, {});
-  const effectiveRole = (req.tenantRole && ['owner', 'admin'].includes(req.tenantRole)) ? 'admin' : req.user?.role;
-  if (effectiveRole === 'staff') {
+  if (shouldRestrictStaffToOwnSales(req)) {
     where.soldBy = req.user.id;
   }
   if (req.shopScoped) {
@@ -98,6 +94,8 @@ const getSaleItemProductCode = (item) => {
     || item?.productCode
     || item?.product?.productCode
     || item?.variant?.productCode
+    || item?.product?.barcode
+    || item?.variant?.barcode
     || item?.product?.barcodeAliases?.[0]
     || item?.variant?.barcodeAliases?.[0]
     || item?.product?.barcodes?.find?.((barcode) => barcode?.isActive !== false)?.barcode
@@ -804,9 +802,8 @@ exports.getSales = async (req, res, next) => {
     const endDate = req.query.endDate;
 
     let where = applyTenantFilter(req.tenantId, {});
-    // Staff see only sales they created (soldBy); admin/manager see all
-    const effectiveRole = (req.tenantRole && ['owner', 'admin'].includes(req.tenantRole)) ? 'admin' : req.user?.role;
-    if (effectiveRole === 'staff') {
+    // Shop-scoped staff see all sales in their assigned/current shop; non-shop staff keep owner-only visibility.
+    if (shouldRestrictStaffToOwnSales(req)) {
       where.soldBy = req.user.id;
     }
     if (req.shopScoped) {
@@ -977,9 +974,7 @@ exports.getSale = async (req, res, next) => {
       });
     }
 
-    // Staff may only view sales they created
-    const effectiveRole = (req.tenantRole && ['owner', 'admin'].includes(req.tenantRole)) ? 'admin' : req.user?.role;
-    if (effectiveRole === 'staff' && sale.soldBy !== req.user.id) {
+    if (shouldRestrictStaffToOwnSales(req) && sale.soldBy !== req.user.id) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to view this sale'
@@ -1613,9 +1608,7 @@ exports.updateSale = async (req, res, next) => {
         { model: Customer, as: 'customer' },
         { model: User, as: 'seller' },
         { model: Invoice, as: 'invoice' },
-        {
-          saleItemDetailInclude
-        }
+        saleItemDetailInclude
       ]
     });
 
@@ -1661,6 +1654,15 @@ exports.recordPayment = async (req, res, next) => {
         success: false,
         message: 'Sale not found'
       });
+    }
+
+    try {
+      assertShopRecordAccess(req, sale);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
     }
 
     if (sale.status === 'cancelled' || sale.status === 'refunded') {
@@ -1805,9 +1807,7 @@ exports.recordPayment = async (req, res, next) => {
         { model: Customer, as: 'customer' },
         { model: User, as: 'seller' },
         { model: Invoice, as: 'invoice' },
-        {
-          saleItemDetailInclude
-        }
+        saleItemDetailInclude
       ]
     });
 
@@ -1848,6 +1848,16 @@ exports.cancelSale = async (req, res, next) => {
         success: false,
         message: 'Sale not found'
       });
+    }
+
+    try {
+      assertShopRecordAccess(req, sale);
+    } catch (accessErr) {
+      await transaction.rollback();
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
     }
 
     if (sale.status === 'cancelled' || sale.status === 'refunded') {
@@ -1917,6 +1927,15 @@ exports.generateInvoice = async (req, res, next) => {
       });
     }
 
+    try {
+      assertShopRecordAccess(req, sale);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
+    }
+
     // Check if sale is already paid
     if (sale.status === 'completed' && sale.amountPaid >= sale.total) {
       return res.status(400).json({
@@ -1979,9 +1998,7 @@ exports.printReceipt = async (req, res, next) => {
     const sale = await Sale.findOne({
       where: applyTenantFilter(req.tenantId, { id: req.params.id }),
       include: [
-        {
-          saleItemDetailInclude
-        },
+        saleItemDetailInclude,
         { model: Customer, as: 'customer', attributes: ['id', 'name', 'phone', 'email'] },
         {
           model: Shop,
@@ -1997,6 +2014,15 @@ exports.printReceipt = async (req, res, next) => {
         success: false,
         message: 'Sale not found'
       });
+    }
+
+    try {
+      assertShopRecordAccess(req, sale);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
     }
 
     res.status(200).json({
@@ -2022,6 +2048,15 @@ exports.updateOrderStatus = async (req, res, next) => {
         success: false,
         message: 'Sale not found'
       });
+    }
+
+    try {
+      assertShopRecordAccess(req, sale);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
     }
 
     if (!isRestaurantTenant(req.tenant)) {
@@ -2060,9 +2095,7 @@ exports.updateOrderStatus = async (req, res, next) => {
         { model: Shop, as: 'shop' },
         { model: Customer, as: 'customer' },
         { model: User, as: 'seller' },
-        {
-          saleItemDetailInclude
-        }
+        saleItemDetailInclude
       ]
     });
 
@@ -2100,6 +2133,15 @@ exports.addSaleActivity = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Sale not found' });
     }
 
+    try {
+      assertShopRecordAccess(req, sale);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
+    }
+
     const payload = sanitizePayload(req.body);
 
     const activity = await SaleActivity.create({
@@ -2134,6 +2176,15 @@ exports.getSaleActivities = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Sale not found' });
     }
 
+    try {
+      assertShopRecordAccess(req, sale);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
+    }
+
     const activities = await SaleActivity.findAll({
       where: applyTenantFilter(req.tenantId, { saleId: sale.id }),
       order: [['createdAt', 'DESC']],
@@ -2164,9 +2215,7 @@ exports.sendReceipt = async (req, res, next) => {
     const sale = await Sale.findOne({
       where: applyTenantFilter(req.tenantId, { id: req.params.id }),
       include: [
-        {
-          saleItemDetailInclude
-        },
+        saleItemDetailInclude,
         { model: Customer, as: 'customer' },
         { model: Shop, as: 'shop' },
         { model: Tenant, as: 'tenant', attributes: ['id', 'name'] },
@@ -2179,6 +2228,15 @@ exports.sendReceipt = async (req, res, next) => {
         success: false,
         message: 'Sale not found'
       });
+    }
+
+    try {
+      assertShopRecordAccess(req, sale);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
     }
 
     // Determine phone and email to use; normalize phone for SMS/WhatsApp (0XX / +233)
@@ -2618,6 +2676,14 @@ exports.initializePaystackForSale = async (req, res, next) => {
     if (!sale) {
       return res.status(404).json({ success: false, message: 'Sale not found' });
     }
+    try {
+      assertShopRecordAccess(req, sale);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
+    }
     if (sale.status !== 'pending') {
       return res.status(400).json({ success: false, message: 'Sale is not pending payment' });
     }
@@ -2720,6 +2786,15 @@ exports.paystackMobileMoneyForSale = async (req, res, next) => {
 
     if (!sale) {
       return res.status(404).json({ success: false, message: 'Sale not found' });
+    }
+
+    try {
+      assertShopRecordAccess(req, sale);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
     }
 
     if (sale.status !== 'pending') {
@@ -2859,6 +2934,15 @@ exports.checkPaystackChargeForSale = async (req, res, next) => {
 
     if (!sale) {
       return res.status(404).json({ success: false, message: 'Sale not found' });
+    }
+
+    try {
+      assertShopRecordAccess(req, sale);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
     }
 
     // If already completed, return as-is

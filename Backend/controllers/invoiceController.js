@@ -66,6 +66,8 @@ const invoiceBranchIncludes = () => [
   },
 ];
 
+const getEffectiveTenantRole = (req) => req.tenantRole || req.user?.role || null;
+
 const invoiceResponseIncludes = () => [
   {
     model: Customer,
@@ -147,6 +149,152 @@ const normalizePaymentNotes = (value) => {
   return String(value).trim().slice(0, 1000);
 };
 
+const normalizePaymentReference = (referenceNumber, clientRequestId) => {
+  const providedReference = referenceNumber == null ? '' : String(referenceNumber).trim();
+  const providedClientRequestId = clientRequestId == null ? '' : String(clientRequestId).trim();
+  return (providedReference || providedClientRequestId).slice(0, 255);
+};
+
+const findExistingPaymentByReference = async ({ tenantId, referenceNumber }) => {
+  if (!referenceNumber) return null;
+  return Payment.findOne({
+    where: {
+      tenantId,
+      type: 'income',
+      referenceNumber,
+      status: 'completed',
+    },
+  });
+};
+
+const loadInvoicePayments = async (invoice) => {
+  if (!invoice) return [];
+  const orConditions = [];
+
+  if (invoice.id) {
+    orConditions.push({ referenceNumber: { [Op.like]: `INV-PAY-${invoice.id}-%` } });
+    orConditions.push({ referenceNumber: { [Op.like]: `INV-MARK-PAID-${invoice.id}-%` } });
+    orConditions.push({ description: { [Op.like]: `%invoice:${invoice.id}%` } });
+  }
+
+  if (invoice.invoiceNumber) {
+    orConditions.push({ notes: { [Op.like]: `%${invoice.invoiceNumber}%` } });
+  }
+
+  if (invoice.jobId) {
+    orConditions.push({ jobId: invoice.jobId });
+  }
+
+  if (orConditions.length === 0) return [];
+
+  return Payment.findAll({
+    where: {
+      tenantId: invoice.tenantId,
+      customerId: invoice.customerId,
+      type: 'income',
+      status: 'completed',
+      [Op.or]: orConditions,
+    },
+    attributes: [
+      'id',
+      'paymentNumber',
+      'amount',
+      'paymentMethod',
+      'paymentDate',
+      'referenceNumber',
+      'description',
+      'notes',
+      'createdAt',
+    ],
+    order: [['paymentDate', 'DESC'], ['createdAt', 'DESC']],
+    limit: 25,
+  });
+};
+
+const runInvoicePaymentBackgroundTask = (label, task) => {
+  setImmediate(async () => {
+    try {
+      await task();
+    } catch (error) {
+      console.error(`[InvoicePaymentBackground] ${label} failed`, error);
+    }
+  });
+};
+
+const enqueueInvoicePaymentSideEffects = ({
+  tenantId,
+  userId,
+  invoiceId,
+  customerId,
+  payment,
+  paymentAmount,
+  paymentDate,
+  paymentMethod,
+  referenceNumber,
+  updatedInvoice,
+  wasFullyPaid,
+  wasAlreadyPaid,
+  markedPaid = false,
+}) => {
+  runInvoicePaymentBackgroundTask('sale sync', () => ensureSaleFromPaidInvoice(invoiceId, payment?.id || null, {
+    tenantId,
+    userId,
+    paymentMethod,
+  }));
+
+  if (paymentAmount > 0 && payment) {
+    runInvoicePaymentBackgroundTask('payment journal', () => createInvoicePaymentJournal({
+      invoice: updatedInvoice,
+      amount: paymentAmount,
+      paymentDate,
+      paymentMethod,
+      referenceNumber,
+      paymentRecordNumber: payment.paymentNumber,
+      metadata: { paymentId: payment.id, ...(markedPaid ? { markedPaid: true } : {}) },
+      userId,
+    }));
+  }
+
+  runInvoicePaymentBackgroundTask('payment activity', async () => {
+    if (paymentAmount > 0 && !markedPaid) {
+      await activityLogger.logPaymentReceived(updatedInvoice, paymentAmount, userId);
+    }
+    if (wasFullyPaid && !wasAlreadyPaid) {
+      await activityLogger.logInvoicePaid(updatedInvoice, userId);
+    }
+  });
+
+  if (wasFullyPaid && !wasAlreadyPaid) {
+    runInvoicePaymentBackgroundTask('customer paid confirmation', () => (
+      sendInvoicePaidConfirmationToCustomer(tenantId, updatedInvoice)
+    ));
+
+    runInvoicePaymentBackgroundTask('Sabito paid webhook', async () => {
+      const customer = await Customer.findOne({
+        where: applyTenantFilter(tenantId, { id: updatedInvoice.customerId }),
+        attributes: [
+          'id',
+          'sabitoCustomerId',
+          'sabitoBusinessId',
+          'email',
+          'name',
+          'phone',
+        ],
+      });
+
+      if (!customer) return;
+      const result = await sabitoWebhookService.sendInvoicePaidWebhook(updatedInvoice, customer, tenantId);
+      if (result.success) {
+        await updatedInvoice.update({ sabitoSyncedAt: new Date() });
+      }
+    });
+  }
+
+  if (customerId) {
+    runInvoicePaymentBackgroundTask('customer balance refresh', () => updateCustomerBalance(customerId));
+  }
+};
+
 const maskEmailForLogs = (email) => {
   if (!email || typeof email !== 'string') return null;
   const [localPart, domainPart] = email.trim().split('@');
@@ -224,7 +372,7 @@ const generateInvoiceNumber = async (tenantId) => {
 
 /**
  * Visibility rules for invoice list and summary stats (must stay in sync).
- * Applies tenant scope, business-type sourceType rules, and staff "own jobs/sales only".
+ * Applies tenant scope, business-type sourceType rules, and staff visibility.
  *
  * @param {import('express').Request} req
  * @returns {Promise<Object>} Sequelize where clause
@@ -242,17 +390,26 @@ const buildInvoiceVisibilityWhere = async (req) => {
     where.sourceType = 'prescription';
   }
 
-  const effectiveRole = (req.tenantRole && ['owner', 'admin'].includes(req.tenantRole)) ? 'admin' : req.user?.role;
-  if (effectiveRole === 'staff') {
-    const [mySales, myJobs] = await Promise.all([
-      Sale.findAll({ where: applyTenantFilter(req.tenantId, { soldBy: req.user.id }), attributes: ['id'] }),
-      Job.findAll({ where: applyTenantFilter(req.tenantId, { createdBy: req.user.id }), attributes: ['id'] })
-    ]);
-    const saleIds = mySales.map((s) => s.id);
-    const jobIds = myJobs.map((j) => j.id);
+  if (getEffectiveTenantRole(req) === 'staff') {
     const ownOr = [];
-    if (saleIds.length) ownOr.push({ saleId: { [Op.in]: saleIds } });
+    if (req.shopScoped) {
+      ownOr.push({ saleId: { [Op.ne]: null } });
+    } else {
+      const mySales = await Sale.findAll({
+        where: applyTenantFilter(req.tenantId, { soldBy: req.user.id }),
+        attributes: ['id']
+      });
+      const saleIds = mySales.map((s) => s.id);
+      if (saleIds.length) ownOr.push({ saleId: { [Op.in]: saleIds } });
+    }
+
+    const myJobs = await Job.findAll({
+      where: applyTenantFilter(req.tenantId, { createdBy: req.user.id }),
+      attributes: ['id']
+    });
+    const jobIds = myJobs.map((j) => j.id);
     if (jobIds.length) ownOr.push({ jobId: { [Op.in]: jobIds } });
+    if (resolved === 'pharmacy') ownOr.push({ prescriptionId: { [Op.ne]: null } });
     if (ownOr.length) {
       where[Op.and] = where[Op.and] || [];
       where[Op.and].push({ [Op.or]: ownOr });
@@ -529,21 +686,10 @@ exports.getInvoice = async (req, res, next) => {
       invoice.job.setDataValue('items', jobItems);
     }
 
-    // Staff may only view invoices from their sales or their jobs (prescription invoices allowed)
-    const effectiveRole = (req.tenantRole && ['owner', 'admin'].includes(req.tenantRole)) ? 'admin' : req.user?.role;
-    if (effectiveRole === 'staff') {
-      const fromMySale = invoice.saleId && invoice.sale?.soldBy === req.user.id;
-      const fromMyJob = invoice.jobId && invoice.job?.createdBy === req.user.id;
-      const fromPrescription = !!invoice.prescriptionId;
-      if (!fromMySale && !fromMyJob && !fromPrescription) {
-        return res.status(403).json({
-          success: false,
-          message: 'Not authorized to view this invoice'
-        });
-      }
-    }
-
     const payload = await invoiceToResponsePayload(invoice);
+    payload.payments = (await loadInvoicePayments(invoice)).map((payment) => (
+      typeof payment.toJSON === 'function' ? payment.toJSON() : payment
+    ));
 
     res.status(200).json({
       success: true,
@@ -996,8 +1142,9 @@ exports.deleteCancelledInvoice = async (req, res, next) => {
 // @access  Private
 exports.recordPayment = async (req, res, next) => {
   try {
-    const { amount, paymentMethod, referenceNumber, paymentDate, notes } = sanitizePayload(req.body);
+    const { amount, paymentMethod, referenceNumber, clientRequestId, paymentDate, notes } = sanitizePayload(req.body);
     const paymentNotes = normalizePaymentNotes(notes);
+    const paymentReference = normalizePaymentReference(referenceNumber, clientRequestId);
 
     const invoice = await Invoice.findOne({
       where: invoiceReadWhere(req, { id: req.params.id })
@@ -1017,7 +1164,37 @@ exports.recordPayment = async (req, res, next) => {
       });
     }
 
+    const existingPayment = await findExistingPaymentByReference({
+      tenantId: req.tenantId,
+      referenceNumber: paymentReference,
+    });
+    if (existingPayment) {
+      const hydratedInvoice = await Invoice.findOne({
+        where: applyTenantFilter(req.tenantId, { id: invoice.id }),
+        include: invoiceResponseIncludes()
+      });
+      const payload = await invoiceToResponsePayload(hydratedInvoice);
+      payload.payments = (await loadInvoicePayments(hydratedInvoice)).map((paymentRecord) => (
+        typeof paymentRecord.toJSON === 'function' ? paymentRecord.toJSON() : paymentRecord
+      ));
+
+      return res.status(200).json({
+        success: true,
+        message: 'Payment already recorded',
+        data: payload,
+        payment: typeof existingPayment.toJSON === 'function' ? existingPayment.toJSON() : existingPayment,
+        duplicate: true
+      });
+    }
+
     const paymentAmount = parseFloat(amount);
+    if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment amount must be greater than 0'
+      });
+    }
+
     const totalAmount = parseFloat(invoice.totalAmount || 0);
     const newAmountPaid = parseFloat(invoice.amountPaid || 0) + paymentAmount;
     const newBalance = Math.max(totalAmount - newAmountPaid, 0);
@@ -1063,8 +1240,9 @@ exports.recordPayment = async (req, res, next) => {
       amount: paymentAmount,
       paymentMethod: paymentMethod || 'cash',
       paymentDate: effectivePaymentDate,
-      referenceNumber,
+      referenceNumber: paymentReference || referenceNumber,
       status: 'completed',
+      description: `invoice:${invoice.id}`,
       notes: paymentNotes || `Payment for invoice ${invoice.invoiceNumber}`
     });
 
@@ -1073,88 +1251,32 @@ exports.recordPayment = async (req, res, next) => {
       include: invoiceResponseIncludes()
     });
 
-    await ensureSaleFromPaidInvoice(invoice.id, payment.id, {
-      tenantId: req.tenantId,
-      userId: req.user?.id || null,
-      paymentMethod: paymentMethod || 'cash'
-    });
-
-    try {
-      await createInvoicePaymentJournal({
-        invoice: updatedInvoice,
-        amount: paymentAmount,
-        paymentDate: effectivePaymentDate,
-        paymentMethod: paymentMethod || 'cash',
-        referenceNumber,
-        paymentRecordNumber: payment.paymentNumber,
-        metadata: { paymentId: payment.id },
-        userId: req.user?.id || null
-      });
-    } catch (journalError) {
-      console.error('Failed to create accounting entry for invoice payment', journalError);
-    }
-
-    try {
-      await activityLogger.logPaymentReceived(updatedInvoice, paymentAmount, req.user?.id || null);
-    } catch (error) {
-      console.error('Failed to log payment received activity:', error);
-    }
-
-    // Log activity if invoice is now fully paid
-    if (updatedInvoice.status === 'paid' && invoice.status !== 'paid') {
-      try {
-        await activityLogger.logInvoicePaid(updatedInvoice, req.user?.id || null);
-      } catch (error) {
-        console.error('Failed to log payment activity:', error);
-      }
-
-      setImmediate(() => sendInvoicePaidConfirmationToCustomer(req.tenantId, updatedInvoice));
-
-      // Send paid webhook to Sabito (async)
-      try {
-        const customer = await Customer.findOne({
-          where: applyTenantFilter(req.tenantId, { id: updatedInvoice.customerId }),
-          attributes: [
-            'id', 
-            'sabitoCustomerId', 
-            'sabitoBusinessId', 
-            'email', 
-            'name', 
-            'phone'
-          ]
-        });
-
-        if (customer) {
-          sabitoWebhookService.sendInvoicePaidWebhook(updatedInvoice, customer, req.tenantId)
-            .then(async (result) => {
-              if (result.success) {
-                await updatedInvoice.update({
-                  sabitoSyncedAt: new Date()
-                });
-              }
-            })
-            .catch((error) => {
-              console.error('Failed to send Sabito paid webhook:', error);
-            });
-        }
-      } catch (error) {
-        console.error('Error sending Sabito paid webhook:', error);
-      }
-    }
-
-    // Update customer balance
-    try {
-      await updateCustomerBalance(invoice.customerId);
-    } catch (error) {
-      console.error('Failed to update customer balance:', error);
-    }
-
     invalidateAfterMutation(req.tenantId);
     invalidateInvoiceListCache(req.tenantId);
+    const payload = await invoiceToResponsePayload(updatedInvoice);
+    payload.payments = (await loadInvoicePayments(updatedInvoice)).map((paymentRecord) => (
+      typeof paymentRecord.toJSON === 'function' ? paymentRecord.toJSON() : paymentRecord
+    ));
+
     res.status(200).json({
       success: true,
-      data: await invoiceToResponsePayload(updatedInvoice),
+      data: payload,
       payment: typeof payment.toJSON === 'function' ? payment.toJSON() : payment
+    });
+
+    enqueueInvoicePaymentSideEffects({
+      tenantId: req.tenantId,
+      userId: req.user?.id || null,
+      invoiceId: invoice.id,
+      customerId: invoice.customerId,
+      payment,
+      paymentAmount,
+      paymentDate: effectivePaymentDate,
+      paymentMethod: paymentMethod || 'cash',
+      referenceNumber: paymentReference || referenceNumber,
+      updatedInvoice,
+      wasFullyPaid: updatedInvoice.status === 'paid',
+      wasAlreadyPaid: invoice.status === 'paid',
     });
   } catch (error) {
     next(error);
@@ -1166,8 +1288,9 @@ exports.recordPayment = async (req, res, next) => {
 // @access  Private
 exports.markInvoicePaid = async (req, res, next) => {
   try {
-    const { paymentDate, paidAt, notes } = sanitizePayload(req.body || {});
+    const { paymentDate, paidAt, notes, clientRequestId } = sanitizePayload(req.body || {});
     const paymentNotes = normalizePaymentNotes(notes);
+    const paymentReference = normalizePaymentReference(null, clientRequestId);
     const effectivePaymentDate = parsePaymentDateInput(paymentDate || paidAt);
     if (!effectivePaymentDate) {
       return res.status(400).json({
@@ -1194,16 +1317,43 @@ exports.markInvoicePaid = async (req, res, next) => {
       });
     }
 
+    const existingPayment = await findExistingPaymentByReference({
+      tenantId: req.tenantId,
+      referenceNumber: paymentReference,
+    });
+    if (existingPayment) {
+      const hydratedInvoice = await Invoice.findOne({
+        where: applyTenantFilter(req.tenantId, { id: invoice.id }),
+        include: invoiceResponseIncludes()
+      });
+      const payload = await invoiceToResponsePayload(hydratedInvoice);
+      payload.payments = (await loadInvoicePayments(hydratedInvoice)).map((paymentRecord) => (
+        typeof paymentRecord.toJSON === 'function' ? paymentRecord.toJSON() : paymentRecord
+      ));
+
+      return res.status(200).json({
+        success: true,
+        message: 'Payment already recorded',
+        data: payload,
+        payment: typeof existingPayment.toJSON === 'function' ? existingPayment.toJSON() : existingPayment,
+        duplicate: true
+      });
+    }
+
     if (invoice.status === 'paid') {
       const hydratedInvoice = await Invoice.findOne({
         where: applyTenantFilter(req.tenantId, { id: invoice.id }),
         include: invoiceResponseIncludes()
       });
+      const payload = await invoiceToResponsePayload(hydratedInvoice);
+      payload.payments = (await loadInvoicePayments(hydratedInvoice)).map((paymentRecord) => (
+        typeof paymentRecord.toJSON === 'function' ? paymentRecord.toJSON() : paymentRecord
+      ));
 
       return res.status(200).json({
         success: true,
         message: 'Invoice is already marked as paid',
-        data: await invoiceToResponsePayload(hydratedInvoice)
+        data: payload
       });
     }
 
@@ -1230,7 +1380,9 @@ exports.markInvoicePaid = async (req, res, next) => {
         amount: outstanding,
         paymentMethod: 'other',
         paymentDate: effectivePaymentDate,
+        referenceNumber: paymentReference || undefined,
         status: 'completed',
+        description: `invoice:${invoice.id}`,
         notes: paymentNotes || `Invoice ${invoice.invoiceNumber} manually marked as paid`
       });
     }
@@ -1240,51 +1392,34 @@ exports.markInvoicePaid = async (req, res, next) => {
       include: invoiceResponseIncludes()
     });
 
-    await ensureSaleFromPaidInvoice(invoice.id, manualPayment?.id || null, {
-      tenantId: req.tenantId,
-      userId: req.user?.id || null,
-      paymentMethod: manualPayment?.paymentMethod || 'other'
-    });
-
-    if (outstanding > 0 && manualPayment) {
-      try {
-        await createInvoicePaymentJournal({
-          invoice: updatedInvoice,
-          amount: outstanding,
-          paymentDate: effectivePaymentDate,
-          paymentMethod: 'other',
-          paymentRecordNumber: manualPayment.paymentNumber,
-          metadata: { paymentId: manualPayment.id, markedPaid: true },
-          userId: req.user?.id || null
-        });
-      } catch (journalError) {
-        console.error('Failed to create accounting entry for invoice mark-paid', journalError);
-      }
-    }
-
-    // Log activity
-    try {
-      await activityLogger.logInvoicePaid(updatedInvoice, req.user?.id || null);
-    } catch (error) {
-      console.error('Failed to log payment activity:', error);
-    }
-
-    setImmediate(() => sendInvoicePaidConfirmationToCustomer(req.tenantId, updatedInvoice));
-
-    // Update customer balance
-    try {
-      await updateCustomerBalance(invoice.customerId);
-    } catch (error) {
-      console.error('Failed to update customer balance:', error);
-    }
-
     invalidateAfterMutation(req.tenantId);
     invalidateInvoiceListCache(req.tenantId);
+    const payload = await invoiceToResponsePayload(updatedInvoice);
+    payload.payments = (await loadInvoicePayments(updatedInvoice)).map((paymentRecord) => (
+      typeof paymentRecord.toJSON === 'function' ? paymentRecord.toJSON() : paymentRecord
+    ));
+
     res.status(200).json({
       success: true,
       message: 'Invoice marked as paid successfully',
-      data: await invoiceToResponsePayload(updatedInvoice),
+      data: payload,
       payment: manualPayment ? (typeof manualPayment.toJSON === 'function' ? manualPayment.toJSON() : manualPayment) : null
+    });
+
+    enqueueInvoicePaymentSideEffects({
+      tenantId: req.tenantId,
+      userId: req.user?.id || null,
+      invoiceId: invoice.id,
+      customerId: invoice.customerId,
+      payment: manualPayment,
+      paymentAmount: outstanding,
+      paymentDate: effectivePaymentDate,
+      paymentMethod: manualPayment?.paymentMethod || 'other',
+      referenceNumber: paymentReference,
+      updatedInvoice,
+      wasFullyPaid: true,
+      wasAlreadyPaid: invoice.status === 'paid',
+      markedPaid: true,
     });
   } catch (error) {
     next(error);

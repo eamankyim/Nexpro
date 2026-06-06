@@ -58,6 +58,14 @@ function formatDate(value) {
   return dayjs(value).format('MMMM D, YYYY');
 }
 
+function formatPaymentMethod(value) {
+  if (!value) return '—';
+  return String(value)
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 /**
  * Mobile-first invoice details layout for DetailsDrawer (section cards per design mock).
  * @param {{ invoice: object, showJobDetails?: boolean }} props
@@ -66,6 +74,7 @@ function InvoiceDetailsDrawerContent({ invoice, showJobDetails = true }) {
   const [itemsExpanded, setItemsExpanded] = useState(false);
 
   const items = invoice?.items || [];
+  const payments = Array.isArray(invoice?.payments) ? invoice.payments : [];
   const hasMoreItems = items.length > ITEMS_PREVIEW_COUNT;
 
   useEffect(() => {
@@ -219,6 +228,52 @@ function InvoiceDetailsDrawerContent({ invoice, showJobDetails = true }) {
           {formatCurrency(invoice.balance)}
         </DrawerFieldRow>
       </DrawerSectionCard>
+
+      {payments.length > 0 && (
+        <DrawerSectionCard
+          title="Payment History"
+          titleStyle="uppercase"
+          cardVariant="white"
+          icon={<CircleDollarSign className="h-4 w-4 text-brand" aria-hidden />}
+        >
+          <ul className="divide-y divide-gray-100">
+            {payments.map((payment) => {
+              const note = String(payment.notes || '').trim();
+              const rawReference = String(payment.referenceNumber || '').trim();
+              const reference = rawReference.startsWith('INV-')
+                ? String(payment.paymentNumber || '').trim()
+                : String(rawReference || payment.paymentNumber || '').trim();
+
+              return (
+                <li key={payment.id || reference} className="space-y-2 py-3 first:pt-0 last:pb-0">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-foreground">
+                        {formatPaymentMethod(payment.paymentMethod)}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {formatDate(payment.paymentDate)}
+                        {reference ? ` • Ref: ${reference}` : ''}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-sm font-semibold text-green-600">
+                      {formatCurrency(payment.amount)}
+                    </span>
+                  </div>
+                  {note && (
+                    <div className="rounded-md border border-gray-100 bg-muted/30 px-3 py-2">
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Payment note
+                      </p>
+                      <p className="mt-1 whitespace-pre-line text-sm text-foreground">{note}</p>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </DrawerSectionCard>
+      )}
 
       <DrawerSectionCard
         title="Additional Information"

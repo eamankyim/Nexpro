@@ -76,11 +76,13 @@ jest.mock('../../../config/config', () => ({
 
 const { Op } = require('sequelize');
 const { Sale } = require('../../../models');
+const { applyShopFilter } = require('../../../utils/shopUtils');
 const saleController = require('../../../controllers/saleController');
 
 describe('saleController getSales summary', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    applyShopFilter.mockImplementation((_req, where) => where);
     Sale.findAndCountAll.mockResolvedValue({ count: 15, rows: [] });
     Sale.findOne.mockResolvedValue({
       totalSales: 15,
@@ -135,5 +137,40 @@ describe('saleController getSales summary', () => {
         completedRevenue: 998,
       }),
     }));
+  });
+
+  it('lets shop-scoped staff list same-shop sales without soldBy ownership filter', async () => {
+    applyShopFilter.mockImplementation((_req, where) => ({ ...where, shopId: 'shop-a' }));
+
+    const req = {
+      query: {},
+      tenantId: 'tenant-1',
+      tenantRole: 'staff',
+      user: { id: 'staff-1', role: 'admin' },
+      shopScoped: true,
+      shopFilterId: 'shop-a',
+      tenant: {
+        businessType: 'shop',
+        metadata: { businessSubType: 'restaurant' },
+      },
+    };
+    const res = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn(),
+    };
+    const next = jest.fn();
+
+    await saleController.getSales(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(Sale.findAndCountAll).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        tenantId: 'tenant-1',
+        shopId: 'shop-a',
+      }),
+    }));
+    expect(Sale.findAndCountAll.mock.calls[0][0].where).not.toHaveProperty('soldBy');
+    expect(Sale.count.mock.calls[0][0].where).not.toHaveProperty('soldBy');
+    expect(res.status).toHaveBeenCalledWith(200);
   });
 });
