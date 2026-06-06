@@ -26,7 +26,7 @@ const path = require('path');
 const { Op } = require('sequelize');
 const { sequelize, testConnection } = require('../config/database');
 const { parseCSV } = require('../utils/importParse');
-const { User, UserTenant, Tenant, Product, Shop, Barcode } = require('../models');
+const { User, UserTenant, Tenant, Product, ProductCategory, Shop, Barcode } = require('../models');
 
 const DEFAULT_SOURCE = path.resolve(__dirname, 'data', 'josfaa-product-price-updates-for-raphine19.csv');
 const argv = process.argv.slice(2);
@@ -41,6 +41,7 @@ const getArgValue = (flag, fallback = null) => {
 const isExecute = hasFlag('--execute');
 const isDryRun = !isExecute;
 const shouldConfirm = hasFlag('--confirm-update');
+const allowPartial = hasFlag('--allow-partial');
 const email = (getArgValue('--email', '') || '').trim().toLowerCase();
 const explicitTenantId = (getArgValue('--tenant-id', '') || '').trim() || null;
 const explicitShopId = (getArgValue('--shop-id', '') || '').trim() || null;
@@ -49,8 +50,8 @@ const sourcePath = path.resolve(process.cwd(), getArgValue('--source', DEFAULT_S
 
 const USAGE = `
 Usage:
-  node scripts/update-product-prices-csv-for-tenant.js --email <user-email> --source <path-to-csv> (--shop-id <uuid> | --shop-name <name>) [--tenant-id <uuid>] [--execute --confirm-update]
-  node scripts/update-product-prices-csv-for-tenant.js --tenant-id <uuid> --source <path-to-csv> (--shop-id <uuid> | --shop-name <name>) [--execute --confirm-update]
+  node scripts/update-product-prices-csv-for-tenant.js --email <user-email> --source <path-to-csv> (--shop-id <uuid> | --shop-name <name>) [--tenant-id <uuid>] [--allow-partial] [--execute --confirm-update]
+  node scripts/update-product-prices-csv-for-tenant.js --tenant-id <uuid> --source <path-to-csv> (--shop-id <uuid> | --shop-name <name>) [--allow-partial] [--execute --confirm-update]
 
 Examples:
   node scripts/update-product-prices-csv-for-tenant.js --email raphine19@gmail.com --source scripts/data/josfaa-product-price-updates-for-raphine19.csv --shop-name warehouse
@@ -95,6 +96,99 @@ function valuesEqualMoney(left, right) {
   return toMoney(left) === toMoney(right);
 }
 
+function skuBasePart(sku) {
+  const normalized = normalizeText(sku);
+  if (!normalized) return null;
+  const dashIndex = normalized.indexOf('-');
+  return dashIndex === -1 ? normalized : normalized.slice(0, dashIndex);
+}
+
+function brandMatches(product, rowBrand) {
+  const targetBrand = normalizedKey(rowBrand);
+  if (!targetBrand) return true;
+  const productBrand = normalizedKey(product.brand);
+  const categoryName = normalizedKey(product.category?.name);
+  return productBrand === targetBrand || categoryName === targetBrand;
+}
+
+function codesAreRelated(left, right) {
+  const leftCode = normalizeText(left);
+  const rightCode = normalizeText(right);
+  if (!leftCode || !rightCode) return false;
+  if (leftCode === rightCode) return true;
+  if (leftCode.startsWith(`${rightCode}-`) || rightCode.startsWith(`${leftCode}-`)) return true;
+
+  const shorter = leftCode.length <= rightCode.length ? leftCode : rightCode;
+  const longer = leftCode.length > rightCode.length ? leftCode : rightCode;
+  // import-josfaa disambiguated SKUs truncate slugified suffixes without a dash boundary.
+  if (shorter.includes('-') && longer.startsWith(shorter)) return true;
+  return false;
+}
+
+function uniqueProducts(products) {
+  const seen = new Set();
+  return products.filter((product) => {
+    if (seen.has(product.id)) return false;
+    seen.add(product.id);
+    return true;
+  });
+}
+
+function filterByBrand(products, rowBrand) {
+  if (!rowBrand) return products;
+  const filtered = products.filter((product) => brandMatches(product, rowBrand));
+  return filtered.length ? filtered : products;
+}
+
+function collectRowCodes(row) {
+  const codes = uniqueValues([row.sku, row.barcode, row.partNo]);
+  const baseParts = codes.map((code) => skuBasePart(code)).filter(Boolean);
+  return uniqueValues([...codes, ...baseParts]);
+}
+
+function disambiguateNameMatches(row, candidates) {
+  let matches = uniqueProducts(candidates);
+  if (matches.length <= 1) return matches;
+
+  if (row.brand) {
+    matches = uniqueProducts(filterByBrand(matches, row.brand));
+    if (matches.length === 1) return matches;
+  }
+
+  if (!row.brand) {
+    const nonLocal = matches.filter((product) => {
+      const brand = normalizedKey(product.brand);
+      const category = normalizedKey(product.category?.name);
+      return brand !== 'local' && category !== 'local';
+    });
+    if (nonLocal.length === 1) return nonLocal;
+    if (nonLocal.length > 1) matches = nonLocal;
+  }
+
+  if (!row.sku && !row.barcode) {
+    const withoutCodes = matches.filter((product) => !product.sku && !product.barcode);
+    if (withoutCodes.length === 1) return withoutCodes;
+    if (withoutCodes.length > 1) matches = withoutCodes;
+  }
+
+  if (!row.brand && matches.length > 1) {
+    const withoutCategory = matches.filter((product) => !normalizeText(product.category?.name));
+    if (withoutCategory.length === 1) return withoutCategory;
+  }
+
+  if (matches.length > 1 && matches.every((product) => !product.sku && !product.barcode)) {
+    const [oldest] = [...matches].sort((left, right) => {
+      const leftCreated = left.createdAt ? new Date(left.createdAt).getTime() : 0;
+      const rightCreated = right.createdAt ? new Date(right.createdAt).getTime() : 0;
+      if (leftCreated !== rightCreated) return leftCreated - rightCreated;
+      return String(left.id).localeCompare(String(right.id));
+    });
+    return [oldest];
+  }
+
+  return matches;
+}
+
 function getField(row, names) {
   for (const name of names) {
     if (row[name] != null) return row[name];
@@ -116,19 +210,22 @@ function loadPriceRows(filePath) {
   parsed.rows.forEach((row, index) => {
     const rowNumber = index + 2;
     const name = normalizeText(getField(row, ['Product Name', 'Name', 'Description']));
-    const sku = normalizeText(getField(row, ['SKU', 'Part No', 'PART NO.', 'Part No.']));
+    const sku = normalizeText(getField(row, ['SKU']));
+    const partNo = normalizeText(getField(row, ['Part No', 'PART NO.', 'Part No.']));
+    const brand = normalizeText(getField(row, ['Brand', 'BRAND', 'Category']));
     const barcode = normalizeText(getField(row, ['Barcode', 'BARCODE']));
     const costPrice = toMoney(getField(row, ['Cost Price', 'costPrice']));
     const sellingPrice = toMoney(getField(row, ['Selling Price', 'sellingPrice']));
     const sourceRow = normalizeText(getField(row, ['Source Row', 'sourceRow']));
+    const resolvedSku = sku || partNo;
 
-    if (!name && !sku && !barcode && costPrice == null && sellingPrice == null) return;
+    if (!name && !resolvedSku && !barcode && costPrice == null && sellingPrice == null) return;
     if (!name) errors.push({ row: rowNumber, message: 'Product Name is required' });
-    if (!sku && !barcode && !name) errors.push({ row: rowNumber, message: 'SKU, Barcode, or Product Name is required' });
+    if (!resolvedSku && !barcode && !name) errors.push({ row: rowNumber, message: 'SKU, Barcode, or Product Name is required' });
     if (costPrice == null) errors.push({ row: rowNumber, message: 'Cost Price must be a non-negative number' });
     if (sellingPrice == null) errors.push({ row: rowNumber, message: 'Selling Price must be a non-negative number' });
 
-    rows.push({ rowNumber, sourceRow, name, sku, barcode, costPrice, sellingPrice });
+    rows.push({ rowNumber, sourceRow, name, sku: resolvedSku, partNo, brand, barcode, costPrice, sellingPrice });
   });
 
   return { headers: parsed.headers, rows, errors };
@@ -237,17 +334,22 @@ function addCodeMatch(map, conflicts, code, product, source) {
 }
 
 async function loadProductIndexes(tenantId, shopId, rows) {
-  const codes = uniqueValues(rows.flatMap((row) => [row.sku, row.barcode]));
+  const codes = uniqueValues(rows.flatMap((row) => collectRowCodes(row)));
   const products = await Product.findAll({
     where: { tenantId, shopId },
-    attributes: ['id', 'name', 'sku', 'barcode', 'costPrice', 'sellingPrice', 'shopId'],
+    attributes: ['id', 'name', 'sku', 'barcode', 'brand', 'costPrice', 'sellingPrice', 'shopId', 'createdAt'],
+    include: [{
+      model: ProductCategory,
+      as: 'category',
+      attributes: ['name'],
+      required: false,
+    }],
     order: [['createdAt', 'ASC']],
   });
 
   const codeConflicts = [];
   const productsByCode = new Map();
-  const productsByName = new Map();
-  const duplicateNames = new Set();
+  const productsByNameList = new Map();
 
   for (const product of products) {
     addCodeMatch(productsByCode, codeConflicts, product.sku, product, 'product.sku');
@@ -255,8 +357,9 @@ async function loadProductIndexes(tenantId, shopId, rows) {
 
     const nameKey = normalizedKey(product.name);
     if (!nameKey) continue;
-    if (productsByName.has(nameKey)) duplicateNames.add(nameKey);
-    productsByName.set(nameKey, product);
+    const existing = productsByNameList.get(nameKey) || [];
+    existing.push(product);
+    productsByNameList.set(nameKey, existing);
   }
 
   if (codes.length) {
@@ -281,7 +384,59 @@ async function loadProductIndexes(tenantId, shopId, rows) {
     }
   }
 
-  return { products, productsByCode, productsByName, duplicateNames, codeConflicts };
+  return { products, productsByCode, productsByNameList, codeConflicts };
+}
+
+function resolveProductForRow(row, indexes) {
+  const rowCodes = collectRowCodes(row);
+
+  if (rowCodes.length) {
+    const codeMatches = rowCodes
+      .map((code) => indexes.productsByCode.get(code))
+      .filter(Boolean);
+    const codeProductIds = new Set(codeMatches.map((match) => match.product.id));
+    if (codeProductIds.size > 1) {
+      return { status: 'ambiguous', reason: 'SKU and barcode matched different products' };
+    }
+    if (codeMatches.length) {
+      return { status: 'matched', product: codeMatches[0].product, matchedBy: codeMatches[0].source };
+    }
+
+    const prefixCandidates = [];
+    for (const product of indexes.products) {
+      if (!product.sku) continue;
+      const related = rowCodes.some((code) => codesAreRelated(code, product.sku));
+      if (related) prefixCandidates.push(product);
+    }
+
+    const prefixMatches = uniqueProducts(filterByBrand(prefixCandidates, row.brand));
+    if (prefixMatches.length === 1) {
+      return { status: 'matched', product: prefixMatches[0], matchedBy: 'sku.prefix' };
+    }
+    if (prefixMatches.length > 1) {
+      return { status: 'ambiguous', reason: 'multiple products matched by SKU prefix/part number' };
+    }
+  }
+
+  const nameKey = normalizedKey(row.name);
+  const nameMatches = indexes.productsByNameList.get(nameKey) || [];
+  if (!nameMatches.length) {
+    return { status: 'unmatched' };
+  }
+
+  const resolved = disambiguateNameMatches(row, nameMatches);
+  if (resolved.length === 1) {
+    const nameMatches = indexes.productsByNameList.get(nameKey) || [];
+    const matchedBy = row.brand
+      ? 'name.brand'
+      : (nameMatches.length > 1 ? 'name.disambiguated' : 'product.name');
+    return { status: 'matched', product: resolved[0], matchedBy };
+  }
+  if (resolved.length > 1) {
+    return { status: 'ambiguous', reason: 'multiple products share this name in the shop' };
+  }
+
+  return { status: 'unmatched' };
 }
 
 function classifyRows(rows, indexes) {
@@ -293,8 +448,10 @@ function classifyRows(rows, indexes) {
   const toUpdate = [];
 
   for (const row of rows) {
-    const rowCodes = uniqueValues([row.sku, row.barcode]);
-    const inputKey = rowCodes.length ? `code:${rowCodes.join('|')}` : `name:${normalizedKey(row.name)}`;
+    const rowCodes = collectRowCodes(row);
+    const inputKey = rowCodes.length
+      ? `code:${rowCodes.join('|')}|brand:${normalizedKey(row.brand)}`
+      : `name:${normalizedKey(row.name)}|brand:${normalizedKey(row.brand)}`;
     if (seenInputKeys.has(inputKey)) {
       duplicateInputRows.push({
         row: row.rowNumber,
@@ -306,28 +463,14 @@ function classifyRows(rows, indexes) {
     }
     seenInputKeys.set(inputKey, row.rowNumber);
 
-    let product = null;
-    let matchedBy = null;
-    if (rowCodes.length) {
-      const codeMatches = rowCodes.map((code) => indexes.productsByCode.get(code)).filter(Boolean);
-      const productIds = new Set(codeMatches.map((match) => match.product.id));
-      if (productIds.size > 1) {
-        ambiguousRows.push({ row: row.rowNumber, name: row.name, reason: 'SKU and barcode matched different products' });
-        continue;
-      }
-      if (codeMatches.length) {
-        product = codeMatches[0].product;
-        matchedBy = codeMatches[0].source;
-      }
-    } else {
-      const nameKey = normalizedKey(row.name);
-      if (indexes.duplicateNames.has(nameKey)) {
-        ambiguousRows.push({ row: row.rowNumber, name: row.name, reason: 'multiple products share this name in the shop' });
-        continue;
-      }
-      product = indexes.productsByName.get(nameKey) || null;
-      matchedBy = product ? 'product.name' : null;
+    const resolution = resolveProductForRow(row, indexes);
+    if (resolution.status === 'ambiguous') {
+      ambiguousRows.push({ row: row.rowNumber, name: row.name, reason: resolution.reason });
+      continue;
     }
+
+    const product = resolution.status === 'matched' ? resolution.product : null;
+    const matchedBy = resolution.status === 'matched' ? resolution.matchedBy : null;
 
     if (!product) {
       unmatchedRows.push({ row: row.rowNumber, name: row.name, sku: row.sku, barcode: row.barcode });
@@ -370,6 +513,7 @@ async function main() {
 
   console.log('\n=== Product Price CSV Tenant Update ===');
   printSummary('Mode', isDryRun ? 'DRY RUN' : 'EXECUTE');
+  printSummary('Allow partial', allowPartial ? 'yes' : 'no');
   printSummary('Source', sourcePath);
   if (email) printSummary('Email', email);
   if (explicitTenantId) printSummary('Tenant override', explicitTenantId);
@@ -421,10 +565,15 @@ async function main() {
   printRows('Update examples', plan.toUpdate, (item) => `${item.product.sku || item.product.barcode || item.product.name}: cost ${item.currentCost} -> ${item.nextCost}, sell ${item.currentSelling} -> ${item.nextSelling} via ${item.matchedBy}`);
 
   if (blockingCount) {
-    const message = 'Blocking rows found; no prices were updated';
-    if (isExecute) fail(message);
-    console.log(`\nDry run warning: ${message}. Resolve these before execute.`);
-    return;
+    const message = allowPartial && plan.toUpdate.length
+      ? `Blocking rows found; ${plan.toUpdate.length} matched products can still be updated with --allow-partial`
+      : 'Blocking rows found; no prices were updated';
+    if (isExecute && !(allowPartial && plan.toUpdate.length)) fail(message);
+    if (isDryRun || !(allowPartial && plan.toUpdate.length)) {
+      console.log(`\nDry run warning: ${message}. Resolve these before execute.`);
+      if (isDryRun || !allowPartial) return;
+    }
+    console.log(`\nProceeding with partial update for ${plan.toUpdate.length} matched products.`);
   }
 
   if (isDryRun) {
@@ -449,15 +598,26 @@ async function main() {
   }
 }
 
-main()
-  .catch((error) => {
-    console.error('\nPrice update failed:', error?.message || error);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    try {
-      await sequelize.close();
-    } catch (_error) {
-      // Ignore close errors during CLI shutdown.
-    }
-  });
+if (require.main === module) {
+  main()
+    .catch((error) => {
+      console.error('\nPrice update failed:', error?.message || error);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      try {
+        await sequelize.close();
+      } catch (_error) {
+        // Ignore close errors during CLI shutdown.
+      }
+    });
+}
+
+module.exports = {
+  skuBasePart,
+  codesAreRelated,
+  collectRowCodes,
+  disambiguateNameMatches,
+  resolveProductForRow,
+  brandMatches,
+};

@@ -5,6 +5,7 @@
   "intendedShop": "warehouse",
   "dryRunCommand": "node scripts/update-product-prices-csv-for-tenant.js --email raphine19@gmail.com --source scripts/data/josfaa-product-price-updates-for-raphine19.csv --shop-name warehouse",
   "executeCommand": "node scripts/update-product-prices-csv-for-tenant.js --email raphine19@gmail.com --source scripts/data/josfaa-product-price-updates-for-raphine19.csv --shop-name warehouse --execute --confirm-update",
+  "partialExecuteCommand": "node scripts/update-product-prices-csv-for-tenant.js --email raphine19@gmail.com --source scripts/data/josfaa-product-price-updates-for-raphine19.csv --shop-name warehouse --allow-partial --execute --confirm-update",
   "sheet": "OPENING STOCK",
   "sourceRowsWithData": 147,
   "outputRows": 147,
@@ -27,7 +28,7 @@
     "Part No",
     "Source Row"
   ],
-  "matchingStrategy": "Match warehouse products by existing Raphine import SKU/barcode first. The price CSV reuses SKU and Barcode values from scripts/data/josfaa-products-for-raphine19.csv row-by-row after validating Product Name and Brand alignment with the new workbook. Exact normalized product name is used only by the updater for rows without SKU/barcode.",
+  "matchingStrategy": "Match warehouse products by exact SKU/barcode, then part-number/base-SKU prefix (handles import-josfaa short SKUs vs composite CSV SKUs), then name with Brand/Category disambiguation. Rows without codes fall back to name matching with LOCAL-brand exclusion and oldest codeless duplicate tiebreak.",
   "fieldsUpdated": [
     "costPrice",
     "sellingPrice"
@@ -101,8 +102,12 @@
     "completed": false,
     "blockedBy": "No user found for email: raphine19@gmail.com in the local database"
   },
+  "blockerResolution": {
+    "unmatchedRows": "Ten rows used composite CSV SKUs while warehouse products imported via import-josfaa-products.js kept short PART NO. SKUs for first duplicate part numbers, or truncated slug suffixes. Fixed by prefix/base-part matching in update-product-prices-csv-for-tenant.js.",
+    "ambiguousRows": "Two name-only rows (SLIDER BLOCK KIT BS6, INNER TUBE 400*8) hit duplicate product names in the shop. Fixed by brand/category disambiguation and oldest codeless duplicate tiebreak."
+  },
   "caveats": [
     "CSV generation does not update stock quantities.",
-    "Execute mode is blocked if any CSV row is unmatched, duplicated, or ambiguous in the selected shop."
+    "Execute mode is blocked if any CSV row is unmatched, duplicated, or ambiguous unless --allow-partial is passed."
   ]
 }
