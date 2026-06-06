@@ -167,21 +167,31 @@ describe('adminController.getBillingSummary', () => {
   });
 
   it('uses current successful Enterprise ledger payments for estimated MRR', async () => {
+    const now = new Date('2026-06-06T12:00:00.000Z');
+    jest.useFakeTimers().setSystemTime(now);
+
     Tenant.findAll
       .mockResolvedValueOnce([
         { plan: 'starter', count: '2' },
         { plan: 'enterprise', count: '1' },
       ])
+      .mockResolvedValueOnce([{ id: 'enterprise-tenant-1' }])
       .mockResolvedValueOnce([]);
     Tenant.count.mockResolvedValue(3);
     SubscriptionPayment.findAll.mockResolvedValue([
       {
+        tenantId: 'enterprise-tenant-1',
         amount: 2400000,
         billingPeriod: 'yearly',
+        periodStart: new Date('2026-01-01T00:00:00.000Z'),
+        periodEnd: new Date('2027-01-01T00:00:00.000Z'),
       },
       {
+        tenantId: 'enterprise-tenant-1',
         amount: 120000,
         billingPeriod: 'monthly',
+        periodStart: new Date('2026-06-01T00:00:00.000Z'),
+        periodEnd: new Date('2026-07-01T00:00:00.000Z'),
       },
     ]);
 
@@ -213,10 +223,56 @@ describe('adminController.getBillingSummary', () => {
         }),
       ])
     );
+
+    jest.useRealTimers();
+  });
+
+  it('falls back to the latest successful Enterprise payment when no current-period payment exists', async () => {
+    const now = new Date('2028-06-06T12:00:00.000Z');
+    jest.useFakeTimers().setSystemTime(now);
+
+    Tenant.findAll
+      .mockResolvedValueOnce([{ plan: 'enterprise', count: '1' }])
+      .mockResolvedValueOnce([{ id: 'enterprise-tenant-1' }])
+      .mockResolvedValueOnce([]);
+    Tenant.count.mockResolvedValue(0);
+    SubscriptionPayment.findAll.mockResolvedValue([
+      {
+        tenantId: 'enterprise-tenant-1',
+        amount: 2400000,
+        billingPeriod: 'yearly',
+        periodStart: new Date('2026-01-01T00:00:00.000Z'),
+        periodEnd: new Date('2027-01-01T00:00:00.000Z'),
+        createdAt: new Date('2026-01-02T00:00:00.000Z'),
+      },
+    ]);
+
+    const res = createResponse();
+    const next = jest.fn();
+
+    await adminController.getBillingSummary({}, res, next);
+
+    const data = res.json.mock.calls[0][0].data;
+    expect(data.estimatedMRR).toBe(2000);
+    expect(data.planBreakdown).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          plan: 'enterprise',
+          count: 1,
+          mrr: 2000,
+          recordedRevenue: 24000,
+        }),
+      ])
+    );
+
+    jest.useRealTimers();
   });
 
   it('excludes trial and free tenants from paying totals', async () => {
-    Tenant.findAll.mockResolvedValueOnce([{ plan: 'free', count: '4' }]).mockResolvedValueOnce([]);
+    Tenant.findAll
+      .mockResolvedValueOnce([{ plan: 'free', count: '4' }])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
     Tenant.count.mockResolvedValue(4);
     SubscriptionPayment.findAll.mockResolvedValue([]);
 

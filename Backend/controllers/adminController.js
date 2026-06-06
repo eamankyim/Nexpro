@@ -80,6 +80,36 @@ const getPaymentEstimatedMrrGhs = (payment) => {
   return payment?.billingPeriod === 'yearly' ? roundCurrency(amountGhs / 12) : amountGhs;
 };
 
+const isCurrentPeriodSubscriptionPayment = (payment, at = new Date()) => {
+  if (!payment?.periodStart || !payment?.periodEnd) return false;
+  const periodStart = new Date(payment.periodStart);
+  const periodEnd = new Date(payment.periodEnd);
+  return periodStart <= at && periodEnd > at;
+};
+
+const pickLatestPaymentByTenant = (payments = []) => {
+  const latestByTenant = new Map();
+  payments.forEach((payment) => {
+    if (!payment?.tenantId || latestByTenant.has(payment.tenantId)) return;
+    latestByTenant.set(payment.tenantId, payment);
+  });
+  return latestByTenant;
+};
+
+const selectEnterprisePaymentsForRevenue = (payments = [], tenantIds = [], at = new Date()) => {
+  const currentPeriodPayments = payments.filter((payment) => isCurrentPeriodSubscriptionPayment(payment, at));
+  const tenantsWithCurrentPayment = new Set(
+    currentPeriodPayments.map((payment) => payment.tenantId).filter(Boolean)
+  );
+  const latestByTenant = pickLatestPaymentByTenant(payments);
+  const fallbackPayments = tenantIds
+    .filter((tenantId) => !tenantsWithCurrentPayment.has(tenantId))
+    .map((tenantId) => latestByTenant.get(tenantId))
+    .filter(Boolean);
+
+  return [...currentPeriodPayments, ...fallbackPayments];
+};
+
 const getPaymentMethodFromPayment = (payment) => payment?.metadata?.paymentMethod || payment?.provider || null;
 
 const parseOptionalDate = (value, fieldName) => {
@@ -1330,7 +1360,7 @@ exports.updateTenantStatus = async (req, res, next) => {
 exports.getBillingSummary = async (req, res, next) => {
   try {
     const now = new Date();
-    const [planBreakdownRaw, enterpriseActivePayments] = await Promise.all([
+    const [planBreakdownRaw, enterpriseTenants] = await Promise.all([
       Tenant.findAll({
         where: {
           plan: {
@@ -1345,27 +1375,31 @@ exports.getBillingSummary = async (req, res, next) => {
         group: ['plan'],
         raw: true
       }),
-      SubscriptionPayment.findAll({
+      Tenant.findAll({
         where: {
           plan: 'enterprise',
-          status: 'success',
-          periodStart: { [Op.lte]: now },
-          periodEnd: { [Op.gt]: now },
+          status: 'active',
         },
-        include: [
-          {
-            model: Tenant,
-            as: 'tenant',
-            attributes: [],
-            where: {
-              plan: 'enterprise',
-              status: 'active',
-            },
-            required: true,
-          },
-        ],
+        attributes: ['id'],
+        raw: true,
       }),
     ]);
+    const enterpriseTenantIds = enterpriseTenants.map((tenant) => tenant.id).filter(Boolean);
+    const enterpriseLedgerPayments = enterpriseTenantIds.length
+      ? await SubscriptionPayment.findAll({
+          where: {
+            tenantId: { [Op.in]: enterpriseTenantIds },
+            plan: 'enterprise',
+            status: 'success',
+          },
+          order: [['createdAt', 'DESC']],
+        })
+      : [];
+    const enterpriseRevenuePayments = selectEnterprisePaymentsForRevenue(
+      enterpriseLedgerPayments,
+      enterpriseTenantIds,
+      now
+    );
 
     const trialingCount = await Tenant.count({
       where: {
@@ -1392,7 +1426,7 @@ exports.getBillingSummary = async (req, res, next) => {
       planBreakdownByPlan.set(normalizedPlan, existing);
     });
 
-    const enterpriseMrr = enterpriseActivePayments.reduce(
+    const enterpriseMrr = enterpriseRevenuePayments.reduce(
       (sum, payment) => roundCurrency(sum + getPaymentEstimatedMrrGhs(payment)),
       0
     );
@@ -1405,7 +1439,7 @@ exports.getBillingSummary = async (req, res, next) => {
       };
       enterpriseBreakdown.mrr = enterpriseMrr;
       enterpriseBreakdown.recordedRevenue = roundCurrency(
-        enterpriseActivePayments.reduce((sum, payment) => sum + pesewasToGhs(payment.amount), 0)
+        enterpriseRevenuePayments.reduce((sum, payment) => sum + pesewasToGhs(payment.amount), 0)
       );
       planBreakdownByPlan.set('enterprise', enterpriseBreakdown);
     }

@@ -30,6 +30,7 @@
     "delete:tenant-products": "node scripts/delete-tenant-products.js",
     "import:sulas-products": "node scripts/import-sulas-products.js",
     "import:products-csv": "node scripts/import-products-csv-for-tenant.js",
+    "copy:products-between-shops": "node scripts/copy-products-between-tenant-shops.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
