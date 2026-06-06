@@ -16,6 +16,7 @@ const { computeDocumentTax } = require('../utils/taxCalculation');
 const { getTenantLogoUrl } = require('../utils/tenantLogo');
 const { resolveDeliveryForSale } = require('../services/deliverySettingsService');
 const { notifyOrderCreatedForCustomer } = require('../services/orderCustomerNotificationService');
+const { getTenantShopType } = require('../config/businessTypes');
 const {
   applyShopFilter,
   attachShopToPayload,
@@ -31,6 +32,7 @@ const productBarcodeInclude = [
   { model: Barcode, as: 'barcodes', where: { isActive: true }, required: false }
 ];
 const ACTIVE_KITCHEN_ORDER_STATUSES = ['received', 'preparing', 'ready'];
+const isRestaurantTenant = (tenant) => getTenantShopType(tenant) === 'restaurant';
 
 const getTodayDateRange = () => {
   const start = new Date();
@@ -833,8 +835,7 @@ exports.getSales = async (req, res, next) => {
       ],
       raw: true
     });
-    const shopType = req.tenant?.metadata?.businessSubType || req.tenant?.metadata?.shopType;
-    const isRestaurant = shopType === 'restaurant';
+    const isRestaurant = isRestaurantTenant(req.tenant);
     const activeKitchenWhere = {
       ...where,
       orderStatus: { [Op.in]: ACTIVE_KITCHEN_ORDER_STATUSES },
@@ -1015,8 +1016,7 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
   const total = Math.round((computed.total + deliveryFee) * 100) / 100;
   const amountPaid = saleData.amountPaid != null ? parseFloat(saleData.amountPaid) : total;
   const change = amountPaid > total ? Math.round((amountPaid - total) * 100) / 100 : 0;
-  const shopType = tenant?.metadata?.shopType;
-  const isRestaurant = shopType === 'restaurant';
+  const isRestaurant = isRestaurantTenant(tenant);
   const saleStatus = saleData.status || 'completed';
   const sendToKitchen = saleData.sendToKitchen !== false;
   const orderStatus = isRestaurant && sendToKitchen ? 'received' : null;
@@ -1156,8 +1156,7 @@ exports.createSale = async (req, res, next) => {
     timer.mark('core:start');
     const { sale, items } = await createSaleCore(transaction, req.tenantId, req.user.id, saleBody, clientId, req.tenant, timer);
     timer.mark('core:end', { saleId: sale.id, saleNumber: sale.saleNumber });
-    const shopType = req.tenant?.metadata?.shopType;
-    const isRestaurant = shopType === 'restaurant';
+    const isRestaurant = isRestaurantTenant(req.tenant);
 
     timer.mark('commit:start');
     await transaction.commit();
@@ -1914,8 +1913,7 @@ exports.updateOrderStatus = async (req, res, next) => {
       });
     }
 
-    const shopType = req.tenant?.metadata?.shopType;
-    if (shopType !== 'restaurant') {
+    if (!isRestaurantTenant(req.tenant)) {
       return res.status(400).json({
         success: false,
         message: 'Order status tracking is only available for restaurant tenants'

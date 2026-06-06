@@ -93,7 +93,7 @@ const saleService = {
    * @param {Object} filters - { orderStatus, activeOrders, startDate, endDate, page, limit }
    */
   getOrders: async (filters = {}) => {
-    const params = { ...filters };
+    const params = withActiveShopScope(filters);
     if (params.activeOrders) params.activeOrders = 'true';
     const searchParams = new URLSearchParams();
     Object.entries(params).forEach(([key, value]) => {
