@@ -1,6 +1,7 @@
 const express = require('express');
 const { protect } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
+const { shopContext } = require('../middleware/shopContext');
 const { studioLocationContext } = require('../middleware/studioLocationContext');
 const {
   getTodos,
@@ -32,6 +33,11 @@ const router = express.Router();
 router.use(protect);
 router.use(tenantContext);
 router.use(studioLocationContext);
+router.use((req, _res, next) => {
+  req.allowAllShopScope = true;
+  next();
+});
+router.use(shopContext);
 
 router.route('/todos').get(getTodos).post(createTodo);
 router.route('/todos/:id').put(updateTodo).delete(deleteTodo);

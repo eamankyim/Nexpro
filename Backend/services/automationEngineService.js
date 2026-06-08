@@ -454,6 +454,8 @@ async function executeRule({
           sourceId: rule.id,
           sourceEvent: rule.triggerType,
           dedupeKey: `automation:${rule.id}:${subjectKey || 'none'}`,
+          shopId: triggerContext.shopId || triggerContext.shop?.id || null,
+          studioLocationId: triggerContext.studioLocationId || triggerContext.studioLocation?.id || null,
           metadata: { automationRuleId: rule.id, link: action.link || null }
         });
         results.push({ type: 'create_task', success: true, taskId: task.id });

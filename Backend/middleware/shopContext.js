@@ -7,15 +7,17 @@ const {
 
 const resolveHeaderShopId = (req) => {
   const raw =
+    req.query?.shopId ||
     req.headers['x-shop-id'] ||
-    req.headers['x-shop'] ||
-    req.query?.shopId;
+    req.headers['x-shop'];
   if (!raw || raw === 'all') return null;
   return String(raw).trim();
 };
 
 const isShopAccessRoute = (req) =>
   req.method === 'GET' && (req.path === '/access' || req.path.endsWith('/access'));
+
+const allowsAllShopScope = (req) => req.allowAllShopScope === true;
 
 /**
  * Resolves shop scope for retail (shop) tenants.
@@ -62,7 +64,7 @@ const shopContext = async (req, res, next) => {
         req.shopFilterId = requestedId;
       }
       // Ignore invalid/stale x-shop-id (e.g. admin shop cached in browser) — fall through to default.
-    } else if (!req.canAccessAllShops && allowedIds.length >= 1) {
+    } else if (!allowsAllShopScope(req) && !req.canAccessAllShops && allowedIds.length >= 1) {
       const preferred =
         req.defaultShopId && allowedIds.includes(req.defaultShopId)
           ? req.defaultShopId
@@ -71,7 +73,7 @@ const shopContext = async (req, res, next) => {
     }
 
     // Admins/owners must always view one shop at a time (no tenant-wide "all shops" aggregate).
-    if (!req.shopFilterId) {
+    if (!req.shopFilterId && !allowsAllShopScope(req)) {
       const fallback =
         req.defaultShopId && (req.canAccessAllShops || allowedIds.includes(req.defaultShopId))
           ? req.defaultShopId

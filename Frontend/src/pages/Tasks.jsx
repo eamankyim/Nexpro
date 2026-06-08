@@ -8,6 +8,8 @@ import { DragDropContext, Draggable, Droppable } from 'react-beautiful-dnd';
 
 import { useAuth } from '../context/AuthContext';
 import { useSmartSearch } from '../context/SmartSearchContext';
+import { useShopOptional } from '../context/ShopContext';
+import { useStudioLocationOptional } from '../context/StudioLocationContext';
 import { useDebounce } from '../hooks/useDebounce';
 import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import userWorkspaceService from '../services/userWorkspaceService';
@@ -15,7 +17,7 @@ import { resolveImageUrl } from '../utils/fileUtils';
 import { showError, showSuccess } from '../utils/toast';
 import WelcomeSection from '../components/WelcomeSection';
 import StatusChip from '../components/StatusChip';
-import { DEBOUNCE_DELAYS, PRIORITY_CHIP_CLASSES, SEARCH_PLACEHOLDERS, STATUS_CHIP_CLASSES, STATUS_CHIP_DEFAULT_CLASS } from '../constants';
+import { DEBOUNCE_DELAYS, PRIORITY_CHIP_CLASSES, SEARCH_PLACEHOLDERS, STATUS_CHIP_CLASSES, STATUS_CHIP_DEFAULT_CLASS, STUDIO_LIKE_TYPES } from '../constants';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -123,9 +125,11 @@ const initialForm = {
 };
 
 const Tasks = () => {
-  const { user } = useAuth();
+  const { user, activeTenant } = useAuth();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
-  const { activeStudioLocationId, scopeReady } = useWorkspaceScope();
+  const { activeShopId, activeStudioLocationId, isShopWorkspace, isStudioWorkspace, scopeReady } = useWorkspaceScope();
+  const shopContext = useShopOptional();
+  const studioLocationContext = useStudioLocationOptional();
   const debouncedSearchValue = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const queryClient = useQueryClient();
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -135,6 +139,7 @@ const Tasks = () => {
   const [sourceFilter, setSourceFilter] = useState('all');
   const [assigneeFilter, setAssigneeFilter] = useState('all');
   const [privacyFilter, setPrivacyFilter] = useState('all');
+  const [locationFilter, setLocationFilter] = useState('all');
   const [viewMode, setViewMode] = useState('list');
   const [openCreateModal, setOpenCreateModal] = useState(false);
   const [openDetails, setOpenDetails] = useState(false);
@@ -149,10 +154,70 @@ const Tasks = () => {
   const [selectedTaskId, setSelectedTaskId] = useState(null);
   const [commentText, setCommentText] = useState('');
   const taskCardRefs = useRef({});
+  const businessType = activeTenant?.businessType || '';
+  const isShopLike = isShopWorkspace || ['shop', 'pharmacy'].includes(businessType);
+  const isStudioLike = STUDIO_LIKE_TYPES.includes(businessType);
+  const locationFilterLabel = isShopLike
+    ? 'Shop location'
+    : isStudioLike || isStudioWorkspace
+      ? 'Studio location'
+      : 'Location';
+  const locationOptions = useMemo(() => {
+    if (isShopWorkspace) {
+      return (shopContext?.shops || []).map((shop) => ({
+        id: shop.id,
+        name: shop.name || shop.code || 'Unnamed shop',
+      }));
+    }
+    if (isStudioLike || isStudioWorkspace) {
+      return (studioLocationContext?.locations || []).map((location) => ({
+        id: location.id,
+        name: location.name || location.code || 'Unnamed location',
+      }));
+    }
+    return [];
+  }, [isShopWorkspace, isStudioLike, isStudioWorkspace, shopContext?.shops, studioLocationContext?.locations]);
+  const selectedLocationName = useMemo(() => {
+    if (locationFilter === 'all') return 'All';
+    return locationOptions.find((location) => location.id === locationFilter)?.name || 'Selected';
+  }, [locationFilter, locationOptions]);
+  const taskLocationQueryParams = useMemo(() => {
+    if (locationFilter === 'all') {
+      if (isShopWorkspace) return { shopId: 'all' };
+      if (isStudioLike || isStudioWorkspace) return { studioLocationId: 'all' };
+      return {};
+    }
+    if (isShopWorkspace) return { shopId: locationFilter };
+    if (isStudioLike || isStudioWorkspace) return { studioLocationId: locationFilter };
+    return {};
+  }, [locationFilter, isShopWorkspace, isStudioLike, isStudioWorkspace]);
+  const taskWriteLocationQueryParams = useMemo(() => {
+    if (locationFilter !== 'all') return taskLocationQueryParams;
+    if (isShopWorkspace && activeShopId) return { shopId: activeShopId };
+    if ((isStudioLike || isStudioWorkspace) && activeStudioLocationId) {
+      return { studioLocationId: activeStudioLocationId };
+    }
+    return {};
+  }, [
+    locationFilter,
+    taskLocationQueryParams,
+    isShopWorkspace,
+    activeShopId,
+    isStudioLike,
+    isStudioWorkspace,
+    activeStudioLocationId,
+  ]);
   const taskListQueryKey = useMemo(
-    () => ['user-workspace', 'tasks', activeStudioLocationId],
-    [activeStudioLocationId]
+    () => ['user-workspace', 'tasks', activeShopId, activeStudioLocationId, isShopWorkspace, isStudioWorkspace, locationFilter],
+    [activeShopId, activeStudioLocationId, isShopWorkspace, isStudioWorkspace, locationFilter]
   );
+
+  useEffect(() => {
+    if (locationFilter === 'all') return;
+    if (!locationOptions.some((location) => location.id === locationFilter)) {
+      setLocationFilter('all');
+    }
+  }, [locationFilter, locationOptions]);
 
   useEffect(() => {
     setPageSearchConfig({
@@ -165,7 +230,7 @@ const Tasks = () => {
   const { data: tasksData = [], isLoading: tasksLoading } = useQuery({
     queryKey: taskListQueryKey,
     queryFn: async () => {
-      const res = await userWorkspaceService.getTasks();
+      const res = await userWorkspaceService.getTasks(taskLocationQueryParams);
       return Array.isArray(res?.data) ? res.data : [];
     },
     enabled: scopeReady,
@@ -181,24 +246,24 @@ const Tasks = () => {
   });
 
   const { data: taskDetailResponse, isLoading: detailLoading } = useQuery({
-    queryKey: ['user-workspace', 'task-detail', selectedTaskId, activeStudioLocationId],
+    queryKey: ['user-workspace', 'task-detail', selectedTaskId, activeShopId, activeStudioLocationId, locationFilter],
     enabled: Boolean(selectedTaskId && openDetails && scopeReady),
-    queryFn: () => userWorkspaceService.getTaskDetail(selectedTaskId),
+    queryFn: () => userWorkspaceService.getTaskDetail(selectedTaskId, taskLocationQueryParams),
   });
 
   const { data: taskActivityResponse, isLoading: activityLoading } = useQuery({
-    queryKey: ['user-workspace', 'task-activity', selectedTaskId, activeStudioLocationId],
+    queryKey: ['user-workspace', 'task-activity', selectedTaskId, activeShopId, activeStudioLocationId, locationFilter],
     enabled: Boolean(selectedTaskId && openDetails && scopeReady),
-    queryFn: () => userWorkspaceService.getTaskActivity(selectedTaskId),
+    queryFn: () => userWorkspaceService.getTaskActivity(selectedTaskId, taskLocationQueryParams),
   });
   const { data: taskCommentsResponse, isLoading: commentsLoading } = useQuery({
-    queryKey: ['user-workspace', 'task-comments', selectedTaskId, activeStudioLocationId],
+    queryKey: ['user-workspace', 'task-comments', selectedTaskId, activeShopId, activeStudioLocationId, locationFilter],
     enabled: Boolean(selectedTaskId && openDetails && scopeReady),
-    queryFn: () => userWorkspaceService.getTaskComments(selectedTaskId),
+    queryFn: () => userWorkspaceService.getTaskComments(selectedTaskId, taskLocationQueryParams),
   });
 
   const saveTaskMutation = useMutation({
-    mutationFn: async (payload) => userWorkspaceService.updateTask(payload.id, payload),
+    mutationFn: async (payload) => userWorkspaceService.updateTask(payload.id, payload, taskLocationQueryParams),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user-workspace', 'tasks'] });
       if (selectedTaskId) {
@@ -214,7 +279,7 @@ const Tasks = () => {
   });
 
   const createTaskMutation = useMutation({
-    mutationFn: async (payload) => userWorkspaceService.createTask(payload),
+    mutationFn: async (payload) => userWorkspaceService.createTask(payload, taskWriteLocationQueryParams),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user-workspace', 'tasks'] });
       setOpenCreateModal(false);
@@ -228,7 +293,7 @@ const Tasks = () => {
   });
 
   const deleteTaskMutation = useMutation({
-    mutationFn: (id) => userWorkspaceService.deleteTask(id),
+    mutationFn: (id) => userWorkspaceService.deleteTask(id, taskLocationQueryParams),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user-workspace', 'tasks'] });
       if (selectedTaskId) {
@@ -248,7 +313,7 @@ const Tasks = () => {
   });
 
   const quickStatusMutation = useMutation({
-    mutationFn: ({ id, status }) => userWorkspaceService.updateTask(id, { status }),
+    mutationFn: ({ id, status }) => userWorkspaceService.updateTask(id, { status }, taskLocationQueryParams),
     onMutate: async ({ id, status }) => {
       await queryClient.cancelQueries({ queryKey: taskListQueryKey });
       const previousTasks = queryClient.getQueryData(taskListQueryKey);
@@ -260,7 +325,7 @@ const Tasks = () => {
     },
     onError: (err, _vars, context) => {
       if (context?.previousTasks) {
-        queryClient.setQueryData(['user-workspace', 'tasks'], context.previousTasks);
+        queryClient.setQueryData(taskListQueryKey, context.previousTasks);
       }
       showError(err?.response?.data?.message || 'Failed to update task status');
     },
@@ -270,7 +335,7 @@ const Tasks = () => {
   });
 
   const addCommentMutation = useMutation({
-    mutationFn: ({ taskId, text }) => userWorkspaceService.addTaskComment(taskId, { text }),
+    mutationFn: ({ taskId, text }) => userWorkspaceService.addTaskComment(taskId, { text }, taskLocationQueryParams),
     onSuccess: () => {
       if (selectedTaskId) {
         queryClient.invalidateQueries({ queryKey: ['user-workspace', 'task-activity', selectedTaskId] });
@@ -648,6 +713,7 @@ const Tasks = () => {
                       : 'Manual'}
             </Badge>
             <Badge variant="outline">Priority: {priorityFilter === 'all' ? 'All' : priorityFilter}</Badge>
+            <Badge variant="outline">{locationFilterLabel}: {selectedLocationName}</Badge>
             <Badge variant="outline">
               Results: {filteredTasks.length}/{tasksData.length}
             </Badge>
@@ -1485,6 +1551,23 @@ const Tasks = () => {
             </div>
 
             <div className="space-y-1.5">
+              <Label>{locationFilterLabel}</Label>
+              <Select value={locationFilter} onValueChange={setLocationFilter} disabled={locationOptions.length === 0}>
+                <SelectTrigger>
+                  <SelectValue placeholder={locationFilterLabel} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All locations</SelectItem>
+                  {locationOptions.map((location) => (
+                    <SelectItem key={location.id} value={location.id}>
+                      {location.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
               <Label>Privacy</Label>
               <Select value={privacyFilter} onValueChange={setPrivacyFilter}>
                 <SelectTrigger>
@@ -1508,6 +1591,7 @@ const Tasks = () => {
                   setSourceFilter('all');
                   setAssigneeFilter('all');
                   setPrivacyFilter('all');
+                  setLocationFilter('all');
                 }}
               >
                 Reset filters

@@ -7,9 +7,9 @@ const {
 
 const resolveHeaderLocationId = (req) => {
   const raw =
+    req.query?.studioLocationId ||
     req.headers['x-studio-location-id'] ||
-    req.headers['x-studio-location'] ||
-    req.query?.studioLocationId;
+    req.headers['x-studio-location'];
   if (!raw || raw === 'all') return null;
   return String(raw).trim();
 };

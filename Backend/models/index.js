@@ -512,6 +512,8 @@ Equipment.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studi
 // Shop Management Relationships
 Tenant.hasMany(Shop, { foreignKey: 'tenantId', as: 'shops' });
 Shop.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Shop.hasMany(UserTask, { foreignKey: 'shopId', as: 'tasks' });
+UserTask.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
 
 User.belongsToMany(Shop, {
   through: UserShop,

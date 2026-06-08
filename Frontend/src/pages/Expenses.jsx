@@ -138,6 +138,11 @@ const quickVendorSchema = z.object({
   phone: z.string().optional()
 });
 
+const formatJobOptionLabel = (job) => {
+  const label = [job?.jobNumber, job?.title].filter(Boolean).join(' - ');
+  return label || 'Untitled job';
+};
+
 const multipleExpenseSchema = z.object({
   expenseDate: z.date({ required_error: 'Expense date is required' }),
   expenses: z.array(multipleExpenseItemSchema).min(1, 'At least one expense is required'),
@@ -350,12 +355,28 @@ const Expenses = () => {
 
   useEffect(() => {
     if (!scopeReady) return;
-    if (isPrintingPress) {
+    if (isStudioLike) {
       fetchJobs();
     }
     fetchVendors();
     fetchStats();
-  }, [scopeReady, activeTenantId, activeShopId, activeStudioLocationId, isPrintingPress]);
+  }, [scopeReady, activeTenantId, activeShopId, activeStudioLocationId, isStudioLike]);
+
+  const jobOptions = useMemo(() => {
+    const optionsById = new Map();
+
+    jobs.forEach((job) => {
+      if (job?.id) {
+        optionsById.set(job.id, job);
+      }
+    });
+
+    if (editingExpense?.jobId && editingExpense?.job && !optionsById.has(editingExpense.jobId)) {
+      optionsById.set(editingExpense.jobId, editingExpense.job);
+    }
+
+    return Array.from(optionsById.values());
+  }, [jobs, editingExpense?.job, editingExpense?.jobId]);
 
   useEffect(() => {
     const total = expensesResponse?.count ?? expenses.length;
@@ -1349,9 +1370,9 @@ const Expenses = () => {
                             </FormControl>
                             <SelectContent>
                               <SelectItem value={SELECT_NONE_VALUE}>None</SelectItem>
-                              {jobs.map(job => (
+                              {jobOptions.map(job => (
                                 <SelectItem key={job.id} value={job.id}>
-                                  {job.jobNumber} - {job.title}
+                                  {formatJobOptionLabel(job)}
                                 </SelectItem>
                               ))}
                             </SelectContent>
@@ -1534,9 +1555,9 @@ const Expenses = () => {
                                 </FormControl>
                                 <SelectContent>
                                   <SelectItem value={SELECT_NONE_VALUE}>None</SelectItem>
-                                  {jobs.map(job => (
+                                  {jobOptions.map(job => (
                                     <SelectItem key={job.id} value={job.id}>
-                                      {job.jobNumber} - {job.title}
+                                      {formatJobOptionLabel(job)}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
@@ -1779,9 +1800,9 @@ const Expenses = () => {
                             </FormControl>
                             <SelectContent>
                               <SelectItem value={SELECT_NONE_VALUE}>None</SelectItem>
-                              {jobs.map(job => (
+                              {jobOptions.map(job => (
                                 <SelectItem key={job.id} value={job.id}>
-                                  {job.jobNumber} - {job.title}
+                                  {formatJobOptionLabel(job)}
                                 </SelectItem>
                               ))}
                             </SelectContent>

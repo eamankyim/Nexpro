@@ -3,14 +3,61 @@ const { getTenantLogoUrl } = require('../utils/tenantLogo');
 const { Op } = require('sequelize');
 const emailService = require('../services/emailService');
 const emailTemplates = require('../services/emailTemplates');
-const {
-  applyStudioLocationFilter,
-  attachStudioLocationToPayload,
-} = require('../utils/studioLocationUtils');
+const { attachScopedToPayload } = require('../utils/shopUtils');
 
 const ALLOWED_TASK_STATUSES = ['todo', 'in_progress', 'on_hold', 'completed'];
-const taskScopeWhere = (req, extra = {}) =>
-  applyStudioLocationFilter(req, { tenantId: req.tenantId, ...extra });
+const isAllLocationParam = (value) => String(value || '').trim().toLowerCase() === 'all';
+const withTaskLocationCondition = (where, condition) => ({
+  [Op.and]: [where, condition]
+});
+const taskScopeWhere = (req, extra = {}) => {
+  const where = { tenantId: req.tenantId, ...extra };
+
+  if (req.shopScoped) {
+    if (isAllLocationParam(req.query?.shopId)) {
+      if (req.allowedShopIds?.length) {
+        return withTaskLocationCondition(where, {
+          [Op.or]: [{ shopId: { [Op.in]: req.allowedShopIds } }, { shopId: null }]
+        });
+      }
+      return where;
+    }
+    if (req.shopFilterId) {
+      return withTaskLocationCondition(where, {
+        [Op.or]: [{ shopId: req.shopFilterId }, { shopId: null }]
+      });
+    }
+    if (req.allowedShopIds?.length) {
+      return withTaskLocationCondition(where, {
+        [Op.or]: [{ shopId: { [Op.in]: req.allowedShopIds } }, { shopId: null }]
+      });
+    }
+  }
+
+  if (req.studioLocationScoped) {
+    if (isAllLocationParam(req.query?.studioLocationId)) {
+      if (req.canAccessAllStudioLocations) return where;
+      if (req.allowedStudioLocationIds?.length) {
+        return withTaskLocationCondition(where, {
+          [Op.or]: [{ studioLocationId: { [Op.in]: req.allowedStudioLocationIds } }, { studioLocationId: null }]
+        });
+      }
+      return where;
+    }
+    if (req.studioLocationFilterId) {
+      return withTaskLocationCondition(where, {
+        [Op.or]: [{ studioLocationId: req.studioLocationFilterId }, { studioLocationId: null }]
+      });
+    }
+    if (!req.canAccessAllStudioLocations && req.allowedStudioLocationIds?.length) {
+      return withTaskLocationCondition(where, {
+        [Op.or]: [{ studioLocationId: { [Op.in]: req.allowedStudioLocationIds } }, { studioLocationId: null }]
+      });
+    }
+  }
+
+  return where;
+};
 
 const normalizeTaskMetadata = (value) => (value && typeof value === 'object' ? value : {});
 const normalizeTaskComments = (metadata) => (Array.isArray(metadata.comments) ? metadata.comments : []);
@@ -281,7 +328,7 @@ exports.createTask = async (req, res, next) => {
       finalAssigneeId = assigneeId;
     }
 
-    const task = await UserTask.create(attachStudioLocationToPayload(req, {
+    const task = await UserTask.create(attachScopedToPayload(req, {
       tenantId: req.tenantId,
       userId: req.user.id,
       title: title.trim(),

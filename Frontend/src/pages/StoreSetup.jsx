@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -212,6 +212,34 @@ const normalizeSlug = (value) => String(value || '')
   .replace(/^-+|-+$/g, '')
   .slice(0, 80);
 
+const DEFAULT_PUBLIC_STORE_ORIGIN = 'https://www.absghana.com';
+
+const getPublicStoreBaseUrl = () => {
+  const configuredUrl = (
+    import.meta.env.VITE_PUBLIC_STORE_URL ||
+    import.meta.env.VITE_PUBLIC_SITE_URL ||
+    DEFAULT_PUBLIC_STORE_ORIGIN
+  );
+  const trimmedUrl = String(configuredUrl || DEFAULT_PUBLIC_STORE_ORIGIN).trim() || DEFAULT_PUBLIC_STORE_ORIGIN;
+  const withProtocol = /^https?:\/\//i.test(trimmedUrl) ? trimmedUrl : `https://${trimmedUrl}`;
+  return `${withProtocol.replace(/\/+$/g, '').replace(/\/store$/i, '')}/store`;
+};
+
+const PUBLIC_STORE_BASE_URL = getPublicStoreBaseUrl();
+const PUBLIC_STORE_DISPLAY_BASE_URL = PUBLIC_STORE_BASE_URL.replace(/^https?:\/\//i, '');
+
+const buildPublicStoreUrl = (slug) => {
+  const normalizedSlug = normalizeSlug(slug) || 'store-url';
+  return `${PUBLIC_STORE_BASE_URL}/${encodeURIComponent(normalizedSlug)}`;
+};
+
+const getPublicStoreDisplayUrl = (slug) => {
+  const normalizedSlug = normalizeSlug(slug) || 'store-url';
+  return `${PUBLIC_STORE_DISPLAY_BASE_URL}/${normalizedSlug}`;
+};
+
+const isLikelyGeneratedSlug = (slug) => /^[a-z0-9]+(?:-[a-z0-9]+)*-[a-z0-9]{6}$/.test(slug);
+
 const getResponseData = (response) => response?.data?.data || response?.data || response;
 
 const getSettledData = (result) => (result?.status === 'fulfilled' ? getResponseData(result.value) : null);
@@ -276,7 +304,7 @@ const buildStoreSetupDefaults = ({ activeTenant, user, organization, profile }) 
 
   return {
     displayName,
-    slug: normalizeSlug(activeTenant?.slug || displayName),
+    slug: normalizeSlug(displayName),
     description: firstFilled(
       tenantMetadata.storeDescription,
       tenantMetadata.businessDescription,
@@ -476,7 +504,16 @@ const UploadField = ({ label, description, value, onChange, onUpload, uploading,
   );
 };
 
-const StorePreview = ({ values, previewMode, enabledPaymentMethods, enabledDeliveryOptions, className, sticky = false }) => {
+const StorePreview = ({
+  values,
+  previewSlug,
+  previewMode,
+  onPreviewModeChange,
+  enabledPaymentMethods,
+  enabledDeliveryOptions,
+  className,
+  sticky = false,
+}) => {
   const whatsapp = values.whatsappNumber || values.contactPhone;
   const containerClass = previewMode === 'mobile' ? 'mx-auto max-w-[320px]' : 'w-full';
   const logoSrc = resolveImageUrl(values.logoUrl);
@@ -485,9 +522,14 @@ const StorePreview = ({ values, previewMode, enabledPaymentMethods, enabledDeliv
   return (
     <Card className={cn('border border-border', sticky && 'sticky top-4', className)}>
       <CardHeader className="space-y-2">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle>Live preview</CardTitle>
-          <Badge variant="outline">{previewMode === 'mobile' ? 'Mobile' : 'Desktop'}</Badge>
+          <Tabs value={previewMode} onValueChange={onPreviewModeChange}>
+            <TabsList>
+              <TabsTrigger value="desktop"><Monitor className="mr-2 h-4 w-4" />Desktop</TabsTrigger>
+              <TabsTrigger value="mobile"><Smartphone className="mr-2 h-4 w-4" />Mobile</TabsTrigger>
+            </TabsList>
+          </Tabs>
         </div>
         <p className="text-sm text-muted-foreground">Updates as you complete each setup step.</p>
       </CardHeader>
@@ -509,7 +551,14 @@ const StorePreview = ({ values, previewMode, enabledPaymentMethods, enabledDeliv
                 </div>
                 <div className="min-w-0">
                   <h3 className="truncate font-semibold">{values.displayName || 'Your store'}</h3>
-                  <p className="truncate text-xs text-muted-foreground">/{values.slug || 'store-url'}</p>
+                  <a
+                    href={buildPublicStoreUrl(previewSlug)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block truncate text-xs text-muted-foreground hover:text-green-700"
+                  >
+                    {getPublicStoreDisplayUrl(previewSlug)}
+                  </a>
                 </div>
               </div>
               <p className="min-h-12 text-sm text-muted-foreground">
@@ -520,7 +569,7 @@ const StorePreview = ({ values, previewMode, enabledPaymentMethods, enabledDeliv
                 <p className="mt-3 text-sm font-medium">Sample listing</p>
                 <p className="mt-1 text-xs text-muted-foreground">Product cards will show photos, public prices, and order actions.</p>
                 <Button className="mt-3 w-full" style={{ backgroundColor: values.primaryColor || undefined }}>
-                  Contact to order
+                  Order now
                 </Button>
               </div>
               <div className="mt-4 grid gap-2 text-xs text-muted-foreground">
@@ -582,6 +631,7 @@ const StoreSetup = () => {
   const [uploadingField, setUploadingField] = useState(null);
   const [previewMode, setPreviewMode] = useState('desktop');
   const [introDismissed, setIntroDismissed] = useState(false);
+  const slugEditedRef = useRef(false);
 
   const form = useForm({
     resolver: zodResolver(setupSchema),
@@ -608,6 +658,20 @@ const StoreSetup = () => {
 
   const values = form.watch();
   const debouncedSlug = useDebounce(values.slug, 500);
+  const slugSuggestion = useMemo(() => normalizeSlug(values.displayName), [values.displayName]);
+  const previewSlug = useMemo(() => {
+    const suggested = normalizeSlug(values.displayName);
+    const current = normalizeSlug(values.slug);
+    if (
+      !slugEditedRef.current ||
+      !current ||
+      current === slugSuggestion ||
+      isLikelyGeneratedSlug(current)
+    ) {
+      return suggested || current || 'store-url';
+    }
+    return current || suggested || 'store-url';
+  }, [values.displayName, values.slug, slugSuggestion]);
 
   const enabledPaymentMethods = useMemo(() => (
     PAYMENT_OPTIONS
@@ -729,10 +793,24 @@ const StoreSetup = () => {
 
       setSettings(nextSettings || null);
       setChecklist(statusData?.checklist || null);
+      const resolvedDisplayName = savedOrDefault(nextSettings?.displayName, inferredDefaults.displayName);
+      const savedSlug = normalizeSlug(nextSettings?.slug);
+      const tenantSlug = normalizeSlug(activeTenant?.slug);
+      const suggestedSlug = normalizeSlug(resolvedDisplayName || inferredDefaults.displayName);
+      const savedSlugManuallyEdited = metadata.slugManuallyEdited === true;
+      const hasCustomSavedSlug = Boolean(
+        savedSlug &&
+        (
+          (savedSlugManuallyEdited && !isLikelyGeneratedSlug(savedSlug)) ||
+          (savedSlug !== tenantSlug && savedSlug !== suggestedSlug && !isLikelyGeneratedSlug(savedSlug))
+        )
+      );
+      const resolvedSlug = hasCustomSavedSlug ? savedSlug : savedOrDefault(suggestedSlug, inferredDefaults.slug);
+      slugEditedRef.current = hasCustomSavedSlug;
 
       form.reset({
-        displayName: savedOrDefault(nextSettings?.displayName, inferredDefaults.displayName),
-        slug: savedOrDefault(nextSettings?.slug, inferredDefaults.slug),
+        displayName: resolvedDisplayName,
+        slug: resolvedSlug,
         description: savedOrDefault(nextSettings?.description, inferredDefaults.description),
         category: savedOrDefault(metadata.category, inferredDefaults.category),
         whatsappNumber: savedOrDefault(nextSettings?.whatsappNumber, inferredDefaults.whatsappNumber),
@@ -793,6 +871,19 @@ const StoreSetup = () => {
   }, [currentStep, searchParams]);
 
   useEffect(() => {
+    if (loading || !slugSuggestion || values.slug === slugSuggestion) return;
+    if (
+      slugEditedRef.current &&
+      values.slug &&
+      !isLikelyGeneratedSlug(values.slug) &&
+      values.slug !== slugSuggestion
+    ) {
+      return;
+    }
+    form.setValue('slug', slugSuggestion, { shouldValidate: true });
+  }, [form, loading, slugSuggestion, values.slug]);
+
+  useEffect(() => {
     let cancelled = false;
     if (!debouncedSlug || debouncedSlug.length < 3 || !/^[a-z0-9-]+$/.test(debouncedSlug)) {
       setSlugStatus({ state: 'idle', message: 'Use lowercase letters, numbers, and dashes.' });
@@ -816,10 +907,10 @@ const StoreSetup = () => {
   }, [debouncedSlug]);
 
   const handleStoreNameBlur = useCallback(() => {
-    if (!form.getValues('slug')) {
-      form.setValue('slug', normalizeSlug(form.getValues('displayName')), { shouldValidate: true });
+    if (!slugEditedRef.current && !form.getValues('slug') && slugSuggestion) {
+      form.setValue('slug', slugSuggestion, { shouldValidate: true });
     }
-  }, [form]);
+  }, [form, slugSuggestion]);
 
   const handleStepClick = useCallback((step) => {
     if (step > highestStepReached) return;
@@ -829,7 +920,7 @@ const StoreSetup = () => {
   const handleNext = useCallback(async () => {
     const valid = await form.trigger(getStepFields(currentStep));
     if (!valid) return;
-    if (currentStep === 0 && slugStatus.state === 'taken') return;
+    if (currentStep === 0 && ['checking', 'taken'].includes(slugStatus.state)) return;
     moveToStep(currentStep + 1);
   }, [currentStep, form, moveToStep, slugStatus.state]);
 
@@ -860,13 +951,16 @@ const StoreSetup = () => {
 
   const buildPayload = useCallback((launch = false) => {
     const formValues = form.getValues();
+    const resolvedSlug = slugEditedRef.current
+      ? normalizeSlug(formValues.slug)
+      : normalizeSlug(formValues.displayName || formValues.slug);
     const deliveryEnabled = Boolean(
       formValues.deliveryOptions.localDelivery.enabled ||
       formValues.deliveryOptions.nationwideDelivery.enabled
     );
     return {
       displayName: formValues.displayName,
-      slug: normalizeSlug(formValues.slug),
+      slug: resolvedSlug,
       description: formValues.description || null,
       logoUrl: formValues.logoUrl || null,
       bannerImageUrl: formValues.bannerImageUrl || null,
@@ -883,6 +977,7 @@ const StoreSetup = () => {
       metadata: {
         ...(settings?.metadata || {}),
         category: formValues.category || null,
+        slugManuallyEdited: slugEditedRef.current,
         paymentMethods: formValues.paymentMethods,
         deliveryOptions: formValues.deliveryOptions,
         localDeliveryAreas: formValues.localDeliveryAreas || null,
@@ -944,11 +1039,17 @@ const StoreSetup = () => {
               <FormLabel>Store URL</FormLabel>
               <FormControl>
                 <div className="flex min-h-12 overflow-hidden rounded-xl border border-input bg-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
-                  <span className="flex items-center border-r border-border bg-muted px-3 text-sm text-muted-foreground">/store/</span>
+                  <span className="flex items-center whitespace-nowrap border-r border-border bg-muted px-3 text-sm text-muted-foreground">
+                    {PUBLIC_STORE_DISPLAY_BASE_URL}/
+                  </span>
                   <Input
                     {...field}
+                    placeholder={slugSuggestion || 'aseda-store'}
                     className="h-12 border-0 text-base focus-visible:ring-0 focus-visible:ring-offset-0"
-                    onChange={(event) => field.onChange(normalizeSlug(event.target.value))}
+                    onChange={(event) => {
+                      slugEditedRef.current = true;
+                      field.onChange(normalizeSlug(event.target.value));
+                    }}
                   />
                 </div>
               </FormControl>
@@ -957,7 +1058,10 @@ const StoreSetup = () => {
                 slugStatus.state === 'taken' && 'text-destructive',
               )}
               >
-                {slugStatus.message || 'This becomes the public URL for your customer-facing store.'}
+                <span className="inline-flex items-center gap-2">
+                  {slugStatus.state === 'checking' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  <span>{slugStatus.message || `This becomes ${getPublicStoreDisplayUrl(previewSlug)}.`}</span>
+                </span>
               </FormDescription>
               <FormMessage />
             </FormItem>
@@ -1092,7 +1196,9 @@ const StoreSetup = () => {
           <StorePreview
             className="xl:hidden"
             values={values}
-            previewMode="mobile"
+            previewSlug={previewSlug}
+            previewMode={previewMode}
+            onPreviewModeChange={setPreviewMode}
             enabledPaymentMethods={enabledPaymentMethods}
             enabledDeliveryOptions={enabledDeliveryOptions}
           />
@@ -1313,21 +1419,11 @@ const StoreSetup = () => {
             </Badge>
           </div>
         </div>
-        <div className="flex flex-col gap-3 rounded-xl border border-border p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="font-medium">Preview mode</p>
-            <p className="text-sm text-muted-foreground">Review how the live preview behaves before launch.</p>
-          </div>
-          <Tabs value={previewMode} onValueChange={setPreviewMode}>
-            <TabsList>
-              <TabsTrigger value="desktop"><Monitor className="mr-2 h-4 w-4" />Desktop</TabsTrigger>
-              <TabsTrigger value="mobile"><Smartphone className="mr-2 h-4 w-4" />Mobile</TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </div>
         <StorePreview
           values={values}
+          previewSlug={previewSlug}
           previewMode={previewMode}
+          onPreviewModeChange={setPreviewMode}
           enabledPaymentMethods={enabledPaymentMethods}
           enabledDeliveryOptions={enabledDeliveryOptions}
         />
@@ -1337,7 +1433,7 @@ const StoreSetup = () => {
             status={{ ready: readiness.storeInfoReady, label: readiness.storeInfoReady ? 'Ready to publish' : 'Needs basics' }}
             onEdit={() => handleStepClick(0)}
           >
-            {values.displayName || 'Store name missing'} · /{values.slug || 'store-url'} · {values.category || 'No category selected'}
+            {values.displayName || 'Store name missing'} · {getPublicStoreDisplayUrl(previewSlug)} · {values.category || 'No category selected'}
           </SummaryCard>
           <SummaryCard
             title="Branding"
@@ -1396,6 +1492,7 @@ const StoreSetup = () => {
     handleStepClick,
     handleStoreNameBlur,
     previewMode,
+    previewSlug,
     readiness,
     slugStatus,
     uploadingField,
@@ -1511,7 +1608,9 @@ const StoreSetup = () => {
           className={currentStep === STEPS.length - 1 ? 'hidden' : 'hidden xl:block'}
           sticky
           values={values}
+          previewSlug={previewSlug}
           previewMode={previewMode}
+          onPreviewModeChange={setPreviewMode}
           enabledPaymentMethods={enabledPaymentMethods}
           enabledDeliveryOptions={enabledDeliveryOptions}
         />

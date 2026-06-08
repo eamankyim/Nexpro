@@ -34,7 +34,9 @@ async function createOrUpsertAutomatedTask({
   sourceId,
   sourceEvent,
   actorUserId = null,
-  link = null
+  link = null,
+  shopId = null,
+  studioLocationId = null
 }) {
   if (!tenantId || !title || !sourceType || !sourceId || !sourceEvent) return null;
   const dedupeKey = `${sourceType}:${sourceId}:${sourceEvent}`;
@@ -64,6 +66,8 @@ async function createOrUpsertAutomatedTask({
     sourceId: String(sourceId),
     sourceEvent,
     dedupeKey,
+    shopId: shopId || null,
+    studioLocationId: studioLocationId || null,
     metadata: {
       automation: true,
       link: link || null
@@ -92,7 +96,9 @@ async function createLeadFollowUpTask({ lead, followUpDate, nextStep, tenantId, 
     sourceId: lead.id,
     sourceEvent: 'follow_up',
     actorUserId: triggeredBy || lead.createdBy || null,
-    link: `/leads/${lead.id}`
+    link: `/leads/${lead.id}`,
+    shopId: lead.shopId || null,
+    studioLocationId: lead.studioLocationId || null
   });
 }
 
@@ -110,7 +116,9 @@ async function createInvoiceOverdueTask({ invoice, tenantId, triggeredBy }) {
     sourceId: invoice.id,
     sourceEvent: 'overdue_follow_up',
     actorUserId: triggeredBy || null,
-    link: '/invoices'
+    link: '/invoices',
+    shopId: invoice.shopId || null,
+    studioLocationId: invoice.studioLocationId || null
   });
 }
 
@@ -128,7 +136,9 @@ async function createLowStockTask({ item, tenantId, triggeredBy }) {
     sourceId: item.id,
     sourceEvent: 'low_stock_restock',
     actorUserId: triggeredBy || null,
-    link: '/materials'
+    link: '/materials',
+    shopId: item.shopId || null,
+    studioLocationId: item.studioLocationId || null
   });
 }
 
@@ -153,7 +163,7 @@ async function runQuoteNoResponseScan() {
         status: 'sent',
         createdAt: { [Op.lte]: thresholdDate }
       },
-      attributes: ['id', 'quoteNumber', 'title', 'createdBy', 'createdAt']
+      attributes: ['id', 'quoteNumber', 'title', 'createdBy', 'createdAt', 'shopId', 'studioLocationId']
     });
 
     for (const quote of staleQuotes) {
@@ -168,7 +178,9 @@ async function runQuoteNoResponseScan() {
         sourceId: quote.id,
         sourceEvent: 'no_response_follow_up',
         actorUserId: quote.createdBy || null,
-        link: '/quotes'
+        link: '/quotes',
+        shopId: quote.shopId || null,
+        studioLocationId: quote.studioLocationId || null
       });
       if (task) createdOrUpdated += 1;
     }

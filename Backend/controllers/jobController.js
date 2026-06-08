@@ -8,7 +8,9 @@ const { getPagination } = require('../utils/paginationUtils');
 const { baseUploadDir } = require('../middleware/upload');
 const activityLogger = require('../services/activityLogger');
 const { createInvoiceRevenueJournal } = require('../services/invoiceAccountingService');
+const { updateCustomerBalance } = require('../services/customerBalanceService');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const { invalidateInvoiceListCache, invalidateAfterMutation } = require('../middleware/cache');
 const {
   applyStudioLocationFilter,
   attachStudioLocationToPayload,
@@ -17,12 +19,182 @@ const { parseDeliveryStatusInput } = require('../utils/deliveryStatus');
 const { getJobItemCategories } = require('../config/jobItemCategories');
 const { getMaterialTypesForStudioType } = require('../config/studioTypes');
 const { buildCustomerFacingJobTitle } = require('../utils/jobCustomerMessageText');
+const { getTaxConfigForTenant } = require('../utils/taxConfig');
+const { convertLineItemsFromTaxInclusive } = require('../utils/taxCalculation');
 
 const jobWhere = (req, extra = {}) =>
   applyStudioLocationFilter(req, applyTenantFilter(req.tenantId, extra));
 
 const WHATSAPP_TEMPLATE_CREATED = 'job_created';
 const WHATSAPP_TEMPLATE_COMPLETED = 'job_completed';
+const MONEY_TOLERANCE = 0.01;
+
+const toMoneyNumber = (value) => {
+  const parsed = parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const roundMoney = (value) => Math.round(toMoneyNumber(value) * 100) / 100;
+
+const normalizeBillableJobItems = (items = []) =>
+  (Array.isArray(items) ? items : []).map((item) => {
+    const quantity = toMoneyNumber(item.quantity);
+    const unitPrice = toMoneyNumber(item.unitPrice);
+    const lineGross = quantity * unitPrice;
+    const totalPrice = item.totalPrice != null
+      ? toMoneyNumber(item.totalPrice)
+      : lineGross;
+
+    return {
+      category: item.category || '',
+      description: item.description || '',
+      paperSize: item.paperSize || '',
+      quantity,
+      unitPrice,
+      totalPrice: roundMoney(totalPrice),
+    };
+  });
+
+const getBillableJobSignature = (jobLike) => JSON.stringify({
+  finalPrice: roundMoney(jobLike?.finalPrice || 0),
+  items: normalizeBillableJobItems(jobLike?.items || []),
+});
+
+const hasBillableJobChange = ({ currentJob, updatePayload, incomingItems }) => {
+  if (updatePayload.finalPrice !== undefined) {
+    const currentFinalPrice = roundMoney(currentJob.finalPrice || 0);
+    const nextFinalPrice = roundMoney(updatePayload.finalPrice || 0);
+    if (Math.abs(currentFinalPrice - nextFinalPrice) > MONEY_TOLERANCE) {
+      return true;
+    }
+  }
+
+  if (!Array.isArray(incomingItems)) {
+    return false;
+  }
+
+  const proposedJob = {
+    ...currentJob.get({ plain: true }),
+    ...updatePayload,
+    items: incomingItems.map((item) => ({
+      ...sanitizePayload(item),
+      totalPrice: toMoneyNumber(item.quantity || 0) * toMoneyNumber(item.unitPrice || 0),
+    })),
+  };
+
+  return getBillableJobSignature(currentJob) !== getBillableJobSignature(proposedJob);
+};
+
+const isInvoicePaymentLocked = (invoice) =>
+  ['paid', 'partial'].includes(invoice.status) || toMoneyNumber(invoice.amountPaid || 0) > 0;
+
+const buildInvoicePayloadFromJob = ({ job, taxRate = 0, pricesAreTaxInclusive = false }) => {
+  const jobItems = Array.isArray(job.items) ? job.items : [];
+  let subtotal = 0;
+  let invoiceItems = [];
+  let totalItemDiscount = 0;
+
+  if (jobItems.length > 0) {
+    invoiceItems = jobItems.map((item) => {
+      const quantity = toMoneyNumber(item.quantity);
+      const unitPrice = toMoneyNumber(item.unitPrice);
+      const lineGross = quantity * unitPrice;
+      const storedTotal = item.totalPrice != null ? toMoneyNumber(item.totalPrice) : lineGross;
+      const explicitDiscount = toMoneyNumber(item.discountAmount || 0);
+      const derivedDiscount = Math.max(0, lineGross - storedTotal);
+      const lineDiscount = explicitDiscount > 0 ? explicitDiscount : derivedDiscount;
+
+      return {
+        description: item.description || item.category,
+        category: item.category,
+        paperSize: item.paperSize,
+        quantity,
+        unitPrice,
+        discountAmount: roundMoney(lineDiscount),
+        discountPercent: toMoneyNumber(item.discountPercent || 0),
+        discountReason: item.discountReason || (lineDiscount > 0 ? 'Discount from job line' : null),
+        total: roundMoney(lineGross - lineDiscount),
+      };
+    });
+    subtotal = invoiceItems.reduce(
+      (sum, item) => sum + (toMoneyNumber(item.quantity) * toMoneyNumber(item.unitPrice)),
+      0
+    );
+    totalItemDiscount = invoiceItems.reduce((sum, item) => sum + toMoneyNumber(item.discountAmount || 0), 0);
+  } else {
+    subtotal = toMoneyNumber(job.finalPrice || 0);
+    invoiceItems = [{
+      description: job.title,
+      quantity: 1,
+      unitPrice: roundMoney(subtotal),
+      total: roundMoney(subtotal),
+    }];
+  }
+
+  if (pricesAreTaxInclusive && taxRate > 0) {
+    const converted = convertLineItemsFromTaxInclusive(invoiceItems, taxRate);
+    invoiceItems = converted.items;
+    subtotal = converted.subtotal;
+    totalItemDiscount = converted.discountTotal ?? invoiceItems.reduce(
+      (sum, item) => sum + toMoneyNumber(item.discountAmount || 0),
+      0
+    );
+  }
+
+  const comparableFinalPrice = pricesAreTaxInclusive && taxRate > 0
+    ? roundMoney(toMoneyNumber(job.finalPrice || 0) / (1 + taxRate / 100))
+    : toMoneyNumber(job.finalPrice || 0);
+  const jobLevelDiscountFallback = Math.max(0, toMoneyNumber(subtotal) - comparableFinalPrice);
+  const effectiveDiscount = totalItemDiscount > 0 ? totalItemDiscount : jobLevelDiscountFallback;
+
+  return {
+    customerId: job.customerId,
+    studioLocationId: job.studioLocationId || null,
+    sourceType: 'job',
+    subtotal: roundMoney(subtotal),
+    taxRate,
+    discountType: 'fixed',
+    discountValue: roundMoney(effectiveDiscount),
+    discountAmount: roundMoney(effectiveDiscount),
+    discountReason: effectiveDiscount > 0
+      ? (invoiceItems.find((item) => item.discountReason)?.discountReason || 'Discounts from job')
+      : null,
+    items: invoiceItems,
+  };
+};
+
+const syncEditableInvoicesForJob = async ({ job, invoices, tenantId, transaction }) => {
+  const activeInvoices = (invoices || []).filter((invoice) => invoice.status !== 'cancelled');
+  if (activeInvoices.length === 0) {
+    return [];
+  }
+
+  const taxConfig = await getTaxConfigForTenant(tenantId);
+  const syncedInvoices = [];
+
+  for (const invoice of activeInvoices) {
+    if (isInvoicePaymentLocked(invoice)) {
+      const error = new Error(
+        `Cannot update job price because invoice ${invoice.invoiceNumber || invoice.id} already has payments. Update the invoice manually or create an adjustment.`
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const taxRate = toMoneyNumber(invoice.taxRate || 0);
+    const pricesAreTaxInclusive = taxConfig.enabled && taxConfig.pricesAreTaxInclusive && taxRate > 0;
+    const payload = buildInvoicePayloadFromJob({
+      job,
+      taxRate,
+      pricesAreTaxInclusive,
+    });
+
+    await invoice.update(payload, { transaction });
+    syncedInvoices.push(invoice);
+  }
+
+  return syncedInvoices;
+};
 
 const sendJobLifecycleWhatsApp = async ({ tenantId, job, eventType }) => {
   try {
@@ -966,7 +1138,8 @@ exports.createJob = async (req, res, next) => {
 exports.updateJob = async (req, res, next) => {
   try {
     const job = await Job.findOne({
-      where: jobWhere(req, { id: req.params.id })
+      where: jobWhere(req, { id: req.params.id }),
+      include: [{ model: JobItem, as: 'items' }]
     });
 
     if (!job) {
@@ -1002,6 +1175,24 @@ exports.updateJob = async (req, res, next) => {
     const oldStatus = job.status;
     const newStatus = updatePayload.status;
     const oldAssignedTo = job.assignedTo;
+    const billableChanged = hasBillableJobChange({
+      currentJob: job,
+      updatePayload,
+      incomingItems: items,
+    });
+    const linkedInvoices = billableChanged
+      ? await Invoice.findAll({ where: applyTenantFilter(req.tenantId, { jobId: job.id }) })
+      : [];
+    const lockedInvoice = linkedInvoices.find(
+      (invoice) => invoice.status !== 'cancelled' && isInvoicePaymentLocked(invoice)
+    );
+
+    if (lockedInvoice) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot update job price because invoice ${lockedInvoice.invoiceNumber || lockedInvoice.id} already has payments. Update the invoice manually or create an adjustment.`
+      });
+    }
 
     // If status is changing to completed, set completion date
     if (newStatus === 'completed' && oldStatus !== 'completed') {
@@ -1015,9 +1206,11 @@ exports.updateJob = async (req, res, next) => {
       }
     }
 
-    if (items !== undefined && Array.isArray(items)) {
-      const transaction = await sequelize.transaction();
-      try {
+    const syncedInvoiceCustomerIds = new Set();
+    let syncedInvoices = [];
+    const transaction = await sequelize.transaction();
+    try {
+      if (items !== undefined && Array.isArray(items)) {
         await job.update(updatePayload, { transaction });
         await JobItem.destroy({ where: { jobId: job.id, tenantId: req.tenantId }, transaction });
         if (items.length > 0) {
@@ -1029,13 +1222,54 @@ exports.updateJob = async (req, res, next) => {
           }));
           await JobItem.bulkCreate(jobItems, { transaction });
         }
-        await transaction.commit();
-      } catch (err) {
-        await transaction.rollback();
-        throw err;
+      } else {
+        await job.update(updatePayload, { transaction });
       }
-    } else {
-      await job.update(updatePayload);
+
+      if (billableChanged && linkedInvoices.length > 0) {
+        linkedInvoices.forEach((invoice) => {
+          if (invoice.customerId) syncedInvoiceCustomerIds.add(invoice.customerId);
+        });
+        const jobForInvoiceSync = await Job.findOne({
+          where: applyTenantFilter(req.tenantId, { id: job.id }),
+          include: [{ model: JobItem, as: 'items' }],
+          transaction
+        });
+        syncedInvoices = await syncEditableInvoicesForJob({
+          job: jobForInvoiceSync,
+          invoices: linkedInvoices,
+          tenantId: req.tenantId,
+          transaction
+        });
+        syncedInvoices.forEach((invoice) => {
+          if (invoice.customerId) syncedInvoiceCustomerIds.add(invoice.customerId);
+        });
+        if (jobForInvoiceSync?.customerId) syncedInvoiceCustomerIds.add(jobForInvoiceSync.customerId);
+      }
+
+      const statusChanged = newStatus && newStatus !== oldStatus;
+      await JobStatusHistory.create({
+        jobId: job.id,
+        tenantId: req.tenantId,
+        status: statusChanged ? newStatus : job.status,
+        comment: statusComment || (statusChanged ? null : 'Details updated'),
+        changedBy: req.user?.id || null
+      }, { transaction });
+
+      await transaction.commit();
+    } catch (err) {
+      await transaction.rollback();
+      throw err;
+    }
+
+    if (syncedInvoices.length > 0) {
+      await Promise.all([...syncedInvoiceCustomerIds].map((customerId) =>
+        updateCustomerBalance(customerId).catch((balanceError) => {
+          console.error('[Job] Failed to update customer balance after invoice sync:', balanceError?.message);
+        })
+      ));
+      invalidateAfterMutation(req.tenantId);
+      invalidateInvoiceListCache(req.tenantId);
     }
 
     // Auto-create invoice when the job still has none — not tied to "completed" status.
@@ -1047,13 +1281,6 @@ exports.updateJob = async (req, res, next) => {
     }
 
     const statusChanged = newStatus && newStatus !== oldStatus;
-    await JobStatusHistory.create({
-      jobId: job.id,
-      tenantId: req.tenantId,
-      status: statusChanged ? newStatus : job.status,
-      comment: statusComment || (statusChanged ? null : 'Details updated'),
-      changedBy: req.user?.id || null
-    });
 
     const updatedJob = await Job.findOne({
       where: applyTenantFilter(req.tenantId, { id: job.id }),
@@ -1124,6 +1351,15 @@ exports.updateJob = async (req, res, next) => {
         id: autoGeneratedInvoice.id,
         invoiceNumber: autoGeneratedInvoice.invoiceNumber,
         message: 'Invoice automatically generated'
+      };
+    } else if (syncedInvoices.length > 0) {
+      response.invoice = {
+        id: syncedInvoices[0].id,
+        invoiceNumber: syncedInvoices[0].invoiceNumber,
+        synced: true,
+        message: syncedInvoices.length === 1
+          ? 'Invoice automatically updated to match job'
+          : `${syncedInvoices.length} invoices automatically updated to match job`
       };
     }
 

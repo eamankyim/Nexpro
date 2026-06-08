@@ -45,6 +45,7 @@ const addAssigneeToUserTasks = require('./add-assignee-to-user-tasks');
 const addTaskAutomationFieldsToUserTasks = require('./add-task-automation-fields-to-user-tasks');
 const addMetadataToUserTasks = require('./add-metadata-to-user-tasks');
 const addStartDateToUserTasks = require('./add-startDate-to-user-tasks');
+const addShopIdToUserTasks = require('./add-shop-id-to-user-tasks');
 const createTenantAccessAudits = require('./create-tenant-access-audits');
 const createAutomationsTables = require('./create-automations-tables');
 const backfillTenantBusinessClassificationDefaults = require('./backfill-tenant-business-classification-defaults');
@@ -307,6 +308,7 @@ const migrate = async () => {
 
     // User ↔ shop access (team invites and assignments)
     await createUserShops();
+    await addShopIdToUserTasks();
 
     // Invite metadata (shopIds, studioLocationIds) + backfill assignments from accepted invites
     await addInviteShopStudioMetadata();
