@@ -59,6 +59,15 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 const STEPS = [
   { id: 'info', label: 'Store Information', icon: Store },
@@ -99,6 +108,8 @@ const CATEGORY_BY_BUSINESS_TYPE = {
   barber: 'Beauty and salon',
   salon: 'Beauty and salon',
 };
+
+const STORE_SETUP_PAYMENTS_RETURN = '/store/setup?step=payments';
 
 const PAYMENT_OPTIONS = [
   {
@@ -162,6 +173,40 @@ const DELIVERY_OPTIONS = [
   },
 ];
 
+const DELIVERY_EDITOR_CONFIG = {
+  localDelivery: {
+    title: 'Local delivery areas',
+    description: 'Add nearby areas you can reach quickly.',
+    fieldName: 'localDeliveryAreas',
+    label: 'Delivery areas (optional)',
+    placeholder: 'Osu, East Legon, Adenta...',
+    multiline: true,
+    includeDeliveryFee: true,
+  },
+  nationwideDelivery: {
+    title: 'Nationwide delivery',
+    description: 'Confirm regions, courier notes, and timelines.',
+    fieldName: 'nationwideRegions',
+    label: 'Nationwide delivery notes (optional)',
+    placeholder: 'Regions, courier notes, delivery timelines...',
+    multiline: true,
+  },
+  pickup: {
+    title: 'Pickup details',
+    description: 'Tell customers where and when pickup is available.',
+    fieldName: 'pickupInstructions',
+    label: 'Pickup instructions (optional)',
+    placeholder: 'Pickup from main branch, 9am-5pm',
+    multiline: false,
+  },
+};
+
+const isDeliveryOptionConfigured = (optionKey, formValues) => {
+  const config = DELIVERY_EDITOR_CONFIG[optionKey];
+  if (!config) return false;
+  return Boolean(String(formValues?.[config.fieldName] || '').trim());
+};
+
 const paymentMethodSchema = z.object({
   enabled: z.boolean().default(false),
   configured: z.boolean().default(false),
@@ -213,6 +258,8 @@ const normalizeSlug = (value) => String(value || '')
   .slice(0, 80);
 
 const DEFAULT_PUBLIC_STORE_ORIGIN = 'https://www.absghana.com';
+const STORE_SETUP_DRAFT_VERSION = 1;
+const STORE_SETUP_DRAFT_PREFIX = 'abs:store-setup-draft';
 
 const getPublicStoreBaseUrl = () => {
   const configuredUrl = (
@@ -223,6 +270,96 @@ const getPublicStoreBaseUrl = () => {
   const trimmedUrl = String(configuredUrl || DEFAULT_PUBLIC_STORE_ORIGIN).trim() || DEFAULT_PUBLIC_STORE_ORIGIN;
   const withProtocol = /^https?:\/\//i.test(trimmedUrl) ? trimmedUrl : `https://${trimmedUrl}`;
   return `${withProtocol.replace(/\/+$/g, '').replace(/\/store$/i, '')}/store`;
+};
+
+const getScopedStoragePart = (...values) => (
+  values
+    .map((value) => compactString(value))
+    .find(Boolean) || 'unknown'
+);
+
+const getStoreSetupDraftKey = ({ activeTenant, user }) => {
+  const tenantPart = getScopedStoragePart(
+    activeTenant?.id,
+    activeTenant?._id,
+    activeTenant?.tenantId,
+    activeTenant?.slug,
+  );
+  const userPart = getScopedStoragePart(user?.id, user?._id, user?.email);
+  return `${STORE_SETUP_DRAFT_PREFIX}:v${STORE_SETUP_DRAFT_VERSION}:${tenantPart}:${userPart}`;
+};
+
+const isFileLikeValue = (value) => (
+  (typeof File !== 'undefined' && value instanceof File) ||
+  (typeof Blob !== 'undefined' && value instanceof Blob)
+);
+
+const omitFileLikeValues = (value) => {
+  if (isFileLikeValue(value)) return undefined;
+  if (Array.isArray(value)) return value.map(omitFileLikeValues).filter((item) => item !== undefined);
+  if (!value || typeof value !== 'object') return value;
+  return Object.entries(value).reduce((acc, [key, childValue]) => {
+    const sanitizedValue = omitFileLikeValues(childValue);
+    if (sanitizedValue !== undefined) acc[key] = sanitizedValue;
+    return acc;
+  }, {});
+};
+
+const sanitizeStoreSetupDraftValues = (values = {}) => omitFileLikeValues({
+  displayName: values.displayName || '',
+  slug: normalizeSlug(values.slug),
+  description: values.description || '',
+  category: values.category || '',
+  whatsappNumber: values.whatsappNumber || '',
+  contactPhone: values.contactPhone || '',
+  contactEmail: values.contactEmail || '',
+  primaryColor: values.primaryColor || '#166534',
+  logoUrl: values.logoUrl || '',
+  bannerImageUrl: values.bannerImageUrl || '',
+  currency: resolveStoreCurrency(values.currency),
+  paymentMethods: values.paymentMethods || defaultPaymentMethods,
+  deliveryOptions: values.deliveryOptions || defaultDeliveryOptions,
+  deliveryFee: Number(values.deliveryFee || 0),
+  localDeliveryAreas: values.localDeliveryAreas || '',
+  nationwideRegions: values.nationwideRegions || '',
+  pickupInstructions: values.pickupInstructions || '',
+});
+
+const readStoreSetupDraft = (storageKey) => {
+  if (typeof window === 'undefined' || !storageKey) return null;
+  try {
+    const rawDraft = window.localStorage.getItem(storageKey);
+    if (!rawDraft) return null;
+    const parsedDraft = JSON.parse(rawDraft);
+    if (parsedDraft?.version !== STORE_SETUP_DRAFT_VERSION || !parsedDraft?.values) return null;
+    return parsedDraft;
+  } catch {
+    return null;
+  }
+};
+
+const isDraftNewerThanSettings = (draft, settings) => {
+  const draftTime = Date.parse(draft?.savedAt || '');
+  const settingsTime = Date.parse(settings?.updatedAt || settings?.createdAt || '');
+  return Number.isFinite(draftTime) && (!Number.isFinite(settingsTime) || draftTime > settingsTime);
+};
+
+const writeStoreSetupDraft = (storageKey, draft) => {
+  if (typeof window === 'undefined' || !storageKey) return;
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(draft));
+  } catch {
+    // Local storage can be unavailable in private browsing or quota-limited sessions.
+  }
+};
+
+const clearStoreSetupDraft = (storageKey) => {
+  if (typeof window === 'undefined' || !storageKey) return;
+  try {
+    window.localStorage.removeItem(storageKey);
+  } catch {
+    // Ignore storage cleanup failures; backend settings remain the source of truth.
+  }
 };
 
 const PUBLIC_STORE_BASE_URL = getPublicStoreBaseUrl();
@@ -332,7 +469,7 @@ const buildStoreSetupDefaults = ({ activeTenant, user, organization, profile }) 
       activeTenant?.logoUrl,
     ),
     bannerImageUrl: firstFilled(tenantMetadata.bannerImageUrl, tenantMetadata.coverImageUrl),
-    currency: 'GHS',
+    currency: CURRENCY.CODE,
     paymentMethods: defaultPaymentMethods,
     deliveryOptions: defaultDeliveryOptions,
     deliveryFee: 0,
@@ -364,10 +501,42 @@ const getReachedStepFromCompletion = (completedSteps = []) => {
 };
 
 const defaultPaymentMethods = {
-  mobileMoney: { enabled: true, configured: true },
-  card: { enabled: true, configured: true },
+  mobileMoney: { enabled: true, configured: false },
+  card: { enabled: true, configured: false },
   bankTransfer: { enabled: false, configured: false },
   payOnDelivery: { enabled: false, configured: false },
+};
+
+const resolveStoreCurrency = (...values) => {
+  const saved = values.map(compactString).find(Boolean);
+  return saved || CURRENCY.CODE;
+};
+
+const resolvePaymentMethods = (savedMethods = {}, paymentCollection = null) => {
+  const merged = mergeOptions(defaultPaymentMethods, savedMethods);
+  const collectionConfigured = isPaymentConfigured(paymentCollection);
+  const mtnCollectionActive = ['tenant', 'platform'].includes(paymentCollection?.mtn_collection?.activeSource);
+
+  return {
+    ...merged,
+    mobileMoney: {
+      ...merged.mobileMoney,
+      configured: collectionConfigured || mtnCollectionActive,
+    },
+    card: {
+      ...merged.card,
+      configured: collectionConfigured,
+    },
+  };
+};
+
+const getPaymentCollectionSettingsUrl = (methodKey, returnTo = STORE_SETUP_PAYMENTS_RETURN) => {
+  const params = new URLSearchParams({
+    tab: 'payment-collections',
+    subtab: methodKey === 'mobileMoney' ? 'settlements' : 'settlements',
+    returnTo,
+  });
+  return `/settings?${params.toString()}`;
 };
 
 const defaultDeliveryOptions = {
@@ -468,7 +637,17 @@ const Stepper = ({ currentStep, completion, highestStepReached, onStepClick }) =
   </div>
 );
 
-const UploadField = ({ label, description, value, onChange, onUpload, uploading, previewClassName = 'h-32' }) => {
+const UploadField = ({
+  label,
+  description,
+  value,
+  onChange,
+  onUpload,
+  uploading,
+  previewClassName = 'h-32',
+  previewAreaClassName,
+  imageClassName,
+}) => {
   const previewSrc = resolveImageUrl(value);
   return (
   <div className="rounded-xl border border-border p-4">
@@ -490,11 +669,11 @@ const UploadField = ({ label, description, value, onChange, onUpload, uploading,
       </label>
     </div>
     {previewSrc ? (
-      <div className="mt-4 overflow-hidden rounded-xl border border-border bg-muted/30">
-        <img src={previewSrc} alt="" className={cn('w-full object-cover', previewClassName)} />
+      <div className={cn('mt-4 overflow-hidden rounded-xl border border-border bg-muted/30', previewAreaClassName)}>
+        <img src={previewSrc} alt="" className={cn('w-full object-cover', previewClassName, imageClassName)} />
       </div>
     ) : (
-      <div className={cn('mt-4 flex items-center justify-center rounded-xl border border-dashed border-border bg-muted/30 text-sm text-muted-foreground', previewClassName)}>
+      <div className={cn('mt-4 flex items-center justify-center rounded-xl border border-dashed border-border bg-muted/30 text-sm text-muted-foreground', previewClassName, previewAreaClassName)}>
         <ImageIcon className="mr-2 h-4 w-4" />
         No image uploaded yet
       </div>
@@ -515,6 +694,8 @@ const StorePreview = ({
   sticky = false,
 }) => {
   const whatsapp = values.whatsappNumber || values.contactPhone;
+  const previewCurrencyCode = values.currency || CURRENCY.CODE;
+  const previewCurrencySymbol = previewCurrencyCode === CURRENCY.CODE ? CURRENCY.SYMBOL : previewCurrencyCode;
   const containerClass = previewMode === 'mobile' ? 'mx-auto max-w-[320px]' : 'w-full';
   const logoSrc = resolveImageUrl(values.logoUrl);
   const bannerSrc = resolveImageUrl(values.bannerImageUrl);
@@ -574,6 +755,7 @@ const StorePreview = ({
               </div>
               <div className="mt-4 grid gap-2 text-xs text-muted-foreground">
                 <p>Payments: {enabledPaymentMethods.length ? enabledPaymentMethods.join(', ') : 'Not configured'}</p>
+                <p>Currency: {previewCurrencyCode}</p>
                 <p>Fulfillment: {enabledDeliveryOptions.length ? enabledDeliveryOptions.join(', ') : 'Not configured'}</p>
                 {whatsapp && <p>WhatsApp: wa.me/{String(whatsapp).replace(/\D/g, '')}</p>}
               </div>
@@ -582,6 +764,66 @@ const StorePreview = ({
         </div>
       </CardContent>
     </Card>
+  );
+};
+
+const DeliveryAreasEditorDialog = ({
+  open,
+  optionKey,
+  onOpenChange,
+  form,
+  onSaved,
+}) => {
+  const config = optionKey ? DELIVERY_EDITOR_CONFIG[optionKey] : null;
+
+  if (!config) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[min(90dvh,720px)] flex-col gap-0 p-0 sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{config.title}</DialogTitle>
+          <DialogDescription>{config.description}</DialogDescription>
+        </DialogHeader>
+        <Form {...form}>
+          <DialogBody className="space-y-4">
+          {config.includeDeliveryFee && (
+            <FormField control={form.control} name="deliveryFee" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Base delivery fee</FormLabel>
+                <FormControl>
+                  <Input className="h-11 rounded-xl" type="number" min="0" step="0.01" {...field} />
+                </FormControl>
+                <FormDescription>Use 0 if you confirm fees manually.</FormDescription>
+                <FormMessage />
+              </FormItem>
+            )} />
+          )}
+          <FormField control={form.control} name={config.fieldName} render={({ field }) => (
+            <FormItem>
+              <FormLabel>{config.label}</FormLabel>
+              <FormControl>
+                {config.multiline ? (
+                  <Textarea className="rounded-xl" rows={4} placeholder={config.placeholder} {...field} />
+                ) : (
+                  <Input className="h-11 rounded-xl" placeholder={config.placeholder} {...field} />
+                )}
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )} />
+          </DialogBody>
+        </Form>
+        <DialogFooter>
+          <Button type="button" variant="outline" className="rounded-xl" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type="button" className="rounded-xl" onClick={onSaved}>
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };
 
@@ -631,7 +873,16 @@ const StoreSetup = () => {
   const [uploadingField, setUploadingField] = useState(null);
   const [previewMode, setPreviewMode] = useState('desktop');
   const [introDismissed, setIntroDismissed] = useState(false);
+  const [activeDeliveryEditor, setActiveDeliveryEditor] = useState(null);
   const slugEditedRef = useRef(false);
+  const draftInitializedRef = useRef(false);
+  const {
+    paymentCollection,
+    isLoading: paymentCollectionLoading,
+  } = usePaymentSettings({
+    refetchOnWindowFocus: true,
+    refetchOnMount: 'always',
+  });
 
   const form = useForm({
     resolver: zodResolver(setupSchema),
@@ -646,7 +897,7 @@ const StoreSetup = () => {
       primaryColor: '#166534',
       logoUrl: '',
       bannerImageUrl: '',
-      currency: 'GHS',
+      currency: CURRENCY.CODE,
       paymentMethods: defaultPaymentMethods,
       deliveryOptions: defaultDeliveryOptions,
       deliveryFee: 0,
@@ -657,6 +908,7 @@ const StoreSetup = () => {
   });
 
   const values = form.watch();
+  const storeSetupDraftKey = useMemo(() => getStoreSetupDraftKey({ activeTenant, user }), [activeTenant, user]);
   const debouncedSlug = useDebounce(values.slug, 500);
   const slugSuggestion = useMemo(() => normalizeSlug(values.displayName), [values.displayName]);
   const previewSlug = useMemo(() => {
@@ -736,8 +988,37 @@ const StoreSetup = () => {
     !loading
   ), [introDismissed, loading, searchParams]);
 
+  const persistDraft = useCallback((overrides = {}) => {
+    if (!draftInitializedRef.current || loading || settings?.id) return;
+    const nextCurrentStep = overrides.currentStep ?? currentStep;
+    const nextHighestStepReached = overrides.highestStepReached ?? highestStepReached;
+    writeStoreSetupDraft(storeSetupDraftKey, {
+      version: STORE_SETUP_DRAFT_VERSION,
+      savedAt: new Date().toISOString(),
+      values: sanitizeStoreSetupDraftValues(form.getValues()),
+      currentStep: nextCurrentStep,
+      highestStepReached: nextHighestStepReached,
+      introDismissed: overrides.introDismissed ?? introDismissed,
+      slugManuallyEdited: slugEditedRef.current,
+    });
+  }, [
+    currentStep,
+    form,
+    highestStepReached,
+    introDismissed,
+    loading,
+    settings?.id,
+    storeSetupDraftKey,
+  ]);
+
   const moveToStep = useCallback((step, options = {}) => {
     const nextStep = clampStepIndex(step);
+    const nextHighestStepReached = Math.max(highestStepReached, nextStep);
+    persistDraft({
+      currentStep: nextStep,
+      highestStepReached: nextHighestStepReached,
+      introDismissed: options.introDismissed ?? introDismissed,
+    });
     setCurrentStep(nextStep);
     setHighestStepReached((reached) => Math.max(reached, nextStep));
     setSearchParams((previousParams) => {
@@ -748,11 +1029,11 @@ const StoreSetup = () => {
     if (options.scroll !== false) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
-  }, [setSearchParams]);
+  }, [highestStepReached, introDismissed, persistDraft, setSearchParams]);
 
   const handleStartSetup = useCallback(() => {
     setIntroDismissed(true);
-    moveToStep(0, { replace: true });
+    moveToStep(0, { introDismissed: true, replace: true });
   }, [moveToStep]);
 
   const loadStore = useCallback(async () => {
@@ -778,7 +1059,7 @@ const StoreSetup = () => {
         organization,
         profile,
       });
-      const savedPaymentMethods = mergeOptions(defaultPaymentMethods, metadata.paymentMethods);
+      const savedPaymentMethods = resolvePaymentMethods(metadata.paymentMethods, paymentCollection);
       const savedDeliveryOptions = mergeOptions(defaultDeliveryOptions, {
         ...metadata.deliveryOptions,
         localDelivery: metadata.deliveryOptions?.localDelivery || {
@@ -808,7 +1089,7 @@ const StoreSetup = () => {
       const resolvedSlug = hasCustomSavedSlug ? savedSlug : savedOrDefault(suggestedSlug, inferredDefaults.slug);
       slugEditedRef.current = hasCustomSavedSlug;
 
-      form.reset({
+      const baseValues = {
         displayName: resolvedDisplayName,
         slug: resolvedSlug,
         description: savedOrDefault(nextSettings?.description, inferredDefaults.description),
@@ -819,14 +1100,39 @@ const StoreSetup = () => {
         primaryColor: savedOrDefault(nextSettings?.primaryColor, inferredDefaults.primaryColor),
         logoUrl: savedOrDefault(nextSettings?.logoUrl, inferredDefaults.logoUrl),
         bannerImageUrl: savedOrDefault(nextSettings?.bannerImageUrl, inferredDefaults.bannerImageUrl),
-        currency: 'GHS',
-        paymentMethods: nextSettings?.id ? savedPaymentMethods : inferredDefaults.paymentMethods,
+        currency: resolveStoreCurrency(nextSettings?.currency, organization?.currency, inferredDefaults.currency),
+        paymentMethods: nextSettings?.id
+          ? savedPaymentMethods
+          : resolvePaymentMethods(inferredDefaults.paymentMethods, paymentCollection),
         deliveryOptions: nextSettings?.id ? savedDeliveryOptions : inferredDefaults.deliveryOptions,
         deliveryFee: Number(nextSettings?.deliveryFee || inferredDefaults.deliveryFee || 0),
         localDeliveryAreas: savedOrDefault(metadata.localDeliveryAreas, inferredDefaults.localDeliveryAreas),
         nationwideRegions: savedOrDefault(metadata.nationwideRegions, inferredDefaults.nationwideRegions),
         pickupInstructions: savedOrDefault(metadata.pickupInstructions, inferredDefaults.pickupInstructions),
-      });
+      };
+      const localDraft = readStoreSetupDraft(storeSetupDraftKey);
+      const shouldRestoreLocalDraft = Boolean(
+        localDraft?.values &&
+        (!nextSettings?.id || isDraftNewerThanSettings(localDraft, nextSettings))
+      );
+      const localDraftValues = shouldRestoreLocalDraft ? localDraft.values : null;
+      if (nextSettings?.id && localDraft && !shouldRestoreLocalDraft) {
+        clearStoreSetupDraft(storeSetupDraftKey);
+      }
+      const restoredValues = localDraftValues ? {
+        ...baseValues,
+        ...sanitizeStoreSetupDraftValues(localDraftValues),
+        paymentMethods: mergeOptions(baseValues.paymentMethods, localDraftValues.paymentMethods),
+        deliveryOptions: mergeOptions(baseValues.deliveryOptions, localDraftValues.deliveryOptions),
+        deliveryFee: Number(localDraftValues.deliveryFee ?? baseValues.deliveryFee ?? 0),
+        currency: resolveStoreCurrency(localDraftValues.currency, baseValues.currency),
+      } : baseValues;
+
+      if (localDraftValues) {
+        slugEditedRef.current = localDraft.slugManuallyEdited === true;
+      }
+
+      form.reset(restoredValues);
 
       if (nextSettings?.id) {
         const savedStep = clampStepIndex(metadata.setupProgress?.currentStep || 0);
@@ -840,17 +1146,49 @@ const StoreSetup = () => {
           savedStep,
           getReachedStepFromCompletion(metadata.setupProgress?.completedSteps),
         ));
+      } else if (localDraftValues) {
+        const draftStep = clampStepIndex(localDraft.currentStep);
+        const stepParam = new URLSearchParams(window.location.search).get('step');
+        const requestedStep = stepParam
+          ? getStepIndexFromParam(stepParam)
+          : draftStep;
+        const restoredHighestStep = Math.max(
+          requestedStep,
+          draftStep,
+          clampStepIndex(localDraft.highestStepReached),
+        );
+        setCurrentStep(requestedStep);
+        setHighestStepReached(restoredHighestStep);
+        setIntroDismissed(localDraft.introDismissed === true || restoredHighestStep > 0);
       }
+      draftInitializedRef.current = true;
     } catch (error) {
       showError(getErrorMessage(error, 'Failed to load store setup'));
     } finally {
       setLoading(false);
     }
-  }, [activeTenant, form, user]);
+  }, [activeTenant, form, paymentCollection, storeSetupDraftKey, user]);
 
   useEffect(() => {
     loadStore();
   }, [loadStore]);
+
+  useEffect(() => {
+    if (paymentCollectionLoading) return;
+    const currentPaymentMethods = form.getValues('paymentMethods');
+    const nextPaymentMethods = resolvePaymentMethods(currentPaymentMethods, paymentCollection);
+    const hasPaymentStatusChange = PAYMENT_OPTIONS.some((option) => (
+      Boolean(currentPaymentMethods?.[option.key]?.configured) !== Boolean(nextPaymentMethods?.[option.key]?.configured)
+    ));
+    if (!hasPaymentStatusChange) return;
+    form.setValue('paymentMethods', nextPaymentMethods, { shouldDirty: false, shouldValidate: true });
+  }, [form, paymentCollection, paymentCollectionLoading]);
+
+  useEffect(() => {
+    if (!draftInitializedRef.current || loading || settings?.id) return undefined;
+    const timeoutId = window.setTimeout(() => persistDraft(), 250);
+    return () => window.clearTimeout(timeoutId);
+  }, [currentStep, highestStepReached, introDismissed, loading, persistDraft, settings?.id, values]);
 
   useEffect(() => {
     if (!introDismissed) return;
@@ -931,8 +1269,36 @@ const StoreSetup = () => {
   const handleOptionToggle = useCallback((fieldName, key, enabled, available = true) => {
     if (!available) return;
     form.setValue(`${fieldName}.${key}.enabled`, enabled, { shouldDirty: true, shouldValidate: true });
-    form.setValue(`${fieldName}.${key}.configured`, enabled, { shouldDirty: true, shouldValidate: true });
+    if (fieldName === 'deliveryOptions') {
+      const configured = enabled ? isDeliveryOptionConfigured(key, form.getValues()) : false;
+      form.setValue(`${fieldName}.${key}.configured`, configured, { shouldDirty: true, shouldValidate: true });
+    }
   }, [form]);
+
+  const handleConfigurePaymentMethod = useCallback((methodKey, available = true) => {
+    if (!available) return;
+    navigate(getPaymentCollectionSettingsUrl(methodKey));
+  }, [navigate]);
+
+  const handleOpenDeliveryEditor = useCallback((optionKey, available = true) => {
+    if (!available || !DELIVERY_EDITOR_CONFIG[optionKey]) return;
+    const current = form.getValues(`deliveryOptions.${optionKey}`);
+    if (!current?.enabled) {
+      form.setValue(`deliveryOptions.${optionKey}.enabled`, true, { shouldDirty: true, shouldValidate: true });
+    }
+    setActiveDeliveryEditor(optionKey);
+  }, [form]);
+
+  const handleDeliveryEditorSaved = useCallback(() => {
+    if (!activeDeliveryEditor) return;
+    const formValues = form.getValues();
+    const configured = isDeliveryOptionConfigured(activeDeliveryEditor, formValues);
+    form.setValue(`deliveryOptions.${activeDeliveryEditor}.configured`, configured, {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+    setActiveDeliveryEditor(null);
+  }, [activeDeliveryEditor, form]);
 
   const handleAssetUpload = useCallback(async (fieldName, file) => {
     if (!file) return;
@@ -971,7 +1337,7 @@ const StoreSetup = () => {
       pickupEnabled: formValues.deliveryOptions.pickup.enabled,
       deliveryEnabled,
       deliveryFee: formValues.deliveryFee,
-      currency: 'GHS',
+      currency: resolveStoreCurrency(formValues.currency),
       enabled: launch ? true : settings?.enabled === true,
       markSetupComplete: launch,
       metadata: {
@@ -1002,6 +1368,7 @@ const StoreSetup = () => {
     try {
       const response = await storeService.updateSettings(buildPayload(launch));
       const savedSettings = getResponseData(response);
+      clearStoreSetupDraft(storeSetupDraftKey);
       setSettings(savedSettings);
       showSuccess(launch ? 'Store launched' : 'Store draft saved');
       if (launch) {
@@ -1014,7 +1381,7 @@ const StoreSetup = () => {
     } finally {
       setSaving(false);
     }
-  }, [buildPayload, form, loadStore, navigate, readiness.launchReady]);
+  }, [buildPayload, form, loadStore, navigate, readiness.launchReady, storeSetupDraftKey]);
 
   const stepContent = useMemo(() => {
     if (currentStep === 0) {
@@ -1148,7 +1515,9 @@ const StoreSetup = () => {
                 onChange={field.onChange}
                 onUpload={(file) => handleAssetUpload('logoUrl', file)}
                 uploading={uploadingField === 'logoUrl'}
-                previewClassName="h-32 sm:h-36"
+                previewAreaClassName="mx-auto h-40 w-40 sm:h-44 sm:w-44"
+                previewClassName="h-full"
+                imageClassName="h-full"
               />
               <FormMessage />
             </FormItem>
@@ -1240,8 +1609,15 @@ const StoreSetup = () => {
                       </div>
                     </div>
                     <div className="flex items-center justify-between gap-3 sm:justify-end">
-                      <Button type="button" variant="outline" size="sm" className="h-10 rounded-xl" disabled={!option.available}>
-                        Configure
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-10 rounded-xl"
+                        disabled={!option.available}
+                        onClick={() => handleConfigurePaymentMethod(option.key, option.available)}
+                      >
+                        {method.configured ? 'Change' : 'Configure'}
                       </Button>
                       <Switch
                         checked={Boolean(method.enabled)}
@@ -1333,7 +1709,14 @@ const StoreSetup = () => {
                       </div>
                     </div>
                     <div className="flex items-center justify-between gap-3 sm:justify-end">
-                      <Button type="button" variant="outline" size="sm" className="h-10 rounded-xl" disabled={!option.available}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-10 rounded-xl"
+                        disabled={!option.available}
+                        onClick={() => handleOpenDeliveryEditor(option.key, option.available)}
+                      >
                         {delivery.enabled ? 'Edit areas' : 'Configure'}
                       </Button>
                       <Switch
@@ -1488,6 +1871,7 @@ const StoreSetup = () => {
     enabledPaymentMethods,
     form.control,
     handleAssetUpload,
+    handleOpenDeliveryEditor,
     handleOptionToggle,
     handleStepClick,
     handleStoreNameBlur,
@@ -1615,6 +1999,16 @@ const StoreSetup = () => {
           enabledDeliveryOptions={enabledDeliveryOptions}
         />
       </div>
+
+      <DeliveryAreasEditorDialog
+        open={Boolean(activeDeliveryEditor)}
+        optionKey={activeDeliveryEditor}
+        onOpenChange={(open) => {
+          if (!open) setActiveDeliveryEditor(null);
+        }}
+        form={form}
+        onSaved={handleDeliveryEditorSaved}
+      />
     </div>
   );
 };

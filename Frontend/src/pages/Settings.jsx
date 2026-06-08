@@ -9,7 +9,7 @@ import settingsService from '../services/settingsService';
 import whatsappService from '../services/whatsappService';
 import smsService from '../services/smsService';
 import emailService from '../services/emailService';
-import { Camera, User, Mail, UserCog, Loader2, Eye, EyeOff, Trash2, Moon, Lightbulb, ExternalLink, HelpCircle, CreditCard, ChevronDown, Bell, CalendarDays, Send, Lock } from 'lucide-react';
+import { Camera, User, Mail, UserCog, Loader2, Eye, EyeOff, Trash2, Moon, Lightbulb, ExternalLink, HelpCircle, CreditCard, ChevronDown, ChevronLeft, Bell, CalendarDays, Send, Lock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useResponsive } from '../hooks/useResponsive';
@@ -289,6 +289,10 @@ const Settings = () => {
     return 'profile';
   };
   const tabFromUrl = normalizeMainTab(searchParams.get('tab') || 'profile');
+  const returnToParam = searchParams.get('returnTo');
+  const safeReturnTo = returnToParam && returnToParam.startsWith('/') && !returnToParam.startsWith('//')
+    ? returnToParam
+    : null;
   const [activeTab, setActiveTab] = useState(tabFromUrl);
   const [integrationSubTab, setIntegrationSubTab] = useState('whatsapp');
   const [paymentsSubTab, setPaymentsSubTab] = useState('settlements');
@@ -6756,6 +6760,18 @@ const Settings = () => {
         </TabsContent>
         <TabsContent value={PAYMENT_COLLECTION_TAB}>
           <div className="space-y-4 md:space-y-6">
+            {safeReturnTo ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-full sm:w-auto"
+                onClick={() => navigate(safeReturnTo)}
+              >
+                <ChevronLeft className="mr-2 h-4 w-4" />
+                Back to store setup
+              </Button>
+            ) : null}
             {paymentsTab}
           </div>
         </TabsContent>

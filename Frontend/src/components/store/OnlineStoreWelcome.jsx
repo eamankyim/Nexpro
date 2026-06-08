@@ -13,8 +13,6 @@ import {
   Truck,
 } from 'lucide-react';
 
-import welcomeImageSrc from '../../../online store image.png';
-
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -73,19 +71,10 @@ const FEATURES = [
   },
 ];
 
-const WELCOME_IMAGE_SRC = welcomeImageSrc;
+const WELCOME_IMAGE_SRC = '/store-setup-welcome.png';
 
 const WelcomeSideImage = () => (
   <div className="relative mx-auto flex h-full min-h-[300px] w-full max-w-[520px] items-center justify-center lg:max-w-none">
-    <div
-      aria-hidden
-      className="pointer-events-none absolute inset-x-6 bottom-4 top-10 rounded-[40%_60%_55%_45%] bg-[#d1fae5]/80 sm:inset-x-10 lg:-right-4 lg:left-12"
-    />
-    <div
-      aria-hidden
-      className="pointer-events-none absolute left-2 top-6 h-20 w-20 rounded-full bg-emerald-100 sm:left-6 sm:h-24 sm:w-24"
-    />
-
     <img
       src={WELCOME_IMAGE_SRC}
       alt="Online store setup preview"

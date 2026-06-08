@@ -7,13 +7,13 @@ import { useAuth } from '../context/AuthContext';
 import settingsService from '../services/settingsService';
 import { QUERY_CACHE } from '../constants';
 
-function getPaymentCollectionPayload(raw) {
+export function getPaymentCollectionPayload(raw) {
   if (!raw || typeof raw !== 'object') return raw;
   if (raw.data != null && (raw.success === true || raw.success === 'true')) return raw.data;
   return raw;
 }
 
-function isPaymentConfigured(pc) {
+export function isPaymentConfigured(pc) {
   if (!pc || typeof pc !== 'object') return false;
   const settlementType = pc.settlement_type ?? pc.settlementType;
   const isMomo = settlementType === 'momo';
@@ -80,6 +80,7 @@ export function usePaymentSettings(queryOptions = {}) {
   );
 
   return {
+    paymentCollection,
     paymentCollectionConfigured,
     onlinePaymentRequired,
     isLoading: channelsLoading || workflowLoading || paymentLoading,
