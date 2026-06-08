@@ -2,19 +2,7 @@ import React from 'react';
 import { AlertTriangle, RefreshCw, Home } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-
-/**
- * Detect "Failed to fetch dynamically imported module" (stale chunk after deploy).
- * Full page reload fixes it by loading fresh assets.
- */
-const isChunkLoadError = (error) => {
-  const msg = String(error?.message || '');
-  return (
-    msg.includes('Failed to fetch dynamically imported module') ||
-    msg.includes('Importing a module script failed') ||
-    (msg.includes('Loading chunk') && msg.includes('failed'))
-  );
-};
+import { hasChunkLoadError } from '../utils/chunkLoadError';
 
 /**
  * Error Boundary Component
@@ -84,7 +72,7 @@ class ErrorBoundary extends React.Component {
       return this.props.children;
     }
 
-    const chunkError = isChunkLoadError(this.state.error);
+    const chunkError = hasChunkLoadError(this.state.error);
     const isDev = import.meta.env.DEV;
     const title = chunkError
       ? isDev

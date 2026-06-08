@@ -1,4 +1,5 @@
 import { toast } from 'react-toastify';
+import { CHUNK_LOAD_REFRESH_MESSAGE, hasChunkLoadError } from './chunkLoadError';
 
 /**
  * Extracts a clear, user-friendly error message from an error object.
@@ -47,7 +48,11 @@ export const getErrorMessage = (error, defaultMessage = 'Something went wrong. P
     }
   }
 
-  // Check for error message directly
+  // Check for error message directly (including wrapped/cause chain from PDF chunk loads)
+  if (hasChunkLoadError(error)) {
+    return CHUNK_LOAD_REFRESH_MESSAGE;
+  }
+
   if (error?.message) {
     // Don't show technical error messages to users - use friendly versions
     const technicalErrors = ['Network Error', 'Request failed', 'timeout'];

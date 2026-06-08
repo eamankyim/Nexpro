@@ -1,3 +1,23 @@
+import {
+  CHUNK_LOAD_REFRESH_MESSAGE,
+  hasChunkLoadError,
+  loadHtml2Pdf,
+} from './chunkLoadError';
+
+/**
+ * Wrap PDF errors so chunk-load failures surface a refresh hint.
+ * @param {unknown} error
+ * @throws {Error}
+ */
+const rethrowPdfError = (error) => {
+  if (hasChunkLoadError(error)) {
+    const err = new Error(CHUNK_LOAD_REFRESH_MESSAGE);
+    err.cause = error;
+    throw err;
+  }
+  throw error;
+};
+
 /**
  * Generate a PDF from an HTML element
  * @param {HTMLElement} element - The HTML element to convert to PDF
@@ -10,43 +30,45 @@
  * @returns {Promise} - Promise that resolves when PDF is generated
  */
 export const generatePDF = async (element, options = {}) => {
-  const html2pdf = (await import('html2pdf.js')).default;
   const {
     filename = 'document.pdf',
     format = 'a4',
     orientation = 'portrait',
     scale = 2,
     download = true,
+    margin = [10, 10, 10, 10],
   } = options;
+
+  const html2pdf = await loadHtml2Pdf();
 
   // Store original styles
   const originalWidth = element.style.width;
   const originalMaxWidth = element.style.maxWidth;
   const originalPadding = element.style.padding;
-  
+
   // Set fixed width for PDF generation (A4 width minus margins = ~190mm = ~718px at 96dpi)
   element.style.width = '190mm';
   element.style.maxWidth = '190mm';
   element.style.padding = '10mm';
 
   const opt = {
-    margin: [10, 10, 10, 10],
+    margin,
     filename,
     image: { type: 'jpeg', quality: 0.98 },
-    html2canvas: { 
+    html2canvas: {
       scale,
       useCORS: true,
       logging: false,
       letterRendering: true,
       windowWidth: 794, // A4 width in pixels at 96dpi
     },
-    jsPDF: { 
-      unit: 'mm', 
-      format, 
+    jsPDF: {
+      unit: 'mm',
+      format,
       orientation,
       compress: true,
     },
-    pagebreak: { 
+    pagebreak: {
       mode: 'avoid-all',
     },
   };
@@ -57,6 +79,8 @@ export const generatePDF = async (element, options = {}) => {
     } else {
       return await html2pdf().set(opt).from(element).outputPdf('blob');
     }
+  } catch (error) {
+    rethrowPdfError(error);
   } finally {
     // Restore original styles
     element.style.width = originalWidth;
@@ -84,25 +108,33 @@ export const generatePDFFromSelector = async (selector, options = {}) => {
  * @param {Object} options - PDF generation options
  */
 export const printPDF = async (element, options = {}) => {
+  const html2pdf = await loadHtml2Pdf();
+
   const opt = {
     margin: [10, 10, 10, 10],
     filename: options.filename || 'document.pdf',
     image: { type: 'jpeg', quality: 0.98 },
-    html2canvas: { 
+    html2canvas: {
       scale: options.scale || 2,
       useCORS: true,
       logging: false,
     },
-    jsPDF: { 
-      unit: 'mm', 
-      format: options.format || 'a4', 
+    jsPDF: {
+      unit: 'mm',
+      format: options.format || 'a4',
       orientation: options.orientation || 'portrait',
     },
   };
 
-  const pdf = await html2pdf().set(opt).from(element).outputPdf('blob');
+  let pdf;
+  try {
+    pdf = await html2pdf().set(opt).from(element).outputPdf('blob');
+  } catch (error) {
+    rethrowPdfError(error);
+  }
+
   const pdfUrl = URL.createObjectURL(pdf);
-  
+
   // Open in new window and trigger print
   const printWindow = window.open(pdfUrl);
   if (printWindow) {
@@ -110,7 +142,7 @@ export const printPDF = async (element, options = {}) => {
       printWindow.print();
     };
   }
-  
+
   return pdf;
 };
 

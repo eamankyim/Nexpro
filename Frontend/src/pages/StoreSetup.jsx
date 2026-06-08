@@ -31,6 +31,8 @@ import storeService from '../services/storeService';
 import settingsService from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
 import { useDebounce } from '../hooks/useDebounce';
+import { usePaymentSettings, isPaymentConfigured } from '../hooks/usePaymentSettings';
+import { CURRENCY } from '../constants';
 import { showError, showSuccess, getErrorMessage } from '../utils/toast';
 import { resolveImageUrl } from '../utils/fileUtils';
 import { cn } from '@/lib/utils';
@@ -231,7 +233,7 @@ const setupSchema = z.object({
   primaryColor: z.string().min(4, 'Choose a brand color'),
   logoUrl: z.string().optional(),
   bannerImageUrl: z.string().optional(),
-  currency: z.literal('GHS'),
+  currency: z.string().trim().default(CURRENCY.CODE),
   paymentMethods: z.object({
     mobileMoney: paymentMethodSchema,
     card: paymentMethodSchema,
@@ -306,10 +308,10 @@ const omitFileLikeValues = (value) => {
 };
 
 const sanitizeStoreSetupDraftValues = (values = {}) => omitFileLikeValues({
-  displayName: values.displayName || '',
-  slug: normalizeSlug(values.slug),
+  displayName: firstFilled(values.displayName, values.storeName, values.name),
+  slug: normalizeSlug(firstFilled(values.slug, values.storeUrl, values.publicUrl)),
   description: values.description || '',
-  category: values.category || '',
+  category: firstFilled(values.category, values.businessCategory),
   whatsappNumber: values.whatsappNumber || '',
   contactPhone: values.contactPhone || '',
   contactEmail: values.contactEmail || '',
@@ -533,7 +535,8 @@ const resolvePaymentMethods = (savedMethods = {}, paymentCollection = null) => {
 const getPaymentCollectionSettingsUrl = (methodKey, returnTo = STORE_SETUP_PAYMENTS_RETURN) => {
   const params = new URLSearchParams({
     tab: 'payment-collections',
-    subtab: methodKey === 'mobileMoney' ? 'settlements' : 'settlements',
+    subtab: 'settlements',
+    method: methodKey,
     returnTo,
   });
   return `/settings?${params.toString()}`;
@@ -555,6 +558,33 @@ const mergeOptions = (defaults, saved = {}) => Object.keys(defaults).reduce((acc
   };
   return acc;
 }, {});
+
+const mergeStoreSetupDraftValues = (baseValues = {}, draftValues = {}) => {
+  const sanitizedDraft = sanitizeStoreSetupDraftValues(draftValues);
+
+  return {
+    ...baseValues,
+    displayName: firstFilled(sanitizedDraft.displayName, baseValues.displayName),
+    slug: firstFilled(sanitizedDraft.slug, baseValues.slug),
+    description: firstFilled(sanitizedDraft.description, baseValues.description),
+    category: firstFilled(sanitizedDraft.category, baseValues.category),
+    whatsappNumber: firstFilled(sanitizedDraft.whatsappNumber, baseValues.whatsappNumber),
+    contactPhone: firstFilled(sanitizedDraft.contactPhone, baseValues.contactPhone),
+    contactEmail: firstFilled(sanitizedDraft.contactEmail, baseValues.contactEmail),
+    primaryColor: firstFilled(sanitizedDraft.primaryColor, baseValues.primaryColor),
+    logoUrl: firstFilled(sanitizedDraft.logoUrl, baseValues.logoUrl),
+    bannerImageUrl: firstFilled(sanitizedDraft.bannerImageUrl, baseValues.bannerImageUrl),
+    currency: resolveStoreCurrency(sanitizedDraft.currency, baseValues.currency),
+    paymentMethods: mergeOptions(baseValues.paymentMethods, sanitizedDraft.paymentMethods),
+    deliveryOptions: mergeOptions(baseValues.deliveryOptions, sanitizedDraft.deliveryOptions),
+    deliveryFee: Number.isFinite(Number(sanitizedDraft.deliveryFee))
+      ? Number(sanitizedDraft.deliveryFee)
+      : Number(baseValues.deliveryFee ?? 0),
+    localDeliveryAreas: firstFilled(sanitizedDraft.localDeliveryAreas, baseValues.localDeliveryAreas),
+    nationwideRegions: firstFilled(sanitizedDraft.nationwideRegions, baseValues.nationwideRegions),
+    pickupInstructions: firstFilled(sanitizedDraft.pickupInstructions, baseValues.pickupInstructions),
+  };
+};
 
 const getStepFields = (step) => {
   if (step === 0) return ['displayName', 'slug', 'description', 'category', 'whatsappNumber', 'contactPhone', 'contactEmail'];
@@ -924,6 +954,17 @@ const StoreSetup = () => {
     }
     return current || suggested || 'store-url';
   }, [values.displayName, values.slug, slugSuggestion]);
+  const storeInfoSummary = useMemo(() => {
+    const storeName = compactString(values.displayName);
+    const category = compactString(values.category);
+    const publicSlug = normalizeSlug(values.slug) || normalizeSlug(storeName) || previewSlug;
+
+    return {
+      storeName: storeName || 'Store name missing',
+      publicUrl: getPublicStoreDisplayUrl(publicSlug),
+      category: category || 'No category selected',
+    };
+  }, [previewSlug, values.category, values.displayName, values.slug]);
 
   const enabledPaymentMethods = useMemo(() => (
     PAYMENT_OPTIONS
@@ -938,11 +979,17 @@ const StoreSetup = () => {
   ), [values.deliveryOptions]);
 
   const readiness = useMemo(() => {
+    const displayName = compactString(values.displayName);
+    const slug = compactString(values.slug);
     const storeInfoReady = Boolean(
-      values.displayName &&
-      values.slug &&
-      /^[a-z0-9-]+$/.test(values.slug) &&
-      (values.contactPhone || values.whatsappNumber || values.contactEmail)
+      displayName &&
+      slug &&
+      /^[a-z0-9-]+$/.test(slug) &&
+      (
+        compactString(values.contactPhone) ||
+        compactString(values.whatsappNumber) ||
+        compactString(values.contactEmail)
+      )
     );
     const brandingReady = Boolean(values.primaryColor);
     const paymentReady = PAYMENT_OPTIONS.some((option) => (
@@ -1100,7 +1147,7 @@ const StoreSetup = () => {
         primaryColor: savedOrDefault(nextSettings?.primaryColor, inferredDefaults.primaryColor),
         logoUrl: savedOrDefault(nextSettings?.logoUrl, inferredDefaults.logoUrl),
         bannerImageUrl: savedOrDefault(nextSettings?.bannerImageUrl, inferredDefaults.bannerImageUrl),
-        currency: resolveStoreCurrency(nextSettings?.currency, organization?.currency, inferredDefaults.currency),
+        currency: resolveStoreCurrency(nextSettings?.currency, inferredDefaults.currency),
         paymentMethods: nextSettings?.id
           ? savedPaymentMethods
           : resolvePaymentMethods(inferredDefaults.paymentMethods, paymentCollection),
@@ -1119,14 +1166,9 @@ const StoreSetup = () => {
       if (nextSettings?.id && localDraft && !shouldRestoreLocalDraft) {
         clearStoreSetupDraft(storeSetupDraftKey);
       }
-      const restoredValues = localDraftValues ? {
-        ...baseValues,
-        ...sanitizeStoreSetupDraftValues(localDraftValues),
-        paymentMethods: mergeOptions(baseValues.paymentMethods, localDraftValues.paymentMethods),
-        deliveryOptions: mergeOptions(baseValues.deliveryOptions, localDraftValues.deliveryOptions),
-        deliveryFee: Number(localDraftValues.deliveryFee ?? baseValues.deliveryFee ?? 0),
-        currency: resolveStoreCurrency(localDraftValues.currency, baseValues.currency),
-      } : baseValues;
+      const restoredValues = localDraftValues
+        ? mergeStoreSetupDraftValues(baseValues, localDraftValues)
+        : baseValues;
 
       if (localDraftValues) {
         slugEditedRef.current = localDraft.slugManuallyEdited === true;
@@ -1360,9 +1402,20 @@ const StoreSetup = () => {
   }, [currentStep, form, settings, setupProgress, stepCompletion]);
 
   const saveStore = useCallback(async (launch = false) => {
-    const valid = await form.trigger();
-    if (!valid) return;
-    if (launch && !readiness.launchReady) return;
+    if (launch) {
+      const valid = await form.trigger();
+      if (!valid || !readiness.launchReady) return;
+    } else {
+      writeStoreSetupDraft(storeSetupDraftKey, {
+        version: STORE_SETUP_DRAFT_VERSION,
+        savedAt: new Date().toISOString(),
+        values: sanitizeStoreSetupDraftValues(form.getValues()),
+        currentStep,
+        highestStepReached,
+        introDismissed,
+        slugManuallyEdited: slugEditedRef.current,
+      });
+    }
 
     setSaving(true);
     try {
@@ -1381,7 +1434,17 @@ const StoreSetup = () => {
     } finally {
       setSaving(false);
     }
-  }, [buildPayload, form, loadStore, navigate, readiness.launchReady, storeSetupDraftKey]);
+  }, [
+    buildPayload,
+    currentStep,
+    form,
+    highestStepReached,
+    introDismissed,
+    loadStore,
+    navigate,
+    readiness.launchReady,
+    storeSetupDraftKey,
+  ]);
 
   const stepContent = useMemo(() => {
     if (currentStep === 0) {
@@ -1816,7 +1879,7 @@ const StoreSetup = () => {
             status={{ ready: readiness.storeInfoReady, label: readiness.storeInfoReady ? 'Ready to publish' : 'Needs basics' }}
             onEdit={() => handleStepClick(0)}
           >
-            {values.displayName || 'Store name missing'} · {getPublicStoreDisplayUrl(previewSlug)} · {values.category || 'No category selected'}
+            {storeInfoSummary.storeName} · {storeInfoSummary.publicUrl} · {storeInfoSummary.category}
           </SummaryCard>
           <SummaryCard
             title="Branding"
@@ -1879,6 +1942,7 @@ const StoreSetup = () => {
     previewSlug,
     readiness,
     slugStatus,
+    storeInfoSummary,
     uploadingField,
     values,
   ]);

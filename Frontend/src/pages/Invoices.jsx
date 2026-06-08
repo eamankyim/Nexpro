@@ -25,6 +25,7 @@ import PrintableInvoice from '../components/PrintableInvoice';
 import StatusChip from '../components/StatusChip';
 import DetailSkeleton from '../components/DetailSkeleton';
 import { showSuccess, showError } from '../utils/toast';
+import { generatePDF } from '../utils/pdfUtils';
 import { resolvePaymentNotePayload } from '../utils/paymentNotes';
 import dayjs from 'dayjs';
 import { Button } from '@/components/ui/button';
@@ -474,31 +475,23 @@ const Invoices = () => {
 
   const handleDownloadInvoice = async () => {
     if (!viewingInvoice) return;
-    
+
     try {
-      const html2pdf = (await import('html2pdf.js')).default;
       const invoiceElement = document.querySelector('.printable-invoice');
-      
+
       if (!invoiceElement) {
         showError(null, 'Invoice not found');
         return;
       }
-      
-      const opt = {
+
+      await generatePDF(invoiceElement, {
         margin: isMobile ? [4, 4, 4, 4] : [0, 0, 0, 0],
         filename: `Invoice_${viewingInvoice.invoiceNumber}.pdf`,
-        image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-      };
-      
-      await html2pdf()
-        .set(opt)
-        .from(invoiceElement)
-        .save();
-      
+        format: 'a4',
+        orientation: 'portrait',
+      });
+
       showSuccess('PDF downloaded successfully!');
-      
     } catch (error) {
       console.error('Error generating PDF:', error);
       showError(error, 'Failed to generate PDF. Please try again.');

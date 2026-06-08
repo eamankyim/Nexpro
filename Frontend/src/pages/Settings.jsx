@@ -293,6 +293,18 @@ const Settings = () => {
   const safeReturnTo = returnToParam && returnToParam.startsWith('/') && !returnToParam.startsWith('//')
     ? returnToParam
     : null;
+  const paymentMethodParam = searchParams.get('method') || searchParams.get('paymentMethod');
+  const requestedPaymentMethod = ['mobileMoney', 'card'].includes(paymentMethodParam) ? paymentMethodParam : null;
+  const requestedSettlementType = requestedPaymentMethod === 'mobileMoney' ? 'momo' : 'bank';
+  const buildPaymentCollectionParams = useCallback((subtab = 'settlements') => {
+    const params = new URLSearchParams({
+      tab: PAYMENT_COLLECTION_TAB,
+      subtab: subtab === 'mtn-collection' ? 'mtn-collection' : 'settlements',
+    });
+    if (safeReturnTo) params.set('returnTo', safeReturnTo);
+    if (requestedPaymentMethod) params.set('method', requestedPaymentMethod);
+    return params;
+  }, [requestedPaymentMethod, safeReturnTo]);
   const [activeTab, setActiveTab] = useState(tabFromUrl);
   const [integrationSubTab, setIntegrationSubTab] = useState('whatsapp');
   const [paymentsSubTab, setPaymentsSubTab] = useState('settlements');
@@ -332,7 +344,7 @@ const Settings = () => {
       setPaymentsSubTab(paySub === 'mtn-collection' ? 'mtn-collection' : 'settlements');
       if (tab !== PAYMENT_COLLECTION_TAB) {
         setActiveTab(PAYMENT_COLLECTION_TAB);
-        setSearchParams({ tab: PAYMENT_COLLECTION_TAB, subtab: paySub === 'mtn-collection' ? 'mtn-collection' : 'settlements' });
+        setSearchParams(buildPaymentCollectionParams(paySub === 'mtn-collection' ? 'mtn-collection' : 'settlements'));
         return;
       }
     }
@@ -340,7 +352,7 @@ const Settings = () => {
     if (tab !== mappedTab && !['whatsapp', 'sms', 'email', 'integration', 'payments'].includes(tab)) {
       setSearchParams({ tab: mappedTab });
     }
-  }, [canManageOrganization, searchParams, setSearchParams]);
+  }, [buildPaymentCollectionParams, canManageOrganization, searchParams, setSearchParams]);
   const [profilePreview, setProfilePreview] = useState('');
   const [profileEditing, setProfileEditing] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -924,22 +936,23 @@ const Settings = () => {
     const rawPc = paymentCollectionData?.data ?? paymentCollectionData;
     const pc = rawPc && typeof rawPc === 'object' && rawPc.data != null && (rawPc.success === true || rawPc.success === 'true') ? rawPc.data : rawPc;
     const org = organizationData?.data;
-    if (pc && canManageOrganization) {
-      const settlementType = pc.settlement_type || (pc.hasSubaccount ? 'bank' : (pc.momo_phone_masked || pc.momo_provider ? 'momo' : 'bank'));
-      const businessName = pc.business_name?.trim() || org?.name?.trim() || org?.legalName?.trim() || '';
-      const contactEmail = pc.primary_contact_email?.trim() || org?.email?.trim() || org?.supportEmail?.trim() || '';
-      paymentCollectionForm.reset({
-        settlement_type: settlementType,
-        business_name: businessName,
-        bank_code: pc.bank_code || '',
-        bank_name: pc.bank_name || '',
-        account_number: '',
-        primary_contact_email: contactEmail,
-        momo_phone: '',
-        momo_provider: (pc.momo_provider || '').toUpperCase() || '',
-      });
-    }
-  }, [paymentCollectionData, organizationData, canManageOrganization]);
+    if (!canManageOrganization) return;
+    const settlementType = pc
+      ? pc.settlement_type || (pc.hasSubaccount ? 'bank' : (pc.momo_phone_masked || pc.momo_provider ? 'momo' : requestedSettlementType))
+      : requestedSettlementType;
+    const businessName = pc?.business_name?.trim() || org?.name?.trim() || org?.legalName?.trim() || '';
+    const contactEmail = pc?.primary_contact_email?.trim() || org?.email?.trim() || org?.supportEmail?.trim() || '';
+    paymentCollectionForm.reset({
+      settlement_type: settlementType,
+      business_name: businessName,
+      bank_code: pc?.bank_code || '',
+      bank_name: pc?.bank_name || '',
+      account_number: '',
+      primary_contact_email: contactEmail,
+      momo_phone: '',
+      momo_provider: (pc?.momo_provider || '').toUpperCase() || '',
+    });
+  }, [paymentCollectionData, organizationData, canManageOrganization, paymentCollectionForm, requestedSettlementType]);
 
   useEffect(() => {
     const rawPc = paymentCollectionData?.data ?? paymentCollectionData;
@@ -5748,7 +5761,7 @@ const Settings = () => {
           value={paymentsSubTab}
           onValueChange={(key) => {
             setPaymentsSubTab(key);
-            setSearchParams({ tab: PAYMENT_COLLECTION_TAB, subtab: key });
+            setSearchParams(buildPaymentCollectionParams(key));
           }}
         >
           {isMobile ? (
@@ -5756,7 +5769,7 @@ const Settings = () => {
               value={paymentsSubTab}
               onValueChange={(key) => {
                 setPaymentsSubTab(key);
-                setSearchParams({ tab: PAYMENT_COLLECTION_TAB, subtab: key });
+                setSearchParams(buildPaymentCollectionParams(key));
               }}
             >
               <SelectTrigger className="w-full mb-2 md:mb-4">
@@ -5947,7 +5960,7 @@ const Settings = () => {
           <div className="flex items-center justify-center py-6 md:py-12">
             <Loader2 className="h-8 w-8 animate-spin" />
           </div>
-        ) : !paymentAlreadyLinked ? (
+        ) : (
           <>
             <Dialog
               open={paymentVerifyModalOpen}
@@ -6023,9 +6036,40 @@ const Settings = () => {
                 </DialogBody>
               </DialogContent>
             </Dialog>
+            {paymentAlreadyLinked && (
+              <div className="rounded-lg border border-border p-4 space-y-4">
+                <Alert>
+                  <AlertTitle>Payout destination linked</AlertTitle>
+                  <AlertDescription>
+                    Your share of customer card and MoMo payments is settled to the linked payout destination below.
+                    Verify your identity to change it.
+                  </AlertDescription>
+                </Alert>
+                <ShadcnDescriptions>
+                  <DescriptionItem label="Status">Linked</DescriptionItem>
+                  <DescriptionItem label="Settlement method">{paymentSettlementMethod}</DescriptionItem>
+                  <DescriptionItem label="Business / account name">{pc?.business_name || 'Not set'}</DescriptionItem>
+                  <DescriptionItem label={paymentDestinationLabel}>{paymentDestinationValue}</DescriptionItem>
+                  {pc?.settlement_type === 'momo' && (
+                    <DescriptionItem label="MoMo provider">{pc?.momo_provider || 'Not set'}</DescriptionItem>
+                  )}
+                  {pc?.settlement_type === 'bank' && pc?.bank_code ? (
+                    <DescriptionItem label="Bank code">{pc.bank_code}</DescriptionItem>
+                  ) : null}
+                  <DescriptionItem label="Contact email">{pc?.primary_contact_email || 'Not set'}</DescriptionItem>
+                  <DescriptionItem label="Paystack subaccount">
+                    {hasPaymentSubaccount ? pc?.paystack_subaccount_code_masked || 'Linked' : 'Not linked'}
+                  </DescriptionItem>
+                </ShadcnDescriptions>
+              </div>
+            )}
             {!paymentVerificationDone ? (
               <div className="space-y-4 py-4">
-                <p className="text-sm text-muted-foreground">To receive card and MoMo payments from customers, link a bank account or MoMo number. You will verify your identity in the next step.</p>
+                <p className="text-sm text-muted-foreground">
+                  {paymentAlreadyLinked
+                    ? 'Verify your identity to update the linked bank account or MoMo number for customer payment collections.'
+                    : 'To receive card and MoMo payments from customers, link a bank account or MoMo number. You will verify your identity in the next step.'}
+                </p>
                 <Button
                   type="button"
                   onClick={() => {
@@ -6036,7 +6080,7 @@ const Settings = () => {
                   }}
                 >
                   <CreditCard className="h-4 w-4 mr-2" />
-                  Link payment account
+                  {paymentAlreadyLinked ? 'Verify identity to change' : 'Link payment account'}
                 </Button>
               </div>
             ) : (
@@ -6260,12 +6304,12 @@ const Settings = () => {
                 {updatePaymentCollectionMutation.isPending ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Linking…
+                    Saving…
                   </>
                 ) : paymentCollectionForm.watch('settlement_type') === 'momo' ? (
-                  'Link MoMo number'
+                  'Save MoMo destination'
                 ) : (
-                  'Link bank account'
+                  'Save bank destination'
                 )}
               </Button>
             </form>
@@ -6273,35 +6317,6 @@ const Settings = () => {
         </div>
         )}
           </>
-        ) : (
-          <div className="rounded-lg border border-border p-4 space-y-4">
-            <Alert>
-              <AlertTitle>Payout destination linked</AlertTitle>
-              <AlertDescription>
-                Your share of customer card and MoMo payments is settled to the linked payout destination below.
-                To change it, contact support.
-              </AlertDescription>
-            </Alert>
-            <ShadcnDescriptions>
-              <DescriptionItem label="Status">Linked</DescriptionItem>
-              <DescriptionItem label="Settlement method">{paymentSettlementMethod}</DescriptionItem>
-              <DescriptionItem label="Business / account name">{pc?.business_name || 'Not set'}</DescriptionItem>
-              <DescriptionItem label={paymentDestinationLabel}>{paymentDestinationValue}</DescriptionItem>
-              {pc?.settlement_type === 'momo' && (
-                <DescriptionItem label="MoMo provider">{pc?.momo_provider || 'Not set'}</DescriptionItem>
-              )}
-              {pc?.settlement_type === 'bank' && pc?.bank_code ? (
-                <DescriptionItem label="Bank code">{pc.bank_code}</DescriptionItem>
-              ) : null}
-              <DescriptionItem label="Contact email">{pc?.primary_contact_email || 'Not set'}</DescriptionItem>
-              <DescriptionItem label="Paystack subaccount">
-                {hasPaymentSubaccount ? pc?.paystack_subaccount_code_masked || 'Linked' : 'Not linked'}
-              </DescriptionItem>
-            </ShadcnDescriptions>
-            <p className="text-xs text-muted-foreground">
-              This Payment collections setup is separate from Billing and ABS subscription charges.
-            </p>
-          </div>
         )}
           </TabsContent>
           <TabsContent value="mtn-collection" className="mt-0 md:mt-1 space-y-4">
@@ -6627,7 +6642,7 @@ const Settings = () => {
           setSearchParams({ tab: 'messaging', subtab: currentSubtab });
         } else if (key === PAYMENT_COLLECTION_TAB) {
           const currentSubtab = searchParams.get('subtab') || paymentsSubTab || 'settlements';
-          setSearchParams({ tab: PAYMENT_COLLECTION_TAB, subtab: currentSubtab });
+          setSearchParams(buildPaymentCollectionParams(currentSubtab));
         } else {
           setSearchParams({ tab: key });
         }
@@ -6645,7 +6660,7 @@ const Settings = () => {
               setSearchParams({ tab: 'messaging', subtab: currentSubtab });
             } else if (key === PAYMENT_COLLECTION_TAB) {
               const currentSubtab = searchParams.get('subtab') || paymentsSubTab || 'settlements';
-              setSearchParams({ tab: PAYMENT_COLLECTION_TAB, subtab: currentSubtab });
+              setSearchParams(buildPaymentCollectionParams(currentSubtab));
             } else {
               setSearchParams({ tab: key });
             }

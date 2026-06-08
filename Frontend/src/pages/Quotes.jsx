@@ -2060,62 +2060,53 @@ const Quotes = () => {
       </MobileFormDialog>
 
       <Dialog open={printModalVisible} onOpenChange={setPrintModalVisible}>
-        <DialogContent
-          className="flex flex-col p-0 rounded-lg w-full"
-          style={{
-            position: 'fixed',
-            left: '50%',
-            top: '50%',
-            right: 'auto',
-            bottom: 'auto',
-            transform: 'translate(-50%, -50%)',
-            width: '100%',
-            maxWidth: 'min(90vw, 900px)',
-            maxHeight: '90vh',
-            margin: 0
-          }}
-        >
-          <DialogHeader className="px-6 py-4 border-b flex-shrink-0 no-print text-left">
-            <div className="flex items-center justify-between">
-              <div className="text-left">
+        <DialogContent className="max-w-[100vw] sm:max-w-6xl max-h-[100dvh] sm:max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden">
+          <DialogHeader className="px-3 sm:px-6 py-3 pr-12 sm:pr-14 border-b flex-shrink-0 no-print text-left">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="min-w-0">
                 <DialogTitle className="text-left">Quote Preview</DialogTitle>
-                <DialogDescription className="text-left">
+                <DialogDescription className="text-left sr-only sm:not-sr-only">
                   Review the quote before printing or downloading
                 </DialogDescription>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex gap-2 w-full sm:w-auto shrink-0">
                 <Button
                   variant="outline"
                   size="sm"
+                  className="flex-1 sm:flex-initial h-9"
                   onClick={() => handleDownloadQuote(quotePrintable)}
                   disabled={!quotePrintable}
+                  aria-label="Download quote PDF"
                 >
-                  <Download className="h-4 w-4 mr-2" />
-                  Download
+                  <Download className="h-4 w-4 sm:mr-2" />
+                  <span className="hidden sm:inline">Download</span>
                 </Button>
                 <Button
                   size="sm"
+                  className="flex-1 sm:flex-initial h-9"
                   onClick={handlePrintQuote}
                   disabled={!quotePrintable}
+                  aria-label="Print quote"
                 >
-                  <Printer className="h-4 w-4 mr-2" />
-                  Print
+                  <Printer className="h-4 w-4 sm:mr-2" />
+                  <span className="hidden sm:inline">Print</span>
                 </Button>
               </div>
             </div>
           </DialogHeader>
-          <div className="flex-1 overflow-y-auto bg-muted/50 p-4 md:p-8 print-content-wrapper">
-            <div className="max-w-[850px] mx-auto bg-card rounded-lg border border-border">
-              {quotePrintable && (
+          {quotePrintable && (
+            <div className="print-invoice-preview flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-muted/30 p-2 sm:p-4 print-content-wrapper">
+              <div className="print-invoice-preview-inner w-full max-w-full sm:max-w-[900px] sm:mx-auto">
                 <PrintableInvoice
                   invoice={buildPrintableQuote(quotePrintable)}
                   documentTitle="PROFORMA INVOICE"
                   documentSubtitle={`Quote ${quotePrintable.quoteNumber}`}
                   organization={quotePrintOrganization}
+                  screenLayout={isMobile ? 'mobile' : 'auto'}
                 />
-              )}
+              </div>
             </div>
-          </div>
+          )}
         </DialogContent>
       </Dialog>
 
