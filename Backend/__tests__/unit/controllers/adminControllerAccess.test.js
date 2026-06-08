@@ -181,6 +181,7 @@ describe('adminController.getBillingSummary', () => {
     SubscriptionPayment.findAll.mockResolvedValue([
       {
         tenantId: 'enterprise-tenant-1',
+        plan: 'enterprise',
         amount: 2400000,
         billingPeriod: 'yearly',
         periodStart: new Date('2026-01-01T00:00:00.000Z'),
@@ -189,6 +190,7 @@ describe('adminController.getBillingSummary', () => {
       },
       {
         tenantId: 'enterprise-tenant-1',
+        plan: 'enterprise',
         amount: 120000,
         billingPeriod: 'monthly',
         periodStart: new Date('2026-06-01T00:00:00.000Z'),
@@ -245,6 +247,7 @@ describe('adminController.getBillingSummary', () => {
     SubscriptionPayment.findAll.mockResolvedValue([
       {
         tenantId: 'enterprise-tenant-1',
+        plan: 'enterprise',
         amount: 2400000,
         billingPeriod: 'yearly',
         periodStart: new Date('2026-01-01T00:00:00.000Z'),

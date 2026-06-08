@@ -38,6 +38,8 @@ const createStockTransfers = async () => {
   await sequelize.query('CREATE INDEX IF NOT EXISTS stock_transfers_destination_shop_idx ON stock_transfers("destinationShopId");');
   await sequelize.query('CREATE INDEX IF NOT EXISTS stock_transfers_source_product_idx ON stock_transfers("sourceProductId");');
   await sequelize.query('CREATE INDEX IF NOT EXISTS stock_transfers_destination_product_idx ON stock_transfers("destinationProductId");');
+  await sequelize.query('CREATE INDEX IF NOT EXISTS stock_transfers_source_variant_idx ON stock_transfers("sourceVariantId");');
+  await sequelize.query('CREATE INDEX IF NOT EXISTS stock_transfers_destination_variant_idx ON stock_transfers("destinationVariantId");');
   await sequelize.query('CREATE INDEX IF NOT EXISTS stock_transfers_created_at_idx ON stock_transfers("createdAt");');
 
   console.log('stock_transfers table ready.');

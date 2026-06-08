@@ -1426,7 +1426,7 @@ const Customers = () => {
                         showSuccess('Receipt downloaded successfully');
                       } catch (error) {
                         console.error('PDF generation error:', error);
-                        showError(null, 'Failed to generate PDF');
+                        showError(error, 'Failed to generate PDF');
                       }
                     }
                   }}

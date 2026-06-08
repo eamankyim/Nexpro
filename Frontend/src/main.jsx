@@ -4,11 +4,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ToastContainer } from 'react-toastify';
 import App from './App';
 import { QUERY_CACHE, APP_NAME } from './constants';
+import { clearChunkReloadAttempt } from './utils/chunkLoadError';
 import 'react-toastify/dist/ReactToastify.css';
 import './index.css';
 
 if (typeof window !== 'undefined') {
   window.APP_NAME = APP_NAME;
+  clearChunkReloadAttempt();
 }
 
 // PWA service worker is registered via PWAUpdatePrompt (prod only).

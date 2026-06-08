@@ -90,6 +90,7 @@ const createSubscriptionPlansTable = require('./create-subscription-plans-table'
 const updateEnterprisePlanLimitsCopy = require('./update-enterprise-plan-limits-copy');
 const createOnlineStoreTables = require('./create-online-store-tables');
 const addOnlineStoreOrderIndexes = require('./add-online-store-order-indexes');
+const createStockTransfers = require('./create-stock-transfers');
 
 const migrate = async () => {
   try {
@@ -319,6 +320,9 @@ const migrate = async () => {
     await addStudioTypeToStudioLocations();
     await addShopIdToExpenses();
     await addShopIdToRetailEntities();
+
+    // Inter-shop stock transfers (products table + transfer audit log)
+    await createStockTransfers();
 
     // Leads scoped to studio locations (multi-branch studio workspaces)
     await addStudioLocationIdToLeads();

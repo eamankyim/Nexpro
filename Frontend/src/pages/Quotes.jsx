@@ -27,7 +27,7 @@ import {
   Search,
   ChevronDown
 } from 'lucide-react';
-import { generatePDF } from '../utils/pdfUtils';
+import { generatePDF, openPrintDialog } from '../utils/pdfUtils';
 import dayjs from 'dayjs';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import quoteService from '../services/quoteService';
@@ -2061,42 +2061,44 @@ const Quotes = () => {
 
       <Dialog open={printModalVisible} onOpenChange={setPrintModalVisible}>
         <DialogContent className="max-w-[100vw] sm:max-w-6xl max-h-[100dvh] sm:max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden">
-          <DialogHeader className="px-3 sm:px-6 py-3 pr-12 sm:pr-14 border-b flex-shrink-0 no-print text-left">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <div className="min-w-0">
-                <DialogTitle className="text-left">Quote Preview</DialogTitle>
-                <DialogDescription className="text-left sr-only sm:not-sr-only">
-                  Review the quote before printing or downloading
-                </DialogDescription>
-              </div>
-              <div className="flex gap-2 w-full sm:w-auto shrink-0">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex-1 sm:flex-initial h-9"
-                  onClick={() => handleDownloadQuote(quotePrintable)}
-                  disabled={!quotePrintable}
-                  aria-label="Download quote PDF"
-                >
-                  <Download className="h-4 w-4 sm:mr-2" />
-                  <span className="hidden sm:inline">Download</span>
-                </Button>
-                <Button
-                  size="sm"
-                  className="flex-1 sm:flex-initial h-9"
-                  onClick={handlePrintQuote}
-                  disabled={!quotePrintable}
-                  aria-label="Print quote"
-                >
-                  <Printer className="h-4 w-4 sm:mr-2" />
-                  <span className="hidden sm:inline">Print</span>
-                </Button>
-              </div>
+          <DialogHeader className="px-4 sm:px-6 pt-14 sm:pt-1 pb-3 pr-14 border-b flex-shrink-0 no-print text-left">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 w-full">
+            <div className="min-w-0 space-y-1">
+              <DialogTitle className="text-left text-base sm:text-lg leading-snug">
+                Quote Preview
+              </DialogTitle>
+              <DialogDescription className="text-left text-xs sm:text-sm">
+                Review the quote before printing or downloading
+              </DialogDescription>
+            </div>
+            <div className="flex gap-2 w-full sm:w-auto shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1 sm:flex-initial h-10 touch-manipulation"
+                onClick={() => handleDownloadQuote(quotePrintable)}
+                disabled={!quotePrintable}
+                aria-label="Download quote PDF"
+              >
+                <Download className="h-4 w-4 mr-1.5 sm:mr-2 shrink-0" />
+                <span>Download</span>
+              </Button>
+              <Button
+                size="sm"
+                className="flex-1 sm:flex-initial h-10 touch-manipulation"
+                onClick={handlePrintQuote}
+                disabled={!quotePrintable}
+                aria-label="Print quote"
+              >
+                <Printer className="h-4 w-4 mr-1.5 sm:mr-2 shrink-0" />
+                <span>Print</span>
+              </Button>
+            </div>
             </div>
           </DialogHeader>
           {quotePrintable && (
-            <div className="print-invoice-preview flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-muted/30 p-2 sm:p-4 print-content-wrapper">
-              <div className="print-invoice-preview-inner w-full max-w-full sm:max-w-[900px] sm:mx-auto">
+            <div className="print-invoice-preview flex-1 min-h-0 overflow-y-auto overflow-x-auto bg-muted/30 p-2 sm:p-4 print-content-wrapper">
+              <div className="print-invoice-preview-inner w-full min-w-0 max-w-full sm:max-w-[900px] sm:mx-auto">
                 <PrintableInvoice
                   invoice={buildPrintableQuote(quotePrintable)}
                   documentTitle="PROFORMA INVOICE"

@@ -5,6 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { REPORT_CHART_COLORS as COLORS, createReportSchema, getBusinessTerminology } from './reports/reportConstants';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import { showSuccess, showError, showWarning, showLoading } from '../utils/toast';
+import { loadHtml2Pdf } from '../utils/chunkLoadError';
 import StatusChip from '../components/StatusChip';
 import TableSkeleton from '../components/TableSkeleton';
 import DetailSkeleton from '../components/DetailSkeleton';
@@ -721,7 +722,7 @@ function ReportsInner() {
     const dismissLoading = showLoading('Generating PDF...', 0);
     setOverviewDownloading(true);
     try {
-      const html2pdf = (await import('html2pdf.js')).default;
+      const html2pdf = await loadHtml2Pdf();
       const reportElement = document.getElementById('overview-report-content');
       if (!reportElement) {
         dismissLoading();
@@ -1666,9 +1667,7 @@ function ReportsInner() {
 
     const dismissLoading = showLoading('Generating PDF...', 0);
     try {
-      // Import html2pdf dynamically
-      const html2pdf = (await import('html2pdf.js')).default;
-      
+      const html2pdf = await loadHtml2Pdf();
       const reportElement = document.getElementById('report-content');
       if (!reportElement) {
         dismissLoading();
