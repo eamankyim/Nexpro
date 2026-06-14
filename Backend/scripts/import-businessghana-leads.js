@@ -5,6 +5,7 @@
  *   cd Backend
  *   node scripts/import-businessghana-leads.js --email icreationsghana@gmail.com --dry-run
  *   node scripts/import-businessghana-leads.js --email icreationsghana@gmail.com --studio-name "ABS Management"
+ *   node scripts/import-businessghana-leads.js --email icreationsghana@gmail.com --repair-phones
  *   node scripts/import-businessghana-leads.js --data-file scripts/data/businessghana-leads.json
  */
 require('dotenv').config();
@@ -37,6 +38,7 @@ function parseArgs() {
     dataFile: DEFAULT_DATA_FILE,
     canvasPaths: [],
     dryRun: false,
+    repairPhones: false,
   };
 
   for (let i = 0; i < args.length; i += 1) {
@@ -46,6 +48,7 @@ function parseArgs() {
     else if (arg === '--data-file') parsed.dataFile = path.resolve(args[++i] || '');
     else if (arg === '--canvas') parsed.canvasPaths.push(path.resolve(args[++i] || ''));
     else if (arg === '--dry-run') parsed.dryRun = true;
+    else if (arg === '--repair-phones') parsed.repairPhones = true;
   }
 
   if (!parsed.email) throw new Error('Owner email is required.');
@@ -149,8 +152,7 @@ function extractPrimaryPhone(rawPhone) {
     if (e164) return e164;
   }
 
-  const fallback = candidates[0] || value;
-  return fallback.length <= 100 ? fallback : fallback.slice(0, 100);
+  return null;
 }
 
 function toLeadRow(lead, { tenantId, studioLocationId, userId, phone }) {
@@ -177,7 +179,7 @@ function toLeadRow(lead, { tenantId, studioLocationId, userId, phone }) {
       category && `Category: ${category}`,
       location && location !== 'Not listed' && `Location: ${location}`,
       rawPhone && rawPhone !== phone && `All listed phones: ${rawPhone}`,
-      phone == null && rawPhone && 'Phone omitted because another lead in this tenant already uses the primary number.',
+      phone == null && rawPhone && 'Phone omitted because no valid unique Ghana phone could be confirmed from the source listing.',
       'Imported from cleaned BusinessGhana restaurant/pub directory leads.',
     ].filter(Boolean).join('\n'),
     tags: [
@@ -223,6 +225,56 @@ function formatInsertError(error) {
     || String(error);
 }
 
+async function repairExistingImportedPhones({ tenantId, uniqueIncoming, dryRun }) {
+  const nonImportedLeads = await Lead.findAll({
+    where: {
+      tenantId,
+      source: { [Op.ne]: SOURCE },
+      phone: { [Op.ne]: null },
+    },
+    attributes: ['phone'],
+  });
+  const reservedPhones = new Set(
+    nonImportedLeads.map((lead) => String(lead.phone || '').trim()).filter(Boolean)
+  );
+  const { rows: phoneAssignments, duplicatePhonesSkipped } = assignImportPhones(uniqueIncoming, reservedPhones);
+  const existingImported = await Lead.findAll({
+    where: { tenantId, source: SOURCE },
+    attributes: ['id', 'name', 'company', 'phone', 'metadata'],
+  });
+  const assignmentByName = new Map(
+    phoneAssignments.map(({ lead, phone }) => [normalizeKey(lead.name), { lead, phone }])
+  );
+
+  let changed = 0;
+  let matched = 0;
+
+  for (const existingLead of existingImported) {
+    const assignment = assignmentByName.get(normalizeKey(existingLead.company || existingLead.name));
+    if (!assignment) continue;
+    matched += 1;
+
+    const nextPhone = assignment.phone || null;
+    const currentPhone = existingLead.phone || null;
+    if (currentPhone === nextPhone) continue;
+
+    changed += 1;
+    if (!dryRun) {
+      await existingLead.update({
+        phone: nextPhone,
+        metadata: {
+          ...(existingLead.metadata || {}),
+          rawPhone: assignment.lead.phone || null,
+          primaryPhone: nextPhone,
+          phoneRepairedAt: new Date().toISOString(),
+        },
+      });
+    }
+  }
+
+  return { matched, changed, duplicatePhonesSkipped };
+}
+
 async function getTenantForOwner(ownerEmail) {
   const user = await User.findOne({ where: { email: ownerEmail } });
   if (!user) throw new Error(`No user found for ${ownerEmail}`);
@@ -263,7 +315,7 @@ async function getOrCreateStudioLocation({ tenantId, studioName, user }) {
 }
 
 async function main() {
-  const { email, studioName, dataFile, canvasPaths, dryRun } = parseArgs();
+  const { email, studioName, dataFile, canvasPaths, dryRun, repairPhones } = parseArgs();
   await sequelize.authenticate();
 
   const { user, tenant } = await getTenantForOwner(email);
@@ -282,6 +334,22 @@ async function main() {
     if (!key || seenIncoming.has(key)) continue;
     seenIncoming.add(key);
     uniqueIncoming.push(lead);
+  }
+
+  if (repairPhones) {
+    const repairResult = await repairExistingImportedPhones({
+      tenantId: tenant.id,
+      uniqueIncoming,
+      dryRun,
+    });
+    console.log(`Owner: ${user.name} <${user.email}>`);
+    console.log(`Tenant: ${tenant.name} (${tenant.id})`);
+    console.log(`Data source: ${canvasPaths.length > 0 ? canvasPaths.join(', ') : dataFile}`);
+    console.log(`Imported leads matched: ${repairResult.matched}`);
+    console.log(`Imported lead phones to repair: ${repairResult.changed}`);
+    console.log(`Duplicate phones kept in notes/metadata only: ${repairResult.duplicatePhonesSkipped}`);
+    console.log(dryRun ? 'Dry run only. No phones repaired.' : 'Phone repair completed.');
+    return;
   }
 
   const existingLeads = await Lead.findAll({
