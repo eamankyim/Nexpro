@@ -22,10 +22,12 @@ type FormInputProps = TextInputProps & {
   multiline?: boolean;
 };
 
-export function FormInput({ multiline, style, placeholderTextColor, ...props }: FormInputProps) {
+export const FormInput = React.forwardRef<TextInput, FormInputProps>(
+  ({ multiline, style, placeholderTextColor, ...props }, ref) => {
   const { textColor, mutedColor, borderColor, inputBg } = useScreenColors();
   return (
     <TextInput
+      ref={ref}
       {...props}
       multiline={multiline}
       placeholderTextColor={placeholderTextColor ?? mutedColor}
@@ -41,7 +43,10 @@ export function FormInput({ multiline, style, placeholderTextColor, ...props }: 
       ]}
     />
   );
-}
+  }
+);
+
+FormInput.displayName = 'FormInput';
 
 const styles = StyleSheet.create({
   label: {

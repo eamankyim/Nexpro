@@ -25,8 +25,9 @@ const STORAGE_KEYS = {
 };
 
 /**
- * Persists session. Prefer payloads from GET /auth/me so each membership.tenant includes
- * effectiveFeatureFlags (computed from DB plan + overrides). Login/register bodies alone may omit flags.
+ * Persists session. Prefer payloads from GET /auth/bootstrap or /auth/me so each
+ * membership.tenant includes effectiveFeatureFlags (computed from DB plan + overrides).
+ * Login/register bodies alone may omit flags.
  */
 const persistAuthPayload = (payload = {}) => {
   const { user, token, memberships = [], defaultTenantId } = payload;
@@ -107,6 +108,12 @@ const authService = {
   // Get current user
   getCurrentUser: async () => {
     return await api.get('/auth/me');
+  },
+
+  // Get post-login bootstrap payload (user, memberships, settings, and workspace access)
+  getBootstrap: async (tenantId) => {
+    const params = tenantId ? { tenantId } : undefined;
+    return await api.get('/auth/bootstrap', { params });
   },
 
   // Update user details

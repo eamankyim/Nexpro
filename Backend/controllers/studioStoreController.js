@@ -28,6 +28,7 @@ const {
   getServiceReviewEligibility,
   listPublicServiceReviews,
 } = require('../services/storefrontReviewService');
+const { startHotPathTimer } = require('../utils/performanceLogger');
 
 const LISTING_STATUSES = new Set(['draft', 'published', 'hidden']);
 const CTA_TYPES = new Set(['request_quote', 'book_service', 'fixed_price']);
@@ -715,6 +716,7 @@ exports.getMarketplaceServiceCategories = async (req, res, next) => {
 };
 
 exports.getMarketplaceStudioHome = async (req, res, next) => {
+  const finishTiming = startHotPathTimer('marketplace.studio_home', req);
   try {
     const store = await OnlineStoreSettings.findOne({
       where: publicStoreWhere({ slug: { [Op.iLike]: normalizeSlug(req.params.slug) } }),
@@ -751,6 +753,11 @@ exports.getMarketplaceStudioHome = async (req, res, next) => {
     const categories = getServiceCategoriesFromListings(listings);
     const metadata = store.metadata && typeof store.metadata === 'object' ? store.metadata : {};
 
+    finishTiming({
+      slug: store.slug,
+      services: services.length,
+      categories: categories.length,
+    });
     res.status(200).json({
       success: true,
       data: {
@@ -767,6 +774,7 @@ exports.getMarketplaceStudioHome = async (req, res, next) => {
       },
     });
   } catch (error) {
+    finishTiming({ error: error?.message || 'unknown' });
     next(error);
   }
 };
@@ -1436,6 +1444,7 @@ exports.createOrUpdateServiceReviewHandler = async (req, res, next) => {
 };
 
 exports.getMarketplaceServicesHome = async (req, res, next) => {
+  const finishTiming = startHotPathTimer('marketplace.services_home', req);
   try {
     const homeData = await exports.getStudioMarketplaceHomeData();
     const stores = await OnlineStoreSettings.findAll({
@@ -1463,6 +1472,11 @@ exports.getMarketplaceServicesHome = async (req, res, next) => {
     const bookableServices = services.filter((service) => service.canBookOnline).slice(0, 8);
     const quoteServices = services.filter((service) => service.canRequestQuote).slice(0, 8);
 
+    finishTiming({
+      stores: stores.length,
+      services: services.length,
+      featuredServices: homeData.featuredServices.length,
+    });
     res.status(200).json({
       success: true,
       data: {
@@ -1480,6 +1494,7 @@ exports.getMarketplaceServicesHome = async (req, res, next) => {
       },
     });
   } catch (error) {
+    finishTiming({ error: error?.message || 'unknown' });
     next(error);
   }
 };

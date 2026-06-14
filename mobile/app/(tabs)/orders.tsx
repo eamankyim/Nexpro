@@ -30,7 +30,7 @@ import { ORDER_STATUSES, ORDER_STATUS_LABELS, SHOP_TYPES, resolveBusinessType } 
 import { resolveImageUrl } from '@/utils/fileUtils';
 import { showListFilters } from '@/utils/listEmptyLayout';
 import { FilterChipRow } from '@/components/FilterChip';
-import { ListLoadingState, ListErrorState } from '@/components/ListScreenStates';
+import { ListSkeletonState, ListErrorState } from '@/components/ListScreenStates';
 import { getApiErrorMessage } from '@/utils/parseApiListResponse';
 import { refreshAfterOrderChange } from '@/utils/queryInvalidation';
 
@@ -384,7 +384,7 @@ export default function OrdersScreen() {
       )}
 
       {isLoading && !response ? (
-        <ListLoadingState message="Loading orders..." />
+        <ListSkeletonState rows={6} message="Loading orders..." />
       ) : isError ? (
         <ListErrorState title="Failed to load orders" message={loadErrorMessage} onRetry={refetch} />
       ) : showGrouped ? (

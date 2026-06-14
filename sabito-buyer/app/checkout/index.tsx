@@ -1,9 +1,9 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { router } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { ReviewSnippet } from '@/components/ReviewSnippet';
-import { PrimaryButton, Screen } from '@/components/ui';
+import { EmptyState, ListSkeleton, PrimaryButton, Screen } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { useCart } from '@/context/CartContext';
 import { BRAND, GHANA_REGIONS, STORAGE_KEYS } from '@/constants';
@@ -11,10 +11,24 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { addressesApi, ordersApi, type DeliveryAddress } from '@/services/ordersApi';
 import { formatCurrency } from '@/utils/format';
 import { analytics } from '@/utils/analytics';
+import {
+  buyerQueryKeys,
+  QUERY_STALE,
+  refreshAfterAddressChange,
+  refreshAfterOrderChange,
+} from '@/utils/queryInvalidation';
 
 const FOOD_SHOP_TYPES = new Set(['restaurant', 'supermarket', 'convenience']);
+const ADDRESS_FIELD_LABELS = {
+  recipientName: 'Recipient name',
+  phone: 'Phone number',
+  line1: 'Address line 1',
+  city: 'City',
+} as const;
+type AddressFieldKey = keyof typeof ADDRESS_FIELD_LABELS;
 
 export default function CheckoutScreen() {
+  const queryClient = useQueryClient();
   const { items, cartSummary } = useCart();
   const { isAuthenticated } = useAuth();
   const isFoodOrder = FOOD_SHOP_TYPES.has(cartSummary.store?.shopType || '');
@@ -34,11 +48,20 @@ export default function CheckoutScreen() {
   });
   const [notes, setNotes] = useState('');
   const [saveAddress, setSaveAddress] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<AddressFieldKey, string>>>({});
+  const addressInputRefs = useRef<Record<AddressFieldKey, TextInput | null>>({
+    recipientName: null,
+    phone: null,
+    line1: null,
+    city: null,
+  });
 
   const addressesQuery = useQuery({
-    queryKey: ['addresses'],
+    queryKey: buyerQueryKeys.addresses,
     queryFn: () => addressesApi.list(),
     enabled: isAuthenticated,
+    staleTime: QUERY_STALE.LIST,
+    refetchOnWindowFocus: false,
   });
 
   useEffect(() => {
@@ -72,17 +95,12 @@ export default function CheckoutScreen() {
     queryKey: ['checkout-preview', previewPayload],
     queryFn: () => ordersApi.previewCheckout(previewPayload),
     enabled: items.length > 0 && isAuthenticated,
+    staleTime: QUERY_STALE.CHECKOUT,
+    refetchOnWindowFocus: false,
   });
 
   const payMutation = useMutation({
     mutationFn: async () => {
-      if (fulfillment === 'delivery') {
-        const missing = ['recipientName', 'phone', 'line1', 'city']
-          .some((key) => !String(address[key as keyof DeliveryAddress] || '').trim());
-        if (missing) {
-          throw new Error('Enter recipient name, phone, address line, and city before paying.');
-        }
-      }
       if (previewQuery.isError) {
         throw new Error('Fix the checkout issue shown above before paying.');
       }
@@ -97,11 +115,13 @@ export default function CheckoutScreen() {
           region: String(address.region || GHANA_REGIONS[0]),
           isDefault: savedAddresses.length === 0,
         });
+        await refreshAfterAddressChange(queryClient);
       }
       analytics.track('paystack_start', { storeSlug: items[0]?.storeSlug || '' });
       return ordersApi.initializePaystack(previewPayload);
     },
-    onSuccess: (res) => {
+    onSuccess: async (res) => {
+      await refreshAfterOrderChange(queryClient);
       const url = res?.data?.authorization_url;
       const reference = res?.data?.reference;
       const orderId = res?.data?.order?.id;
@@ -117,6 +137,36 @@ export default function CheckoutScreen() {
   const preview = previewQuery.data?.data;
   const savedAddresses = (addressesQuery.data?.data as DeliveryAddress[]) || [];
   const previewError = previewQuery.error as { message?: string } | null;
+  const submitBlockedReason = previewQuery.isError
+    ? 'Fix the checkout issue shown above before paying.'
+    : !preview
+      ? 'Wait for checkout totals before paying.'
+      : '';
+
+  const validateDeliveryFields = () => {
+    if (fulfillment !== 'delivery') return true;
+    const nextErrors: Partial<Record<AddressFieldKey, string>> = {};
+    (Object.keys(ADDRESS_FIELD_LABELS) as AddressFieldKey[]).forEach((key) => {
+      if (!String(address[key] || '').trim()) {
+        nextErrors[key] = `${ADDRESS_FIELD_LABELS[key]} is required for delivery.`;
+      }
+    });
+
+    if (Object.keys(nextErrors).length > 0) {
+      setFieldErrors(nextErrors);
+      const firstKey = (Object.keys(nextErrors) as AddressFieldKey[])[0];
+      requestAnimationFrame(() => addressInputRefs.current[firstKey]?.focus());
+      return false;
+    }
+
+    setFieldErrors({});
+    return true;
+  };
+
+  const handlePay = () => {
+    if (!validateDeliveryFields()) return;
+    payMutation.mutate();
+  };
 
   const requireAuth = async () => {
     await AsyncStorage.setItem(STORAGE_KEYS.checkoutIntent, '/checkout');
@@ -126,7 +176,12 @@ export default function CheckoutScreen() {
   if (items.length === 0) {
     return (
       <Screen style={styles.center}>
-        <Text>Your cart is empty.</Text>
+        <EmptyState
+          title="Your cart is empty"
+          message="Add products from a store before starting checkout."
+          actionLabel="Browse products"
+          onAction={() => router.push('/(tabs)/store')}
+        />
       </Screen>
     );
   }
@@ -186,13 +241,25 @@ export default function CheckoutScreen() {
             ))
           ) : null}
           {(['recipientName', 'phone', 'line1', 'city'] as const).map((key) => (
+            <View key={key}>
             <TextInput
-              key={key}
-              style={styles.input}
-              placeholder={key}
+              ref={(node) => {
+                addressInputRefs.current[key] = node;
+              }}
+              style={[styles.input, fieldErrors[key] && styles.inputError]}
+              placeholder={ADDRESS_FIELD_LABELS[key]}
               value={String(address[key] || '')}
-              onChangeText={(v) => setAddress((prev) => ({ ...prev, [key]: v }))}
+              onChangeText={(v) => {
+                setAddress((prev) => ({ ...prev, [key]: v }));
+                if (fieldErrors[key]) setFieldErrors((current) => ({ ...current, [key]: undefined }));
+              }}
+              accessibilityLabel={ADDRESS_FIELD_LABELS[key]}
+              accessibilityHint={fieldErrors[key] || `${ADDRESS_FIELD_LABELS[key]} for delivery`}
+              textContentType={key === 'phone' ? 'telephoneNumber' : key === 'recipientName' ? 'name' : key === 'line1' ? 'streetAddressLine1' : 'addressCity'}
+              keyboardType={key === 'phone' ? 'phone-pad' : 'default'}
             />
+            {fieldErrors[key] ? <Text style={styles.fieldError}>{fieldErrors[key]}</Text> : null}
+            </View>
           ))}
           <Text style={styles.blockTitle}>Region (optional)</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.regionRow}>
@@ -247,19 +314,32 @@ export default function CheckoutScreen() {
         </View>
       ) : null}
 
+      {previewQuery.isFetching && !preview ? (
+        <ListSkeleton rows={2} label="Calculating checkout total" />
+      ) : null}
+
       {previewQuery.isError ? (
         <View style={styles.errorBox}>
           <Text style={styles.errorTitle}>Checkout needs attention</Text>
           <Text style={styles.errorText}>{previewError?.message || 'Could not calculate checkout totals.'}</Text>
+          <Pressable
+            style={styles.retryButton}
+            onPress={() => previewQuery.refetch()}
+            accessibilityRole="button"
+            accessibilityLabel="Retry checkout totals"
+          >
+            <Text style={styles.retryText}>Try again</Text>
+          </Pressable>
         </View>
       ) : null}
 
       <PrimaryButton
         label="Pay with Paystack"
-        onPress={() => payMutation.mutate()}
+        onPress={handlePay}
         disabled={previewQuery.isError || !preview}
         loading={payMutation.isPending || previewQuery.isFetching}
       />
+      {submitBlockedReason ? <Text style={styles.helperText}>{submitBlockedReason}</Text> : null}
     </ScrollView>
   );
 }
@@ -295,6 +375,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 12,
   },
+  inputError: { borderColor: BRAND.danger },
+  fieldError: { color: BRAND.danger, fontSize: 13, lineHeight: 18, marginTop: -4, marginBottom: 4 },
+  helperText: { color: BRAND.muted, textAlign: 'center', fontSize: 12, lineHeight: 18 },
   textarea: { minHeight: 90, textAlignVertical: 'top' },
   regionRow: { gap: 8, paddingVertical: 2 },
   regionChip: {
@@ -337,4 +420,13 @@ const styles = StyleSheet.create({
   },
   errorTitle: { color: BRAND.danger, fontWeight: '800' },
   errorText: { color: BRAND.danger, lineHeight: 20 },
+  retryButton: {
+    alignSelf: 'flex-start',
+    marginTop: 10,
+    borderRadius: 10,
+    backgroundColor: BRAND.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  retryText: { color: '#fff', fontWeight: '700' },
 });

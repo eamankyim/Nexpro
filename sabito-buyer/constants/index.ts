@@ -3,6 +3,9 @@ export const STORAGE_KEYS = {
   customer: 'sabito_buyer_customer',
   cart: 'sabito_buyer_cart',
   checkoutIntent: 'sabito_buyer_checkout_intent',
+  authReturnTo: 'sabito_buyer_auth_return_to',
+  authSessionMessage: 'sabito_buyer_auth_session_message',
+  pushRegistrationState: 'sabito_buyer_push_registration_state',
   onboardingComplete: 'sabito_buyer_onboarding_complete',
 } as const;
 

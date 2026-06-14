@@ -3,6 +3,8 @@ jest.mock('../../../config/database', () => ({
     where: jest.fn((left, right) => ({ type: 'where', left, right })),
     json: jest.fn((path) => ({ type: 'json', path })),
     literal: jest.fn((sql) => ({ type: 'literal', sql })),
+    query: jest.fn(),
+    QueryTypes: { SELECT: 'SELECT' },
     transaction: jest.fn(),
   },
   testConnection: jest.fn(),
@@ -11,14 +13,18 @@ jest.mock('../../../config/database', () => ({
 jest.mock('../../../models', () => ({
   OnlineStoreSettings: { findOne: jest.fn(), create: jest.fn(), count: jest.fn() },
   OnlineProductListing: { findOne: jest.fn(), findAndCountAll: jest.fn(), count: jest.fn(), create: jest.fn(), findAll: jest.fn() },
-  Sale: { findAndCountAll: jest.fn(), findOne: jest.fn(), count: jest.fn(), sum: jest.fn() },
+  Sale: { findAndCountAll: jest.fn(), findAll: jest.fn(), findOne: jest.fn(), count: jest.fn(), sum: jest.fn() },
   SaleItem: {},
   SaleActivity: { create: jest.fn() },
   MarketplaceOrderPayment: {},
   Customer: {},
+  Lead: {},
+  Job: { findAll: jest.fn(), findOne: jest.fn(), count: jest.fn(), sum: jest.fn() },
   Product: {},
   ProductVariant: {},
   Shop: {},
+  Tenant: {},
+  Setting: { findOne: jest.fn() },
 }));
 
 jest.mock('../../../middleware/upload', () => ({
@@ -55,7 +61,7 @@ jest.mock('../../../services/tradeAssuranceService', () => ({
 }));
 
 const { sequelize } = require('../../../config/database');
-const { Sale, SaleActivity } = require('../../../models');
+const { Sale, SaleActivity, Job } = require('../../../models');
 const { invalidateSaleListCache } = require('../../../middleware/cache');
 const {
   getTradeAssuranceSummary,
@@ -77,8 +83,13 @@ describe('storeController online orders', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     Sale.findAndCountAll.mockResolvedValue({ count: 1, rows: [{ id: 'sale-1', saleNumber: 'SALE-1' }] });
+    Sale.findAll.mockResolvedValue([]);
     Sale.count.mockResolvedValue(0);
     Sale.sum.mockResolvedValue(0);
+    Job.findAll.mockResolvedValue([]);
+    Job.count.mockResolvedValue(0);
+    Job.sum.mockResolvedValue(0);
+    sequelize.query.mockResolvedValue([]);
     getTradeAssuranceSummary.mockResolvedValue({ balances: {}, counts: {} });
     listTradeAssurancePayments.mockResolvedValue({ count: 0, rows: [] });
     listTradeAssuranceDisputes.mockResolvedValue({ count: 0, rows: [] });
@@ -131,6 +142,75 @@ describe('storeController online orders', () => {
         todayRevenue: 125.5,
       }),
     }));
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('paginates mixed studio orders through a unified feed before hydrating details', async () => {
+    sequelize.query.mockResolvedValue([
+      { orderType: 'service', id: 'job-1', sortAt: '2026-06-14T10:00:00.000Z' },
+      { orderType: 'product', id: 'sale-1', sortAt: '2026-06-13T10:00:00.000Z' },
+    ]);
+    Sale.count.mockResolvedValue(1);
+    Job.count.mockResolvedValue(1);
+    Sale.findAll.mockResolvedValue([{
+      id: 'sale-1',
+      get: () => ({
+        id: 'sale-1',
+        saleNumber: 'SALE-1',
+        createdAt: '2026-06-13T10:00:00.000Z',
+        status: 'completed',
+        metadata: { source: 'online_store' },
+      }),
+    }]);
+    Job.findAll.mockResolvedValue([{
+      id: 'job-1',
+      get: () => ({
+        id: 'job-1',
+        jobNumber: 'JOB-1',
+        title: 'Logo design',
+        createdAt: '2026-06-14T10:00:00.000Z',
+        status: 'new',
+        adminLead: {
+          id: 'lead-1',
+          name: 'Ama',
+          email: 'ama@example.com',
+          phone: '123',
+          metadata: { requestType: 'paid_service_booking', paymentStatus: 'paid' },
+        },
+        metadata: { paymentStatus: 'paid', serviceTitle: 'Logo design' },
+      }),
+    }]);
+
+    const req = {
+      tenantId: 'tenant-1',
+      tenant: { businessType: 'printing_press' },
+      query: { page: '2', limit: '2', search: 'Ama' },
+    };
+    const res = mockRes();
+    const next = jest.fn();
+
+    await storeController.getStoreOrders(req, res, next);
+
+    expect(sequelize.query).toHaveBeenCalledWith(expect.stringContaining('UNION ALL'), expect.objectContaining({
+      replacements: expect.objectContaining({
+        limit: 20,
+        offset: 0,
+        mixedSearch: '%Ama%',
+      }),
+      type: sequelize.QueryTypes.SELECT,
+    }));
+    expect(Sale.findAll).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: expect.any(Object) }),
+    }));
+    expect(Job.findAll).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: expect.any(Object) }),
+    }));
+    const payload = res.json.mock.calls[0][0];
+    expect(payload.count).toBe(2);
+    expect(payload.data).toEqual([
+      expect.objectContaining({ orderType: 'service', id: 'job-1' }),
+      expect.objectContaining({ id: 'sale-1' }),
+    ]);
     expect(next).not.toHaveBeenCalled();
   });
 

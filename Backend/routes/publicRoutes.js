@@ -99,6 +99,7 @@ const {
   getStorefrontCustomerDispute,
 } = require('../controllers/storefrontCustomerController');
 const { requireStorefrontCustomer } = require('../middleware/storefrontAuth');
+const { cacheMiddleware, generatePublicCacheKey } = require('../middleware/cache');
 const {
   authLimiter,
   passwordResetLimiter,
@@ -109,6 +110,7 @@ const {
 } = require('../middleware/rateLimiter');
 
 const router = express.Router();
+const publicMarketplaceHomeCache = cacheMiddleware(45, generatePublicCacheKey('public-marketplace'));
 const STOREFRONT_AVATAR_MAX_SIZE_MB = Math.max(1, parseInt(process.env.STOREFRONT_AVATAR_MAX_SIZE_MB || '2', 10) || 2);
 const STOREFRONT_AVATAR_ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 const storefrontAvatarUploader = multer({
@@ -168,17 +170,17 @@ router.get('/feedback/branding/:tenantSlug', publicTrackBrandingLimiter, getPubl
 router.post('/feedback', publicFeedbackSubmitLimiter, submitPublicFeedback);
 
 // Public online store (MVP catalog only)
-router.get('/marketplace/home', getMarketplaceHome);
-router.get('/marketplace/food/home', getMarketplaceFoodHome);
-router.get('/marketplace/products/home', getMarketplaceProductsHome);
+router.get('/marketplace/home', publicMarketplaceHomeCache, getMarketplaceHome);
+router.get('/marketplace/food/home', publicMarketplaceHomeCache, getMarketplaceFoodHome);
+router.get('/marketplace/products/home', publicMarketplaceHomeCache, getMarketplaceProductsHome);
 router.get('/marketplace/stores', getMarketplaceStores);
-router.get('/marketplace/stores/:slug', getMarketplaceStoreHome);
+router.get('/marketplace/stores/:slug', publicMarketplaceHomeCache, getMarketplaceStoreHome);
 router.get('/marketplace/products', getMarketplaceProducts);
 router.get('/marketplace/products/:idOrSlug', getMarketplaceProduct);
 router.get('/marketplace/categories', getMarketplaceCategories);
 router.get('/marketplace/studios', getMarketplaceStudios);
-router.get('/marketplace/studios/:slug', getMarketplaceStudioHome);
-router.get('/marketplace/services/home', getMarketplaceServicesHome);
+router.get('/marketplace/studios/:slug', publicMarketplaceHomeCache, getMarketplaceStudioHome);
+router.get('/marketplace/services/home', publicMarketplaceHomeCache, getMarketplaceServicesHome);
 router.get('/marketplace/services', getMarketplaceServices);
 router.get('/marketplace/service-categories', getMarketplaceServiceCategories);
 router.get('/marketplace/studios/:slug/services/:serviceSlug', getPublicStudioService);

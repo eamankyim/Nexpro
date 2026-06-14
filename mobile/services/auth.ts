@@ -107,6 +107,15 @@ export const authService = {
     return res;
   },
 
+  getBootstrap: async (tenantId?: string | null) => {
+    logger.debug('Auth', 'Fetching auth bootstrap');
+    const res = await api.get('/auth/bootstrap', {
+      params: tenantId ? { tenantId } : undefined,
+    });
+    logger.info('Auth', 'Auth bootstrap fetched');
+    return res;
+  },
+
   resendVerification: async () => {
     await api.post('/auth/resend-verification');
   },

@@ -89,6 +89,7 @@
     "xss": "^1.0.14"
   },
   "devDependencies": {
+    "jest": "^29.7.0",
     "nodemon": "^3.0.2"
   }
 }

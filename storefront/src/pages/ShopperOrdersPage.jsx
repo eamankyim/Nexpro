@@ -1,12 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, CalendarDays, Loader2, Package, Scissors } from 'lucide-react';
+import { ArrowRight, CalendarDays, Package, Scissors } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 
 import AccountLayout from '../components/storefront/AccountLayout';
 import { EmptyState } from '../components/storefront/StorefrontLayout';
+import { InlineErrorState, OrderHistorySkeleton } from '../components/storefront/StateBlocks';
 import storeService from '../services/storeService';
 import { showError } from '../utils/toast';
 import { formatAmount } from '../utils/formatNumber';
+import { QUERY_STALE, SHOPPER_QUERY_KEYS } from '../utils/queryInvalidation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 
@@ -92,34 +95,40 @@ const normalizeServiceBookingHistoryItem = (booking) => ({
 });
 
 const ShopperOrdersPage = () => {
-  const [historyItems, setHistoryItems] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const ordersQuery = useQuery({
+    queryKey: SHOPPER_QUERY_KEYS.orders(),
+    queryFn: storeService.getStorefrontOrders,
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchOnWindowFocus: false,
+  });
+
+  const bookingsQuery = useQuery({
+    queryKey: SHOPPER_QUERY_KEYS.serviceBookings(),
+    queryFn: storeService.getStorefrontServiceBookings,
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchOnWindowFocus: false,
+  });
+
+  const historyItems = useMemo(() => {
+    const orders = ordersQuery.data?.data?.orders || ordersQuery.data?.orders || [];
+    const bookings = bookingsQuery.data?.data?.bookings || bookingsQuery.data?.bookings || [];
+    return [
+      ...orders.map(normalizeOrderHistoryItem),
+      ...bookings.map(normalizeServiceBookingHistoryItem),
+    ].sort((first, second) => new Date(second.sortDate || 0) - new Date(first.sortDate || 0));
+  }, [bookingsQuery.data, ordersQuery.data]);
+
+  const isLoading = ordersQuery.isLoading || bookingsQuery.isLoading;
+  const loadError = ordersQuery.error || bookingsQuery.error;
 
   useEffect(() => {
-    let mounted = true;
-    Promise.all([
-      storeService.getStorefrontOrders(),
-      storeService.getStorefrontServiceBookings(),
-    ])
-      .then(([ordersResponse, bookingsResponse]) => {
-        if (!mounted) return;
-        const orders = ordersResponse?.data?.orders || ordersResponse?.orders || [];
-        const bookings = bookingsResponse?.data?.bookings || bookingsResponse?.bookings || [];
-        const nextItems = [
-          ...orders.map(normalizeOrderHistoryItem),
-          ...bookings.map(normalizeServiceBookingHistoryItem),
-        ].sort((first, second) => new Date(second.sortDate || 0) - new Date(first.sortDate || 0));
-        setHistoryItems(nextItems);
-      })
-      .catch((error) => showError(error, 'Could not load your orders.'))
-      .finally(() => {
-        if (mounted) setIsLoading(false);
-      });
+    if (loadError) showError(loadError, 'Could not load your orders.');
+  }, [loadError]);
 
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  const retryOrders = () => {
+    ordersQuery.refetch();
+    bookingsQuery.refetch();
+  };
 
   return (
     <AccountLayout
@@ -138,10 +147,13 @@ const ShopperOrdersPage = () => {
         </div>
 
         {isLoading ? (
-          <div className="mt-6 flex min-h-56 items-center justify-center text-sm font-semibold text-slate-500">
-            <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-            Loading orders...
-          </div>
+          <OrderHistorySkeleton />
+        ) : loadError ? (
+          <InlineErrorState
+            title="Could not load your orders"
+            message="Your order history is safe. Retry when your connection is stable."
+            onRetry={retryOrders}
+          />
         ) : historyItems.length === 0 ? (
           <div className="mt-6">
             <EmptyState

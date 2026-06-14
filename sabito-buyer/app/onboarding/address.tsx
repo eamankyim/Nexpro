@@ -1,4 +1,4 @@
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -6,8 +6,10 @@ import { PrimaryButton, SecondaryButton } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { BRAND, GHANA_REGIONS } from '@/constants';
 import { addressesApi, type DeliveryAddress } from '@/services/ordersApi';
+import { refreshAfterAddressChange } from '@/utils/queryInvalidation';
 
 export default function OnboardingAddressScreen() {
+  const queryClient = useQueryClient();
   const { customer, isAuthenticated } = useAuth();
   const [form, setForm] = useState<Partial<DeliveryAddress>>({
     label: 'Home',
@@ -40,7 +42,8 @@ export default function OnboardingAddressScreen() {
       if (id) await addressesApi.setDefault(id);
       return response;
     },
-    onSuccess: () => {
+    onSuccess: async () => {
+      await refreshAfterAddressChange(queryClient);
       Alert.alert('Address saved', 'Your default delivery address is ready.');
       router.replace('/(tabs)/food');
     },

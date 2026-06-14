@@ -176,6 +176,27 @@ if (!API_BASE_URL && typeof window !== 'undefined') {
 // Retry configuration
 const MAX_RETRIES = 3;
 const RETRY_DELAY_BASE = 1000; // 1 second base delay
+const AUTH_SESSION_EXPIRED_EVENT = 'nexpro:auth-session-expired';
+let hasDispatchedSessionExpired = false;
+
+const getCurrentReturnTo = () => {
+  if (typeof window === 'undefined') return '/dashboard';
+  const path = `${window.location.pathname}${window.location.search || ''}`;
+  return path.startsWith('/login') || path.startsWith('/signup') ? '/dashboard' : path;
+};
+
+const dispatchSessionExpired = (detail = {}) => {
+  if (typeof window === 'undefined' || hasDispatchedSessionExpired) return;
+  hasDispatchedSessionExpired = true;
+  window.dispatchEvent(new CustomEvent(AUTH_SESSION_EXPIRED_EVENT, {
+    detail: {
+      reason: 'session_expired',
+      message: 'Your session expired. Sign in again to continue.',
+      returnTo: getCurrentReturnTo(),
+      ...detail,
+    },
+  }));
+};
 
 /**
  * Calculate exponential backoff delay
@@ -252,6 +273,7 @@ api.interceptors.request.use(
                             config.url?.includes('/auth/register') ||
                             config.url?.includes('/auth/sso') ||
                             config.url?.includes('/auth/check-email') ||
+                            config.url?.includes('/auth/verify-email') ||
                             config.url?.includes('/auth/config') ||
                             config.url?.includes('/invites/validate');
     const isUserScopedEndpoint = config.url?.includes('/user-workspace');
@@ -367,6 +389,7 @@ api.interceptors.response.use(
     // Don't redirect on 401 for login/register endpoints - let them handle the error
     const isAuthEndpoint = error.config?.url?.includes('/auth/login') ||
                           error.config?.url?.includes('/auth/register') ||
+                          error.config?.url?.includes('/auth/verify-email') ||
                           error.config?.url?.includes('/tenants/signup');
     // Don't redirect on 401 for tour status - avoids reload loop when token expired and tour refetches
     const isTourEndpoint = error.config?.url?.includes('/tours/status');
@@ -385,9 +408,10 @@ api.interceptors.response.use(
       // Only redirect when we actually had a session token.
       // This prevents redirect/reload loops on public pages making optional requests.
       if (existingToken) {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        window.location.href = '/login';
+        dispatchSessionExpired({
+          status: 401,
+          errorCode: error.response?.data?.errorCode || error.response?.data?.code,
+        });
       }
     }
 

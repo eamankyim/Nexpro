@@ -41,7 +41,7 @@ export const AuthProvider = ({ children }) => {
   const [supportSession, setSupportSession] = useState(() => supportAccessService.getSession());
   const [endingSupportAccess, setEndingSupportAccess] = useState(false);
   const queryClient = useQueryClient();
-  /** Prevents repeated /auth/me loops when flags are missing; cleared on logout / successful hydrate. */
+  /** Prevents repeated bootstrap loops when flags are missing; cleared on logout / successful hydrate. */
   const featureFlagsHydrateForTenantRef = useRef(null);
 
   /**
@@ -65,12 +65,112 @@ export const AuthProvider = ({ children }) => {
     );
   };
 
+  const bootstrapDataFromResponse = (body) => body?.data ?? body ?? {};
+
+  const getBootstrapMemberships = (bootstrapData = {}) =>
+    bootstrapData?.memberships || bootstrapData?.user?.tenantMemberships || [];
+
+  const buildAuthPayloadFromBootstrap = (bootstrapData = {}, preferredTenantId = null) => {
+    const nextMemberships = getBootstrapMemberships(bootstrapData);
+    const resolvedTenantId = resolveInitialTenant(
+      nextMemberships,
+      preferredTenantId || bootstrapData?.activeTenantId || bootstrapData?.defaultTenantId || null
+    );
+    return {
+      user: bootstrapData?.user || null,
+      memberships: nextMemberships,
+      defaultTenantId: resolvedTenantId,
+    };
+  };
+
+  const hasWorkspaceWideAccess = (role) => ['owner', 'admin', 'support'].includes(role || '');
+
+  const buildAccessCache = (items = [], role = null, storedActiveId = null, activeIdKey = 'activeId', defaultIdKey = 'defaultId') => {
+    const list = Array.isArray(items) ? items : [];
+    const validIds = new Set(list.map((item) => item?.id).filter(Boolean));
+    const defaultId = list.find((item) => item?.isDefault)?.id || list[0]?.id || null;
+    const activeId = storedActiveId && validIds.has(storedActiveId) ? storedActiveId : defaultId;
+    return {
+      items: list,
+      canAccessAll: hasWorkspaceWideAccess(role),
+      [activeIdKey]: activeId,
+      [defaultIdKey]: defaultId,
+    };
+  };
+
+  const seedBootstrapQueryCache = (bootstrapData = {}, preferredTenantId = null) => {
+    const activeId =
+      bootstrapData?.activeTenantId ||
+      resolveInitialTenant(getBootstrapMemberships(bootstrapData), preferredTenantId) ||
+      null;
+    if (!activeId) return;
+
+    queryClient.setQueryData(['auth', 'bootstrap', activeId], {
+      success: true,
+      data: bootstrapData,
+    });
+
+    if (bootstrapData?.user) {
+      queryClient.setQueryData(['auth', 'me'], {
+        success: true,
+        data: bootstrapData.user,
+      });
+    }
+
+    const settings = bootstrapData?.settings || {};
+    if (Object.prototype.hasOwnProperty.call(settings, 'organization')) {
+      const organization = { success: true, data: settings.organization || {} };
+      queryClient.setQueryData(['settings', 'organization'], organization);
+      queryClient.setQueryData(['settings', 'organization', activeId], organization);
+    }
+
+    const role = bootstrapData?.tenantRole || null;
+    if (bootstrapData?.activeTenant?.billingStatus) {
+      queryClient.setQueryData(['subscription', 'status', activeId], bootstrapData.activeTenant.billingStatus);
+    }
+
+    const access = bootstrapData?.access || {};
+    if (Array.isArray(access.shops)) {
+      const shopAccess = buildAccessCache(
+        access.shops,
+        role,
+        localStorage.getItem('activeShopId'),
+        'activeShopId',
+        'defaultShopId'
+      );
+      queryClient.setQueryData(['shops', 'access', activeId], {
+        shops: shopAccess.items,
+        canAccessAll: shopAccess.canAccessAll,
+        activeShopId: shopAccess.activeShopId,
+        defaultShopId: shopAccess.defaultShopId,
+      });
+    }
+
+    if (Array.isArray(access.studioLocations)) {
+      const locationAccess = buildAccessCache(
+        access.studioLocations,
+        role,
+        localStorage.getItem('activeStudioLocationId'),
+        'activeStudioLocationId',
+        'defaultStudioLocationId'
+      );
+      queryClient.setQueryData(['studio-locations', 'access', activeId], {
+        locations: locationAccess.items,
+        canAccessAll: locationAccess.canAccessAll,
+        activeStudioLocationId: locationAccess.activeStudioLocationId,
+        defaultStudioLocationId: locationAccess.defaultStudioLocationId,
+      });
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
 
     const applyBootstrapFromServer = (body) => {
-      const userData = body?.data ?? body;
-      const nextMemberships = userData?.tenantMemberships || [];
+      const bootstrapData = bootstrapDataFromResponse(body);
+      const payload = buildAuthPayloadFromBootstrap(bootstrapData, storedActiveTenantId);
+      const userData = payload.user;
+      const nextMemberships = payload.memberships || [];
       if (import.meta.env.DEV) {
         console.log('[AuthContext] Fetched memberships:', {
           membershipsCount: nextMemberships.length,
@@ -103,21 +203,14 @@ export const AuthProvider = ({ children }) => {
       }
 
       setUser(userData);
+      seedBootstrapQueryCache(bootstrapData, storedActiveTenantId);
 
       if (nextMemberships.length > 0) {
         setMemberships(nextMemberships);
-        const defaultTid = authService.membershipTenantId(nextMemberships[0]) || null;
-        const preferredAfterFetch = (() => {
-          const ids = new Set(
-            nextMemberships.map((m) => authService.membershipTenantId(m)).filter(Boolean)
-          );
-          const s = storedActiveTenantId != null && storedActiveTenantId !== '' ? String(storedActiveTenantId) : null;
-          return s && ids.has(s) ? s : defaultTid;
-        })();
         authService.persistAuthPayload({
           user: userData,
           memberships: nextMemberships,
-          defaultTenantId: preferredAfterFetch,
+          defaultTenantId: payload.defaultTenantId,
         });
         applyResolvedTenant(nextMemberships, storedActiveTenantId);
       } else {
@@ -207,22 +300,22 @@ export const AuthProvider = ({ children }) => {
       return undefined;
     }
 
-    // Unblock the shell from cache immediately; /auth/me can be slow or hang without blocking PrivateRoute.
+    // Unblock the shell from cache immediately; the server refresh should not block PrivateRoute.
     finishBootstrapFromCache();
 
-    // Always refresh from server so effectiveFeatureFlags and billing match admin/plan changes.
+    // Always refresh from server so effectiveFeatureFlags, settings, and workspace access match source of truth.
     if (import.meta.env.DEV) {
-      console.log('[AuthContext] Refreshing session via GET /auth/me (feature flags + memberships source of truth)...');
+      console.log('[AuthContext] Refreshing session via GET /auth/bootstrap (auth shell source of truth)...');
     }
     authService
-      .getCurrentUser()
+      .getBootstrap(storedActiveTenantId || undefined)
       .then((body) => {
         if (cancelled) return;
         applyBootstrapFromServer(body);
       })
       .catch((error) => {
         if (cancelled) return;
-        if (import.meta.env.DEV) console.error('[AuthContext] Error fetching /auth/me:', error);
+        if (import.meta.env.DEV) console.error('[AuthContext] Error fetching /auth/bootstrap:', error);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -272,26 +365,21 @@ export const AuthProvider = ({ children }) => {
   };
 
   /**
-   * Refetch /auth/me so tenant.effectiveFeatureFlags is populated (login/register return raw Tenant rows).
+   * Refetch /auth/bootstrap so tenant.effectiveFeatureFlags, settings, and workspace access are populated.
    */
   const refreshAuthState = async () => {
-    if (import.meta.env.DEV) console.log('[AuthContext] refreshAuthState: fetching /auth/me');
-    const body = await authService.getCurrentUser();
-    const userData = body?.data ?? body;
-    const nextMemberships = userData?.tenantMemberships || [];
+    const preferredTenantId = authService.getActiveTenantId();
+    if (import.meta.env.DEV) console.log('[AuthContext] refreshAuthState: fetching /auth/bootstrap');
+    const body = await authService.getBootstrap(preferredTenantId || undefined);
+    const bootstrapData = bootstrapDataFromResponse(body);
+    const payload = buildAuthPayloadFromBootstrap(bootstrapData, preferredTenantId);
+    const userData = payload.user;
+    const nextMemberships = payload.memberships || [];
     const firstTenant = nextMemberships[0]?.tenant;
     if (import.meta.env.DEV) {
       console.log('[AuthContext] refreshAuthState:', { membershipsCount: nextMemberships.length, firstTenantId: firstTenant?.id });
     }
-    const payload = {
-      user: userData,
-      memberships: nextMemberships,
-      defaultTenantId:
-        authService.getActiveTenantId() ||
-        authService.membershipTenantId(nextMemberships.find((m) => m.isDefault)) ||
-        authService.membershipTenantId(nextMemberships[0]) ||
-        null,
-    };
+    seedBootstrapQueryCache(bootstrapData, preferredTenantId);
     authService.persistAuthPayload(payload);
     syncAuthState(payload);
     const activeId =
@@ -328,7 +416,7 @@ export const AuthProvider = ({ children }) => {
       try {
         await refreshAuthState();
       } catch (e) {
-        if (import.meta.env.DEV) console.warn('[AuthContext] login: /auth/me refresh failed', e);
+        if (import.meta.env.DEV) console.warn('[AuthContext] login: /auth/bootstrap refresh failed', e);
       }
       if (import.meta.env.DEV) {
         const data = response?.data || {};
@@ -354,7 +442,7 @@ export const AuthProvider = ({ children }) => {
       try {
         await refreshAuthState();
       } catch (e) {
-        if (import.meta.env.DEV) console.warn('[AuthContext] register: /auth/me refresh failed', e);
+        if (import.meta.env.DEV) console.warn('[AuthContext] register: /auth/bootstrap refresh failed', e);
       }
       return response;
     } catch (error) {
@@ -371,6 +459,35 @@ export const AuthProvider = ({ children }) => {
     queryClient.clear();
   };
 
+  useEffect(() => {
+    const handleSessionExpired = (event) => {
+      const detail = event?.detail || {};
+      const returnTo = typeof detail.returnTo === 'string' && detail.returnTo.startsWith('/') && !detail.returnTo.startsWith('//')
+        ? detail.returnTo
+        : '/dashboard';
+      try {
+        sessionStorage.setItem('authSessionMessage', detail.message || 'Your session expired. Sign in again to continue.');
+      } catch {
+        // Session messaging is best-effort only.
+      }
+      authService.logout();
+      supportAccessService.clearSession();
+      setUser(null);
+      setMemberships([]);
+      setActiveTenantId(null);
+      setSupportSession(null);
+      featureFlagsHydrateForTenantRef.current = null;
+      queryClient.clear();
+      const loginUrl = `/login?reason=session_expired&returnTo=${encodeURIComponent(returnTo)}`;
+      if (window.location.pathname !== '/login') {
+        window.location.assign(loginUrl);
+      }
+    };
+
+    window.addEventListener('nexpro:auth-session-expired', handleSessionExpired);
+    return () => window.removeEventListener('nexpro:auth-session-expired', handleSessionExpired);
+  }, [queryClient]);
+
   const tenantSignup = async (payload) => {
     try {
       const response = await authService.tenantSignup(payload);
@@ -378,7 +495,7 @@ export const AuthProvider = ({ children }) => {
       try {
         await refreshAuthState();
       } catch (e) {
-        if (import.meta.env.DEV) console.warn('[AuthContext] tenantSignup: /auth/me refresh failed', e);
+        if (import.meta.env.DEV) console.warn('[AuthContext] tenantSignup: /auth/bootstrap refresh failed', e);
       }
       return response;
     } catch (error) {
@@ -403,15 +520,13 @@ export const AuthProvider = ({ children }) => {
       try {
         await refreshAuthState();
       } catch (e) {
-        if (import.meta.env.DEV) console.warn('[AuthContext] sabitoSSO: /auth/me refresh failed', e);
+        if (import.meta.env.DEV) console.warn('[AuthContext] sabitoSSO: /auth/bootstrap refresh failed', e);
       }
 
       // Verify activeTenantId was set
       const activeTenantId = authService.getActiveTenantId();
       if (import.meta.env.DEV) console.log('[AuthContext] Active tenant after sync:', activeTenantId);
       
-      // Invalidate organization settings query to refetch after SSO
-      queryClient.invalidateQueries({ queryKey: ['settings', 'organization'] });
       return response;
     } catch (error) {
       if (import.meta.env.DEV) console.error('[AuthContext] SSO login failed:', error);
@@ -431,30 +546,26 @@ export const AuthProvider = ({ children }) => {
     try {
       await refreshAuthState();
     } catch (e) {
-      if (import.meta.env.DEV) console.warn('[AuthContext] googleAuth: /auth/me refresh failed', e);
+      if (import.meta.env.DEV) console.warn('[AuthContext] googleAuth: /auth/bootstrap refresh failed', e);
     }
-    queryClient.invalidateQueries({ queryKey: ['settings', 'organization'] });
     return response;
   };
 
   const loginWithToken = async (token) => {
     try {
-      // Get user info with the token (API returns { success, data: user })
-      const body = await authService.getCurrentUser();
-      const userData = body?.data ?? body;
-      const memberships = userData?.tenantMemberships || [];
+      if (token) {
+        localStorage.setItem('token', token);
+      }
+      const body = await authService.getBootstrap(authService.getActiveTenantId() || undefined);
+      const bootstrapData = bootstrapDataFromResponse(body);
+      const payload = buildAuthPayloadFromBootstrap(bootstrapData, authService.getActiveTenantId());
+      seedBootstrapQueryCache(bootstrapData, payload.defaultTenantId);
       
       // Sync auth state
-      syncAuthState({
-        user: userData,
-        memberships: memberships,
-        defaultTenantId: authService.membershipTenantId(memberships[0]) || null,
-      });
+      authService.persistAuthPayload(payload);
+      syncAuthState(payload);
       
-      // Invalidate organization settings query to refetch after login
-      queryClient.invalidateQueries({ queryKey: ['settings', 'organization'] });
-      
-      return { success: true, data: { user: userData, memberships } };
+      return { success: true, data: payload };
     } catch (error) {
       throw error;
     }
@@ -619,7 +730,7 @@ export const AuthProvider = ({ children }) => {
   refreshAuthStateRef.current = refreshAuthState;
 
   /**
-   * DB is source of truth; /auth/me attaches computed effectiveFeatureFlags.
+   * DB is source of truth; /auth/bootstrap attaches computed effectiveFeatureFlags.
    * If the active membership's tenant is missing that payload (stale localStorage, old login shape), hydrate once.
    */
   useEffect(() => {
@@ -637,7 +748,7 @@ export const AuthProvider = ({ children }) => {
     }
     if (featureFlagsHydrateForTenantRef.current === resolvedActiveTenantId) return;
     featureFlagsHydrateForTenantRef.current = resolvedActiveTenantId;
-    console.log('[TenantAccess] hydrate_missing_flags tenantId=%s → GET /auth/me', resolvedActiveTenantId);
+    console.log('[TenantAccess] hydrate_missing_flags tenantId=%s -> GET /auth/bootstrap', resolvedActiveTenantId);
     refreshAuthStateRef.current().catch(() => {
       /* Keep ref = tenantId so we do not retry in a loop; full page reload can retry. */
     });

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import storeService from '../services/storeService';
+import { QUERY_STALE } from '../utils/queryInvalidation';
 
 export const getStoreOrdersPayload = (response) => {
   const payload = response?.data ?? response ?? {};
@@ -60,7 +61,8 @@ export function useOnlineStoreOrderAttention({ enabled = true } = {}) {
     queryKey: ['store', 'setup-status'],
     queryFn: () => storeService.getSetupStatus(),
     enabled,
-    staleTime: 60 * 1000,
+    staleTime: QUERY_STALE.METADATA,
+    refetchOnWindowFocus: false,
     retry: 1,
   });
 
@@ -75,7 +77,10 @@ export function useOnlineStoreOrderAttention({ enabled = true } = {}) {
     queryKey: ['store', 'dashboard', 'order-stats'],
     queryFn: () => storeService.getOrderStats(),
     enabled: enabled && hasStoreSettings,
-    staleTime: 60 * 1000,
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchInterval: 60 * 1000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
     retry: 1,
   });
 
@@ -88,9 +93,10 @@ export function useOnlineStoreOrderAttention({ enabled = true } = {}) {
     queryKey: ['store', 'dashboard', 'recent-online-orders'],
     queryFn: () => storeService.getOrders({ limit: 5 }),
     enabled: enabled && hasStoreSettings,
-    staleTime: 60 * 1000,
+    staleTime: QUERY_STALE.TRANSACTIONAL,
     refetchInterval: 60 * 1000,
     refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
     retry: 1,
   });
 

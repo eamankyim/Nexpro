@@ -21,7 +21,16 @@ const PrivateRoute = ({ children }) => {
     );
   }
 
-  return isAuthenticated ? children : <Navigate to="/login" />;
+  if (isAuthenticated) return children;
+
+  const returnTo = `${location.pathname}${location.search || ''}`;
+  return (
+    <Navigate
+      to={`/login?returnTo=${encodeURIComponent(returnTo)}&reason=session_required`}
+      replace
+      state={{ returnTo }}
+    />
+  );
 };
 
 export default PrivateRoute;

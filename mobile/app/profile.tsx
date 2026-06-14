@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -52,6 +52,14 @@ export default function ProfileScreen() {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<{
+    name?: string;
+    currentPassword?: string;
+    newPassword?: string;
+  }>({});
+  const nameInputRef = useRef<TextInput>(null);
+  const currentPasswordRef = useRef<TextInput>(null);
+  const newPasswordRef = useRef<TextInput>(null);
 
   const { data: profileRes, isLoading: profileLoading } = useQuery({
     queryKey: PROFILE_QUERY_KEY,
@@ -82,6 +90,7 @@ export default function ProfileScreen() {
     setShowChangePassword(false);
     setShowCurrentPassword(false);
     setShowNewPassword(false);
+    setFieldErrors({});
   }, [profileData, user?.email, user?.name, user?.profilePicture]);
 
   const handleToggleEdit = useCallback(() => {
@@ -152,21 +161,30 @@ export default function ProfileScreen() {
 
   const handleSave = useCallback(async () => {
     const trimmedName = name.trim();
+    const nextErrors: { name?: string; currentPassword?: string; newPassword?: string } = {};
     if (!trimmedName) {
-      Alert.alert('Name required', 'Enter your full name.');
-      return;
+      nextErrors.name = 'Enter your full name.';
     }
 
     if (newPassword && newPassword.length < 6) {
-      Alert.alert('Password too short', 'Use at least 6 characters for your new password.');
-      return;
+      nextErrors.newPassword = 'Use at least 6 characters for your new password.';
     }
 
     if (newPassword && !currentPassword.trim()) {
-      Alert.alert('Current password required', 'Enter your current password to set a new one.');
+      nextErrors.currentPassword = 'Enter your current password to set a new one.';
+    }
+
+    if (nextErrors.name || nextErrors.currentPassword || nextErrors.newPassword) {
+      setFieldErrors(nextErrors);
+      requestAnimationFrame(() => {
+        if (nextErrors.name) nameInputRef.current?.focus();
+        else if (nextErrors.currentPassword) currentPasswordRef.current?.focus();
+        else if (nextErrors.newPassword) newPasswordRef.current?.focus();
+      });
       return;
     }
 
+    setFieldErrors({});
     setSaving(true);
     try {
       const payload: Parameters<typeof settingsService.updateProfile>[0] = {
@@ -183,6 +201,7 @@ export default function ProfileScreen() {
       await refreshAuth();
       setCurrentPassword('');
       setNewPassword('');
+      setFieldErrors({});
       setShowChangePassword(false);
       setEditing(false);
       logger.info('Profile', 'Profile updated');
@@ -204,6 +223,27 @@ export default function ProfileScreen() {
   }, [email, router, user?.email]);
 
   const inputDisabledBg = inputBg;
+
+  const renderProfileSkeleton = () => (
+    <View
+      style={styles.skeletonWrap}
+      accessibilityRole="progressbar"
+      accessibilityLabel="Loading profile details"
+    >
+      <View style={styles.skeletonAvatar} />
+      <View style={[styles.card, { backgroundColor: cardBg, borderColor }]}>
+        <View style={[styles.skeletonLine, styles.skeletonTitle]} />
+        <View style={[styles.skeletonLine, styles.skeletonLabel]} />
+        <View style={styles.skeletonInput} />
+        <View style={[styles.skeletonLine, styles.skeletonLabel]} />
+        <View style={styles.skeletonInput} />
+      </View>
+      <View style={[styles.card, { backgroundColor: cardBg, borderColor }]}>
+        <View style={[styles.skeletonLine, styles.skeletonTitle]} />
+        <View style={styles.skeletonButton} />
+      </View>
+    </View>
+  );
 
   return (
     <ScreenShell style={styles.container}>
@@ -255,9 +295,8 @@ export default function ProfileScreen() {
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
-        {profileLoading ? (
-          <ActivityIndicator style={{ marginVertical: 24 }} color={colors.tint} />
-        ) : null}
+        {profileLoading ? renderProfileSkeleton() : (
+        <>
 
         <View style={styles.avatarSection}>
           <View style={styles.avatarWrap}>
@@ -272,6 +311,8 @@ export default function ProfileScreen() {
               <Pressable
                 onPress={handlePickPhoto}
                 disabled={uploadingPhoto}
+                accessibilityRole="button"
+                accessibilityLabel="Upload profile picture"
                 style={[styles.cameraButton, { backgroundColor: colors.tint, borderColor: bg }]}
               >
                 {uploadingPhoto ? (
@@ -286,6 +327,8 @@ export default function ProfileScreen() {
             <Pressable
               onPress={handleRemovePhoto}
               disabled={uploadingPhoto}
+              accessibilityRole="button"
+              accessibilityLabel="Remove profile picture"
               style={({ pressed }) => [styles.removePhotoBtn, pressed && styles.buttonPressed]}
             >
               <Text style={{ color: '#dc2626', fontWeight: '600', fontSize: 14 }}>Remove photo</Text>
@@ -302,6 +345,7 @@ export default function ProfileScreen() {
           <Text style={[styles.sectionTitle, { color: textColor }]}>Personal information</Text>
           <Text style={[styles.label, { color: mutedColor }]}>Full name</Text>
           <TextInput
+            ref={nameInputRef}
             style={[
               styles.input,
               {
@@ -309,14 +353,21 @@ export default function ProfileScreen() {
                 borderColor,
                 backgroundColor: editing ? cardBg : inputDisabledBg,
               },
+              fieldErrors.name && styles.inputError,
             ]}
             value={name}
-            onChangeText={setName}
+            onChangeText={(value) => {
+              setName(value);
+              if (fieldErrors.name) setFieldErrors((current) => ({ ...current, name: undefined }));
+            }}
             placeholder="Your name"
             placeholderTextColor={mutedColor}
             autoCapitalize="words"
+            accessibilityLabel="Full name"
+            accessibilityHint={fieldErrors.name || 'Enter your full name'}
             editable={editing && !saving}
           />
+          {fieldErrors.name ? <Text style={styles.fieldError}>{fieldErrors.name}</Text> : null}
           <Text style={[styles.label, { color: mutedColor, marginTop: 16 }]}>Email</Text>
           <TextInput
             style={[
@@ -331,6 +382,7 @@ export default function ProfileScreen() {
             editable={false}
             placeholder="Email"
             placeholderTextColor={mutedColor}
+            accessibilityLabel="Email address"
           />
           <Text style={[styles.hint, { color: mutedColor }]}>
             Email cannot be changed here.
@@ -358,52 +410,80 @@ export default function ProfileScreen() {
               <Text style={[styles.label, { color: mutedColor }]}>Current password</Text>
               <View style={styles.passwordRow}>
                 <TextInput
+                  ref={currentPasswordRef}
                   style={[
                     styles.input,
                     styles.passwordInput,
                     { color: textColor, borderColor, backgroundColor: cardBg },
+                    fieldErrors.currentPassword && styles.inputError,
                   ]}
                   value={currentPassword}
-                  onChangeText={setCurrentPassword}
+                  onChangeText={(value) => {
+                    setCurrentPassword(value);
+                    if (fieldErrors.currentPassword) {
+                      setFieldErrors((current) => ({ ...current, currentPassword: undefined }));
+                    }
+                  }}
                   placeholder="Enter current password"
                   placeholderTextColor={mutedColor}
                   secureTextEntry={!showCurrentPassword}
                   autoCapitalize="none"
+                  accessibilityLabel="Current password"
+                  accessibilityHint={fieldErrors.currentPassword || 'Enter your current password'}
                   editable={editing && !saving}
                 />
                 <Pressable
                   onPress={() => setShowCurrentPassword((v) => !v)}
                   style={styles.eyeButton}
                   hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel={showCurrentPassword ? 'Hide current password' : 'Show current password'}
                 >
                   <AppIcon name={showCurrentPassword ? 'eye-off' : 'eye'} size={18} color={mutedColor} />
                 </Pressable>
               </View>
+              {fieldErrors.currentPassword ? (
+                <Text style={styles.fieldError}>{fieldErrors.currentPassword}</Text>
+              ) : null}
 
               <Text style={[styles.label, { color: mutedColor, marginTop: 16 }]}>New password</Text>
               <View style={styles.passwordRow}>
                 <TextInput
+                  ref={newPasswordRef}
                   style={[
                     styles.input,
                     styles.passwordInput,
                     { color: textColor, borderColor, backgroundColor: cardBg },
+                    fieldErrors.newPassword && styles.inputError,
                   ]}
                   value={newPassword}
-                  onChangeText={setNewPassword}
+                  onChangeText={(value) => {
+                    setNewPassword(value);
+                    if (fieldErrors.newPassword) {
+                      setFieldErrors((current) => ({ ...current, newPassword: undefined }));
+                    }
+                  }}
                   placeholder="Enter new password"
                   placeholderTextColor={mutedColor}
                   secureTextEntry={!showNewPassword}
                   autoCapitalize="none"
+                  accessibilityLabel="New password"
+                  accessibilityHint={fieldErrors.newPassword || 'Enter a new password'}
                   editable={editing && !saving}
                 />
                 <Pressable
                   onPress={() => setShowNewPassword((v) => !v)}
                   style={styles.eyeButton}
                   hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel={showNewPassword ? 'Hide new password' : 'Show new password'}
                 >
                   <AppIcon name={showNewPassword ? 'eye-off' : 'eye'} size={18} color={mutedColor} />
                 </Pressable>
               </View>
+              {fieldErrors.newPassword ? (
+                <Text style={styles.fieldError}>{fieldErrors.newPassword}</Text>
+              ) : null}
 
               <Pressable
                 onPress={() => {
@@ -432,6 +512,8 @@ export default function ProfileScreen() {
             We'll email you a link if you forgot your current password.
           </Text>
         </View>
+        </>
+        )}
       </ScrollView>
     </KeyboardAvoidingView>
     </ScreenShell>
@@ -488,6 +570,15 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 16,
   },
+  inputError: {
+    borderColor: '#dc2626',
+  },
+  fieldError: {
+    color: '#dc2626',
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 6,
+  },
   passwordFields: { gap: 0 },
   passwordRow: { position: 'relative' },
   passwordInput: { paddingRight: 44 },
@@ -517,4 +608,28 @@ const styles = StyleSheet.create({
   primaryButtonSmallText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   buttonPressed: { opacity: 0.88 },
   buttonDisabled: { opacity: 0.6 },
+  skeletonWrap: { gap: 16 },
+  skeletonAvatar: {
+    alignSelf: 'center',
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: '#e5e7eb',
+    marginBottom: 8,
+  },
+  skeletonLine: { backgroundColor: '#e5e7eb', borderRadius: 8 },
+  skeletonTitle: { width: '52%', height: 18, marginBottom: 18 },
+  skeletonLabel: { width: '34%', height: 12, marginBottom: 8 },
+  skeletonInput: {
+    height: 46,
+    borderRadius: 10,
+    backgroundColor: '#f1f5f9',
+    marginBottom: 16,
+  },
+  skeletonButton: {
+    width: 150,
+    height: 42,
+    borderRadius: 10,
+    backgroundColor: '#f1f5f9',
+  },
 });

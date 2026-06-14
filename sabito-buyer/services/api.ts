@@ -31,9 +31,16 @@ const axiosInstance: AxiosInstance = axios.create({
 });
 
 let cachedToken: string | null | undefined;
+let sessionExpiredHandler: ((detail: { message: string }) => void | Promise<void>) | null = null;
 
 export const setApiAuthToken = (token: string | null) => {
   cachedToken = token;
+};
+
+export const setSessionExpiredHandler = (
+  handler: ((detail: { message: string }) => void | Promise<void>) | null
+) => {
+  sessionExpiredHandler = handler;
 };
 
 export const getApiAuthToken = async () => {
@@ -49,6 +56,8 @@ const isPublicAuthPath = (url?: string) =>
       url?.includes('/public/storefront/auth/google') ||
       url?.includes('/public/storefront/auth/send-login-otp') ||
       url?.includes('/public/storefront/auth/verify-login-otp') ||
+      url?.includes('/public/storefront/auth/verify-email') ||
+      url?.includes('/public/storefront/auth/resend-verification') ||
       url?.includes('/public/storefront/auth/forgot-password') ||
       url?.includes('/public/storefront/auth/reset-password') ||
       url?.includes('/public/marketplace/') ||
@@ -78,6 +87,9 @@ axiosInstance.interceptors.response.use(
     if (status === 401 && !isPublicAuthPath(url)) {
       await SecureStore.deleteItemAsync(STORAGE_KEYS.token);
       setApiAuthToken(null);
+      await sessionExpiredHandler?.({
+        message: 'Your shopper session expired. Sign in again to continue.',
+      });
     }
     const message =
       error.response?.data?.message ||

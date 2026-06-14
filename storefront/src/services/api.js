@@ -98,6 +98,27 @@ const api = axios.create({
   timeout: 30000,
 });
 
+let hasDispatchedSessionExpired = false;
+
+const isPublicAuthPath = (url = '') => (
+  url.includes('/public/storefront/auth/login') ||
+  url.includes('/public/storefront/auth/register') ||
+  url.includes('/public/storefront/auth/google') ||
+  url.includes('/public/storefront/auth/send-login-otp') ||
+  url.includes('/public/storefront/auth/verify-login-otp') ||
+  url.includes('/public/storefront/auth/verify-email') ||
+  url.includes('/public/storefront/auth/resend-verification') ||
+  url.includes('/public/storefront/auth/forgot-password') ||
+  url.includes('/public/storefront/auth/reset-password') ||
+  url.includes('/auth/config')
+);
+
+const getCurrentReturnTo = () => {
+  if (typeof window === 'undefined') return '/';
+  const path = `${window.location.pathname}${window.location.search || ''}`;
+  return path.startsWith('/login') || path.startsWith('/signup') ? '/' : path;
+};
+
 api.interceptors.request.use((config) => {
   const token = typeof window !== 'undefined'
     ? window.localStorage.getItem('sabito_storefront_token')
@@ -119,7 +140,25 @@ api.interceptors.request.use((config) => {
 
 api.interceptors.response.use(
   (response) => response.data,
-  (error) => Promise.reject(error),
+  (error) => {
+    const status = error.response?.status;
+    const url = error.config?.url || '';
+    if (status === 401 && !isPublicAuthPath(url) && !hasDispatchedSessionExpired) {
+      const token = typeof window !== 'undefined'
+        ? window.localStorage.getItem('sabito_storefront_token')
+        : null;
+      if (token) {
+        hasDispatchedSessionExpired = true;
+        window.dispatchEvent(new CustomEvent('sabito-storefront:session-expired', {
+          detail: {
+            message: 'Your shopper session expired. Sign in again to continue.',
+            returnTo: getCurrentReturnTo(),
+          },
+        }));
+      }
+    }
+    return Promise.reject(error);
+  },
 );
 
 export default api;

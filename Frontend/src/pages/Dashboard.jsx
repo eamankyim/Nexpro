@@ -62,7 +62,7 @@ import settingsService from '../services/settingsService';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
 import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
-import { CURRENCY, STUDIO_LIKE_TYPES } from '../constants';
+import { CURRENCY, QUERY_CACHE, STUDIO_LIKE_TYPES } from '../constants';
 import { isPlaceholderBusinessName } from '../constants/tenantPlaceholders';
 import { formatAmount } from '../utils/formatNumber';
 import { useScopedWorkspaceName } from '../hooks/useScopedWorkspaceName';
@@ -370,10 +370,10 @@ const Dashboard = () => {
     queryKey: ['dashboard', 'overview', activeTenantId, activeShopId, activeStudioLocationId, overviewParams.startDate, overviewParams.endDate, overviewParams.filterType],
     queryFn: () => dashboardService.getOverview(overviewParams.startDate, overviewParams.endDate, overviewParams.filterType),
     enabled: scopeReady,
-    staleTime: 2 * 60 * 1000, // 2 min cache
-    refetchOnWindowFocus: false,
+    staleTime: QUERY_CACHE.STALE_TIME_VOLATILE,
+    refetchOnWindowFocus: true,
     // Keep dashboard figures fresh after payments/invoice changes without manual refresh.
-    refetchInterval: 2 * 60 * 1000,
+    refetchInterval: 60 * 1000,
     refetchIntervalInBackground: false,
     retry: (failureCount, error) => !isDashboardAccessDeniedError(error) && failureCount < 1,
   });
@@ -688,7 +688,8 @@ const Dashboard = () => {
     queryKey: ['products', 'active', activeTenantId, activeShopId],
     queryFn: () => productService.getAllActiveProducts(),
     enabled: isPharmacy || (isShop && !!activeShopId),
-    staleTime: 60 * 1000,
+    staleTime: QUERY_CACHE.STALE_TIME_VOLATILE,
+    refetchOnWindowFocus: true,
   });
   const staffProducts = useMemo(
     () => (Array.isArray(staffProductsRaw) ? staffProductsRaw : (staffProductsRaw?.products ?? [])),
@@ -943,7 +944,7 @@ const Dashboard = () => {
   // Full-page skeletons only on initial load when we have no data yet
   if (loading && !overview) {
     return (
-      <div className="space-y-4 md:space-y-6">
+      <div className="space-y-4 md:space-y-6" role="status" aria-live="polite" aria-label="Loading dashboard">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {Array.from({ length: 4 }).map((_, i) => (
             <Card key={i}>

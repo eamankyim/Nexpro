@@ -1,4 +1,4 @@
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useRef } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text } from 'react-native';
@@ -7,15 +7,18 @@ import { PrimaryButton, Screen } from '@/components/ui';
 import { BRAND } from '@/constants';
 import { marketplaceApi } from '@/services/marketplaceApi';
 import { analytics } from '@/utils/analytics';
+import { refreshAfterOrderChange } from '@/utils/queryInvalidation';
 
 export default function ServiceBookingPaystackScreen() {
+  const queryClient = useQueryClient();
   const { url, reference, jobId } = useLocalSearchParams<{ url: string; reference: string; jobId: string }>();
   const verifiedRef = useRef(false);
   const lastReferenceRef = useRef(reference);
 
   const verifyMutation = useMutation({
     mutationFn: (nextReference: string) => marketplaceApi.verifyServicePaystack(nextReference),
-    onSuccess: () => {
+    onSuccess: async () => {
+      await refreshAfterOrderChange(queryClient);
       analytics.track('service_booking_paid', { jobId: jobId || '' });
       router.replace(`/service/booking/success/${jobId}`);
     },

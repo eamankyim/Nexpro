@@ -5,13 +5,16 @@ import { ErrorState, LoadingState, PrimaryButton, Screen, SecondaryButton } from
 import { BRAND } from '@/constants';
 import { bookingsApi } from '@/services/ordersApi';
 import { formatCurrency } from '@/utils/format';
+import { buyerQueryKeys, QUERY_STALE } from '@/utils/queryInvalidation';
 
 export default function BookingDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['service-booking', id],
+    queryKey: buyerQueryKeys.serviceBooking(id),
     queryFn: () => bookingsApi.get(id),
     enabled: Boolean(id),
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchOnWindowFocus: false,
   });
 
   if (isLoading) {

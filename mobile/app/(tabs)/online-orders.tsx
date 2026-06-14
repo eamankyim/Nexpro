@@ -15,7 +15,7 @@ import { AppIcon } from '@/components/AppIcon';
 import { ListEmptyState } from '@/components/ListEmptyState';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { FilterChipRow } from '@/components/FilterChip';
-import { ListLoadingState, ListErrorState } from '@/components/ListScreenStates';
+import { ListSkeletonState, ListErrorState } from '@/components/ListScreenStates';
 import { ScreenShell } from '@/components/ScreenShell';
 import { useAuth } from '@/context/AuthContext';
 import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
@@ -226,9 +226,9 @@ export default function OnlineOrdersScreen() {
   return (
     <ScreenShell style={styles.container}>
       {isLoading ? (
-        <ListLoadingState message="Loading online orders..." />
+        <ListSkeletonState rows={6} message="Loading online orders..." />
       ) : isError ? (
-        <ListErrorState title="Failed to load" message={loadErrorMessage} onRetry={refetch} />
+        <ListErrorState title="Failed to load online orders" message={loadErrorMessage} onRetry={refetch} />
       ) : (
         <FlatList
           style={flatListStyleForEmpty}

@@ -1,4 +1,4 @@
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, View } from 'react-native';
@@ -8,8 +8,10 @@ import { useCart } from '@/context/CartContext';
 import { BRAND } from '@/constants';
 import { ordersApi } from '@/services/ordersApi';
 import { analytics } from '@/utils/analytics';
+import { refreshAfterOrderChange } from '@/utils/queryInvalidation';
 
 export default function PaystackCheckoutScreen() {
+  const queryClient = useQueryClient();
   const { url, reference, orderId } = useLocalSearchParams<{ url: string; reference: string; orderId: string }>();
   const { clearCart } = useCart();
   const verifiedRef = useRef(false);
@@ -17,8 +19,9 @@ export default function PaystackCheckoutScreen() {
 
   const verifyMutation = useMutation({
     mutationFn: (nextReference: string) => ordersApi.verifyPaystack(nextReference),
-    onSuccess: () => {
+    onSuccess: async () => {
       clearCart();
+      await refreshAfterOrderChange(queryClient);
       analytics.track('order_paid', { orderId: orderId || '' });
       router.replace(`/checkout/success/${orderId}`);
     },

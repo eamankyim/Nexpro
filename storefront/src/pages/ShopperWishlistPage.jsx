@@ -1,8 +1,9 @@
 import { Link } from 'react-router-dom';
-import { Heart, Loader2, Package, ShoppingCart, Trash2 } from 'lucide-react';
+import { Heart, Package, ShoppingCart, Trash2 } from 'lucide-react';
 
 import AccountLayout from '../components/storefront/AccountLayout';
 import { EmptyState, getProductUrl } from '../components/storefront/StorefrontLayout';
+import { InlineErrorState, WishlistSkeleton } from '../components/storefront/StateBlocks';
 import { useCart } from '../context/CartContext';
 import { useWishlist } from '../context/WishlistContext';
 import { resolveImageUrl } from '../utils/fileUtils';
@@ -15,6 +16,8 @@ const ShopperWishlistPage = () => {
   const { addItem } = useCart();
   const {
     isWishlistLoading,
+    wishlistError,
+    refetchWishlist,
     items,
     pendingListingIds,
     removeWishlistItem,
@@ -51,10 +54,13 @@ const ShopperWishlistPage = () => {
         </div>
 
         {isWishlistLoading ? (
-          <div className="mt-6 flex min-h-56 items-center justify-center text-sm font-semibold text-slate-500">
-            <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-            Loading wishlist...
-          </div>
+          <WishlistSkeleton />
+        ) : wishlistError ? (
+          <InlineErrorState
+            title="Could not load your wishlist"
+            message="Saved products will appear here after the wishlist refreshes."
+            onRetry={refetchWishlist}
+          />
         ) : items.length === 0 ? (
           <div className="mt-6">
             <EmptyState

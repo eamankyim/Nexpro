@@ -1,18 +1,23 @@
 import { Link, router } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { PrimaryButton, Screen, SecondaryButton } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
-import { BRAND } from '@/constants';
+import { BRAND, STORAGE_KEYS } from '@/constants';
 
 export default function AccountScreen() {
   const { customer, isAuthenticated, logout } = useAuth();
+  const signInToAccount = async () => {
+    await AsyncStorage.setItem(STORAGE_KEYS.authReturnTo, '/account');
+    router.push('/login');
+  };
 
   if (!isAuthenticated) {
     return (
       <Screen style={styles.center}>
         <Text style={styles.title}>Welcome to Sabito Store</Text>
         <Text style={styles.subtitle}>Sign in to manage orders, wishlist, and addresses.</Text>
-        <SecondaryButton label="Sign in" onPress={() => router.push('/login')} />
+        <SecondaryButton label="Sign in" onPress={signInToAccount} />
         <PrimaryButton label="Create account" onPress={() => router.push('/signup')} />
       </Screen>
     );

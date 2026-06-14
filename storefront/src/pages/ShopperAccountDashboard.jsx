@@ -1,44 +1,53 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Heart, Loader2, MapPin, Package, UserRound } from 'lucide-react';
+import { ArrowRight, Heart, MapPin, Package, UserRound } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 
 import AccountLayout from '../components/storefront/AccountLayout';
 import { EmptyState } from '../components/storefront/StorefrontLayout';
+import { InlineErrorState, OrderHistorySkeleton, SkeletonBlock } from '../components/storefront/StateBlocks';
 import { useStorefrontAuth } from '../context/StorefrontAuthContext';
 import { useWishlist } from '../context/WishlistContext';
 import storeService from '../services/storeService';
 import { showError } from '../utils/toast';
 import { formatAmount } from '../utils/formatNumber';
+import { QUERY_STALE, SHOPPER_QUERY_KEYS } from '../utils/queryInvalidation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+
+const RECENT_ORDERS_PARAMS = { limit: 3 };
 
 const ShopperAccountDashboard = () => {
   const { customer } = useStorefrontAuth();
   const { count: wishlistCount } = useWishlist();
-  const [orders, setOrders] = useState([]);
-  const [addresses, setAddresses] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+
+  const ordersQuery = useQuery({
+    queryKey: SHOPPER_QUERY_KEYS.orders(RECENT_ORDERS_PARAMS),
+    queryFn: () => storeService.getStorefrontOrders(RECENT_ORDERS_PARAMS),
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchOnWindowFocus: false,
+  });
+
+  const addressesQuery = useQuery({
+    queryKey: SHOPPER_QUERY_KEYS.addresses,
+    queryFn: storeService.getDeliveryAddresses,
+    staleTime: QUERY_STALE.LIST,
+    refetchOnWindowFocus: false,
+  });
+
+  const orders = ordersQuery.data?.data?.orders || ordersQuery.data?.orders || [];
+  const addresses = addressesQuery.data?.data?.addresses || addressesQuery.data?.addresses || [];
+  const isLoading = ordersQuery.isLoading || addressesQuery.isLoading;
+  const loadError = ordersQuery.error || addressesQuery.error;
 
   useEffect(() => {
-    let mounted = true;
-    Promise.all([
-      storeService.getStorefrontOrders({ limit: 3 }),
-      storeService.getDeliveryAddresses(),
-    ])
-      .then(([ordersResponse, addressesResponse]) => {
-        if (!mounted) return;
-        setOrders(ordersResponse?.data?.orders || ordersResponse?.orders || []);
-        setAddresses(addressesResponse?.data?.addresses || addressesResponse?.addresses || []);
-      })
-      .catch((error) => showError(error, 'Could not load account dashboard.'))
-      .finally(() => {
-        if (mounted) setIsLoading(false);
-      });
+    if (loadError) showError(loadError, 'Could not load account dashboard.');
+  }, [loadError]);
 
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  const retryDashboard = () => {
+    ordersQuery.refetch();
+    addressesQuery.refetch();
+  };
 
   return (
     <AccountLayout
@@ -46,10 +55,21 @@ const ShopperAccountDashboard = () => {
       description="Track your orders, delivery addresses, and shopper profile."
     >
       <div className="grid gap-4 md:grid-cols-4">
-        <SummaryCard icon={Package} label="Recent orders" value={orders.length} to="/account/orders" />
-        <SummaryCard icon={Heart} label="Wishlist" value={wishlistCount} to="/account/wishlist" />
-        <SummaryCard icon={MapPin} label="Saved addresses" value={addresses.length} to="/account/addresses" />
-        <SummaryCard icon={UserRound} label="Profile" value={customer?.isEmailVerified ? 'Verified' : 'Pending'} to="/account/profile" />
+        {isLoading ? (
+          <>
+            <SummaryCardSkeleton />
+            <SummaryCardSkeleton />
+            <SummaryCardSkeleton />
+            <SummaryCardSkeleton />
+          </>
+        ) : (
+          <>
+            <SummaryCard icon={Package} label="Recent orders" value={orders.length} to="/account/orders" />
+            <SummaryCard icon={Heart} label="Wishlist" value={wishlistCount} to="/account/wishlist" />
+            <SummaryCard icon={MapPin} label="Saved addresses" value={addresses.length} to="/account/addresses" />
+            <SummaryCard icon={UserRound} label="Profile" value={customer?.isEmailVerified ? 'Verified' : 'Pending'} to="/account/profile" />
+          </>
+        )}
       </div>
 
       <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 sm:rounded-[2rem] sm:p-6">
@@ -64,10 +84,13 @@ const ShopperAccountDashboard = () => {
         </div>
 
         {isLoading ? (
-          <div className="mt-6 flex min-h-40 items-center justify-center text-sm font-semibold text-slate-500">
-            <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-            Loading dashboard...
-          </div>
+          <OrderHistorySkeleton rows={2} />
+        ) : loadError ? (
+          <InlineErrorState
+            title="Could not load dashboard activity"
+            message="Retry to refresh orders and saved addresses."
+            onRetry={retryDashboard}
+          />
         ) : orders.length === 0 ? (
           <div className="mt-6">
             <EmptyState
@@ -112,6 +135,14 @@ const SummaryCard = ({ icon: Icon, label, value, to }) => (
     <p className="mt-4 text-sm font-semibold text-slate-500">{label}</p>
     <p className="mt-1 text-2xl font-black text-slate-950">{value}</p>
   </Link>
+);
+
+const SummaryCardSkeleton = () => (
+  <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:rounded-[2rem]" role="status" aria-label="Loading account summary">
+    <SkeletonBlock className="h-12 w-12 rounded-2xl" />
+    <SkeletonBlock className="mt-4 h-4 w-24" />
+    <SkeletonBlock className="mt-2 h-8 w-16" />
+  </div>
 );
 
 export default ShopperAccountDashboard;

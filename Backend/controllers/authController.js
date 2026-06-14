@@ -2,7 +2,20 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
 const { OAuth2Client } = require('google-auth-library');
-const { User, InviteToken, UserTenant, Tenant, PlatformAdminRole, PlatformAdminUserRole, PasswordResetToken, EmailVerificationToken, Setting } = require('../models');
+const {
+  User,
+  InviteToken,
+  UserTenant,
+  Tenant,
+  PlatformAdminRole,
+  PlatformAdminUserRole,
+  PasswordResetToken,
+  EmailVerificationToken,
+  Setting,
+  Shop,
+  StudioLocation,
+  OnlineStoreSettings,
+} = require('../models');
 const config = require('../config/config');
 const { sequelize } = require('../config/database');
 const { invalidateUserCache } = require('../middleware/cache');
@@ -26,6 +39,9 @@ const {
   buildTermsAcceptanceMetadata,
   isTermsAccepted,
 } = require('../utils/legalTerms');
+const { getUserShopIds } = require('../utils/shopUtils');
+const { getUserStudioLocationIds } = require('../utils/studioLocationUtils');
+const { startHotPathTimer } = require('../utils/performanceLogger');
 
 /** User defaultScope omits emailVerifiedAt/googleId; auth responses need both for verification UI. */
 const findUserForAuthResponse = (userId, options = {}) =>
@@ -1042,20 +1058,16 @@ exports.getPublicConfig = async (req, res, next) => {
   }
 };
 
-// @desc    Get current logged in user
-// @route   GET /api/auth/me
-// @access  Private
-exports.getMe = async (req, res, next) => {
-  try {
-    const user = await findUserForAuthResponse(req.user.id, {
-      include: [
-        {
-          model: UserTenant,
-          as: 'tenantMemberships',
-          include: [{ model: Tenant, as: 'tenant' }]
-        }
-      ]
-    });
+const buildAuthUserPayload = async (req) => {
+  const user = await findUserForAuthResponse(req.user.id, {
+    include: [
+      {
+        model: UserTenant,
+        as: 'tenantMemberships',
+        include: [{ model: Tenant, as: 'tenant' }]
+      }
+    ]
+  });
     const firstMembership = user?.tenantMemberships?.[0];
     const firstTenant = firstMembership?.tenant;
     console.log(
@@ -1119,11 +1131,153 @@ exports.getMe = async (req, res, next) => {
     }
 
     const safeUserJson = toPlainJsonSafe(userJson);
+  return safeUserJson;
+};
+
+const resolveBootstrapTenant = (memberships = [], requestedTenantId = null) => {
+  const activeTenantId = requestedTenantId ? String(requestedTenantId) : null;
+  if (activeTenantId) {
+    const requested = memberships.find((membership) => String(membership.tenantId || membership.tenant?.id) === activeTenantId);
+    if (requested) return requested;
+  }
+  return memberships.find((membership) => membership.isDefault) || memberships[0] || null;
+};
+
+const indexSettingsByKey = (rows = []) => rows.reduce((acc, row) => {
+  acc[row.key] = row.value;
+  return acc;
+}, {});
+
+const buildTenantBootstrapPayload = async ({ userId, membership }) => {
+  if (!membership?.tenantId) {
+    return {
+      activeTenantId: null,
+      activeTenant: null,
+      settings: {},
+      access: { shops: [], studioLocations: [] },
+      onlineStore: null,
+    };
+  }
+
+  const tenantId = membership.tenantId;
+  const tenant = membership.tenant || null;
+  const role = membership.role || null;
+  const [
+    settingsRows,
+    shopIds,
+    studioLocationIds,
+    onlineStore,
+  ] = await Promise.all([
+    Setting.findAll({
+      where: {
+        tenantId,
+        key: {
+          [Op.in]: [
+            'organization',
+            'subscription',
+            'payment-collection',
+            'paymentCollection',
+            'customer-notification-preferences',
+          ],
+        },
+      },
+      attributes: ['key', 'value'],
+    }),
+    getUserShopIds(userId, tenantId, role).catch(() => []),
+    getUserStudioLocationIds(userId, tenantId, role).catch(() => []),
+    OnlineStoreSettings.findOne({
+      where: { tenantId },
+      attributes: [
+        'id',
+        'tenantId',
+        'shopId',
+        'studioLocationId',
+        'enabled',
+        'slug',
+        'displayName',
+        'setupCompletedAt',
+        'updatedAt',
+      ],
+      order: [['updatedAt', 'DESC']],
+    }).catch(() => null),
+  ]);
+
+  const [shops, studioLocations] = await Promise.all([
+    shopIds.length
+      ? Shop.findAll({
+        where: { tenantId, id: { [Op.in]: shopIds }, isActive: true },
+        attributes: ['id', 'name', 'shopType', 'isDefault', 'city', 'country'],
+        order: [['isDefault', 'DESC'], ['createdAt', 'ASC']],
+      })
+      : [],
+    studioLocationIds.length
+      ? StudioLocation.findAll({
+        where: { tenantId, id: { [Op.in]: studioLocationIds }, isActive: true },
+        attributes: ['id', 'name', 'city', 'country', 'isDefault'],
+        order: [['isDefault', 'DESC'], ['createdAt', 'ASC']],
+      })
+      : [],
+  ]);
+
+  return {
+    activeTenantId: tenantId,
+    activeTenant: tenant,
+    tenantRole: role,
+    settings: indexSettingsByKey(settingsRows),
+    access: {
+      shops,
+      studioLocations,
+    },
+    onlineStore,
+  };
+};
+
+// @desc    Get current logged in user
+// @route   GET /api/auth/me
+// @access  Private
+exports.getMe = async (req, res, next) => {
+  try {
+    const safeUserJson = await buildAuthUserPayload(req);
     res.status(200).json({
       success: true,
       data: safeUserJson
     });
   } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Lightweight post-login bootstrap data
+// @route   GET /api/auth/bootstrap
+// @access  Private
+exports.getBootstrap = async (req, res, next) => {
+  const finishTiming = startHotPathTimer('auth.bootstrap', req);
+  try {
+    const userPayload = await buildAuthUserPayload(req);
+    const memberships = Array.isArray(userPayload.tenantMemberships)
+      ? userPayload.tenantMemberships
+      : [];
+    const activeMembership = resolveBootstrapTenant(memberships, req.query?.tenantId);
+    const tenantBootstrap = await buildTenantBootstrapPayload({
+      userId: req.user.id,
+      membership: activeMembership,
+    });
+    const data = toPlainJsonSafe({
+      user: userPayload,
+      memberships,
+      defaultTenantId: resolveBootstrapTenant(memberships)?.tenantId || null,
+      ...tenantBootstrap,
+    });
+
+    finishTiming({
+      memberships: memberships.length,
+      activeTenantId: data.activeTenantId || null,
+      shops: data.access?.shops?.length || 0,
+      studioLocations: data.access?.studioLocations?.length || 0,
+    });
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    finishTiming({ error: error?.message || 'unknown' });
     next(error);
   }
 };

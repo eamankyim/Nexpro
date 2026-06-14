@@ -37,6 +37,7 @@ let cachedToken: string | null | undefined;
 let cachedTenantId: string | null | undefined;
 let cachedStudioLocationId: string | null | undefined;
 let cachedShopId: string | null | undefined;
+let sessionExpiredHandler: ((detail: { message: string }) => void | Promise<void>) | null = null;
 
 const getCachedToken = async () => {
   if (cachedToken !== undefined) return cachedToken;
@@ -57,6 +58,12 @@ const getCachedStorageValue = async (
 
 export const setApiAuthToken = (token: string | null) => {
   cachedToken = token;
+};
+
+export const setSessionExpiredHandler = (
+  handler: ((detail: { message: string }) => void | Promise<void>) | null
+) => {
+  sessionExpiredHandler = handler;
 };
 
 export const setApiTenantContext = (tenantId: string | null) => {
@@ -109,6 +116,7 @@ const isPublicEndpoint = (url?: string) =>
   url?.includes('/auth/login') ||
   url?.includes('/auth/register') ||
   url?.includes('/auth/google') ||
+  url?.includes('/auth/verify-email') ||
   url?.includes('/auth/config') ||
   url?.includes('/auth/sso') ||
   url?.includes('/tenants/signup') ||
@@ -208,6 +216,11 @@ api.interceptors.response.use(
       logger.info('API', '401 Unauthorized - clearing token');
       await SecureStore.deleteItemAsync('token');
       setApiAuthToken(null);
+      if (!isPublicEndpoint(error.config?.url)) {
+        await sessionExpiredHandler?.({
+          message: 'Your session expired. Sign in again to continue.',
+        });
+      }
     }
 
     return Promise.reject(error);

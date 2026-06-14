@@ -1,7 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { GoogleOAuthProvider } from '@react-oauth/google';
+import { useQueryClient } from '@tanstack/react-query';
 
 import authService from '../services/authService';
+import {
+  refreshAfterProfileChange,
+  refreshAfterShopperAuthChange,
+  SHOPPER_QUERY_KEYS,
+} from '../utils/queryInvalidation';
 
 const StorefrontAuthContext = createContext(null);
 export const STOREFRONT_PURCHASE_INTENT_KEY = 'sabito_storefront_purchase_intent';
@@ -21,6 +27,7 @@ const buildDefaultIntent = (intent = {}) => {
 };
 
 export const StorefrontAuthProvider = ({ children }) => {
+  const queryClient = useQueryClient();
   const [customer, setCustomer] = useState(() => authService.getStoredCustomer());
   const [googleClientId, setGoogleClientId] = useState(() => (
     String(import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim()
@@ -42,7 +49,10 @@ export const StorefrontAuthProvider = ({ children }) => {
 
     authService.getMe()
       .then((data) => {
-        if (mounted) setCustomer(data.customer || null);
+        if (!mounted) return;
+        const nextCustomer = data.customer || null;
+        setCustomer(nextCustomer);
+        queryClient.setQueryData(SHOPPER_QUERY_KEYS.profile, data);
       })
       .catch(() => {
         authService.logout();
@@ -55,7 +65,15 @@ export const StorefrontAuthProvider = ({ children }) => {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [queryClient]);
+
+  const applyAuthenticatedCustomer = useCallback(async (data) => {
+    const nextCustomer = data.customer || null;
+    setCustomer(nextCustomer);
+    queryClient.setQueryData(SHOPPER_QUERY_KEYS.profile, data);
+    await refreshAfterShopperAuthChange(queryClient);
+    return data;
+  }, [queryClient]);
 
   useEffect(() => {
     if (googleClientId) {
@@ -84,21 +102,18 @@ export const StorefrontAuthProvider = ({ children }) => {
 
   const login = useCallback(async (payload) => {
     const data = await authService.login(payload);
-    setCustomer(data.customer || null);
-    return data;
-  }, []);
+    return applyAuthenticatedCustomer(data);
+  }, [applyAuthenticatedCustomer]);
 
   const googleAuth = useCallback(async (idToken, options = {}) => {
     const data = await authService.googleAuth(idToken, options);
-    setCustomer(data.customer || null);
-    return data;
-  }, []);
+    return applyAuthenticatedCustomer(data);
+  }, [applyAuthenticatedCustomer]);
 
   const verifyLoginOtp = useCallback(async (payload) => {
     const data = await authService.verifyLoginOtp(payload);
-    setCustomer(data.customer || null);
-    return data;
-  }, []);
+    return applyAuthenticatedCustomer(data);
+  }, [applyAuthenticatedCustomer]);
 
   const sendLoginOtp = useCallback(async (payload) => {
     const data = await authService.sendLoginOtp(payload);
@@ -107,15 +122,14 @@ export const StorefrontAuthProvider = ({ children }) => {
 
   const register = useCallback(async (payload) => {
     const data = await authService.register(payload);
-    if (data?.token) setCustomer(data.customer || null);
+    if (data?.token) await applyAuthenticatedCustomer(data);
     return data;
-  }, []);
+  }, [applyAuthenticatedCustomer]);
 
   const verifyEmail = useCallback(async (payload) => {
     const data = await authService.verifyEmail(payload);
-    setCustomer(data.customer || null);
-    return data;
-  }, []);
+    return applyAuthenticatedCustomer(data);
+  }, [applyAuthenticatedCustomer]);
 
   const resendVerification = useCallback(async (payload) => {
     const data = await authService.resendVerification(payload);
@@ -125,25 +139,53 @@ export const StorefrontAuthProvider = ({ children }) => {
   const updateProfile = useCallback(async (payload) => {
     const data = await authService.updateProfile(payload);
     setCustomer(data.customer || null);
+    queryClient.setQueryData(SHOPPER_QUERY_KEYS.profile, data);
+    await refreshAfterProfileChange(queryClient);
     return data;
-  }, []);
+  }, [queryClient]);
 
   const uploadAvatar = useCallback(async (file) => {
     const data = await authService.uploadAvatar(file);
     setCustomer(data.customer || null);
+    queryClient.setQueryData(SHOPPER_QUERY_KEYS.profile, data);
+    await refreshAfterProfileChange(queryClient);
     return data;
-  }, []);
+  }, [queryClient]);
 
   const removeAvatar = useCallback(async () => {
     const data = await authService.removeAvatar();
     setCustomer(data.customer || null);
+    queryClient.setQueryData(SHOPPER_QUERY_KEYS.profile, data);
+    await refreshAfterProfileChange(queryClient);
     return data;
-  }, []);
+  }, [queryClient]);
 
   const logout = useCallback(() => {
     authService.logout();
     setCustomer(null);
-  }, []);
+    queryClient.removeQueries({ queryKey: ['shopper'] });
+  }, [queryClient]);
+
+  useEffect(() => {
+    const handleSessionExpired = (event) => {
+      const detail = event?.detail || {};
+      const returnTo = typeof detail.returnTo === 'string' && detail.returnTo.startsWith('/') && !detail.returnTo.startsWith('//')
+        ? detail.returnTo
+        : '/';
+      try {
+        window.sessionStorage.setItem('storefrontAuthMessage', detail.message || 'Your shopper session expired. Sign in again to continue.');
+      } catch {
+        // One-time login notice is best-effort only.
+      }
+      authService.logout();
+      setCustomer(null);
+      queryClient.removeQueries({ queryKey: ['shopper'] });
+      window.location.assign(`/login?reason=session_expired&returnTo=${encodeURIComponent(returnTo)}`);
+    };
+
+    window.addEventListener('sabito-storefront:session-expired', handleSessionExpired);
+    return () => window.removeEventListener('sabito-storefront:session-expired', handleSessionExpired);
+  }, [queryClient]);
 
   const openShopperAuthModal = useCallback((options = {}) => {
     const intent = buildDefaultIntent(options.intent);

@@ -87,7 +87,12 @@ export function ErrorState({
       <Text style={styles.emptyTitle}>{title}</Text>
       {message ? <Text style={styles.emptyMessage}>{message}</Text> : null}
       {onRetry ? (
-        <Pressable style={styles.retryBtn} onPress={onRetry}>
+        <Pressable
+          style={styles.retryBtn}
+          onPress={onRetry}
+          accessibilityRole="button"
+          accessibilityLabel="Try loading again"
+        >
           <Text style={styles.retryText}>Try again</Text>
         </Pressable>
       ) : null}
@@ -97,9 +102,26 @@ export function ErrorState({
 
 export function LoadingState({ label = 'Loading...' }: { label?: string }) {
   return (
-    <View style={styles.loading}>
+    <View style={styles.loading} accessibilityRole="progressbar" accessibilityLabel={label}>
       <ActivityIndicator color={BRAND.primary} />
       <Text style={styles.loadingText}>{label}</Text>
+    </View>
+  );
+}
+
+export function ListSkeleton({ rows = 4, label = 'Loading content...' }: { rows?: number; label?: string }) {
+  return (
+    <View style={styles.skeletonWrap} accessibilityRole="progressbar" accessibilityLabel={label}>
+      {Array.from({ length: rows }).map((_, index) => (
+        <View key={index} style={styles.skeletonCard}>
+          <View style={styles.skeletonThumb} />
+          <View style={styles.skeletonContent}>
+            <View style={styles.skeletonLineWide} />
+            <View style={styles.skeletonLine} />
+            <View style={styles.skeletonLineShort} />
+          </View>
+        </View>
+      ))}
     </View>
   );
 }
@@ -141,4 +163,19 @@ const styles = StyleSheet.create({
   loading: { padding: 40, alignItems: 'center', gap: 10 },
   loadingText: { color: BRAND.muted },
   sectionTitle: { fontSize: 18, fontWeight: '700', color: BRAND.text, marginBottom: 12 },
+  skeletonWrap: { padding: 16, gap: 10 },
+  skeletonCard: {
+    flexDirection: 'row',
+    gap: 12,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: BRAND.border,
+    padding: 12,
+  },
+  skeletonThumb: { width: 64, height: 64, borderRadius: 10, backgroundColor: '#e2e8f0' },
+  skeletonContent: { flex: 1, justifyContent: 'center', gap: 8 },
+  skeletonLineWide: { height: 14, width: '75%', borderRadius: 7, backgroundColor: '#e2e8f0' },
+  skeletonLine: { height: 12, width: '55%', borderRadius: 6, backgroundColor: '#f1f5f9' },
+  skeletonLineShort: { height: 10, width: '35%', borderRadius: 5, backgroundColor: '#f1f5f9' },
 });

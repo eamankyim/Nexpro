@@ -11,6 +11,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Package,
   Plus,
@@ -50,6 +51,7 @@ import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { guardOnline } from '../utils/onlineRequired';
 import { useResponsive } from '../hooks/useResponsive';
 import { useActiveShopType } from '../hooks/useActiveShopType';
+import { useApi } from '../hooks/useApi';
 import DetailsDrawer from '../components/DetailsDrawer';
 import MobileFormDialog from '../components/MobileFormDialog';
 import DrawerSectionCard from '../components/DrawerSectionCard';
@@ -76,6 +78,7 @@ import { useShopOptional } from '../context/ShopContext';
 import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import { getErrorMessage, showSuccess, showError } from '../utils/toast';
+import { QUERY_STALE, refreshAfterInventoryChange } from '../utils/queryInvalidation';
 import { EMPTY_STATES, FEATURE_NOT_AVAILABLE } from '../constants/microcopy';
 import { getEmptyStateProps } from '../components/ui/empty-state';
 import ReceiveStockModal from '../components/ReceiveStockModal';
@@ -173,6 +176,44 @@ import { formatAmount, formatInteger } from '../utils/formatNumber';
 
 const sortCategories = (list = []) =>
   [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+const getProductsBody = (response) => response && typeof response === 'object' ? response : {};
+
+const getProductRows = (response) => {
+  const body = getProductsBody(response);
+  const list = body.data ?? body.products ?? [];
+  return Array.isArray(list) ? list : [];
+};
+
+const getProductTotal = (response) => {
+  const body = getProductsBody(response);
+  return body?.count ?? body?.pagination?.total ?? 0;
+};
+
+const getCategoryRows = (response) => {
+  const data = response?.data ?? response;
+  const categoryList = Array.isArray(data?.data)
+    ? data.data
+    : Array.isArray(data?.categories)
+      ? data.categories
+      : Array.isArray(data)
+        ? data
+        : [];
+  return sortCategories(categoryList);
+};
+
+const getProductStats = (response) => {
+  const body = getProductsBody(response);
+  const data = body.data && typeof body.data === 'object' ? body.data : body;
+  return {
+    total: Number(data.total || 0),
+    lowStock: Number(data.lowStock || 0),
+    outOfStock: Number(data.outOfStock || 0),
+    totalValue: Number(data.totalValue || 0),
+  };
+};
+
+const getProductDetail = (response) => response?.data?.data ?? response?.data ?? response;
 
 const valueFormatter = (value, currency = '₵') => formatAmount(value, currency);
 
@@ -585,12 +626,13 @@ const Products = () => {
   const { activeTenant, activeTenantId, tenantRole, isAdmin } = useAuth();
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
-  const { scopeReady } = useWorkspaceScope();
+  const { scopeReady, activeStudioLocationId } = useWorkspaceScope();
   const activeShopName = shopContext?.activeShop?.name ?? null;
   const { isMobile } = useResponsive();
   const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const shopType = useActiveShopType();
   const shopTypeFields = SHOP_TYPE_FIELDS[shopType] || [];
@@ -618,12 +660,6 @@ const Products = () => {
   // =============================================
   // STATE
   // =============================================
-
-  // Data state
-  const [products, setProducts] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [statsLoading, setStatsLoading] = useState(true);
 
   // Pagination
   const [pagination, setPagination] = useState({
@@ -694,16 +730,141 @@ const Products = () => {
 
   const { isOnline } = useOnlineStatus();
 
-  // Stats
-  const [stats, setStats] = useState({
-    total: 0,
-    lowStock: 0,
-    outOfStock: 0,
-    totalValue: 0,
-  });
-
   // Debounced search
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
+
+  const productQueryParams = useMemo(() => {
+    const params = {
+      page: pagination.current,
+      limit: pagination.pageSize,
+      search: debouncedSearch,
+      categoryId: categoryFilter === 'all' ? undefined : categoryFilter,
+    };
+
+    if (stockFilter === 'low') {
+      params.lowStock = true;
+    } else if (stockFilter === 'out') {
+      params.outOfStock = true;
+    }
+
+    return params;
+  }, [pagination.current, pagination.pageSize, debouncedSearch, categoryFilter, stockFilter]);
+
+  const productListQueryKey = useMemo(() => [
+    'products',
+    'list',
+    activeTenantId,
+    activeShopId,
+    activeStudioLocationId,
+    productQueryParams,
+  ], [activeTenantId, activeShopId, activeStudioLocationId, productQueryParams]);
+
+  const productCategoriesQueryKey = useMemo(() => [
+    'products',
+    'categories',
+    activeTenantId,
+    activeShopId,
+    activeStudioLocationId,
+  ], [activeTenantId, activeShopId, activeStudioLocationId]);
+
+  const productStatsQueryKey = useMemo(() => [
+    'products',
+    'stats',
+    activeTenantId,
+    activeShopId,
+    activeStudioLocationId,
+  ], [activeTenantId, activeShopId, activeStudioLocationId]);
+
+  const {
+    data: productsResponse,
+    isLoading: loading,
+    isFetching: productsFetching,
+    isError: productsError,
+    error: productsQueryError,
+    refetch: refetchProducts,
+  } = useApi({
+    queryKey: productListQueryKey,
+    queryFn: () => productService.getProducts(productQueryParams),
+    options: {
+      enabled: scopeReady,
+      staleTime: QUERY_STALE.LIST,
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  });
+
+  const {
+    data: categoriesResponse,
+    refetch: refetchCategories,
+  } = useApi({
+    queryKey: productCategoriesQueryKey,
+    queryFn: () => productService.getCategories(),
+    options: {
+      enabled: scopeReady,
+      staleTime: QUERY_STALE.SLOW,
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  });
+
+  const {
+    data: statsResponse,
+    isLoading: statsLoading,
+    refetch: refetchStats,
+  } = useApi({
+    queryKey: productStatsQueryKey,
+    queryFn: () => productService.getProductStats(),
+    options: {
+      enabled: scopeReady,
+      staleTime: QUERY_STALE.TRANSACTIONAL,
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  });
+
+  const products = useMemo(() => getProductRows(productsResponse), [productsResponse]);
+  const categories = useMemo(() => getCategoryRows(categoriesResponse), [categoriesResponse]);
+  const stats = useMemo(() => getProductStats(statsResponse), [statsResponse]);
+
+  const selectedProductDetailQueryKey = useMemo(() => [
+    'product',
+    selectedProduct?.id,
+    activeTenantId,
+    activeShopId,
+    activeStudioLocationId,
+  ], [selectedProduct?.id, activeTenantId, activeShopId, activeStudioLocationId]);
+
+  const { data: selectedProductDetailResponse } = useApi({
+    queryKey: selectedProductDetailQueryKey,
+    queryFn: () => productService.getProductById(selectedProduct.id),
+    options: {
+      enabled: Boolean(scopeReady && drawerOpen && selectedProduct?.id),
+      staleTime: QUERY_STALE.TRANSACTIONAL,
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  });
+
+  useEffect(() => {
+    setPagination((prev) => {
+      const nextTotal = getProductTotal(productsResponse);
+      return prev.total === nextTotal ? prev : { ...prev, total: nextTotal };
+    });
+  }, [productsResponse]);
+
+  useEffect(() => {
+    if (productsError) {
+      console.error('Failed to fetch products:', productsQueryError);
+      showError(productsQueryError, 'Failed to load products');
+    }
+  }, [productsError, productsQueryError]);
+
+  useEffect(() => {
+    const detail = getProductDetail(selectedProductDetailResponse);
+    if (detail?.id) {
+      setSelectedProduct((prev) => (prev?.id === detail.id ? detail : prev));
+    }
+  }, [selectedProductDetailResponse]);
 
   // =============================================
   // FORMS
@@ -864,68 +1025,14 @@ const Products = () => {
   // =============================================
 
   const fetchProducts = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = {
-        page: pagination.current,
-        limit: pagination.pageSize,
-        search: debouncedSearch,
-        categoryId: categoryFilter === 'all' ? undefined : categoryFilter,
-      };
-
-      // Add stock filter
-      if (stockFilter === 'low') {
-        params.lowStock = true;
-      } else if (stockFilter === 'out') {
-        params.outOfStock = true;
-      }
-
-      const response = await productService.getProducts(params);
-      const body = response && typeof response === 'object' ? response : {};
-      const list = body.data ?? body.products ?? [];
-
-      setProducts(Array.isArray(list) ? list : []);
-      setPagination(prev => ({
-        ...prev,
-        total: body?.count ?? body?.pagination?.total ?? 0,
-      }));
-
-    } catch (error) {
-      console.error('Failed to fetch products:', error);
-      showError(error, 'Failed to load products');
-    } finally {
-      setLoading(false);
-    }
-  }, [pagination.current, pagination.pageSize, debouncedSearch, categoryFilter, stockFilter, activeShopId]);
+    await queryClient.invalidateQueries({ queryKey: ['products', 'list'] });
+    return refetchProducts();
+  }, [queryClient, refetchProducts]);
 
   const fetchCategories = useCallback(async () => {
-    try {
-      console.log('[Products fetchCategories] Fetching product_categories from /products/categories');
-      const response = await productService.getCategories();
-      const data = response?.data ?? response;
-      const categoryList = Array.isArray(data?.data)
-        ? data.data
-        : Array.isArray(data?.categories)
-          ? data.categories
-          : Array.isArray(data)
-            ? data
-            : [];
-      if (categoryList.length === 0) {
-        console.warn('[Products fetchCategories] API returned 0 product_categories. Check: tenant context, backend seeded product_categories for this tenant.');
-      } else {
-        console.log('[Products fetchCategories] Loaded', categoryList.length, 'product_categories (NOT inventory_categories):', categoryList.map(c => c.name));
-      }
-      setCategories(sortCategories(categoryList));
-    } catch (error) {
-      const status = error?.response?.status;
-      const message = error?.response?.data?.message ?? error?.message;
-      console.error('[Products fetchCategories] Failed to load categories:', {
-        status,
-        message,
-        fullError: error
-      });
-    }
-  }, []);
+    await queryClient.invalidateQueries({ queryKey: ['products', 'categories'] });
+    return refetchCategories();
+  }, [queryClient, refetchCategories]);
 
   const fetchVendors = useCallback(async () => {
     try {
@@ -962,7 +1069,10 @@ const Products = () => {
       const newCategory = response.data || response;
       
       if (newCategory?.id) {
-        setCategories((prev) => sortCategories([...prev, newCategory]));
+        queryClient.setQueryData(productCategoriesQueryKey, (old) => {
+          const current = getCategoryRows(old);
+          return { data: sortCategories([...current, newCategory]) };
+        });
         showSuccess('Category created successfully');
         setCategoryModalOpen(false);
         setNewCategoryName('');
@@ -978,7 +1088,7 @@ const Products = () => {
     } finally {
       setCreatingCategory(false);
     }
-  }, [newCategoryName, formOpen, form]);
+  }, [newCategoryName, queryClient, productCategoriesQueryKey, formOpen, form]);
 
   const handleDeleteCategory = useCallback(async () => {
     if (!categoryToDelete?.id) return;
@@ -1027,24 +1137,9 @@ const Products = () => {
   }, [form, vendorForm, fetchVendors]);
 
   const fetchStats = useCallback(async () => {
-    setStatsLoading(true);
-    try {
-      const response = await productService.getProductStats();
-      const body = response && typeof response === 'object' ? response : {};
-      const data = body.data && typeof body.data === 'object' ? body.data : body;
-
-      setStats({
-        total: Number(data.total || 0),
-        lowStock: Number(data.lowStock || 0),
-        outOfStock: Number(data.outOfStock || 0),
-        totalValue: Number(data.totalValue || 0),
-      });
-    } catch (error) {
-      console.error('Failed to fetch stats:', error);
-    } finally {
-      setStatsLoading(false);
-    }
-  }, [activeShopId]);
+    await queryClient.invalidateQueries({ queryKey: ['products', 'stats'] });
+    return refetchStats();
+  }, [queryClient, refetchStats]);
 
   // =============================================
   // EFFECTS
@@ -1065,28 +1160,6 @@ const Products = () => {
   useEffect(() => {
     setVendors([]);
   }, [activeTenantId]);
-
-  // Single fetch path: filters, pagination, and scope changes
-  useEffect(() => {
-    if (!scopeReady) return;
-    fetchProducts();
-  }, [
-    scopeReady,
-    activeTenantId,
-    activeShopId,
-    debouncedSearch,
-    categoryFilter,
-    stockFilter,
-    pagination.current,
-    pagination.pageSize,
-    fetchProducts,
-  ]);
-
-  useEffect(() => {
-    if (!scopeReady) return;
-    fetchCategories();
-    fetchStats();
-  }, [scopeReady, activeTenantId, activeShopId, fetchCategories, fetchStats]);
 
   // Set up smart search
   useEffect(() => {
@@ -1130,24 +1203,22 @@ const Products = () => {
   // HANDLERS
   // =============================================
 
-  const handleViewProduct = (product) => {
+  const handleViewProduct = useCallback((product) => {
     setSelectedProduct(product);
     setDrawerOpen(true);
-    productService.getProductById(product.id)
-      .then((response) => {
-        const data = response?.data || response;
-        setSelectedProduct((prev) => (prev?.id === product.id ? data : prev));
-      })
-      .catch((error) => console.error('Failed to fetch product details:', error));
-  };
+  }, []);
 
-  const handleEditProduct = async (product) => {
+  const handleEditProduct = useCallback(async (product) => {
     let productForEdit = product;
 
     if (product?.id && !Array.isArray(product.barcodes) && !Array.isArray(product.barcodeAliases)) {
       try {
-        const response = await productService.getProductById(product.id);
-        const data = response?.data?.data ?? response?.data ?? response;
+        const response = await queryClient.fetchQuery({
+          queryKey: ['product', product.id, activeTenantId, activeShopId, activeStudioLocationId],
+          queryFn: () => productService.getProductById(product.id),
+          staleTime: QUERY_STALE.TRANSACTIONAL,
+        });
+        const data = getProductDetail(response);
         if (data?.id) {
           productForEdit = data;
           setSelectedProduct((prev) => (prev?.id === product.id ? data : prev));
@@ -1207,7 +1278,7 @@ const Products = () => {
     });
     
     setFormOpen(true);
-  };
+  }, [activeTenantId, activeShopId, activeStudioLocationId, form, queryClient]);
 
   const handleOpenStoreListing = useCallback((product) => {
     if (!product?.id) return;
@@ -1420,8 +1491,7 @@ const Products = () => {
       const failed = result?.errorCount ?? 0;
       if (success > 0) {
         showSuccess(`${success} product(s) imported`);
-        fetchProducts();
-        fetchStats();
+        refreshAfterInventoryChange(queryClient);
       }
       if (failed > 0 && success === 0) {
         showError(`${failed} row(s) failed. Check the errors below.`);
@@ -1433,7 +1503,7 @@ const Products = () => {
     } finally {
       setImportLoading(false);
     }
-  }, [importFile, fetchProducts, fetchStats]);
+  }, [importFile, queryClient]);
 
   const handleDeleteClick = (product) => {
     setProductToDelete(product);
@@ -1450,8 +1520,7 @@ const Products = () => {
       showSuccess('Product deleted successfully');
       setDeleteDialogOpen(false);
       setProductToDelete(null);
-      fetchProducts();
-      fetchStats();
+      refreshAfterInventoryChange(queryClient);
     } catch (error) {
       showError(error, 'Failed to delete product');
     } finally {
@@ -1463,8 +1532,7 @@ const Products = () => {
     try {
       await productService.duplicateProduct(product.id);
       showSuccess('Product duplicated successfully');
-      fetchProducts();
-      fetchStats();
+      refreshAfterInventoryChange(queryClient);
     } catch (error) {
       showError(error, 'Failed to duplicate product');
     }
@@ -1539,8 +1607,7 @@ const Products = () => {
       }
 
       handleCloseVariantForm();
-      fetchProducts();
-      fetchStats();
+      refreshAfterInventoryChange(queryClient);
       productService.getProductById(selectedProduct.id).then((r) => {
         const data = r?.data?.data ?? r?.data ?? r;
         if (data?.id) setSelectedProduct(data);
@@ -1612,8 +1679,7 @@ const Products = () => {
 
       setFormOpen(false);
       setEditingProduct(null);
-      fetchProducts();
-      fetchStats();
+      refreshAfterInventoryChange(queryClient);
     } catch (error) {
       showError(error, editingProduct ? 'Failed to update product' : 'Failed to create product');
     } finally {
@@ -1723,8 +1789,7 @@ const Products = () => {
       showSuccess('Stock adjusted successfully');
       setAdjustStockOpen(false);
       setProductToAdjust(null);
-      fetchProducts();
-      fetchStats();
+      refreshAfterInventoryChange(queryClient);
       
       // Refresh drawer if open
       if (selectedProduct?.id === productToAdjust.id) {
@@ -2786,7 +2851,7 @@ const Products = () => {
       <DashboardTable
         data={products}
         columns={tableColumns}
-        loading={loading}
+        loading={loading || productsFetching}
         title={null}
         emptyState={productsEmptyState}
         pageSize={pagination.pageSize}
@@ -3646,8 +3711,7 @@ const Products = () => {
           setProductToReceive(null);
         }}
         onSuccess={() => {
-          fetchProducts();
-          fetchStats();
+          refreshAfterInventoryChange(queryClient);
           if (selectedProduct) {
             productService.getProductById(selectedProduct.id).then((r) => {
               const p = r?.data ?? r;
@@ -3668,8 +3732,7 @@ const Products = () => {
           setProductToTransfer(null);
         }}
         onSuccess={() => {
-          fetchProducts();
-          fetchStats();
+          refreshAfterInventoryChange(queryClient);
           if (selectedProduct) {
             productService.getProductById(selectedProduct.id).then((r) => {
               const p = r?.data ?? r;

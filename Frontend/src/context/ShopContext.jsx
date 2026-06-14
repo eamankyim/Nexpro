@@ -9,6 +9,7 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from './AuthContext';
 import shopService from '../services/shopService';
+import { refreshAfterWorkspaceScopeChange } from '../utils/queryInvalidation';
 
 export const ACTIVE_SHOP_STORAGE_KEY = 'activeShopId';
 const STORAGE_KEY = ACTIVE_SHOP_STORAGE_KEY;
@@ -110,8 +111,7 @@ export function ShopProvider({ children }) {
       if (!shopId || shopId === 'all') return;
       localStorage.setItem(STORAGE_KEY, shopId);
       setActiveShopIdState(shopId);
-      queryClient.invalidateQueries();
-      queryClient.refetchQueries({ type: 'active' });
+      refreshAfterWorkspaceScopeChange(queryClient);
     },
     [queryClient]
   );

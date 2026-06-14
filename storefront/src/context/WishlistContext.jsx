@@ -1,8 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useStorefrontAuth } from './StorefrontAuthContext';
 import storeService from '../services/storeService';
 import { showError, showSuccess } from '../utils/toast';
+import {
+  QUERY_STALE,
+  refreshAfterWishlistChange,
+  SHOPPER_QUERY_KEYS,
+} from '../utils/queryInvalidation';
 
 const WishlistContext = createContext(null);
 
@@ -14,10 +20,10 @@ const getCurrentReturnTo = () => {
 const unwrapWishlist = (response) => response?.data?.data || response?.data || response || {};
 
 export const WishlistProvider = ({ children }) => {
+  const queryClient = useQueryClient();
   const { isAuthenticated, isLoading, openShopperAuthModal } = useStorefrontAuth();
   const [items, setItems] = useState([]);
   const [listingIds, setListingIds] = useState([]);
-  const [isWishlistLoading, setIsWishlistLoading] = useState(false);
   const [pendingListingIds, setPendingListingIds] = useState([]);
 
   const applyWishlist = useCallback((payload) => {
@@ -31,6 +37,14 @@ export const WishlistProvider = ({ children }) => {
     setListingIds([...new Set(nextListingIds)]);
   }, []);
 
+  const wishlistQuery = useQuery({
+    queryKey: SHOPPER_QUERY_KEYS.wishlist,
+    queryFn: storeService.getWishlist,
+    enabled: isAuthenticated,
+    staleTime: QUERY_STALE.LIST,
+    refetchOnWindowFocus: false,
+  });
+
   const refreshWishlist = useCallback(async () => {
     if (!isAuthenticated) {
       setItems([]);
@@ -38,29 +52,33 @@ export const WishlistProvider = ({ children }) => {
       return null;
     }
 
-    setIsWishlistLoading(true);
     try {
-      const response = await storeService.getWishlist();
-      applyWishlist(response);
-      return response;
+      const result = await wishlistQuery.refetch();
+      if (result.data) applyWishlist(result.data);
+      return result.data || null;
     } catch (error) {
       showError(error, 'Could not load your wishlist.');
       return null;
-    } finally {
-      setIsWishlistLoading(false);
     }
-  }, [applyWishlist, isAuthenticated]);
+  }, [applyWishlist, isAuthenticated, wishlistQuery]);
 
   useEffect(() => {
     if (isLoading) return;
     if (!isAuthenticated) {
       setItems([]);
       setListingIds([]);
-      setIsWishlistLoading(false);
       return;
     }
-    refreshWishlist();
-  }, [isAuthenticated, isLoading, refreshWishlist]);
+    if (wishlistQuery.data) {
+      applyWishlist(wishlistQuery.data);
+    }
+  }, [applyWishlist, isAuthenticated, isLoading, wishlistQuery.data]);
+
+  useEffect(() => {
+    if (wishlistQuery.error) {
+      showError(wishlistQuery.error, 'Could not load your wishlist.');
+    }
+  }, [wishlistQuery.error]);
 
   const isWishlisted = useCallback((listingId) => (
     Boolean(listingId && listingIds.includes(listingId))
@@ -105,6 +123,8 @@ export const WishlistProvider = ({ children }) => {
       const response = await storeService.toggleWishlistItem(listingId);
       const data = unwrapWishlist(response);
       applyWishlist(data);
+      queryClient.setQueryData(SHOPPER_QUERY_KEYS.wishlist, data);
+      await refreshAfterWishlistChange(queryClient);
       showSuccess(wasSaved ? 'Removed from wishlist.' : 'Saved to wishlist.');
       return { ok: true, saved: !wasSaved };
     } catch (error) {
@@ -113,7 +133,7 @@ export const WishlistProvider = ({ children }) => {
     } finally {
       markPending(listingId, false);
     }
-  }, [applyWishlist, isAuthenticated, isWishlisted, markPending, requireWishlistAuth]);
+  }, [applyWishlist, isAuthenticated, isWishlisted, markPending, queryClient, requireWishlistAuth]);
 
   const removeWishlistItem = useCallback(async (listingId) => {
     if (!listingId) return { ok: false };
@@ -121,6 +141,8 @@ export const WishlistProvider = ({ children }) => {
     try {
       const response = await storeService.removeWishlistItem(listingId);
       applyWishlist(response);
+      queryClient.setQueryData(SHOPPER_QUERY_KEYS.wishlist, response);
+      await refreshAfterWishlistChange(queryClient);
       showSuccess('Removed from wishlist.');
       return { ok: true };
     } catch (error) {
@@ -129,19 +151,20 @@ export const WishlistProvider = ({ children }) => {
     } finally {
       markPending(listingId, false);
     }
-  }, [applyWishlist, markPending]);
+  }, [applyWishlist, markPending, queryClient]);
 
   const value = useMemo(() => ({
     count: listingIds.length,
-    isWishlistLoading,
+    isWishlistLoading: wishlistQuery.isLoading || wishlistQuery.isFetching,
     isWishlisted,
     items,
     pendingListingIds,
+    wishlistError: wishlistQuery.error,
+    refetchWishlist: refreshWishlist,
     refreshWishlist,
     removeWishlistItem,
     toggleWishlist,
   }), [
-    isWishlistLoading,
     isWishlisted,
     items,
     listingIds.length,
@@ -149,6 +172,9 @@ export const WishlistProvider = ({ children }) => {
     refreshWishlist,
     removeWishlistItem,
     toggleWishlist,
+    wishlistQuery.error,
+    wishlistQuery.isFetching,
+    wishlistQuery.isLoading,
   ]);
 
   return (

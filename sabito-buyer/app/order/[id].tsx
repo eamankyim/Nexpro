@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect } from '@react-navigation/native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useState } from 'react';
@@ -8,19 +8,23 @@ import { ErrorState, LoadingState, PrimaryButton, Screen, SecondaryButton } from
 import { BRAND } from '@/constants';
 import { ordersApi, reviewsApi } from '@/services/ordersApi';
 import { formatCurrency } from '@/utils/format';
+import { buyerQueryKeys, QUERY_STALE, refreshAfterOrderChange } from '@/utils/queryInvalidation';
 
 const ACTIVE_STATUSES = new Set(['pending', 'paid', 'processing', 'ready', 'packed', 'out_for_delivery']);
 
 export default function OrderDetailScreen() {
+  const queryClient = useQueryClient();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [disputeMessage, setDisputeMessage] = useState('');
   const [reviewRating, setReviewRating] = useState(5);
   const [reviewBody, setReviewBody] = useState('');
 
   const { data, refetch, isLoading, isError } = useQuery({
-    queryKey: ['order', id],
+    queryKey: buyerQueryKeys.order(id),
     queryFn: () => ordersApi.get(id),
     enabled: Boolean(id),
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchOnWindowFocus: false,
   });
 
   useFocusEffect(
@@ -35,17 +39,17 @@ export default function OrderDetailScreen() {
 
   const confirmMutation = useMutation({
     mutationFn: () => ordersApi.confirmReceived(id),
-    onSuccess: () => {
+    onSuccess: async () => {
       Alert.alert('Confirmed', 'Thanks for confirming delivery.');
-      refetch();
+      await refreshAfterOrderChange(queryClient);
     },
   });
 
   const disputeMutation = useMutation({
     mutationFn: () => ordersApi.openDispute(id, { reason: 'issue', message: disputeMessage }),
-    onSuccess: () => {
+    onSuccess: async () => {
       Alert.alert('Issue reported', 'Our team will review your case.');
-      refetch();
+      await refreshAfterOrderChange(queryClient);
     },
   });
 

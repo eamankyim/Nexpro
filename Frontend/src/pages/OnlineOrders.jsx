@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -22,6 +22,7 @@ import { formatAmount } from '../utils/formatNumber';
 import { showError, showSuccess } from '../utils/toast';
 import { buildStorefrontStoreUrl } from '../utils/storefrontUrl';
 import { resolveImageUrl } from '../utils/fileUtils';
+import { QUERY_STALE, refreshAfterOnlineOrderChange } from '../utils/queryInvalidation';
 import DetailsDrawer from '../components/DetailsDrawer';
 import DrawerSectionCard from '../components/DrawerSectionCard';
 import { Button } from '@/components/ui/button';
@@ -562,6 +563,8 @@ const OnlineOrders = () => {
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [cancelOrderRequest, setCancelOrderRequest] = useState(null);
   const [cancellationReason, setCancellationReason] = useState('');
+  const [cancellationReasonError, setCancellationReasonError] = useState('');
+  const cancellationReasonRef = useRef(null);
 
   const queryParams = useMemo(() => ({
     page,
@@ -578,6 +581,10 @@ const OnlineOrders = () => {
   } = useQuery({
     queryKey: ['store', 'online-orders', queryParams],
     queryFn: () => storeService.getOrders(queryParams),
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchInterval: 60 * 1000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
     retry: 1,
   });
 
@@ -589,12 +596,18 @@ const OnlineOrders = () => {
   } = useQuery({
     queryKey: ['store', 'trade-assurance-dashboard', queryParams],
     queryFn: () => storeService.getTradeAssuranceDashboard(queryParams),
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchInterval: 60 * 1000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
     retry: 1,
   });
 
   const { data: settingsResponse } = useQuery({
     queryKey: ['store', 'settings'],
     queryFn: () => storeService.getSettings(),
+    staleTime: QUERY_STALE.METADATA,
+    refetchOnWindowFocus: false,
     retry: 1,
   });
 
@@ -626,6 +639,8 @@ const OnlineOrders = () => {
     queryKey: ['store', 'online-orders', selectedOrder?.id],
     queryFn: () => storeService.getOrderById(selectedOrder.id),
     enabled: Boolean(isDetailOpen && selectedOrder?.id),
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchOnWindowFocus: true,
     retry: 1,
   });
 
@@ -641,8 +656,7 @@ const OnlineOrders = () => {
       const updateBody = getBody(updateResponse);
       const updatedOrder = updateBody.data || updateBody.order || updateBody;
       showSuccess(updatedOrder?.status === 'refunded' ? 'Online order cancelled and buyer refund recorded' : 'Online order status updated');
-      queryClient.invalidateQueries({ queryKey: ['store', 'online-orders'] });
-      queryClient.invalidateQueries({ queryKey: ['store', 'trade-assurance-dashboard'] });
+      refreshAfterOnlineOrderChange(queryClient);
       setCancelOrderRequest(null);
       setCancellationReason('');
       if (updatedOrder?.id) {
@@ -664,8 +678,7 @@ const OnlineOrders = () => {
     mutationFn: ({ orderId, amount, reason }) => storeService.refundTradeAssuranceOrder(orderId, { amount, reason }),
     onSuccess: () => {
       showSuccess('Marketplace refund recorded');
-      queryClient.invalidateQueries({ queryKey: ['store', 'online-orders'] });
-      queryClient.invalidateQueries({ queryKey: ['store', 'trade-assurance-dashboard'] });
+      refreshAfterOnlineOrderChange(queryClient);
       if (selectedOrder?.id) detailQuery.refetch();
     },
     onError: (mutationError) => {
@@ -718,12 +731,14 @@ const OnlineOrders = () => {
     if (open || updateStatusMutation.isPending) return;
     setCancelOrderRequest(null);
     setCancellationReason('');
+    setCancellationReasonError('');
   }, [updateStatusMutation.isPending]);
 
   const handleConfirmCancellation = useCallback(() => {
     const reason = cancellationReason.trim();
     if (!reason) {
-      showError('Enter a cancellation reason for the buyer.');
+      setCancellationReasonError('Enter a cancellation reason for the buyer.');
+      cancellationReasonRef.current?.focus();
       return;
     }
     if (!cancelOrderRequest?.id || updateStatusMutation.isPending) return;
@@ -787,6 +802,12 @@ const OnlineOrders = () => {
             ? (ordersErrorMessage || 'Could not load online orders. Check your connection and try again.')
             : 'Orders from your online storefront will appear here as customers check out.'}
         </p>
+        {error ? (
+          <Button type="button" variant="outline" className="mt-4" onClick={handleRefresh}>
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Try again
+          </Button>
+        ) : null}
       </CardContent>
     </Card>
   );
@@ -1287,15 +1308,27 @@ const OnlineOrders = () => {
                 Cancellation reason
               </label>
               <Textarea
+                ref={cancellationReasonRef}
                 id="order-cancellation-reason"
                 value={cancellationReason}
-                onChange={(event) => setCancellationReason(event.target.value)}
+                onChange={(event) => {
+                  setCancellationReason(event.target.value);
+                  if (cancellationReasonError) setCancellationReasonError('');
+                }}
                 placeholder="Example: Item is out of stock and cannot be fulfilled."
                 maxLength={240}
                 rows={5}
                 disabled={isCancellingOrder}
+                aria-invalid={Boolean(cancellationReasonError)}
+                aria-describedby={cancellationReasonError ? 'order-cancellation-reason-error' : 'order-cancellation-reason-help'}
+                className={cancellationReasonError ? 'border-red-300 focus-visible:ring-red-200' : undefined}
               />
-              <p className="text-xs text-muted-foreground">
+              {cancellationReasonError ? (
+                <p id="order-cancellation-reason-error" className="text-sm font-medium text-red-700">
+                  {cancellationReasonError}
+                </p>
+              ) : null}
+              <p id="order-cancellation-reason-help" className="text-xs text-muted-foreground">
                 This reason is saved on the order record and refund activity.
               </p>
             </div>

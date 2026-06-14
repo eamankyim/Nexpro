@@ -30,6 +30,16 @@ const loginSchema = z.object({
   password: z.string().min(1, 'Enter your password'),
 });
 
+const getSafeReturnTo = (value) => (
+  typeof value === 'string' &&
+  value.startsWith('/') &&
+  !value.startsWith('//') &&
+  !value.startsWith('/login') &&
+  !value.startsWith('/signup')
+    ? value
+    : ''
+);
+
 const Login = () => {
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -44,12 +54,15 @@ const Login = () => {
   const planParam = searchParams.get('plan');
   const billingPeriodParam = searchParams.get('billingPeriod');
   const inviteTokenParam = searchParams.get('token');
+  const returnTo = getSafeReturnTo(searchParams.get('returnTo'));
+  const reasonParam = searchParams.get('reason');
   const validPlans = ['starter', 'professional'];
   const validPeriods = ['monthly', 'yearly'];
   const hasCheckoutParams = validPlans.includes(planParam) && validPeriods.includes(billingPeriodParam);
   const { isMobile } = useResponsive();
   const form = useForm({
     resolver: zodResolver(loginSchema),
+    shouldFocusError: true,
     defaultValues: {
       email: '',
       password: '',
@@ -57,10 +70,32 @@ const Login = () => {
   });
 
   const [emailNotFound, setEmailNotFound] = useState(false);
+  const [verificationRequired, setVerificationRequired] = useState(null);
+  const [sessionNotice, setSessionNotice] = useState('');
   const emailValue = form.watch('email');
   useEffect(() => {
     if (emailNotFound && emailValue) setEmailNotFound(false);
-  }, [emailValue]);
+    if (verificationRequired && emailValue) setVerificationRequired(null);
+  }, [emailNotFound, emailValue, verificationRequired]);
+
+  useEffect(() => {
+    let storedMessage = '';
+    try {
+      storedMessage = sessionStorage.getItem('authSessionMessage') || '';
+      sessionStorage.removeItem('authSessionMessage');
+    } catch {
+      storedMessage = '';
+    }
+    if (storedMessage) {
+      setSessionNotice(storedMessage);
+      return;
+    }
+    if (reasonParam === 'session_expired') {
+      setSessionNotice('Your session expired. Sign in again to continue.');
+    } else if (reasonParam === 'session_required' && returnTo) {
+      setSessionNotice('Sign in to continue where you left off.');
+    }
+  }, [reasonParam, returnTo]);
 
   const onSubmit = async (values) => {
     setLoading(true);
@@ -92,6 +127,8 @@ const Login = () => {
         });
       } else if (requiresOnboarding) {
         navigate('/onboarding');
+      } else if (returnTo) {
+        navigate(returnTo, { replace: true });
       } else {
         navigate('/dashboard');
       }
@@ -106,12 +143,20 @@ const Login = () => {
         const devProxyHint =
           import.meta.env.DEV &&
           (!message || message === 'Invalid request origin' || error?.response?.data?.error === 'Forbidden');
-        showError(
-          error,
-          devProxyHint
-            ? 'Cannot reach the local API (403). The backend is usually on port 5001 or 5002 on macOS — restart the frontend dev server after starting the backend.'
-            : message || 'Access denied. Check your account or try again.'
-        );
+        if (errorCode === 'EMAIL_VERIFICATION_REQUIRED' || errorCode === 'PHONE_VERIFICATION_REQUIRED') {
+          setVerificationRequired({
+            type: errorCode,
+            message: message || 'Verify your account before signing in.',
+          });
+          showError(message || 'Verify your account before signing in.');
+        } else {
+          showError(
+            error,
+            devProxyHint
+              ? 'Cannot reach the local API (403). The backend is usually on port 5001 or 5002 on macOS — restart the frontend dev server after starting the backend.'
+              : message || 'Access denied. Check your account or try again.'
+          );
+        }
       } else {
         showError(error, message || 'Wrong email or password. Check and try again.');
       }
@@ -152,6 +197,8 @@ const Login = () => {
           });
         } else if (requiresOnboarding) {
           navigate('/onboarding');
+        } else if (returnTo) {
+          navigate(returnTo, { replace: true });
         } else {
           navigate('/dashboard');
         }
@@ -168,7 +215,7 @@ const Login = () => {
         setGoogleLoading(false);
       }
     },
-    [googleAuth, navigate, hasCheckoutParams, planParam, billingPeriodParam]
+    [googleAuth, navigate, hasCheckoutParams, planParam, billingPeriodParam, returnTo]
   );
 
   const handleGoogleError = useCallback(() => {
@@ -205,6 +252,24 @@ const Login = () => {
                   <Link to="/signup" className="text-sm font-medium text-brand hover:underline">
                     Create an account
                   </Link>
+                </div>
+              )}
+
+              {sessionNotice && (
+                <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-foreground dark:border-amber-800 dark:bg-amber-950/30" role="status">
+                  <p className="text-sm font-medium">{sessionNotice}</p>
+                  {returnTo ? (
+                    <p className="mt-1 text-xs text-muted-foreground">We will bring you back after sign-in.</p>
+                  ) : null}
+                </div>
+              )}
+
+              {verificationRequired && (
+                <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-foreground dark:border-amber-800 dark:bg-amber-950/30" role="alert">
+                  <p className="text-sm font-medium">{verificationRequired.message}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Check your inbox for the verification link, then sign in again.
+                  </p>
                 </div>
               )}
 
@@ -246,6 +311,7 @@ const Login = () => {
                               type="button"
                               onClick={() => setShowPassword(!showPassword)}
                               className={`absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground ${isMobile ? 'min-h-[44px] min-w-[44px] flex items-center justify-center' : ''}`}
+                              aria-label={showPassword ? 'Hide password' : 'Show password'}
                             >
                               {showPassword ? (
                                 <EyeOff className="h-5 w-5" />

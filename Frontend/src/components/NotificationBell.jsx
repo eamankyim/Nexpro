@@ -6,23 +6,45 @@ import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import notificationService from '../services/notificationService';
 import { useAuth } from '../context/AuthContext';
+import { QUERY_STALE, refreshNotifications } from '../utils/queryInvalidation';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { EmptyState, getEmptyStateProps } from '@/components/ui/empty-state';
+import { Skeleton } from '@/components/ui/skeleton';
 import { EMPTY_STATES } from '../constants/microcopy';
 import { cn } from '@/lib/utils';
 
 const NOTIFICATION_SUMMARY_KEY = ['notifications', 'summary'];
 /** Shared with Dashboard so list is fetched once and cached */
 export const NOTIFICATION_LIST_QUERY_KEY = ['notifications', 'list'];
-const SUMMARY_STALE_MS = 60 * 1000;
 const SUMMARY_REFETCH_MS = 60 * 1000;
-const LIST_STALE_MS = 60 * 1000;
 
 dayjs.extend(relativeTime);
 
 const PAGE_SIZE = 10;
+
+const NotificationListSkeleton = () => (
+  <div
+    className="space-y-2 px-3 py-2"
+    role="status"
+    aria-live="polite"
+    aria-label="Loading notifications"
+  >
+    {Array.from({ length: 5 }).map((_, index) => (
+      <div key={index} className="rounded-lg border border-border p-3">
+        <div className="flex items-start gap-3">
+          <Skeleton className="mt-1 h-2.5 w-2.5 rounded-full" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <Skeleton className="h-4 w-3/4" />
+            <Skeleton className="h-3 w-full" />
+            <Skeleton className="h-3 w-1/3" />
+          </div>
+        </div>
+      </div>
+    ))}
+  </div>
+);
 
 const NotificationBell = () => {
   const [open, setOpen] = useState(false);
@@ -42,9 +64,11 @@ const NotificationBell = () => {
     queryKey: [...NOTIFICATION_SUMMARY_KEY, activeTenantId],
     queryFn: () => notificationService.getSummary(),
     enabled: !!activeTenantId,
-    staleTime: SUMMARY_STALE_MS,
+    staleTime: QUERY_STALE.TRANSACTIONAL,
     refetchOnMount: 'always',
     refetchInterval: SUMMARY_REFETCH_MS,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
     retry: (failureCount, error) => {
       const isNetworkError = error?.code === 'ERR_NETWORK' || error?.message === 'Network Error';
       return !isNetworkError && failureCount < 2;
@@ -61,9 +85,9 @@ const NotificationBell = () => {
     queryKey: [...NOTIFICATION_LIST_QUERY_KEY, activeTenantId, 1],
     queryFn: () => notificationService.getNotifications({ page: 1, limit: PAGE_SIZE }),
     enabled: !!activeTenantId && open,
-    staleTime: LIST_STALE_MS,
+    staleTime: QUERY_STALE.TRANSACTIONAL,
     refetchOnMount: 'always',
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
   });
 
   const summary = useMemo(() => {
@@ -152,7 +176,7 @@ const NotificationBell = () => {
               item.id === notification.id ? { ...item, isRead: true, readAt } : item
             )
           );
-          queryClient.invalidateQueries({ queryKey: NOTIFICATION_SUMMARY_KEY });
+          refreshNotifications(queryClient);
         }
       } catch (error) {
         const isNetworkError = error?.code === 'ERR_NETWORK' || error?.message === 'Network Error';
@@ -183,7 +207,7 @@ const NotificationBell = () => {
           }
         );
         setExtraPages((prev) => prev.map((item) => ({ ...item, isRead: true, readAt: item.readAt ?? now })));
-        queryClient.invalidateQueries({ queryKey: NOTIFICATION_SUMMARY_KEY });
+        refreshNotifications(queryClient);
       }
     } catch (error) {
       const isNetworkError = error?.code === 'ERR_NETWORK' || error?.message === 'Network Error';
@@ -253,9 +277,7 @@ const NotificationBell = () => {
           </div>
         )}
         {loadingList ? (
-          <div className="flex justify-center items-center h-[200px]">
-            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-          </div>
+          <NotificationListSkeleton />
         ) : displayedNotifications.length === 0 ? (
           <EmptyState {...getEmptyStateProps(EMPTY_STATES.NOTIFICATIONS)} size="sm" className="py-6 sm:py-8" />
         ) : (

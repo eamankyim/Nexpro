@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Loader2, LockKeyhole, MailCheck, ShieldCheck, ShoppingBag } from 'lucide-react';
 
@@ -18,6 +18,7 @@ const getErrorMessage = (error) => (
 );
 
 const HOME_PATH = '/';
+const EMAIL_PATTERN = /\S+@\S+\.\S+/;
 
 const isSafeReturnPath = (path) => (
   typeof path === 'string' && path.startsWith('/') && !path.startsWith('//')
@@ -38,6 +39,9 @@ const StorefrontAuthPage = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isResending, setIsResending] = useState(false);
   const [isSendingLoginOtp, setIsSendingLoginOtp] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [sessionNotice, setSessionNotice] = useState('');
+  const fieldRefs = useRef({});
   const returnTo = useMemo(() => {
     const requested = searchParams.get('returnTo') || location.state?.returnTo || '';
     return isSafeReturnPath(requested) ? requested : HOME_PATH;
@@ -48,12 +52,64 @@ const StorefrontAuthPage = () => {
   const isVerification = mode === 'verify';
   const isOtpLogin = !isSignup && !isVerification && loginMethod === 'otp';
 
+  useEffect(() => {
+    let storedMessage = '';
+    try {
+      storedMessage = window.sessionStorage.getItem('storefrontAuthMessage') || '';
+      window.sessionStorage.removeItem('storefrontAuthMessage');
+    } catch {
+      storedMessage = '';
+    }
+    if (storedMessage) {
+      setSessionNotice(storedMessage);
+      return;
+    }
+    if (searchParams.get('reason') === 'session_expired') {
+      setSessionNotice('Your shopper session expired. Sign in again to continue.');
+    }
+  }, [searchParams]);
+
   const updateField = useCallback((field, value) => {
     setForm((current) => ({ ...current, [field]: value }));
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      return { ...current, [field]: undefined, form: undefined };
+    });
   }, []);
+
+  const focusFirstInvalid = useCallback((errors) => {
+    const firstField = ['name', 'email', 'phone', 'password', 'otp'].find((field) => errors[field]);
+    if (firstField) {
+      fieldRefs.current[firstField]?.focus();
+    }
+  }, []);
+
+  const validateAuthForm = useCallback(() => {
+    const errors = {};
+    const email = form.email.trim();
+
+    if (isSignup && !form.name.trim()) errors.name = 'Enter your full name.';
+    if (!email) errors.email = 'Enter your email.';
+    else if (!EMAIL_PATTERN.test(email)) errors.email = 'Enter a valid email address.';
+    if (isSignup && !form.phone.trim()) errors.phone = 'Enter your phone number.';
+
+    if (isVerification || isOtpLogin) {
+      if (!form.otp.trim()) errors.otp = 'Enter the 6-digit code from your email.';
+      else if (form.otp.trim().length !== 6) errors.otp = 'Enter the full 6-digit code.';
+    } else if (!form.password) {
+      errors.password = 'Enter your password.';
+    } else if (isSignup && form.password.length < 8) {
+      errors.password = 'Use at least 8 characters.';
+    }
+
+    setFieldErrors(errors);
+    focusFirstInvalid(errors);
+    return Object.keys(errors).length === 0;
+  }, [focusFirstInvalid, form.email, form.name, form.otp, form.password, form.phone, isOtpLogin, isSignup, isVerification]);
 
   const handleSubmit = useCallback(async (event) => {
     event.preventDefault();
+    if (!validateAuthForm()) return;
     setIsSubmitting(true);
     try {
       if (isVerification) {
@@ -93,12 +149,18 @@ const StorefrontAuthPage = () => {
         const pendingEmail = errorData?.data?.email || form.email;
         updateField('email', pendingEmail);
         setMode('verify');
+        setFieldErrors((current) => ({
+          ...current,
+          form: errorData?.message || 'Verify your email to continue.',
+        }));
       }
-      showError(getErrorMessage(error));
+      const message = getErrorMessage(error);
+      setFieldErrors((current) => ({ ...current, form: message }));
+      showError(message);
     } finally {
       setIsSubmitting(false);
     }
-  }, [form.email, form.name, form.otp, form.password, form.phone, isOtpLogin, isSignup, isVerification, login, navigate, register, returnTo, targetLabel, verifyEmail, verifyLoginOtp]);
+  }, [form.email, form.name, form.otp, form.password, form.phone, isOtpLogin, isSignup, isVerification, login, navigate, register, returnTo, targetLabel, validateAuthForm, verifyEmail, verifyLoginOtp]);
 
   const handleResend = useCallback(async () => {
     setIsResending(true);
@@ -113,16 +175,29 @@ const StorefrontAuthPage = () => {
   }, [form.email, resendVerification]);
 
   const handleSendLoginOtp = useCallback(async () => {
+    const email = form.email.trim();
+    const errors = {};
+    if (!email) errors.email = 'Enter your email before requesting a code.';
+    else if (!EMAIL_PATTERN.test(email)) errors.email = 'Enter a valid email address.';
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      focusFirstInvalid(errors);
+      return;
+    }
+
+    setFieldErrors({});
     setIsSendingLoginOtp(true);
     try {
       const response = await sendLoginOtp({ email: form.email });
       showSuccess(response?.message || 'Sign-in code sent. Check your email.');
     } catch (error) {
-      showError(getErrorMessage(error));
+      const message = getErrorMessage(error);
+      setFieldErrors((current) => ({ ...current, form: message }));
+      showError(message);
     } finally {
       setIsSendingLoginOtp(false);
     }
-  }, [form.email, sendLoginOtp]);
+  }, [focusFirstInvalid, form.email, sendLoginOtp]);
 
   return (
     <PageShell activePath="/login">
@@ -150,7 +225,7 @@ const StorefrontAuthPage = () => {
           ) : null}
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
           <div>
             <p className="text-sm font-bold uppercase tracking-[0.18em] text-green-700">
               {isVerification ? 'Email activation' : isSignup ? 'New customer' : isOtpLogin ? 'Email code login' : 'Returning customer'}
@@ -169,6 +244,15 @@ const StorefrontAuthPage = () => {
             </Alert>
           ) : null}
 
+          {sessionNotice ? (
+            <Alert className="border-amber-200 bg-amber-50">
+              <LockKeyhole className="h-4 w-4" />
+              <AlertDescription>
+                {sessionNotice} {returnTo !== '/' ? 'We will bring you back after sign-in.' : ''}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
           {isOtpLogin ? (
             <Alert className="border-green-200 bg-green-50">
               <ShieldCheck className="h-4 w-4" />
@@ -182,38 +266,50 @@ const StorefrontAuthPage = () => {
             <div className="grid gap-2">
               <label className="text-sm font-semibold text-slate-700" htmlFor="name">Full name</label>
               <Input
+                ref={(node) => { fieldRefs.current.name = node; }}
                 id="name"
                 value={form.name}
                 onChange={(event) => updateField('name', event.target.value)}
                 autoComplete="name"
-                required
+                aria-invalid={Boolean(fieldErrors.name)}
+                aria-describedby={fieldErrors.name ? 'name-error' : undefined}
+                className={fieldErrors.name ? 'border-red-300 focus-visible:ring-red-200' : undefined}
               />
+              <FieldError id="name-error" message={fieldErrors.name} />
             </div>
           ) : null}
 
           <div className="grid gap-2">
             <label className="text-sm font-semibold text-slate-700" htmlFor="email">Email</label>
             <Input
+              ref={(node) => { fieldRefs.current.email = node; }}
               id="email"
               type="email"
               value={form.email}
               onChange={(event) => updateField('email', event.target.value)}
               autoComplete="email"
               disabled={isVerification}
-              required
+              aria-invalid={Boolean(fieldErrors.email)}
+              aria-describedby={fieldErrors.email ? 'email-error' : undefined}
+              className={fieldErrors.email ? 'border-red-300 focus-visible:ring-red-200' : undefined}
             />
+            <FieldError id="email-error" message={fieldErrors.email} />
           </div>
 
           {isSignup ? (
             <div className="grid gap-2">
               <label className="text-sm font-semibold text-slate-700" htmlFor="phone">Phone</label>
               <Input
+                ref={(node) => { fieldRefs.current.phone = node; }}
                 id="phone"
                 value={form.phone}
                 onChange={(event) => updateField('phone', event.target.value)}
                 autoComplete="tel"
-                required
+                aria-invalid={Boolean(fieldErrors.phone)}
+                aria-describedby={fieldErrors.phone ? 'phone-error' : undefined}
+                className={fieldErrors.phone ? 'border-red-300 focus-visible:ring-red-200' : undefined}
               />
+              <FieldError id="phone-error" message={fieldErrors.phone} />
             </div>
           ) : null}
 
@@ -223,6 +319,7 @@ const StorefrontAuthPage = () => {
                 {isOtpLogin ? 'Sign-in code' : 'Verification code'}
               </label>
               <Input
+                ref={(node) => { fieldRefs.current.otp = node; }}
                 id="otp"
                 inputMode="numeric"
                 maxLength={6}
@@ -230,21 +327,28 @@ const StorefrontAuthPage = () => {
                 value={form.otp}
                 onChange={(event) => updateField('otp', event.target.value.replace(/\D/g, '').slice(0, 6))}
                 autoComplete="one-time-code"
-                required
+                aria-invalid={Boolean(fieldErrors.otp)}
+                aria-describedby={fieldErrors.otp ? 'otp-error' : undefined}
+                className={fieldErrors.otp ? 'border-red-300 focus-visible:ring-red-200' : undefined}
               />
+              <FieldError id="otp-error" message={fieldErrors.otp} />
             </div>
           ) : (
           <div className="grid gap-2">
             <label className="text-sm font-semibold text-slate-700" htmlFor="password">Password</label>
             <Input
+              ref={(node) => { fieldRefs.current.password = node; }}
               id="password"
               type="password"
               value={form.password}
               onChange={(event) => updateField('password', event.target.value)}
               autoComplete={isSignup ? 'new-password' : 'current-password'}
               minLength={8}
-              required
+              aria-invalid={Boolean(fieldErrors.password)}
+              aria-describedby={fieldErrors.password ? 'password-error' : undefined}
+              className={fieldErrors.password ? 'border-red-300 focus-visible:ring-red-200' : undefined}
             />
+            <FieldError id="password-error" message={fieldErrors.password} />
           </div>
           )}
 
@@ -261,21 +365,35 @@ const StorefrontAuthPage = () => {
                 {isOtpLogin ? 'Use password instead' : 'Email me a sign-in code'}
               </button>
               {isOtpLogin ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="rounded-full border-green-200 text-green-800 hover:bg-green-50"
-                  disabled={isSendingLoginOtp || !form.email}
-                  onClick={handleSendLoginOtp}
-                >
-                  {isSendingLoginOtp ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                  Send code
-                </Button>
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="rounded-full border-green-200 text-green-800 hover:bg-green-50"
+                    disabled={isSendingLoginOtp || !form.email}
+                    aria-describedby={!form.email ? 'send-code-helper' : undefined}
+                    onClick={handleSendLoginOtp}
+                  >
+                    {isSendingLoginOtp ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Send code
+                  </Button>
+                  {!form.email ? (
+                    <p id="send-code-helper" className="basis-full text-xs text-slate-500">
+                      Enter your email before requesting a sign-in code.
+                    </p>
+                  ) : null}
+                </>
               ) : (
                 <Link className="font-semibold text-green-800 hover:underline" to={`/forgot-password?returnTo=${encodeURIComponent(returnTo)}`}>
                   Forgot password?
                 </Link>
               )}
+            </div>
+          ) : null}
+
+          {fieldErrors.form ? (
+            <div role="alert" className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+              {fieldErrors.form}
             </div>
           ) : null}
 
@@ -320,5 +438,13 @@ const StorefrontAuthPage = () => {
     </PageShell>
   );
 };
+
+const FieldError = ({ id, message }) => (
+  message ? (
+    <p id={id} className="text-sm font-semibold text-red-700">
+      {message}
+    </p>
+  ) : null
+);
 
 export default StorefrontAuthPage;

@@ -13,6 +13,7 @@ import { BRAND } from '@/constants';
 import { addressesApi } from '@/services/ordersApi';
 import { marketplaceApi, type FoodStoreCard, type MarketplaceProduct } from '@/services/marketplaceApi';
 import { analytics } from '@/utils/analytics';
+import { buyerQueryKeys, QUERY_STALE } from '@/utils/queryInvalidation';
 
 export default function FoodTabScreen() {
   const [activeCuisine, setActiveCuisine] = useState<string | null>(null);
@@ -23,8 +24,10 @@ export default function FoodTabScreen() {
   });
 
   const addressesQuery = useQuery({
-    queryKey: ['addresses'],
+    queryKey: buyerQueryKeys.addresses,
     queryFn: () => addressesApi.list(),
+    staleTime: QUERY_STALE.LIST,
+    refetchOnWindowFocus: false,
   });
 
   useEffect(() => {

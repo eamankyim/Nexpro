@@ -26,6 +26,7 @@ import ShopperProfilePage from './pages/ShopperProfilePage';
 import ShopperWishlistPage from './pages/ShopperWishlistPage';
 import StorefrontAuthPage from './pages/StorefrontAuthPage';
 import TrackOrderPage from './pages/TrackOrderPage';
+import ConnectionHealthBanner from './components/storefront/ConnectionHealthBanner';
 import ShopperAuthModal from './components/storefront/ShopperAuthModal';
 import { useStorefrontAuth } from './context/StorefrontAuthContext';
 import { useStorefrontBackgroundPrefetch } from './hooks/useStorefrontBackgroundPrefetch';
@@ -40,6 +41,7 @@ function App() {
         v7_relativeSplatPath: true,
       }}
     >
+      <ConnectionHealthBanner />
       <Routes>
         <Route path="/" element={<MarketplaceHome />} />
         <Route path="/stores" element={<MarketplaceStoresPage />} />

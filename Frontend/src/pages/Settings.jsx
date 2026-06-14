@@ -560,7 +560,9 @@ const Settings = () => {
     isLoading: loadingProfile
   } = useQuery({
     queryKey: ['settings', 'profile'],
-    queryFn: settingsService.getProfile
+    queryFn: settingsService.getProfile,
+    staleTime: QUERY_CACHE.STALE_TIME_VOLATILE,
+    refetchOnWindowFocus: true,
   });
 
   const {
@@ -571,6 +573,8 @@ const Settings = () => {
     queryKey: ['settings', 'organization', activeTenant?.id],
     queryFn: settingsService.getOrganization,
     enabled: canManageOrganization && !!activeTenant?.id,
+    staleTime: QUERY_CACHE.STALE_TIME_DEFAULT,
+    refetchOnWindowFocus: false,
   });
 
   const organizationRecord = useMemo(() => organizationData?.data || {}, [organizationData]);
@@ -1178,7 +1182,7 @@ const Settings = () => {
     onSuccess: (response) => {
       dismissSavingToast();
       showSuccess('Organization settings saved successfully');
-      queryClient.invalidateQueries({ queryKey: ['settings', 'organization'] });
+      queryClient.invalidateQueries({ queryKey: ['settings', 'organization', activeTenant?.id] });
       queryClient.invalidateQueries({ queryKey: ['auth', 'me'] });
       if (response?.data) {
         organizationForm.reset(response.data);
@@ -1820,7 +1824,7 @@ const Settings = () => {
       const organization = result?.data || result;
       organizationForm.setValue('logoUrl', organization.logoUrl || '');
       setOrganizationLogoPreview(organization.logoUrl || '');
-      queryClient.invalidateQueries({ queryKey: ['settings', 'organization'] });
+      queryClient.invalidateQueries({ queryKey: ['settings', 'organization', activeTenant?.id] });
       showSuccess('Organization logo updated successfully');
     } catch (error) {
       showError(error, 'Failed to upload organization logo. Please try again.');

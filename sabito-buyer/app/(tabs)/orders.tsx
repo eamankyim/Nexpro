@@ -1,11 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Link, router } from 'expo-router';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text } from 'react-native';
-import { EmptyState, PrimaryButton, Screen } from '@/components/ui';
+import { EmptyState, ErrorState, ListSkeleton, PrimaryButton, Screen } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
-import { BRAND } from '@/constants';
+import { BRAND, STORAGE_KEYS } from '@/constants';
 import { bookingsApi, ordersApi, type OrderSummary, type ServiceBookingSummary } from '@/services/ordersApi';
 import { formatCurrency } from '@/utils/format';
+import { buyerQueryKeys, QUERY_STALE } from '@/utils/queryInvalidation';
 
 type ActivityItem =
   | { type: 'order'; id: string; createdAt: string; order: OrderSummary }
@@ -14,16 +16,25 @@ type ActivityItem =
 export default function OrdersScreen() {
   const { isAuthenticated, isLoading: authLoading } = useAuth();
 
-  const { data, isLoading, refetch, isRefetching } = useQuery({
-    queryKey: ['orders'],
+  const signInToOrders = async () => {
+    await AsyncStorage.setItem(STORAGE_KEYS.authReturnTo, '/(tabs)/orders');
+    router.push('/login');
+  };
+
+  const { data, isLoading, isError, error, refetch, isRefetching } = useQuery({
+    queryKey: buyerQueryKeys.orders,
     queryFn: () => ordersApi.list({ limit: 30 }),
     enabled: isAuthenticated,
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchOnWindowFocus: false,
   });
 
   const bookingsQuery = useQuery({
-    queryKey: ['service-bookings'],
+    queryKey: buyerQueryKeys.serviceBookings,
     queryFn: () => bookingsApi.list({ limit: 30 }),
     enabled: isAuthenticated,
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchOnWindowFocus: false,
   });
 
   if (authLoading) {
@@ -38,7 +49,7 @@ export default function OrdersScreen() {
     return (
       <Screen style={styles.center}>
         <EmptyState title="Sign in to view orders" />
-        <PrimaryButton label="Sign in" onPress={() => router.push('/login')} />
+        <PrimaryButton label="Sign in" onPress={signInToOrders} />
         <Link href="/track-order" asChild>
           <Pressable style={styles.trackLink}>
             <Text style={styles.trackText}>Track as guest</Text>
@@ -60,6 +71,10 @@ export default function OrdersScreen() {
     bookingsQuery.refetch();
   };
 
+  const loadError = (error as { message?: string } | null)?.message
+    || (bookingsQuery.error as { message?: string } | null)?.message
+    || 'Could not load your orders and bookings.';
+
   return (
     <Screen>
       <FlatList
@@ -69,10 +84,21 @@ export default function OrdersScreen() {
         onRefresh={refreshAll}
         contentContainerStyle={styles.list}
         ListEmptyComponent={
-          isLoading ? (
-            <ActivityIndicator color={BRAND.primary} style={{ marginTop: 40 }} />
+          isLoading || bookingsQuery.isLoading ? (
+            <ListSkeleton rows={5} label="Loading orders and bookings" />
+          ) : isError || bookingsQuery.isError ? (
+            <ErrorState
+              title="Could not load activity"
+              message={loadError}
+              onRetry={refreshAll}
+            />
           ) : (
-            <EmptyState title="No orders or bookings yet" message="Your purchases and service bookings will appear here." />
+            <EmptyState
+              title="No orders or bookings yet"
+              message="Your product purchases and service bookings will appear here after checkout."
+              actionLabel="Browse products"
+              onAction={() => router.push('/(tabs)/store')}
+            />
           )
         }
         renderItem={({ item }) => {

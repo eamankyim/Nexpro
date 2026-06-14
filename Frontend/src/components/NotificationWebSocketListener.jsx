@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useAuth } from '../context/AuthContext';
+import { refreshNotifications } from '../utils/queryInvalidation';
 
 /**
  * Listens for notification events via WebSocket and invalidates
@@ -13,7 +14,7 @@ const NotificationWebSocketListener = () => {
   const { user, activeTenantId } = useAuth();
 
   const handleNotification = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    refreshNotifications(queryClient);
   }, [queryClient]);
 
   useWebSocket({

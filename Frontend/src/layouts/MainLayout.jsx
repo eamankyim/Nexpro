@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
-import { Mail, Loader2, WifiOff, X } from 'lucide-react';
+import { Mail, Loader2, X } from 'lucide-react';
 import { Sidebar } from '../components/layout/Sidebar';
 import { Header } from '../components/layout/Header';
 import { SmartSearchProvider } from '../context/SmartSearchContext';
 import { StudioLocationProvider } from '../context/StudioLocationContext';
 import { ShopProvider } from '../context/ShopContext';
+import ConnectionHealthBanner from '../components/ConnectionHealthBanner';
 import NotificationWebSocketListener from '../components/NotificationWebSocketListener';
 import PaymentCollectionRequiredBanner from '../components/PaymentCollectionRequiredBanner';
 import BillingGraceBanner from '../components/BillingGraceBanner';
@@ -37,20 +38,6 @@ const MainLayout = () => {
   const [collapsed, setCollapsed] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const wasBelowTabletRef = useRef(isBelowTablet);
-  const [isOnline, setIsOnline] = useState(
-    typeof navigator !== 'undefined' ? navigator.onLine : true
-  );
-
-  useEffect(() => {
-    const onOnline = () => setIsOnline(true);
-    const onOffline = () => setIsOnline(false);
-    window.addEventListener('online', onOnline);
-    window.addEventListener('offline', onOffline);
-    return () => {
-      window.removeEventListener('online', onOnline);
-      window.removeEventListener('offline', onOffline);
-    };
-  }, []);
 
   const showVerifyEmailBanner = useMemo(() => Boolean(needsEmailVerification), [needsEmailVerification]);
   const isDashboardRoute = location.pathname === '/' || location.pathname === '/dashboard';
@@ -136,13 +123,7 @@ const MainLayout = () => {
         >
           <Header />
           <SupportAccessBanner />
-          {/* Global offline banner */}
-          {!isOnline && (
-            <div className="mx-4 sm:mx-4 lg:mx-6 mt-2 rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/30 dark:border-red-800 px-3 py-2.5 flex items-center gap-2 text-red-800 dark:text-red-200 text-sm">
-              <WifiOff className="h-4 w-4 shrink-0" />
-              <span>You&apos;re offline. Reconnect to continue, or use the mobile app for offline work.</span>
-            </div>
-          )}
+          <ConnectionHealthBanner className="mx-4 mt-2 sm:mx-4 lg:mx-6" />
           {/* Email verification banner only in layout; onboarding banner is on Dashboard */}
           {showVerifyEmailInLayout && (
             <div className="mx-4 sm:mx-4 lg:mx-6 mt-2 rounded-lg border border-amber-600/50 bg-amber-500/10 p-3 sm:p-3 lg:p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">

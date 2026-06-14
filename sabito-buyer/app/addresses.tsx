@@ -1,12 +1,19 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { PrimaryButton, Screen } from '@/components/ui';
 import { BRAND, GHANA_REGIONS } from '@/constants';
 import { addressesApi, type DeliveryAddress } from '@/services/ordersApi';
+import { buyerQueryKeys, QUERY_STALE, refreshAfterAddressChange } from '@/utils/queryInvalidation';
 
 export default function AddressesScreen() {
-  const { data, refetch } = useQuery({ queryKey: ['addresses'], queryFn: () => addressesApi.list() });
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: buyerQueryKeys.addresses,
+    queryFn: () => addressesApi.list(),
+    staleTime: QUERY_STALE.LIST,
+    refetchOnWindowFocus: false,
+  });
   const addresses = (data?.data as DeliveryAddress[]) || [];
   const [form, setForm] = useState<Partial<DeliveryAddress>>({ region: GHANA_REGIONS[0] });
 
@@ -23,8 +30,13 @@ export default function AddressesScreen() {
     onSuccess: () => {
       Alert.alert('Address saved');
       setForm({ region: GHANA_REGIONS[0] });
-      refetch();
+      refreshAfterAddressChange(queryClient);
     },
+  });
+
+  const setDefaultMutation = useMutation({
+    mutationFn: (id: string) => addressesApi.setDefault(id),
+    onSuccess: () => refreshAfterAddressChange(queryClient),
   });
 
   return (
@@ -53,7 +65,7 @@ export default function AddressesScreen() {
             <Text style={styles.name}>{item.recipientName}</Text>
             <Text style={styles.line}>{item.line1}, {item.city}, {item.region}</Text>
             {item.isDefault ? <Text style={styles.default}>Default</Text> : (
-              <Pressable onPress={() => item.id && addressesApi.setDefault(item.id).then(() => refetch())}>
+              <Pressable onPress={() => item.id && setDefaultMutation.mutate(item.id)}>
                 <Text style={styles.link}>Set as default</Text>
               </Pressable>
             )}

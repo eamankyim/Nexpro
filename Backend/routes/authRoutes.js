@@ -8,6 +8,7 @@ const {
   updateDetails,
   updatePassword,
   setInitialPassword,
+  getBootstrap,
   requestPasswordReset,
   resetPassword,
   verifyEmail,
@@ -35,6 +36,7 @@ router.get('/verify-token', verifyNexproToken);
 router.get('/config', getPublicConfig);
 console.log('[AUTH ROUTES] ✅ GET /api/auth/config registered');
 console.log('[AUTH ROUTES] ✅ POST /api/auth/check-email registered');
+router.get('/bootstrap', protect, getBootstrap);
 router.get('/me', protect, getMe);
 router.patch('/notification-preferences', protect, updateNotificationPreferences);
 router.put('/updatedetails', protect, updateDetails);

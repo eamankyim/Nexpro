@@ -55,6 +55,7 @@ const {
   hasCustomerConfirmedDelivery,
   paymentStatusForMarketplaceOrder,
 } = require('../utils/marketplaceOrderStatus');
+const { startHotPathTimer } = require('../utils/performanceLogger');
 
 const DEFAULT_PRIMARY_COLOR = '#166534';
 const HEX_COLOR_PATTERN = /^#[0-9A-Fa-f]{6}$/;
@@ -1262,43 +1263,195 @@ const serializeServiceBookingOrder = (job) => {
   };
 };
 
+const normalizeRequestDateRange = (query = {}) => {
+  const { startDate, endDate } = query || {};
+  if (!startDate && !endDate) return null;
+  const start = startDate ? new Date(startDate) : new Date(0);
+  const end = endDate ? new Date(endDate) : new Date();
+  start.setHours(0, 0, 0, 0);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+};
+
+const addMixedFeedDateClause = (clauses, alias, replacements, query = {}) => {
+  const range = normalizeRequestDateRange(query);
+  if (!range) return;
+  clauses.push(`${alias}."createdAt" BETWEEN :mixedStartDate AND :mixedEndDate`);
+  replacements.mixedStartDate = range.start;
+  replacements.mixedEndDate = range.end;
+};
+
+const productStatusSqlClause = (status) => {
+  if (!status || status === 'all' || !ORDER_STATUS_FILTERS.has(status)) return '';
+  if (status === 'pending') {
+    return `s."status" NOT IN ('cancelled', 'refunded') AND (s."orderStatus" IS NULL OR s."orderStatus" = 'received')`;
+  }
+  if (status === 'paid') return `s."status" = 'completed'`;
+  if (status === 'ready' || status === 'packed') {
+    return `s."status" NOT IN ('cancelled', 'refunded') AND (s."deliveryStatus" = 'ready_for_delivery' OR s."orderStatus" = 'ready')`;
+  }
+  if (status === 'cancelled') return `s."status" IN ('cancelled', 'refunded')`;
+  if (status === 'out_for_delivery') {
+    return `s."deliveryStatus" = 'out_for_delivery' AND s."status" NOT IN ('cancelled', 'refunded')`;
+  }
+  if (status === 'delivered') {
+    return `s."status" NOT IN ('cancelled', 'refunded') AND (s."deliveryStatus" = 'delivered' OR s."orderStatus" = 'completed')`;
+  }
+  return `s."status" NOT IN ('cancelled', 'refunded') AND s."orderStatus" IN ('preparing', 'processing')`;
+};
+
+const servicePaymentStatusSql = `COALESCE(
+  j."metadata"->>'paymentStatus',
+  j."metadata"->'paystack'->>'status',
+  l."metadata"->>'paymentStatus',
+  CASE WHEN j."status" = 'completed' THEN 'paid' ELSE NULL END
+)`;
+
+const serviceStatusSqlClause = (status) => {
+  if (!status || status === 'all' || !ORDER_STATUS_FILTERS.has(status)) return '';
+  if (status === 'pending') {
+    return `j."status" = 'new' AND ${servicePaymentStatusSql} IN ('paid', 'success', 'successful', 'service_paid')`;
+  }
+  if (status === 'paid') {
+    return `${servicePaymentStatusSql} IN ('paid', 'success', 'successful', 'service_paid')`;
+  }
+  if (status === 'processing') return `j."status" = 'in_progress'`;
+  if (status === 'delivered') return `j."status" = 'completed'`;
+  if (status === 'cancelled') return `j."status" = 'cancelled'`;
+  return '';
+};
+
+const buildMixedOrdersFeedSql = (req, { limit, offset }) => {
+  const replacements = {
+    tenantId: req.tenantId,
+    onlineStoreSource: ONLINE_STORE_SOURCE,
+    limit,
+    offset,
+  };
+  const productClauses = [
+    `s."tenantId" = :tenantId`,
+    `s."metadata"->>'source' = :onlineStoreSource`,
+  ];
+  const serviceClauses = [
+    `j."tenantId" = :tenantId`,
+    `j."adminLeadId" IS NOT NULL`,
+    `l."metadata"->>'requestType' = 'paid_service_booking'`,
+  ];
+
+  if (req.shopScoped && req.shopFilterId) {
+    productClauses.push(`s."shopId" = :shopFilterId`);
+    replacements.shopFilterId = req.shopFilterId;
+  }
+  if (req.studioLocationScoped && req.studioLocationFilterId) {
+    serviceClauses.push(`j."studioLocationId" = :studioLocationFilterId`);
+    replacements.studioLocationFilterId = req.studioLocationFilterId;
+  }
+
+  const productStatusClause = productStatusSqlClause(req.query?.status);
+  if (productStatusClause) productClauses.push(`(${productStatusClause})`);
+  const serviceStatusClause = serviceStatusSqlClause(req.query?.status);
+  if (serviceStatusClause) serviceClauses.push(`(${serviceStatusClause})`);
+
+  addMixedFeedDateClause(productClauses, 's', replacements, req.query);
+  addMixedFeedDateClause(serviceClauses, 'j', replacements, req.query);
+
+  const term = String(req.query?.search || '').trim();
+  if (term) {
+    replacements.mixedSearch = `%${term}%`;
+    productClauses.push(`(
+      s."saleNumber" ILIKE :mixedSearch
+      OR c."name" ILIKE :mixedSearch
+      OR c."phone" ILIKE :mixedSearch
+    )`);
+    serviceClauses.push(`(
+      j."jobNumber" ILIKE :mixedSearch
+      OR j."title" ILIKE :mixedSearch
+      OR l."name" ILIKE :mixedSearch
+      OR l."email" ILIKE :mixedSearch
+      OR l."phone" ILIKE :mixedSearch
+    )`);
+  }
+
+  return {
+    sql: `
+      WITH mixed_orders AS (
+        SELECT 'product' AS "orderType", s."id", s."createdAt" AS "sortAt"
+        FROM sales s
+        LEFT JOIN customers c ON c."id" = s."customerId"
+        WHERE ${productClauses.join(' AND ')}
+        UNION ALL
+        SELECT 'service' AS "orderType", j."id", j."createdAt" AS "sortAt"
+        FROM jobs j
+        INNER JOIN leads l ON l."id" = j."adminLeadId"
+        WHERE ${serviceClauses.join(' AND ')}
+      )
+      SELECT "orderType", "id", "sortAt"
+      FROM mixed_orders
+      ORDER BY "sortAt" DESC NULLS LAST, "id" DESC
+      LIMIT :limit OFFSET :offset
+    `,
+    replacements,
+  };
+};
+
 const getMixedStoreOrders = async (req, { limit, offset }) => {
   const productWhere = buildOnlineOrderWhere(req);
   const serviceWhere = serviceBookingWhereForRequest(req);
-  const fetchLimit = offset + limit;
+  const { sql, replacements } = buildMixedOrdersFeedSql(req, { limit, offset });
 
-  const [productResult, serviceResult, productStats, serviceStats] = await Promise.all([
-    Sale.findAndCountAll({
-      where: productWhere,
-      attributes: { exclude: ['notes'] },
-      include: storeOrderInclude,
-      distinct: true,
-      subQuery: false,
-      limit: fetchLimit,
-      offset: 0,
-      order: [['createdAt', 'DESC']],
+  const [feedRows, productCount, serviceCount, productStats, serviceStats] = await Promise.all([
+    sequelize.query(sql, {
+      replacements,
+      type: sequelize.QueryTypes.SELECT,
     }),
-    Job.findAndCountAll({
+    Sale.count({
+      where: productWhere,
+      include: [{ model: Customer, as: 'customer', attributes: [], required: false }],
+      distinct: true,
+    }),
+    Job.count({
       where: serviceWhere,
       include: [serviceBookingLeadInclude(req)],
       distinct: true,
-      limit: fetchLimit,
-      offset: 0,
-      order: [['createdAt', 'DESC']],
     }),
     getOnlineOrderStats(req),
     getServiceBookingStats(req),
   ]);
 
-  const rows = [
-    ...productResult.rows.map(serializeStoreOrder),
-    ...serviceResult.rows.map(serializeServiceBookingOrder),
-  ]
-    .sort((a, b) => new Date(b.createdAt || b.orderDate || 0) - new Date(a.createdAt || a.orderDate || 0))
-    .slice(offset, offset + limit);
+  const productIds = feedRows.filter((row) => row.orderType === 'product').map((row) => row.id);
+  const serviceIds = feedRows.filter((row) => row.orderType === 'service').map((row) => row.id);
+  const [productRows, serviceRows] = await Promise.all([
+    productIds.length
+      ? Sale.findAll({
+        where: {
+          ...productWhere,
+          id: { [Op.in]: productIds },
+        },
+        attributes: { exclude: ['notes'] },
+        include: storeOrderInclude,
+      })
+      : [],
+    serviceIds.length
+      ? Job.findAll({
+        where: {
+          ...serviceWhere,
+          id: { [Op.in]: serviceIds },
+        },
+        include: [serviceBookingLeadInclude(req)],
+      })
+      : [],
+  ]);
+
+  const rowsByKey = new Map([
+    ...productRows.map((row) => [`product:${row.id}`, serializeStoreOrder(row)]),
+    ...serviceRows.map((row) => [`service:${row.id}`, serializeServiceBookingOrder(row)]),
+  ]);
+  const rows = feedRows
+    .map((row) => rowsByKey.get(`${row.orderType}:${row.id}`))
+    .filter(Boolean);
 
   return {
-    count: Number(productResult.count || 0) + Number(serviceResult.count || 0),
+    count: Number(productCount || 0) + Number(serviceCount || 0),
     stats: combineOrderStats(productStats, serviceStats),
     rows,
   };
@@ -2000,10 +2153,12 @@ exports.generateBanner = async (req, res, next) => {
 };
 
 exports.getStoreOrders = async (req, res, next) => {
+  const finishTiming = startHotPathTimer('online_orders.list', req);
   try {
     const { page, limit, offset } = getPagination(req);
     if (isStudioStoreRequest(req)) {
       const { count, rows, stats } = await getMixedStoreOrders(req, { limit, offset });
+      finishTiming({ page, limit, count, returned: rows.length, mixed: true });
       return res.status(200).json({
         success: true,
         count,
@@ -2032,6 +2187,7 @@ exports.getStoreOrders = async (req, res, next) => {
       getOnlineOrderStats(req),
     ]);
 
+    finishTiming({ page, limit, count, returned: rows.length, mixed: false });
     res.status(200).json({
       success: true,
       count,
@@ -2044,6 +2200,7 @@ exports.getStoreOrders = async (req, res, next) => {
       data: rows.map(serializeStoreOrder),
     });
   } catch (error) {
+    finishTiming({ error: error?.message || 'unknown' });
     next(error);
   }
 };
@@ -2774,6 +2931,7 @@ exports.getMarketplaceProduct = async (req, res, next) => {
 };
 
 exports.getMarketplaceHome = async (req, res, next) => {
+  const finishTiming = startHotPathTimer('marketplace.home', req);
   try {
     const stores = await OnlineStoreSettings.findAll({
       where: publicStoreWhere(),
@@ -2843,6 +3001,11 @@ exports.getMarketplaceHome = async (req, res, next) => {
 
     const studioData = await getStudioMarketplaceHomeData();
 
+    finishTiming({
+      stores: stores.length,
+      featuredProducts: featuredProducts.length,
+      popularStores: popularStores.length,
+    });
     res.status(200).json({
       success: true,
       data: {
@@ -2860,6 +3023,7 @@ exports.getMarketplaceHome = async (req, res, next) => {
       },
     });
   } catch (error) {
+    finishTiming({ error: error?.message || 'unknown' });
     next(error);
   }
 };
@@ -2892,6 +3056,7 @@ const isGroceryStore = (store) => {
 const isProductStore = (store) => !isFoodStore(store);
 
 exports.getMarketplaceProductsHome = async (req, res, next) => {
+  const finishTiming = startHotPathTimer('marketplace.products_home', req);
   try {
     const stores = await OnlineStoreSettings.findAll({
       where: publicStoreWhere(),
@@ -2969,6 +3134,11 @@ exports.getMarketplaceProductsHome = async (req, res, next) => {
     const bestDeals = products.filter((product) => product.onSale).slice(0, 8);
     const deliveryStores = storeCards.filter((store) => store.deliveryEnabled).slice(0, 8);
 
+    finishTiming({
+      stores: productStores.length,
+      products: products.length,
+      popularStores: storeCards.length,
+    });
     res.status(200).json({
       success: true,
       data: {
@@ -2987,11 +3157,13 @@ exports.getMarketplaceProductsHome = async (req, res, next) => {
       },
     });
   } catch (error) {
+    finishTiming({ error: error?.message || 'unknown' });
     next(error);
   }
 };
 
 exports.getMarketplaceFoodHome = async (req, res, next) => {
+  const finishTiming = startHotPathTimer('marketplace.food_home', req);
   try {
     const stores = await OnlineStoreSettings.findAll({
       where: publicStoreWhere(),
@@ -3101,6 +3273,11 @@ exports.getMarketplaceFoodHome = async (req, res, next) => {
       return DRINK_CATEGORY_PATTERN.test(categoryName) || DRINK_CATEGORY_PATTERN.test(product.title || '');
     }).slice(0, 12);
 
+    finishTiming({
+      stores: stores.length,
+      products: products.length,
+      restaurants: restaurants.length,
+    });
     res.status(200).json({
       success: true,
       data: {
@@ -3121,11 +3298,13 @@ exports.getMarketplaceFoodHome = async (req, res, next) => {
       },
     });
   } catch (error) {
+    finishTiming({ error: error?.message || 'unknown' });
     next(error);
   }
 };
 
 exports.getMarketplaceStoreHome = async (req, res, next) => {
+  const finishTiming = startHotPathTimer('marketplace.store_home', req);
   try {
     const store = await OnlineStoreSettings.findOne({
       where: publicStoreWhere({ slug: { [Op.iLike]: normalizeSlug(req.params.slug) } }),
@@ -3237,6 +3416,11 @@ exports.getMarketplaceStoreHome = async (req, res, next) => {
     ));
     const metadata = store.metadata && typeof store.metadata === 'object' ? store.metadata : {};
 
+    finishTiming({
+      slug: store.slug,
+      products: products.length,
+      services: services.length,
+    });
     res.status(200).json({
       success: true,
       data: {
@@ -3266,6 +3450,7 @@ exports.getMarketplaceStoreHome = async (req, res, next) => {
       },
     });
   } catch (error) {
+    finishTiming({ error: error?.message || 'unknown' });
     next(error);
   }
 };

@@ -133,6 +133,13 @@ const generateListKey = (prefix) => (req) => {
 
 const generateCustomerListKey = generateListKey('customers');
 const generateSaleListKey = generateListKey('sales');
+const generatePublicCacheKey = (prefix = 'public') => (req) => {
+  const params = Object.keys(req.query || {})
+    .sort()
+    .map(k => `${k}=${req.query[k]}`)
+    .join('&');
+  return `${prefix}:${req.baseUrl || ''}${req.path || ''}${params ? `:${params}` : ''}`;
+};
 const generateInvoiceListKey = (req) => {
   const key = generateListKey('invoices')(req);
   logCacheDebug('Invoice list key generated', {
@@ -428,6 +435,7 @@ module.exports = {
   generateProductListKey,
   generateCustomerListKey,
   generateSaleListKey,
+  generatePublicCacheKey,
   generateInvoiceListKey,
   getShopCacheSegment,
   invalidateCache,

@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View,
   Text,
@@ -28,9 +29,15 @@ import { BRAND_GREEN } from '@/constants/brand';
 
 const ERROR_MESSAGES = {
   EMPTY_FIELDS: 'Please enter your email and password.',
+  EMAIL_REQUIRED: 'Enter your email.',
+  EMAIL_INVALID: 'Enter a valid email address.',
+  PASSWORD_REQUIRED: 'Enter your password.',
   DEFAULT: 'Login failed. Please try again.',
   GOOGLE_NOT_FOUND: 'No account found with this Google account. Sign up to create one.',
 };
+
+const isValidEmail = (value: string) => /\S+@\S+\.\S+/.test(value.trim());
+const AUTH_SESSION_MESSAGE_KEY = 'auth_session_message';
 
 export default function LoginScreen() {
   const { colors, bg, textColor, mutedColor, borderColor } = useScreenColors();
@@ -39,7 +46,12 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [checkingIntro, setCheckingIntro] = useState(true);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({});
+  const [sessionNotice, setSessionNotice] = useState('');
+  const [verificationNotice, setVerificationNotice] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const emailRef = useRef<TextInput>(null);
+  const passwordRef = useRef<TextInput>(null);
   const queryClient = useQueryClient();
   const { login, googleAuth } = useAuth();
   const { googleClientId } = usePublicConfig();
@@ -53,6 +65,11 @@ export default function LoginScreen() {
       if (!introDone) {
         router.replace('/intro');
         return;
+      }
+      const message = await AsyncStorage.getItem(AUTH_SESSION_MESSAGE_KEY);
+      if (message) {
+        setSessionNotice(message);
+        await AsyncStorage.removeItem(AUTH_SESSION_MESSAGE_KEY);
       }
       setCheckingIntro(false);
     })();
@@ -70,10 +87,26 @@ export default function LoginScreen() {
   };
 
   const handleLogin = async () => {
-    if (!email.trim() || !password) {
+    const nextErrors: { email?: string; password?: string } = {};
+    if (!email.trim()) {
+      nextErrors.email = ERROR_MESSAGES.EMAIL_REQUIRED;
+    } else if (!isValidEmail(email)) {
+      nextErrors.email = ERROR_MESSAGES.EMAIL_INVALID;
+    }
+    if (!password) {
+      nextErrors.password = ERROR_MESSAGES.PASSWORD_REQUIRED;
+    }
+
+    if (nextErrors.email || nextErrors.password) {
+      setFieldErrors(nextErrors);
       setError(ERROR_MESSAGES.EMPTY_FIELDS);
+      requestAnimationFrame(() => {
+        if (nextErrors.email) emailRef.current?.focus();
+        else if (nextErrors.password) passwordRef.current?.focus();
+      });
       return;
     }
+    setFieldErrors({});
     setError('');
     setLoading(true);
     logger.info('Login', 'Attempting login for:', email.trim());
@@ -84,8 +117,14 @@ export default function LoginScreen() {
       router.replace('/');
     } catch (err: unknown) {
       const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code;
+      const errorCode = (err as { response?: { data?: { errorCode?: string } } })?.response?.data?.errorCode;
       const msg = code === 'GOOGLE_USER_NOT_FOUND' ? ERROR_MESSAGES.GOOGLE_NOT_FOUND : getErrorMessage(err, ERROR_MESSAGES.DEFAULT);
-      setError(msg);
+      if (code === 'EMAIL_VERIFICATION_REQUIRED' || errorCode === 'EMAIL_VERIFICATION_REQUIRED') {
+        setVerificationNotice(msg || 'Verify your email before signing in.');
+        setError('');
+      } else {
+        setError(msg);
+      }
       logger.error('Login', 'Login failed:', err);
     } finally {
       setLoading(false);
@@ -121,35 +160,72 @@ export default function LoginScreen() {
         <Text style={[styles.title, { color: textColor }]}>Welcome back</Text>
         <Text style={[styles.subtitle, { color: mutedColor }]}>Sign in to manage your business</Text>
 
+        {sessionNotice ? (
+          <View style={styles.noticeBox} accessibilityRole="alert">
+            <Text style={styles.noticeTitle}>Session expired</Text>
+            <Text style={styles.noticeText}>{sessionNotice}</Text>
+          </View>
+        ) : null}
+
+        {verificationNotice ? (
+          <View style={styles.noticeBox} accessibilityRole="alert">
+            <Text style={styles.noticeTitle}>Verification required</Text>
+            <Text style={styles.noticeText}>{verificationNotice}</Text>
+            <Text style={styles.noticeText}>Check your inbox for the verification link, then sign in again.</Text>
+          </View>
+        ) : null}
+
         <FormLabel>Email</FormLabel>
         <FormInput
+            ref={emailRef}
             placeholder="you@example.com"
             value={email}
-            onChangeText={setEmail}
+            onChangeText={(value) => {
+              setEmail(value);
+              if (fieldErrors.email) setFieldErrors((current) => ({ ...current, email: undefined }));
+              if (verificationNotice) setVerificationNotice('');
+            }}
             autoCapitalize="none"
             keyboardType="email-address"
+            textContentType="emailAddress"
+            autoComplete="email"
+            accessibilityLabel="Email"
+            accessibilityHint={fieldErrors.email || 'Enter the email for your account'}
             editable={!loading}
+            style={fieldErrors.email ? styles.inputError : undefined}
           />
+        {fieldErrors.email ? <Text style={styles.fieldError}>{fieldErrors.email}</Text> : null}
 
         <FormLabel>Password</FormLabel>
-        <View style={[styles.inputWithIcon, { borderColor }]}>
+        <View style={[styles.inputWithIcon, { borderColor: fieldErrors.password ? '#dc2626' : borderColor }]}>
           <TextInput
+            ref={passwordRef}
             style={[styles.inputInner, { color: textColor }]}
             placeholder="Enter your password"
             placeholderTextColor={mutedColor}
             value={password}
-            onChangeText={setPassword}
+            onChangeText={(value) => {
+              setPassword(value);
+              if (fieldErrors.password) setFieldErrors((current) => ({ ...current, password: undefined }));
+            }}
             secureTextEntry={!showPassword}
+            textContentType="password"
+            autoComplete="password"
+            accessibilityLabel="Password"
+            accessibilityHint={fieldErrors.password || 'Enter your account password'}
             editable={!loading}
           />
           <Pressable
             style={styles.eyeButton}
             onPress={() => setShowPassword((prev) => !prev)}
             disabled={loading}
+            accessibilityRole="button"
+            accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
           >
             <AppIcon name={showPassword ? 'eye-off' : 'eye'} size={20} color={mutedColor} />
           </Pressable>
         </View>
+        {fieldErrors.password ? <Text style={styles.fieldError}>{fieldErrors.password}</Text> : null}
         <View style={styles.forgotRow}>
           <Pressable onPress={() => router.push('/forgot-password')} disabled={loading}>
             <Text style={[styles.link, { color: colors.tint }]}>Forgot password?</Text>
@@ -263,6 +339,24 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     marginBottom: 32,
   },
+  noticeBox: {
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 16,
+  },
+  noticeTitle: {
+    color: '#92400e',
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  noticeText: {
+    color: '#92400e',
+    fontSize: 13,
+    lineHeight: 18,
+  },
   input: {
     height: 48,
     borderWidth: 1,
@@ -272,6 +366,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginBottom: 16,
     backgroundColor: '#fff',
+  },
+  inputError: {
+    borderColor: '#dc2626',
   },
   inputWithIcon: {
     height: 48,
@@ -326,6 +423,13 @@ const styles = StyleSheet.create({
     color: '#dc2626',
     fontSize: 14,
     lineHeight: 20,
+  },
+  fieldError: {
+    color: '#dc2626',
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: -4,
+    marginBottom: 8,
   },
   button: {
     height: 48,

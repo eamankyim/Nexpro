@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
@@ -14,8 +14,10 @@ import { marketplaceApi } from '@/services/marketplaceApi';
 import { reviewsApi, wishlistApi } from '@/services/ordersApi';
 import { formatCurrency, resolveImageUrl } from '@/utils/format';
 import { analytics } from '@/utils/analytics';
+import { refreshAfterWishlistChange } from '@/utils/queryInvalidation';
 
 export default function ProductDetailScreen() {
+  const queryClient = useQueryClient();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { addItem, items } = useCart();
   const { isAuthenticated } = useAuth();
@@ -48,7 +50,8 @@ export default function ProductDetailScreen() {
 
   const wishlistMutation = useMutation({
     mutationFn: () => wishlistApi.toggle(id),
-    onSuccess: (res) => {
+    onSuccess: async (res) => {
+      await refreshAfterWishlistChange(queryClient);
       Alert.alert(res?.data?.saved ? 'Saved to wishlist' : 'Removed from wishlist');
     },
   });

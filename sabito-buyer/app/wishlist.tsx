@@ -1,14 +1,23 @@
 import { useQuery } from '@tanstack/react-query';
 import { router } from 'expo-router';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
-import { EmptyState, Screen } from '@/components/ui';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { EmptyState, ErrorState, ListSkeleton, Screen } from '@/components/ui';
+import { useAuth } from '@/context/AuthContext';
 import { BRAND } from '@/constants';
 import { wishlistApi } from '@/services/ordersApi';
 import { formatCurrency, resolveImageUrl } from '@/utils/format';
+import { buyerQueryKeys, QUERY_STALE } from '@/utils/queryInvalidation';
 import { Image } from 'expo-image';
 
 export default function WishlistScreen() {
-  const { data, isLoading } = useQuery({ queryKey: ['wishlist'], queryFn: () => wishlistApi.list() });
+  const { isAuthenticated } = useAuth();
+  const { data, isLoading, isError, error, refetch } = useQuery({
+    queryKey: buyerQueryKeys.wishlist,
+    queryFn: () => wishlistApi.list(),
+    enabled: isAuthenticated,
+    staleTime: QUERY_STALE.LIST,
+    refetchOnWindowFocus: false,
+  });
   const items = (data?.data as Array<{ listingId: string; title?: string; publicPrice?: number; imageUrl?: string; currency?: string }>) || [];
 
   return (
@@ -18,7 +27,22 @@ export default function WishlistScreen() {
         keyExtractor={(item) => item.listingId}
         contentContainerStyle={styles.list}
         ListEmptyComponent={
-          isLoading ? <ActivityIndicator color={BRAND.primary} /> : <EmptyState title="Wishlist is empty" />
+          isLoading ? (
+            <ListSkeleton rows={4} label="Loading wishlist" />
+          ) : isError ? (
+            <ErrorState
+              title="Could not load wishlist"
+              message={(error as { message?: string } | null)?.message || 'Saved products will appear after this refreshes.'}
+              onRetry={refetch}
+            />
+          ) : (
+            <EmptyState
+              title="Wishlist is empty"
+              message="Tap the heart on products you like and they will appear here."
+              actionLabel="Browse products"
+              onAction={() => router.push('/(tabs)/store')}
+            />
+          )
         }
         renderItem={({ item }) => (
           <Pressable style={styles.row} onPress={() => router.push(`/product/${item.listingId}`)}>

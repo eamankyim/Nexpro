@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Loader2, MapPin, ShieldCheck, ShoppingBag, Truck } from 'lucide-react';
+import { AlertCircle, Loader2, MapPin, ShieldCheck, ShoppingBag, Truck } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useCart } from '../context/CartContext';
 import storeService from '../services/storeService';
@@ -9,6 +10,12 @@ import { showError } from '../utils/toast';
 import { formatAmount } from '../utils/formatNumber';
 import AccountLayout from '../components/storefront/AccountLayout';
 import { EmptyState } from '../components/storefront/StorefrontLayout';
+import { InlineErrorState, SkeletonBlock } from '../components/storefront/StateBlocks';
+import {
+  QUERY_STALE,
+  refreshAfterAddressChange,
+  SHOPPER_QUERY_KEYS,
+} from '../utils/queryInvalidation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -27,6 +34,13 @@ const emptyAddress = {
 
 const comparableAddressFields = ['recipientName', 'phone', 'line1', 'line2', 'city', 'region', 'country'];
 const EMPTY_REGION_VALUE = 'none';
+const REQUIRED_DELIVERY_FIELDS = ['recipientName', 'phone', 'line1', 'city'];
+const DELIVERY_FIELD_LABELS = {
+  recipientName: 'Recipient name',
+  phone: 'Phone',
+  line1: 'Address line 1',
+  city: 'City',
+};
 
 const normalizeAddressPart = (value) => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
 
@@ -44,29 +58,32 @@ const formatDeliveryAddress = (address = {}) => (
 );
 
 const CheckoutPage = () => {
+  const queryClient = useQueryClient();
   const { cartSummary, items } = useCart();
-  const [addresses, setAddresses] = useState([]);
   const [selectedAddressId, setSelectedAddressId] = useState('new');
   const [addressForm, setAddressForm] = useState(emptyAddress);
   const [saveAddressForLater, setSaveAddressForLater] = useState(false);
   const [fulfillmentMethod, setFulfillmentMethod] = useState('pickup');
   const [notes, setNotes] = useState('');
-  const [isLoadingAddresses, setIsLoadingAddresses] = useState(true);
   const [paymentPhase, setPaymentPhase] = useState('idle');
-  const [checkoutPreview, setCheckoutPreview] = useState(null);
-  const [checkoutPreviewError, setCheckoutPreviewError] = useState('');
-  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  const [addressErrors, setAddressErrors] = useState({});
+  const defaultAddressAppliedRef = useRef(false);
+  const addressFieldRefs = useRef({});
   const isPlacingOrder = paymentPhase !== 'idle';
 
   const store = cartSummary.store;
   const currency = cartSummary.currency;
-  const deliveryFee = checkoutPreview
-    ? Number(checkoutPreview.deliveryFee || 0)
-    : fulfillmentMethod === 'delivery' ? Number(store?.deliveryFee || 0) : 0;
-  const subtotal = checkoutPreview ? Number(checkoutPreview.subtotal || 0) : cartSummary.subtotal;
-  const total = checkoutPreview ? Number(checkoutPreview.total || 0) : Number((cartSummary.subtotal + deliveryFee).toFixed(2));
   const deliveryAvailable = store?.deliveryEnabled === true;
   const pickupAvailable = store?.pickupEnabled !== false;
+
+  const addressesQuery = useQuery({
+    queryKey: SHOPPER_QUERY_KEYS.addresses,
+    queryFn: storeService.getDeliveryAddresses,
+    staleTime: QUERY_STALE.LIST,
+    refetchOnWindowFocus: false,
+  });
+
+  const addresses = addressesQuery.data?.data?.addresses || addressesQuery.data?.addresses || [];
 
   useEffect(() => {
     if (!store) return;
@@ -78,28 +95,17 @@ const CheckoutPage = () => {
   }, [deliveryAvailable, pickupAvailable, store]);
 
   useEffect(() => {
-    let mounted = true;
-    storeService.getDeliveryAddresses()
-      .then((response) => {
-        if (!mounted) return;
-        const nextAddresses = response?.data?.addresses || response?.addresses || [];
-        setAddresses(nextAddresses);
-        const defaultAddress = nextAddresses.find((address) => address.isDefault) || nextAddresses[0];
-        if (defaultAddress) {
-          setSelectedAddressId(defaultAddress.id);
-        }
-      })
-      .catch((error) => {
-        if (mounted) showError(error, 'Could not load saved delivery addresses.');
-      })
-      .finally(() => {
-        if (mounted) setIsLoadingAddresses(false);
-      });
+    if (addressesQuery.error) showError(addressesQuery.error, 'Could not load saved delivery addresses.');
+  }, [addressesQuery.error]);
 
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  useEffect(() => {
+    if (!addresses.length || defaultAddressAppliedRef.current) return;
+    const defaultAddress = addresses.find((address) => address.isDefault) || addresses[0];
+    if (defaultAddress?.id) {
+      defaultAddressAppliedRef.current = true;
+      setSelectedAddressId(defaultAddress.id);
+    }
+  }, [addresses]);
 
   const selectedAddress = useMemo(
     () => addresses.find((address) => address.id === selectedAddressId) || null,
@@ -126,38 +132,57 @@ const CheckoutPage = () => {
     return payload;
   }, [deliveryAddress, fulfillmentMethod, items, notes, store]);
 
-  useEffect(() => {
-    if (!checkoutPayload || items.length === 0) {
-      setCheckoutPreview(null);
-      setCheckoutPreviewError('');
-      return undefined;
+  const previewQuery = useQuery({
+    queryKey: ['checkout', 'preview', checkoutPayload],
+    queryFn: () => storeService.previewStorefrontCheckout(checkoutPayload),
+    enabled: Boolean(checkoutPayload && items.length > 0),
+    staleTime: QUERY_STALE.CHECKOUT,
+    refetchOnWindowFocus: false,
+  });
+
+  const checkoutPreview = previewQuery.data?.data || previewQuery.data || null;
+  const checkoutPreviewError = previewQuery.error?.message || '';
+  const isLoadingPreview = previewQuery.isFetching;
+  const isLoadingAddresses = addressesQuery.isLoading;
+  const deliveryFee = checkoutPreview
+    ? Number(checkoutPreview.deliveryFee || 0)
+    : fulfillmentMethod === 'delivery' ? Number(store?.deliveryFee || 0) : 0;
+  const subtotal = checkoutPreview ? Number(checkoutPreview.subtotal || 0) : cartSummary.subtotal;
+  const total = checkoutPreview ? Number(checkoutPreview.total || 0) : Number((cartSummary.subtotal + deliveryFee).toFixed(2));
+  const submitBlockedReason = addressesQuery.isError && fulfillmentMethod === 'delivery'
+    ? 'Retry saved addresses before paying for delivery.'
+    : checkoutPreviewError
+      ? 'Fix the checkout issue shown above before paying.'
+      : isLoadingPreview
+        ? 'Wait for checkout totals to finish calculating.'
+        : '';
+
+  const validateDeliveryAddress = useCallback(() => {
+    if (fulfillmentMethod !== 'delivery' || selectedAddressId !== 'new') {
+      setAddressErrors({});
+      return true;
     }
 
-    let cancelled = false;
-    setIsLoadingPreview(true);
-    storeService.previewStorefrontCheckout(checkoutPayload)
-      .then((response) => {
-        if (cancelled) return;
-        setCheckoutPreview(response?.data || response || null);
-        setCheckoutPreviewError('');
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setCheckoutPreview(null);
-        setCheckoutPreviewError(error?.message || 'Could not calculate checkout totals.');
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoadingPreview(false);
-      });
+    const nextErrors = {};
+    REQUIRED_DELIVERY_FIELDS.forEach((field) => {
+      if (!String(addressForm[field] || '').trim()) {
+        nextErrors[field] = `${DELIVERY_FIELD_LABELS[field]} is required for delivery.`;
+      }
+    });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [checkoutPayload, items.length]);
+    setAddressErrors(nextErrors);
+    const firstField = REQUIRED_DELIVERY_FIELDS.find((field) => nextErrors[field]);
+    if (firstField) {
+      addressFieldRefs.current[firstField]?.focus();
+      return false;
+    }
+    return true;
+  }, [addressForm, fulfillmentMethod, selectedAddressId]);
 
   const placeOrder = useCallback(async (event) => {
     event.preventDefault();
     if (!checkoutPayload || !store || items.length === 0) return;
+    if (!validateDeliveryAddress()) return;
     if (checkoutPreviewError) {
       showError(new Error(checkoutPreviewError), 'Fix the checkout issue before paying.');
       return;
@@ -171,12 +196,11 @@ const CheckoutPage = () => {
           const existingAddress = addresses.find((address) => isSameDeliveryAddress(address, inlineAddressPayload));
           if (!existingAddress) {
             const saveResponse = await storeService.createDeliveryAddress(inlineAddressPayload);
-            const nextAddresses = saveResponse?.data?.addresses || saveResponse?.addresses || addresses;
             const savedAddress = saveResponse?.data?.address || saveResponse?.address;
-            setAddresses(nextAddresses);
             if (savedAddress?.id) {
               setSelectedAddressId(savedAddress.id);
             }
+            await refreshAfterAddressChange(queryClient);
           }
         } catch (saveError) {
           showError(saveError, 'Checkout will continue, but this address could not be saved.');
@@ -201,8 +225,10 @@ const CheckoutPage = () => {
     checkoutPayload,
     checkoutPreviewError,
     items,
+    queryClient,
     shouldSaveInlineAddress,
     store,
+    validateDeliveryAddress,
   ]);
 
   if (items.length === 0) {
@@ -230,7 +256,7 @@ const CheckoutPage = () => {
       description="Choose delivery, confirm your saved address, and place your Sabito Store order."
       breadcrumbItems={[{ label: 'Cart', to: '/cart' }, { label: 'Checkout' }]}
     >
-      <form onSubmit={placeOrder} className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
+      <form onSubmit={placeOrder} className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]" noValidate>
         <section className="grid gap-6">
           <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:rounded-[2rem] sm:p-5 md:p-6">
             <p className="text-sm font-bold uppercase tracking-[0.18em] text-green-700">Checkout</p>
@@ -272,10 +298,16 @@ const CheckoutPage = () => {
                 Delivery address
               </h2>
               {isLoadingAddresses ? (
-                <div className="mt-5 flex min-h-28 items-center justify-center text-sm font-semibold text-slate-500">
-                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  Loading saved addresses...
+                <div className="mt-5 grid gap-3" role="status" aria-label="Loading saved delivery addresses">
+                  <SkeletonBlock className="h-24 rounded-2xl" />
+                  <SkeletonBlock className="h-24 rounded-2xl" />
                 </div>
+              ) : addressesQuery.isError ? (
+                <InlineErrorState
+                  title="Saved addresses did not load"
+                  message="Retry saved addresses before choosing delivery for this checkout."
+                  onRetry={addressesQuery.refetch}
+                />
               ) : (
                 <div className="mt-5 grid gap-4">
                   {addresses.length ? (
@@ -313,7 +345,12 @@ const CheckoutPage = () => {
                   {selectedAddressId === 'new' ? (
                     <AddressForm
                       value={addressForm}
-                      onChange={setAddressForm}
+                      onChange={(updater) => {
+                        setAddressForm(updater);
+                      }}
+                      errors={addressErrors}
+                      onClearError={(field) => setAddressErrors((current) => ({ ...current, [field]: undefined }))}
+                      fieldRefs={addressFieldRefs}
                       saveAddressForLater={saveAddressForLater}
                       onSaveAddressForLaterChange={setSaveAddressForLater}
                     />
@@ -362,9 +399,21 @@ const CheckoutPage = () => {
             </p>
           ) : null}
           {checkoutPreviewError ? (
-            <p className="mt-3 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-              {checkoutPreviewError}
-            </p>
+            <div
+              role="alert"
+              id="checkout-preview-error"
+              className="mt-3 flex gap-2 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700"
+            >
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{checkoutPreviewError}</span>
+            </div>
+          ) : null}
+          {isLoadingPreview && !checkoutPreview ? (
+            <div className="mt-3 grid gap-2" role="status" aria-label="Calculating checkout total">
+              <SkeletonBlock className="h-4 w-2/3" />
+              <SkeletonBlock className="h-4 w-1/2" />
+              <SkeletonBlock className="h-5 w-3/4" />
+            </div>
           ) : null}
           <div className="mt-5 rounded-2xl border border-green-100 bg-green-50 p-4 text-sm leading-6 text-green-900 sm:rounded-3xl">
             <span className="inline-flex items-center gap-2 font-black text-green-800">
@@ -373,10 +422,20 @@ const CheckoutPage = () => {
             </span>
             <p className="mt-2">Payment is held by Sabito until you confirm delivery. Seller payout is released after confirmation.</p>
           </div>
-          <Button type="submit" className="mt-5 w-full rounded-full bg-green-700 hover:bg-green-800" disabled={isPlacingOrder || isLoadingAddresses || isLoadingPreview || Boolean(checkoutPreviewError)}>
+          <Button
+            type="submit"
+            className="mt-5 w-full rounded-full bg-green-700 hover:bg-green-800"
+            disabled={isPlacingOrder || isLoadingAddresses || isLoadingPreview || Boolean(checkoutPreviewError) || (addressesQuery.isError && fulfillmentMethod === 'delivery')}
+            aria-describedby={checkoutPreviewError ? 'checkout-preview-error' : submitBlockedReason ? 'checkout-submit-helper' : undefined}
+          >
             {isPlacingOrder || isLoadingPreview ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             {paymentPhase === 'redirecting' ? 'Redirecting to Paystack...' : paymentPhase === 'initializing' ? 'Starting Paystack...' : 'Pay with Paystack'}
           </Button>
+          {submitBlockedReason ? (
+            <p id="checkout-submit-helper" className="mt-2 text-center text-xs font-semibold leading-5 text-slate-500">
+              {submitBlockedReason}
+            </p>
+          ) : null}
           <p className="mt-3 text-center text-xs leading-5 text-slate-500">
             You will be redirected to Paystack to pay securely. Your order is placed only after payment is confirmed.
           </p>
@@ -399,18 +458,21 @@ const MethodCard = ({ checked, label, description, onChange }) => (
 const AddressForm = ({
   value,
   onChange,
+  errors = {},
+  onClearError,
+  fieldRefs,
   saveAddressForLater,
   onSaveAddressForLaterChange,
 }) => (
   <div className="grid gap-3">
     <div className="grid gap-3 sm:grid-cols-2">
-      <Field label="Recipient name" value={value.recipientName} onChange={(recipientName) => onChange((current) => ({ ...current, recipientName }))} required />
-      <Field label="Phone" value={value.phone} onChange={(phone) => onChange((current) => ({ ...current, phone }))} required />
+      <Field name="recipientName" label="Recipient name" value={value.recipientName} onChange={(recipientName) => onChange((current) => ({ ...current, recipientName }))} error={errors.recipientName} onClearError={onClearError} fieldRefs={fieldRefs} required />
+      <Field name="phone" label="Phone" value={value.phone} onChange={(phone) => onChange((current) => ({ ...current, phone }))} error={errors.phone} onClearError={onClearError} fieldRefs={fieldRefs} required />
     </div>
-    <Field label="Address line 1" value={value.line1} onChange={(line1) => onChange((current) => ({ ...current, line1 }))} required />
+    <Field name="line1" label="Address line 1" value={value.line1} onChange={(line1) => onChange((current) => ({ ...current, line1 }))} error={errors.line1} onClearError={onClearError} fieldRefs={fieldRefs} required />
     <Field label="Address line 2 (optional)" value={value.line2} onChange={(line2) => onChange((current) => ({ ...current, line2 }))} />
     <div className="grid gap-3 sm:grid-cols-2">
-      <Field label="City" value={value.city} onChange={(city) => onChange((current) => ({ ...current, city }))} required />
+      <Field name="city" label="City" value={value.city} onChange={(city) => onChange((current) => ({ ...current, city }))} error={errors.city} onClearError={onClearError} fieldRefs={fieldRefs} required />
       <RegionSelect value={value.region} onChange={(region) => onChange((current) => ({ ...current, region }))} />
     </div>
     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:rounded-3xl">
@@ -430,12 +492,28 @@ const AddressForm = ({
   </div>
 );
 
-const Field = ({ label, value, onChange, required = false }) => {
+const Field = ({ name, label, value, onChange, required = false, error, onClearError, fieldRefs }) => {
   const id = label.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  const errorId = `${id}-error`;
   return (
     <div className="grid gap-2">
       <label className="text-sm font-semibold text-slate-700" htmlFor={id}>{label}</label>
-      <Input id={id} value={value} onChange={(event) => onChange(event.target.value)} required={required} />
+      <Input
+        ref={(node) => {
+          if (name && fieldRefs) fieldRefs.current[name] = node;
+        }}
+        id={id}
+        value={value}
+        onChange={(event) => {
+          onChange(event.target.value);
+          if (name && error) onClearError?.(name);
+        }}
+        required={required}
+        aria-invalid={Boolean(error)}
+        aria-describedby={error ? errorId : undefined}
+        className={error ? 'border-red-300 focus-visible:ring-red-200' : undefined}
+      />
+      {error ? <p id={errorId} className="text-sm font-semibold text-red-700">{error}</p> : null}
     </div>
   );
 };

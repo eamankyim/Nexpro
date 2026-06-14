@@ -10,6 +10,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from './AuthContext';
 import { STUDIO_LIKE_TYPES } from '../constants';
 import studioLocationService from '../services/studioLocationService';
+import { refreshAfterWorkspaceScopeChange } from '../utils/queryInvalidation';
 
 export const ACTIVE_STUDIO_LOCATION_STORAGE_KEY = 'activeStudioLocationId';
 const STORAGE_KEY = ACTIVE_STUDIO_LOCATION_STORAGE_KEY;
@@ -93,8 +94,7 @@ export function StudioLocationProvider({ children }) {
         localStorage.setItem(STORAGE_KEY, locationId);
         setActiveStudioLocationIdState(locationId);
       }
-      queryClient.invalidateQueries();
-      queryClient.refetchQueries({ type: 'active' });
+      refreshAfterWorkspaceScopeChange(queryClient);
     },
     [queryClient]
   );

@@ -6,11 +6,50 @@ const { applyTenantFilter } = require('../utils/tenantUtils');
 const { applyShopFilter } = require('../utils/shopUtils');
 const { getPagination } = require('../utils/paginationUtils');
 const { invalidateNotificationsCache } = require('../middleware/cache');
+const { startHotPathTimer } = require('../utils/performanceLogger');
 
 const STOCK_ALERT_TYPES = {
   OUT_OF_STOCK: 'out_of_stock',
   LOW_STOCK: 'low_stock'
 };
+const STOCK_ALERT_SYNC_TTL_MS = 5 * 60 * 1000;
+const stockAlertSyncCache = new Map();
+
+function getStockAlertSyncKey(req) {
+  return [
+    req.tenantId,
+    req.user?.id,
+    req.shopFilterId || 'all'
+  ].join(':');
+}
+
+async function syncStockAlertNotificationsThrottled(req) {
+  if (!req.tenantId || !req.user?.id) return;
+
+  const key = getStockAlertSyncKey(req);
+  const now = Date.now();
+  const cached = stockAlertSyncCache.get(key);
+
+  if (cached?.inFlight) {
+    return cached.inFlight;
+  }
+
+  if (cached?.lastSyncedAt && now - cached.lastSyncedAt < STOCK_ALERT_SYNC_TTL_MS) {
+    return;
+  }
+
+  const inFlight = syncStockAlertNotifications(req)
+    .then(() => {
+      stockAlertSyncCache.set(key, { lastSyncedAt: Date.now(), inFlight: null });
+    })
+    .catch((error) => {
+      stockAlertSyncCache.delete(key);
+      throw error;
+    });
+
+  stockAlertSyncCache.set(key, { lastSyncedAt: cached?.lastSyncedAt || 0, inFlight });
+  return inFlight;
+}
 
 async function syncStockAlertNotifications(req) {
   if (!req.tenantId || !req.user?.id) return;
@@ -133,8 +172,9 @@ async function upsertStockAlertNotification({ req, alertType, count, title, mess
 }
 
 exports.getNotifications = async (req, res, next) => {
+  const finishTiming = startHotPathTimer('notifications.list', req);
   try {
-    await syncStockAlertNotifications(req);
+    await syncStockAlertNotificationsThrottled(req);
 
     const { page, limit, offset } = getPagination(req);
     const type = req.query.type;
@@ -177,6 +217,7 @@ exports.getNotifications = async (req, res, next) => {
       total: count
     });
 
+    finishTiming({ page, limit, count, returned: rows.length, unreadOnly, type: type || null });
     res.status(200).json({
       success: true,
       count,
@@ -188,6 +229,7 @@ exports.getNotifications = async (req, res, next) => {
       data: rows
     });
   } catch (error) {
+    finishTiming({ error: error?.message || 'unknown' });
     next(error);
   }
 };
@@ -252,8 +294,9 @@ exports.markAllNotificationsRead = async (req, res, next) => {
 };
 
 exports.getNotificationSummary = async (req, res, next) => {
+  const finishTiming = startHotPathTimer('notifications.summary', req);
   try {
-    await syncStockAlertNotifications(req);
+    await syncStockAlertNotificationsThrottled(req);
 
     const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
 
@@ -272,6 +315,7 @@ exports.getNotificationSummary = async (req, res, next) => {
 
     const summary = summaryRow || { total: 0, unread: 0, recent: 0 };
 
+    finishTiming({ unread: summary.unread ?? 0, recent: summary.recent ?? 0 });
     res.status(200).json({
       success: true,
       data: {
@@ -281,6 +325,7 @@ exports.getNotificationSummary = async (req, res, next) => {
       }
     });
   } catch (error) {
+    finishTiming({ error: error?.message || 'unknown' });
     next(error);
   }
 };

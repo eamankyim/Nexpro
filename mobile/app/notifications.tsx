@@ -13,7 +13,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { AppIcon } from '@/components/AppIcon';
 import { ListEmptyState } from '@/components/ListEmptyState';
-import { ListLoadingState, ListErrorState } from '@/components/ListScreenStates';
+import { ListSkeletonState, ListErrorState } from '@/components/ListScreenStates';
 import { flatListStyleForEmpty, listContentStyleWhenEmpty } from '@/utils/listEmptyLayout';
 import { notificationService } from '@/services/notificationService';
 import { useAuth } from '@/context/AuthContext';
@@ -253,7 +253,7 @@ export default function NotificationsScreen() {
         </Pressable>
       </View>
       {isLoading ? (
-        <ListLoadingState message="Loading notifications..." />
+        <ListSkeletonState rows={6} message="Loading notifications..." />
       ) : isError ? (
         <ListErrorState
           title="Failed to load notifications"

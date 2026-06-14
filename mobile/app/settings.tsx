@@ -280,6 +280,16 @@ export default function SettingsScreen() {
           Choose what appears in the bell and whether to also get email at {user?.email || 'your account email'}.
         </Text>
         <View style={[styles.card, { backgroundColor: cardBg, borderColor }]}>
+          <View style={[styles.pushStatusBox, { borderColor, backgroundColor: activeRowBg }]}>
+            <View style={styles.pushStatusHeader}>
+              <AppIcon name="bell" size={18} color={brand} />
+              <Text style={[styles.noticeTitle, { color: textColor }]}>Push delivery</Text>
+            </View>
+            <Text style={[styles.noticeText, { color: mutedColor }]}>
+              This workspace app currently delivers notifications through the in-app bell and account email. Device push alerts
+              are not enabled for this app yet, so these preferences control the reliable channels available today.
+            </Text>
+          </View>
           <View style={[styles.noticeBox, { borderColor, backgroundColor: activeRowBg }]}>
             <Text style={[styles.noticeTitle, { color: textColor }]}>Security and account email</Text>
             <Text style={[styles.noticeText, { color: mutedColor }]}>
@@ -454,6 +464,19 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 10,
     borderWidth: 1,
+  },
+  pushStatusBox: {
+    margin: 12,
+    marginBottom: 0,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  pushStatusHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
   },
   noticeTitle: { fontSize: 14, fontWeight: '700', marginBottom: 4 },
   noticeText: { fontSize: 12, lineHeight: 18 },

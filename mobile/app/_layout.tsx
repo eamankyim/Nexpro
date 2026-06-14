@@ -7,13 +7,14 @@ import { useFonts } from 'expo-font';
 import { Stack, usePathname, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useRef } from 'react';
-import { AppState, AppStateStatus } from 'react-native';
+import { AppState, AppStateStatus, View } from 'react-native';
 import 'react-native-reanimated';
 import { offlineQueueService } from '@/services/offlineQueueService';
 import { refreshAfterSale } from '@/utils/queryInvalidation';
-import { useQueryClient } from '@tanstack/react-query';
+import { onlineManager, useQueryClient } from '@tanstack/react-query';
 
 import { AppIcon, type AppIconName } from '@/components/AppIcon';
+import { ConnectivityBanner } from '@/components/ConnectivityBanner';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { ShopProvider } from '@/context/ShopContext';
 import { StudioLocationProvider } from '@/context/StudioLocationContext';
@@ -21,6 +22,7 @@ import { CartProvider } from '@/context/CartContext';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
+import { getCurrentNetworkOnline, registerReactQueryOnlineManager } from '@/utils/connectivity';
 
 export { ErrorBoundary } from 'expo-router';
 
@@ -38,8 +40,8 @@ const queryClient = new QueryClient({
       staleTime: 60 * 1000,
       // Keep cached data for 24 hours (allows offline access)
       gcTime: 24 * 60 * 60 * 1000, // 24 hours (formerly cacheTime)
-      // Retry failed requests with exponential backoff
-      retry: 2,
+      // Avoid retry churn while the device is known offline.
+      retry: (failureCount) => onlineManager.isOnline() && failureCount < 2,
       retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
       // Refetch on window focus (disabled for mobile - battery optimization)
       refetchOnWindowFocus: false,
@@ -47,16 +49,16 @@ const queryClient = new QueryClient({
       refetchOnReconnect: true,
       // Refetch stale queries when returning to a screen (pairs with mutation invalidation)
       refetchOnMount: true,
-      // Network mode: prefer cache, fallback to network
-      networkMode: 'offlineFirst',
+      networkMode: 'online',
     },
     mutations: {
-      // Retry mutations once on failure
-      retry: 1,
+      retry: (failureCount) => onlineManager.isOnline() && failureCount < 1,
       retryDelay: 1000,
     },
   },
 });
+
+registerReactQueryOnlineManager();
 
 // Create AsyncStorage persister for offline cache
 const asyncStoragePersister = createAsyncStoragePersister({
@@ -73,9 +75,13 @@ function OfflineSyncOnActive() {
   const { isDriver } = useAuth();
   const appState = useRef<AppStateStatus>(AppState.currentState);
   useEffect(() => {
-    const sub = AppState.addEventListener('change', (nextState) => {
+    const sub = AppState.addEventListener('change', async (nextState) => {
       if (isDriver) return;
       if (appState.current === 'background' && nextState === 'active') {
+        if (!(await getCurrentNetworkOnline())) {
+          appState.current = nextState;
+          return;
+        }
         offlineQueueService
           .syncPendingSales()
           .then(({ synced }) => {
@@ -183,23 +189,26 @@ function RootLayoutNav() {
 
   return (
     <NavigationThemeProvider value={resolvedTheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="index" />
-        <Stack.Screen name="intro" />
-        <Stack.Screen name="login" />
-        <Stack.Screen name="signup" />
-        <Stack.Screen name="onboarding" />
-        <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="account" options={{ ...innerScreenOptions, title: 'Account', headerShown: false }} />
-        <Stack.Screen name="profile" options={{ ...innerScreenOptions, title: 'Profile', headerShown: false }} />
-        <Stack.Screen name="settings" options={{ ...innerScreenOptions, title: 'Settings', headerShown: false }} />
-        <Stack.Screen name="terms" options={{ ...innerScreenOptions, title: 'Terms and Conditions', headerShown: false }} />
-        <Stack.Screen name="privacy-policy" options={{ ...innerScreenOptions, title: 'Privacy Policy', headerShown: false }} />
-        <Stack.Screen name="data-deletion" options={{ ...innerScreenOptions, title: 'Data Deletion', headerShown: false }} />
-        <Stack.Screen name="notifications" options={{ ...innerScreenOptions, title: 'Notifications', headerShown: false }} />
-        <Stack.Screen name="store-order/[id]" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
-      </Stack>
+      <View style={{ flex: 1, backgroundColor: isDark ? '#0f0f0f' : '#fff' }}>
+        <ConnectivityBanner />
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="index" />
+          <Stack.Screen name="intro" />
+          <Stack.Screen name="login" />
+          <Stack.Screen name="signup" />
+          <Stack.Screen name="onboarding" />
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="account" options={{ ...innerScreenOptions, title: 'Account', headerShown: false }} />
+          <Stack.Screen name="profile" options={{ ...innerScreenOptions, title: 'Profile', headerShown: false }} />
+          <Stack.Screen name="settings" options={{ ...innerScreenOptions, title: 'Settings', headerShown: false }} />
+          <Stack.Screen name="terms" options={{ ...innerScreenOptions, title: 'Terms and Conditions', headerShown: false }} />
+          <Stack.Screen name="privacy-policy" options={{ ...innerScreenOptions, title: 'Privacy Policy', headerShown: false }} />
+          <Stack.Screen name="data-deletion" options={{ ...innerScreenOptions, title: 'Data Deletion', headerShown: false }} />
+          <Stack.Screen name="notifications" options={{ ...innerScreenOptions, title: 'Notifications', headerShown: false }} />
+          <Stack.Screen name="store-order/[id]" options={{ headerShown: false }} />
+          <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+        </Stack>
+      </View>
     </NavigationThemeProvider>
   );
 }

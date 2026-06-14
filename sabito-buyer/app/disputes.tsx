@@ -3,9 +3,15 @@ import { ActivityIndicator, FlatList, StyleSheet, Text, View } from 'react-nativ
 import { EmptyState, Screen } from '@/components/ui';
 import { BRAND } from '@/constants';
 import { disputesApi } from '@/services/ordersApi';
+import { buyerQueryKeys, QUERY_STALE } from '@/utils/queryInvalidation';
 
 export default function DisputesScreen() {
-  const { data, isLoading } = useQuery({ queryKey: ['disputes'], queryFn: () => disputesApi.list() });
+  const { data, isLoading } = useQuery({
+    queryKey: buyerQueryKeys.disputes,
+    queryFn: () => disputesApi.list(),
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchOnWindowFocus: false,
+  });
   const disputes = (data?.data as Array<{ id: string; status: string; reason: string; saleNumber?: string; openedAt?: string }>) || [];
 
   return (

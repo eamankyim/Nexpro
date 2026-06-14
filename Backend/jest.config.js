@@ -22,8 +22,8 @@ module.exports = {
   // Setup files
   setupFilesAfterEnv: ['<rootDir>/__tests__/setup.js'],
 
-  // Coverage configuration
-  collectCoverage: true,
+  // Coverage (opt-in via `npm run test:coverage`)
+  collectCoverage: false,
   coverageDirectory: 'coverage',
   coveragePathIgnorePatterns: [
     '/node_modules/',
@@ -33,8 +33,6 @@ module.exports = {
     '/docs/',
   ],
   coverageReporters: ['text', 'lcov', 'html'],
-  
-  // Minimum coverage thresholds
   coverageThreshold: {
     global: {
       branches: 50,
