@@ -14,6 +14,7 @@ const path = require('path');
 const vm = require('vm');
 const { Op } = require('sequelize');
 const { sequelize } = require('../config/database');
+const { formatToE164 } = require('../utils/phoneUtils');
 const {
   Lead,
   StudioLocation,
@@ -134,24 +135,37 @@ function normalizePriority(priority) {
   return 'medium';
 }
 
-function normalizePhone(phone) {
-  const value = String(phone || '').trim();
+function extractPrimaryPhone(rawPhone) {
+  const value = String(rawPhone || '').trim();
   if (!value || /^n\/?a$/i.test(value)) return null;
-  return value;
+
+  const candidates = value
+    .split(/[,/|]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  for (const candidate of candidates) {
+    const e164 = formatToE164(candidate);
+    if (e164) return e164;
+  }
+
+  const fallback = candidates[0] || value;
+  return fallback.length <= 100 ? fallback : fallback.slice(0, 100);
 }
 
-function toLeadRow(lead, { tenantId, studioLocationId, userId }) {
+function toLeadRow(lead, { tenantId, studioLocationId, userId, phone }) {
   const businessName = String(lead.name || '').trim();
   const location = String(lead.location || '').trim();
   const category = String(lead.category || '').trim();
   const description = String(lead.description || '').trim();
+  const rawPhone = String(lead.phone || '').trim();
 
   return {
     tenantId,
     studioLocationId,
     name: businessName,
     company: businessName,
-    phone: normalizePhone(lead.phone),
+    phone,
     email: null,
     source: SOURCE,
     status: 'new',
@@ -162,6 +176,8 @@ function toLeadRow(lead, { tenantId, studioLocationId, userId }) {
       description && `Description: ${description}`,
       category && `Category: ${category}`,
       location && location !== 'Not listed' && `Location: ${location}`,
+      rawPhone && rawPhone !== phone && `All listed phones: ${rawPhone}`,
+      phone == null && rawPhone && 'Phone omitted because another lead in this tenant already uses the primary number.',
       'Imported from cleaned BusinessGhana restaurant/pub directory leads.',
     ].filter(Boolean).join('\n'),
     tags: [
@@ -176,10 +192,35 @@ function toLeadRow(lead, { tenantId, studioLocationId, userId }) {
       category,
       location,
       rawPhone: lead.phone || null,
+      primaryPhone: phone,
       rawPriority: lead.priority || null,
     },
     isActive: true,
   };
+}
+
+function assignImportPhones(leads, reservedPhones = new Set()) {
+  const usedPhones = new Set(reservedPhones);
+  const rows = [];
+  let duplicatePhonesSkipped = 0;
+
+  for (const lead of leads) {
+    const primaryPhone = extractPrimaryPhone(lead.phone);
+    const phone = primaryPhone && !usedPhones.has(primaryPhone) ? primaryPhone : null;
+    if (primaryPhone && phone == null) duplicatePhonesSkipped += 1;
+    if (phone) usedPhones.add(phone);
+    rows.push({ lead, phone });
+  }
+
+  return { rows, duplicatePhonesSkipped };
+}
+
+function formatInsertError(error) {
+  return error?.parent?.detail
+    || error?.parent?.message
+    || error?.errors?.map((item) => item.message).join('; ')
+    || error?.message
+    || String(error);
 }
 
 async function getTenantForOwner(ownerEmail) {
@@ -234,17 +275,13 @@ async function main() {
 
   const loadedLeads = loadLeads({ dataFile, canvasPaths });
 
-  const uniqueRows = [];
+  const uniqueIncoming = [];
   const seenIncoming = new Set();
   for (const lead of loadedLeads) {
     const key = normalizeKey(lead.name);
     if (!key || seenIncoming.has(key)) continue;
     seenIncoming.add(key);
-    uniqueRows.push(toLeadRow(lead, {
-      tenantId: tenant.id,
-      studioLocationId: studioLocation.id,
-      userId: user.id,
-    }));
+    uniqueIncoming.push(lead);
   }
 
   const existingLeads = await Lead.findAll({
@@ -252,25 +289,37 @@ async function main() {
       tenantId: tenant.id,
       [Op.or]: [
         { source: SOURCE },
-        { company: { [Op.in]: uniqueRows.map((row) => row.company) } },
-        { name: { [Op.in]: uniqueRows.map((row) => row.name) } },
+        { company: { [Op.in]: uniqueIncoming.map((lead) => String(lead.name || '').trim()) } },
+        { name: { [Op.in]: uniqueIncoming.map((lead) => String(lead.name || '').trim()) } },
       ],
     },
-    attributes: ['name', 'company'],
+    attributes: ['name', 'company', 'phone'],
   });
 
   const existingKeys = new Set(
     existingLeads.flatMap((lead) => [normalizeKey(lead.name), normalizeKey(lead.company)]).filter(Boolean)
   );
-  const rowsToCreate = uniqueRows.filter((row) => !existingKeys.has(normalizeKey(row.company)));
+  const reservedPhones = new Set(
+    existingLeads.map((lead) => String(lead.phone || '').trim()).filter(Boolean)
+  );
+
+  const leadsToImport = uniqueIncoming.filter((lead) => !existingKeys.has(normalizeKey(lead.name)));
+  const { rows: phoneAssignments, duplicatePhonesSkipped } = assignImportPhones(leadsToImport, reservedPhones);
+  const rowsToCreate = phoneAssignments.map(({ lead, phone }) => toLeadRow(lead, {
+    tenantId: tenant.id,
+    studioLocationId: studioLocation.id,
+    userId: user.id,
+    phone,
+  }));
 
   console.log(`Owner: ${user.name} <${user.email}>`);
   console.log(`Tenant: ${tenant.name} (${tenant.id})`);
   console.log(`Studio location: ${studioLocation.name} (${studioLocation.id})${studioCreated ? ' [created]' : ''}`);
   console.log(`Data source: ${canvasPaths.length > 0 ? canvasPaths.join(', ') : dataFile}`);
   console.log(`Loaded leads: ${loadedLeads.length}`);
-  console.log(`Unique incoming leads: ${uniqueRows.length}`);
-  console.log(`Existing matches skipped: ${uniqueRows.length - rowsToCreate.length}`);
+  console.log(`Unique incoming leads: ${uniqueIncoming.length}`);
+  console.log(`Existing matches skipped: ${uniqueIncoming.length - leadsToImport.length}`);
+  console.log(`Duplicate phones kept in notes only: ${duplicatePhonesSkipped}`);
   console.log(`Ready to insert: ${rowsToCreate.length}`);
 
   if (dryRun) {
@@ -278,12 +327,29 @@ async function main() {
     return;
   }
 
-  const created = await Lead.bulkCreate(rowsToCreate, {
-    individualHooks: true,
-    validate: true,
-  });
+  let inserted = 0;
+  const failures = [];
 
-  console.log(`Inserted ${created.length} leads.`);
+  for (const row of rowsToCreate) {
+    try {
+      await Lead.create(row);
+      inserted += 1;
+    } catch (error) {
+      failures.push({ name: row.name, message: formatInsertError(error) });
+    }
+  }
+
+  console.log(`Inserted ${inserted} leads.`);
+  if (failures.length > 0) {
+    console.log(`Failed ${failures.length} leads:`);
+    failures.slice(0, 20).forEach((failure) => {
+      console.log(`- ${failure.name}: ${failure.message}`);
+    });
+    if (failures.length > 20) {
+      console.log(`... and ${failures.length - 20} more`);
+    }
+    process.exitCode = 1;
+  }
 }
 
 main()
