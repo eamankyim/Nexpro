@@ -4,7 +4,7 @@
  * Usage:
  *   cd Backend
  *   node scripts/import-businessghana-leads.js
- *   node scripts/import-businessghana-leads.js --email icreationsghana@gmail.com --studio-name "ABS Management Leads"
+ *   node scripts/import-businessghana-leads.js --email icreationsghana@gmail.com --studio-name "ABS Management"
  */
 require('dotenv').config();
 
@@ -23,7 +23,7 @@ const {
 } = require('../models');
 
 const DEFAULT_OWNER_EMAIL = 'icreationsghana@gmail.com';
-const DEFAULT_STUDIO_NAME = 'ABS Management Leads';
+const DEFAULT_STUDIO_NAME = 'ABS Management';
 const SOURCE = 'BusinessGhana Directory';
 const DEFAULT_CANVAS_PATHS = [
   '/Users/us/.cursor/projects/Users-us-Desktop-Development-Nexpro/canvases/ghana-food-pub-leads.canvas.tsx',
