@@ -7,6 +7,7 @@ const { applyShopFilter } = require('../utils/shopUtils');
 const { getPagination } = require('../utils/paginationUtils');
 const { invalidateNotificationsCache } = require('../middleware/cache');
 const { startHotPathTimer } = require('../utils/performanceLogger');
+const { dispatchExpoPushToUsers } = require('../services/pushNotificationService');
 
 const STOCK_ALERT_TYPES = {
   OUT_OF_STOCK: 'out_of_stock',
@@ -14,6 +15,30 @@ const STOCK_ALERT_TYPES = {
 };
 const STOCK_ALERT_SYNC_TTL_MS = 5 * 60 * 1000;
 const stockAlertSyncCache = new Map();
+
+const dispatchStockAlertPush = async ({ req, alertType, title, message, priority, metadata }) => {
+  try {
+    await dispatchExpoPushToUsers({
+      tenantId: req.tenantId,
+      userIds: [req.user.id],
+      title,
+      message,
+      type: 'inventory',
+      priority,
+      metadata: {
+        ...metadata,
+        alertType
+      },
+      link: '/products'
+    });
+  } catch (error) {
+    console.error('[Notifications] Stock alert push failed', {
+      userId: req.user?.id,
+      alertType,
+      error: error.message
+    });
+  }
+};
 
 const compact = (value, maxLength) => String(value || '').trim().slice(0, maxLength);
 
@@ -172,11 +197,12 @@ async function upsertStockAlertNotification({ req, alertType, count, title, mess
       type: 'inventory',
       priority,
       metadata,
-      channels: ['in_app'],
+      channels: ['in_app', 'push'],
       icon: 'package',
       link: '/products'
     });
     invalidateNotificationsCache(req.tenantId, req.user.id);
+    await dispatchStockAlertPush({ req, alertType, title, message, priority, metadata });
     return;
   }
 
@@ -187,11 +213,13 @@ async function upsertStockAlertNotification({ req, alertType, count, title, mess
       message,
       priority,
       metadata,
+      channels: ['in_app', 'push'],
       isRead: false,
       readAt: null,
       expiresAt: null
     });
     invalidateNotificationsCache(req.tenantId, req.user.id);
+    await dispatchStockAlertPush({ req, alertType, title, message, priority, metadata });
   }
 }
 

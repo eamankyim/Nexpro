@@ -1309,7 +1309,8 @@ exports.updateNotificationPreferences = async (req, res, next) => {
       ) {
         merged.categories[key] = {
           in_app: patch[key].in_app !== false,
-          email: patch[key].email === true
+          email: patch[key].email === true,
+          push: patch[key].push !== false
         };
       }
     }

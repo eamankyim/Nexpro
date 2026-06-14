@@ -13,7 +13,7 @@ const NOTIFICATION_PREFERENCE_CATEGORIES = [
   'user'
 ];
 
-const DEFAULT_CATEGORY_PREFS = { in_app: true, email: false };
+const DEFAULT_CATEGORY_PREFS = { in_app: true, email: false, push: true };
 
 /**
  * @returns {{ categories: Record<string, { in_app: boolean, email: boolean }> }}
@@ -41,7 +41,8 @@ function mergeNotificationPreferences(stored) {
     if (row && typeof row === 'object') {
       out.categories[key] = {
         in_app: row.in_app !== false,
-        email: row.email === true
+        email: row.email === true,
+        push: row.push !== false
       };
     }
   }
@@ -54,13 +55,14 @@ function mergeNotificationPreferences(stored) {
  */
 function normalizeNotificationCategory(type) {
   if (!type || typeof type !== 'string') return null;
+  if (type === 'inventory') return 'alert';
   return NOTIFICATION_PREFERENCE_CATEGORIES.includes(type) ? type : null;
 }
 
 /**
  * @param {{ categories: Record<string, { in_app: boolean, email: boolean }> }} mergedPrefs
  * @param {string} category - raw type from notification payload
- * @param {'in_app'|'email'} channel
+ * @param {'in_app'|'email'|'push'} channel
  */
 function isNotificationChannelEnabled(mergedPrefs, category, channel) {
   const cat = normalizeNotificationCategory(category);
@@ -70,6 +72,7 @@ function isNotificationChannelEnabled(mergedPrefs, category, channel) {
   if (!c) return channel === 'in_app';
   if (channel === 'in_app') return c.in_app !== false;
   if (channel === 'email') return c.email === true;
+  if (channel === 'push') return c.push !== false;
   return true;
 }
 

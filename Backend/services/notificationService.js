@@ -4,9 +4,41 @@ const {
   isNotificationChannelEnabled,
   normalizeNotificationCategory
 } = require('./notificationPreferenceHelper');
+const { dispatchExpoPushToUsers } = require('./pushNotificationService');
 const { formatDecimal } = require('../utils/formatNumber');
 
 const logPrefix = '[Notifications]';
+
+const dispatchPushForNotification = async ({ tenantId, userIds, payload }) => {
+  const channels = payload.channels || ['in_app'];
+  if (!channels.includes('push')) return;
+
+  try {
+    const result = await dispatchExpoPushToUsers({
+      tenantId,
+      userIds,
+      title: payload.title || 'Notification',
+      message: payload.message,
+      type: payload.type || 'info',
+      priority: payload.priority || 'normal',
+      metadata: payload.metadata || {},
+      link: payload.link || null
+    });
+    if (result.attempted > 0) {
+      console.log(`${logPrefix} Push dispatched`, {
+        attempted: result.attempted,
+        sent: result.sent,
+        invalidTokens: result.invalidTokens,
+        title: payload.title
+      });
+    }
+  } catch (error) {
+    console.error(`${logPrefix} Push dispatch failed`, {
+      title: payload.title,
+      error: error.message
+    });
+  }
+};
 
 const createNotification = async ({
   tenantId,
@@ -83,6 +115,20 @@ const createNotification = async ({
     } catch (wsErr) {
       if (process.env.NODE_ENV === 'development') console.warn(`${logPrefix} WebSocket emit failed:`, wsErr?.message);
     }
+
+    await dispatchPushForNotification({
+      tenantId,
+      userIds: [userId],
+      payload: {
+        title,
+        message,
+        type,
+        priority,
+        metadata,
+        channels,
+        link
+      }
+    });
 
     return notification;
   } catch (error) {
@@ -164,6 +210,17 @@ const notifyUsers = async ({ tenantId, userIds, payload = {}, transaction = null
     } catch (wsErr) {
       if (process.env.NODE_ENV === 'development') console.warn(`${logPrefix} WebSocket emit failed:`, wsErr?.message);
     }
+    await dispatchPushForNotification({
+      tenantId,
+      userIds: eligibleUserIds,
+      payload: {
+        ...payload,
+        title: payload.title || 'Notification',
+        type: payload.type || 'info',
+        priority: payload.priority || 'normal',
+        channels: payload.channels || ['in_app']
+      }
+    });
     return created;
   } catch (error) {
     console.error(`${logPrefix} Failed bulkCreate`, {
@@ -805,6 +862,7 @@ const notifyOnlineStoreOrderReceived = async ({ sale, shopper = null, store = nu
     message: `${shopperName} placed ${saleNumber} from ${storeName}. Review it in Online Orders.`,
     type: 'order',
     priority: 'high',
+    channels: ['in_app', 'push'],
     metadata: {
       saleId: sale.id,
       saleNumber,
