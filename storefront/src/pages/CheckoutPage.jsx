@@ -53,6 +53,25 @@ const buildDeliveryAddressPayload = (address = {}) => ({
   country: DEFAULT_DELIVERY_COUNTRY,
 });
 
+const getCachedAddresses = (payload) => {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.data?.addresses)) return payload.data.addresses;
+  if (Array.isArray(payload?.addresses)) return payload.addresses;
+  return [];
+};
+
+const patchCachedAddresses = (payload, nextAddresses) => {
+  if (Array.isArray(payload)) return nextAddresses;
+  if (Array.isArray(payload?.data)) {
+    return { ...payload, data: nextAddresses };
+  }
+  if (payload?.data && typeof payload.data === 'object') {
+    return { ...payload, data: { ...payload.data, addresses: nextAddresses } };
+  }
+  return { ...(payload || {}), addresses: nextAddresses };
+};
+
 const formatDeliveryAddress = (address = {}) => (
   [address.line1, address.line2, address.city, address.region].filter(Boolean).join(', ')
 );
@@ -195,14 +214,39 @@ const CheckoutPage = () => {
           const inlineAddressPayload = buildDeliveryAddressPayload(addressForm);
           const existingAddress = addresses.find((address) => isSameDeliveryAddress(address, inlineAddressPayload));
           if (!existingAddress) {
+            await queryClient.cancelQueries({ queryKey: SHOPPER_QUERY_KEYS.addresses });
+            const previousAddresses = queryClient.getQueryData(SHOPPER_QUERY_KEYS.addresses);
+            const optimisticAddress = {
+              ...inlineAddressPayload,
+              id: `optimistic-${Date.now()}`,
+              isDefault: addresses.length === 0,
+            };
+            queryClient.setQueryData(
+              SHOPPER_QUERY_KEYS.addresses,
+              (current) => patchCachedAddresses(
+                current || previousAddresses,
+                [...getCachedAddresses(current || previousAddresses), optimisticAddress],
+              ),
+            );
+
             const saveResponse = await storeService.createDeliveryAddress(inlineAddressPayload);
             const savedAddress = saveResponse?.data?.address || saveResponse?.address;
             if (savedAddress?.id) {
+              queryClient.setQueryData(
+                SHOPPER_QUERY_KEYS.addresses,
+                (current) => patchCachedAddresses(
+                  current,
+                  getCachedAddresses(current).map((address) => (
+                    address.id === optimisticAddress.id ? savedAddress : address
+                  )),
+                ),
+              );
               setSelectedAddressId(savedAddress.id);
             }
             await refreshAfterAddressChange(queryClient);
           }
         } catch (saveError) {
+          queryClient.setQueryData(SHOPPER_QUERY_KEYS.addresses, addressesQuery.data);
           showError(saveError, 'Checkout will continue, but this address could not be saved.');
         }
       }
