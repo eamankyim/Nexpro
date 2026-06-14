@@ -1,10 +1,11 @@
 /**
- * Import cleaned BusinessGhana leads from Cursor canvas lead sheets.
+ * Import cleaned BusinessGhana leads into a tenant studio location.
  *
  * Usage:
  *   cd Backend
- *   node scripts/import-businessghana-leads.js
+ *   node scripts/import-businessghana-leads.js --email icreationsghana@gmail.com --dry-run
  *   node scripts/import-businessghana-leads.js --email icreationsghana@gmail.com --studio-name "ABS Management"
+ *   node scripts/import-businessghana-leads.js --data-file scripts/data/businessghana-leads.json
  */
 require('dotenv').config();
 
@@ -25,17 +26,15 @@ const {
 const DEFAULT_OWNER_EMAIL = 'icreationsghana@gmail.com';
 const DEFAULT_STUDIO_NAME = 'ABS Management';
 const SOURCE = 'BusinessGhana Directory';
-const DEFAULT_CANVAS_PATHS = [
-  '/Users/us/.cursor/projects/Users-us-Desktop-Development-Nexpro/canvases/ghana-food-pub-leads.canvas.tsx',
-  '/Users/us/.cursor/projects/Users-us-Desktop-Development-Nexpro/canvases/ghana-restaurant-leads-list-2.canvas.tsx',
-];
+const DEFAULT_DATA_FILE = path.join(__dirname, 'data', 'businessghana-leads.json');
 
 function parseArgs() {
   const args = process.argv.slice(2);
   const parsed = {
     email: DEFAULT_OWNER_EMAIL,
     studioName: DEFAULT_STUDIO_NAME,
-    canvasPaths: [...DEFAULT_CANVAS_PATHS],
+    dataFile: DEFAULT_DATA_FILE,
+    canvasPaths: [],
     dryRun: false,
   };
 
@@ -43,6 +42,7 @@ function parseArgs() {
     const arg = args[i];
     if (arg === '--email') parsed.email = String(args[++i] || '').trim().toLowerCase();
     else if (arg === '--studio-name') parsed.studioName = String(args[++i] || '').trim();
+    else if (arg === '--data-file') parsed.dataFile = path.resolve(args[++i] || '');
     else if (arg === '--canvas') parsed.canvasPaths.push(path.resolve(args[++i] || ''));
     else if (arg === '--dry-run') parsed.dryRun = true;
   }
@@ -57,7 +57,8 @@ function extractArrayLiteral(source, filePath) {
   const markerIndex = source.indexOf(marker);
   if (markerIndex === -1) throw new Error(`Could not find leads array in ${filePath}`);
 
-  const start = source.indexOf('[', markerIndex);
+  const equalsIndex = source.indexOf('=', markerIndex);
+  const start = source.indexOf('[', equalsIndex);
   if (start === -1) throw new Error(`Could not find leads array start in ${filePath}`);
 
   let depth = 0;
@@ -94,6 +95,28 @@ function loadLeadsFromCanvas(filePath) {
   const source = fs.readFileSync(filePath, 'utf8');
   const arrayLiteral = extractArrayLiteral(source, filePath);
   return vm.runInNewContext(arrayLiteral, {}, { timeout: 1000 });
+}
+
+function loadLeadsFromJson(filePath) {
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`Lead data file not found: ${filePath}`);
+  }
+  const payload = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  const leads = Array.isArray(payload) ? payload : payload.leads;
+  if (!Array.isArray(leads) || leads.length === 0) {
+    throw new Error(`No leads found in ${filePath}`);
+  }
+  return leads;
+}
+
+function loadLeads({ dataFile, canvasPaths }) {
+  if (canvasPaths.length > 0) {
+    return canvasPaths.flatMap((canvasPath) => {
+      if (!fs.existsSync(canvasPath)) throw new Error(`Canvas not found: ${canvasPath}`);
+      return loadLeadsFromCanvas(canvasPath);
+    });
+  }
+  return loadLeadsFromJson(dataFile);
 }
 
 function normalizeKey(value) {
@@ -199,7 +222,7 @@ async function getOrCreateStudioLocation({ tenantId, studioName, user }) {
 }
 
 async function main() {
-  const { email, studioName, canvasPaths, dryRun } = parseArgs();
+  const { email, studioName, dataFile, canvasPaths, dryRun } = parseArgs();
   await sequelize.authenticate();
 
   const { user, tenant } = await getTenantForOwner(email);
@@ -209,10 +232,7 @@ async function main() {
     user,
   });
 
-  const loadedLeads = canvasPaths.flatMap((canvasPath) => {
-    if (!fs.existsSync(canvasPath)) throw new Error(`Canvas not found: ${canvasPath}`);
-    return loadLeadsFromCanvas(canvasPath);
-  });
+  const loadedLeads = loadLeads({ dataFile, canvasPaths });
 
   const uniqueRows = [];
   const seenIncoming = new Set();
@@ -247,6 +267,7 @@ async function main() {
   console.log(`Owner: ${user.name} <${user.email}>`);
   console.log(`Tenant: ${tenant.name} (${tenant.id})`);
   console.log(`Studio location: ${studioLocation.name} (${studioLocation.id})${studioCreated ? ' [created]' : ''}`);
+  console.log(`Data source: ${canvasPaths.length > 0 ? canvasPaths.join(', ') : dataFile}`);
   console.log(`Loaded leads: ${loadedLeads.length}`);
   console.log(`Unique incoming leads: ${uniqueRows.length}`);
   console.log(`Existing matches skipped: ${uniqueRows.length - rowsToCreate.length}`);
