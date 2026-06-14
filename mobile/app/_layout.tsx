@@ -23,6 +23,7 @@ import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
 import { getCurrentNetworkOnline, registerReactQueryOnlineManager } from '@/utils/connectivity';
+import { registerPushNotifications } from '@/utils/pushNotifications';
 
 export { ErrorBoundary } from 'expo-router';
 
@@ -96,6 +97,32 @@ function OfflineSyncOnActive() {
   return null;
 }
 
+function PushRegistrationOnActive() {
+  const { activeTenantId, user } = useAuth();
+  const appState = useRef<AppStateStatus>(AppState.currentState);
+
+  useEffect(() => {
+    if (!user || !activeTenantId) return;
+    registerPushNotifications({ prompt: false }).catch(() => {});
+  }, [activeTenantId, user]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (!user || !activeTenantId) {
+        appState.current = nextState;
+        return;
+      }
+      if (appState.current === 'background' && nextState === 'active') {
+        registerPushNotifications({ prompt: false }).catch(() => {});
+      }
+      appState.current = nextState;
+    });
+    return () => sub.remove();
+  }, [activeTenantId, user]);
+
+  return null;
+}
+
 export default function RootLayout() {
   const [loaded, error] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
@@ -139,6 +166,7 @@ export default function RootLayout() {
             <StudioLocationProvider>
               <CartProvider>
                 <OfflineSyncOnActive />
+                <PushRegistrationOnActive />
                 <RootLayoutNav />
               </CartProvider>
             </StudioLocationProvider>

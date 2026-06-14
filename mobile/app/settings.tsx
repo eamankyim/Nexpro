@@ -22,6 +22,11 @@ import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
 import { StackPageHeader } from '@/components/StackPageHeader';
 import {
+  getStoredPushRegistrationState,
+  registerPushNotifications,
+  type PushRegistrationState,
+} from '@/utils/pushNotifications';
+import {
   NOTIFICATION_PREFERENCE_CATEGORY_LABELS,
   NOTIFICATION_PREFERENCE_CATEGORY_ORDER,
   normalizeNotificationPreferences,
@@ -46,6 +51,8 @@ export default function SettingsScreen() {
   const { theme, setTheme } = useTheme();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, resolvedTheme } = useScreenColors();
   const [notificationPrefsDraft, setNotificationPrefsDraft] = useState<NotificationPrefsDraft | null>(null);
+  const [pushState, setPushState] = useState<PushRegistrationState | null>(null);
+  const [pushLoading, setPushLoading] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
 
   const { data: profileRes, isLoading: loadingProfile } = useQuery({
@@ -58,6 +65,16 @@ export default function SettingsScreen() {
   useEffect(() => {
     setNotificationPrefsDraft(normalizeNotificationPreferences(profileData?.notificationPreferences));
   }, [profileData]);
+
+  useEffect(() => {
+    let mounted = true;
+    getStoredPushRegistrationState().then((state) => {
+      if (mounted) setPushState(state);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const notificationCategories = notificationPrefsDraft?.categories;
   const hasNotificationPrefs = Boolean(
@@ -109,6 +126,21 @@ export default function SettingsScreen() {
       updateNotificationPrefsMutation.mutate(notificationPrefsDraft.categories);
     }
   }, [notificationPrefsDraft, updateNotificationPrefsMutation]);
+
+  const handleEnablePush = useCallback(async () => {
+    setPushLoading(true);
+    try {
+      const state = await registerPushNotifications({ prompt: true });
+      setPushState(state);
+      if (state.status === 'registered') {
+        Alert.alert('Push enabled', state.message);
+      } else if (state.status === 'denied') {
+        Alert.alert('Push not enabled', state.message);
+      }
+    } finally {
+      setPushLoading(false);
+    }
+  }, []);
 
   const handleSelectTenant = useCallback(
     async (tenantId: string) => {
@@ -286,9 +318,31 @@ export default function SettingsScreen() {
               <Text style={[styles.noticeTitle, { color: textColor }]}>Push delivery</Text>
             </View>
             <Text style={[styles.noticeText, { color: mutedColor }]}>
-              This workspace app currently delivers notifications through the in-app bell and account email. Device push alerts
-              are not enabled for this app yet, so these preferences control the reliable channels available today.
+              {pushState?.message || 'Checking push notification status...'}
             </Text>
+            {pushState?.updatedAt ? (
+              <Text style={[styles.pushMetaText, { color: mutedColor }]}>
+                Last checked {new Date(pushState.updatedAt).toLocaleString()}
+              </Text>
+            ) : null}
+            <Pressable
+              onPress={handleEnablePush}
+              disabled={pushLoading || pushState?.status === 'unsupported' || pushState?.canAskAgain === false}
+              style={({ pressed }) => [
+                styles.pushButton,
+                { borderColor: brand },
+                pressed && styles.pressed,
+                (pushLoading || pushState?.status === 'unsupported' || pushState?.canAskAgain === false) && styles.disabled,
+              ]}
+            >
+              {pushLoading ? (
+                <ActivityIndicator color={brand} size="small" />
+              ) : (
+                <Text style={[styles.pushButtonText, { color: brand }]}>
+                  {pushState?.status === 'registered' ? 'Refresh push token' : 'Enable push notifications'}
+                </Text>
+              )}
+            </Pressable>
           </View>
           <View style={[styles.noticeBox, { borderColor, backgroundColor: activeRowBg }]}>
             <Text style={[styles.noticeTitle, { color: textColor }]}>Security and account email</Text>
@@ -480,6 +534,16 @@ const styles = StyleSheet.create({
   },
   noticeTitle: { fontSize: 14, fontWeight: '700', marginBottom: 4 },
   noticeText: { fontSize: 12, lineHeight: 18 },
+  pushMetaText: { fontSize: 11, lineHeight: 16, marginTop: 6 },
+  pushButton: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginTop: 10,
+  },
+  pushButtonText: { fontSize: 13, fontWeight: '600' },
   loadingRow: {
     flexDirection: 'row',
     alignItems: 'center',

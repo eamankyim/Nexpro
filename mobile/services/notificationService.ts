@@ -6,6 +6,12 @@ type NotificationParams = {
   unread?: boolean;
 };
 
+type PushRegistrationPayload = {
+  token: string;
+  platform: 'ios' | 'android';
+  deviceName?: string;
+};
+
 export const notificationService = {
   getSummary: async () => {
     const res = await api.get('/notifications/summary');
@@ -35,6 +41,11 @@ export const notificationService = {
   markAllRead: async () => {
     const res = await api.post('/notifications/mark-all-read');
     // Backend returns: { success: true, message: '...' }
+    return res.data;
+  },
+
+  registerPushToken: async (payload: PushRegistrationPayload) => {
+    const res = await api.post('/notifications/push/register', payload);
     return res.data;
   },
 };

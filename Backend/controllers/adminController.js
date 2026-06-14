@@ -72,6 +72,7 @@ const { getSeatUsageSummary } = require('../utils/seatLimitHelper');
 const { getStorageUsageSummary } = require('../utils/storageLimitHelper');
 const { invalidateProductListCache, invalidateInvoiceListCache, invalidateSaleListCache, invalidateAfterMutation } = require('../middleware/cache');
 const { updateCustomerBalance } = require('../services/customerBalanceService');
+const { getRecentSlowOperations } = require('../utils/performanceLogger');
 
 const PLAN_PRICING = {
   trial: 0,
@@ -2575,6 +2576,7 @@ exports.getSystemHealth = async (req, res, next) => {
           suspendedTenants,
           activeAdmins,
         },
+        performance: getRecentSlowOperations(req.query.limit),
         recentTenants,
         recentNotifications,
       },

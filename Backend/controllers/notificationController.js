@@ -15,6 +15,30 @@ const STOCK_ALERT_TYPES = {
 const STOCK_ALERT_SYNC_TTL_MS = 5 * 60 * 1000;
 const stockAlertSyncCache = new Map();
 
+const compact = (value, maxLength) => String(value || '').trim().slice(0, maxLength);
+
+const getPushDevices = (user) => {
+  const prefs = user?.notificationPreferences && typeof user.notificationPreferences === 'object'
+    ? user.notificationPreferences
+    : {};
+  const devices = Array.isArray(prefs.pushDevices) ? prefs.pushDevices : [];
+  return devices.filter((device) => device && typeof device.token === 'string');
+};
+
+const savePushDevices = async (userId, devices) => {
+  const user = await User.scope(null).findByPk(userId, {
+    attributes: ['id', 'notificationPreferences']
+  });
+  if (!user) return [];
+
+  const preferences = user.notificationPreferences && typeof user.notificationPreferences === 'object'
+    ? { ...user.notificationPreferences }
+    : {};
+  preferences.pushDevices = devices.slice(0, 20);
+  await user.update({ notificationPreferences: preferences });
+  return preferences.pushDevices;
+};
+
 function getStockAlertSyncKey(req) {
   return [
     req.tenantId,
@@ -230,6 +254,44 @@ exports.getNotifications = async (req, res, next) => {
     });
   } catch (error) {
     finishTiming({ error: error?.message || 'unknown' });
+    next(error);
+  }
+};
+
+exports.registerPushToken = async (req, res, next) => {
+  try {
+    const token = compact(req.body?.token, 512);
+    const platform = compact(req.body?.platform, 20).toLowerCase();
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'Push token is required.' });
+    }
+    if (!['ios', 'android'].includes(platform)) {
+      return res.status(400).json({ success: false, message: 'Platform must be ios or android.' });
+    }
+
+    const user = await User.scope(null).findByPk(req.user.id, {
+      attributes: ['id', 'notificationPreferences']
+    });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    const devices = getPushDevices(user).filter((device) => device.token !== token);
+    devices.unshift({
+      token,
+      platform,
+      deviceName: compact(req.body?.deviceName, 120) || null,
+      tenantId: req.tenantId || null,
+      updatedAt: new Date().toISOString(),
+    });
+    const saved = await savePushDevices(req.user.id, devices);
+
+    res.status(200).json({
+      success: true,
+      message: 'Push token registered.',
+      data: { deviceCount: saved.length },
+    });
+  } catch (error) {
     next(error);
   }
 };

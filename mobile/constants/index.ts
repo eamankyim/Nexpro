@@ -14,6 +14,7 @@ export const STORAGE_KEYS = {
   ACTIVE_STUDIO_LOCATION_ID: 'activeStudioLocationId',
   ACTIVE_SHOP_ID: 'activeShopId',
   CART_PREFIX: '@cart_items_',
+  PUSH_REGISTRATION_STATE: 'pushRegistrationState',
   /** Set after user finishes or skips the 3-screen marketing intro carousel */
   INTRO_ONBOARDING_COMPLETED: 'introOnboardingCompleted',
 } as const;

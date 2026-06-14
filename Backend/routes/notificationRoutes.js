@@ -6,7 +6,8 @@ const {
   getNotifications,
   markNotificationRead,
   markAllNotificationsRead,
-  getNotificationSummary
+  getNotificationSummary,
+  registerPushToken
 } = require('../controllers/notificationController');
 
 const router = express.Router();
@@ -17,6 +18,7 @@ router.use(shopContext);
 
 // Cache summary for 60s to reduce repeated DB hits (same user/tenant)
 router.get('/summary', getNotificationSummary);
+router.post('/push/register', registerPushToken);
 router.post('/mark-all-read', markAllNotificationsRead);
 router.put('/:id/read', markNotificationRead);
 router.get('/', getNotifications);
