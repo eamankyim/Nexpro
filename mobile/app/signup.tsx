@@ -22,6 +22,12 @@ import { logger } from '@/utils/logger';
 import { AppIcon, type AppIconName } from '@/components/AppIcon';
 import { AppBrandLogo } from '@/components/AppBrandLogo';
 import { BRAND_GREEN } from '@/constants/brand';
+import {
+  PRIVACY_POLICY_PATH,
+  TERMS_ACCEPTANCE_MESSAGE,
+  TERMS_PATH,
+  TERMS_VERSION,
+} from '@/constants/legal';
 import { FormInput, FormLabel } from '@/components/FormField';
 import { useScreenColors } from '@/hooks/useScreenColors';
 const WELCOME_BG = '#0E1801';
@@ -33,6 +39,7 @@ const ERROR_MESSAGES = {
   PASSWORD_MISMATCH: "Passwords don't match.",
   PASSWORD_SHORT: 'Use at least 6 characters for password.',
   NAME_SHORT: 'Enter your full name.',
+  TERMS_REQUIRED: TERMS_ACCEPTANCE_MESSAGE,
   DEFAULT: 'Sign up failed. Please try again.',
 };
 
@@ -43,6 +50,7 @@ export default function SignupScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const { tenantSignup, googleAuth } = useAuth();
@@ -90,6 +98,10 @@ export default function SignupScreen() {
       setError(ERROR_MESSAGES.NAME_SHORT);
       return;
     }
+    if (!acceptedTerms) {
+      setError(ERROR_MESSAGES.TERMS_REQUIRED);
+      return;
+    }
 
     setError('');
 
@@ -121,6 +133,10 @@ export default function SignupScreen() {
   };
 
   const handleGoogleSuccess = async (idToken: string) => {
+    if (!acceptedTerms) {
+      setError(ERROR_MESSAGES.TERMS_REQUIRED);
+      return;
+    }
     setError('');
     overlayStartTimeRef.current = Date.now();
     setShowWelcomeScreen(true);
@@ -128,7 +144,12 @@ export default function SignupScreen() {
     setWelcomeErrorMessage('');
     setLoading(true);
     try {
-      await googleAuth(idToken, { signUp: true, companyName: 'My Business' });
+      await googleAuth(idToken, {
+        signUp: true,
+        companyName: 'My Business',
+        acceptedTerms: true,
+        termsVersion: TERMS_VERSION,
+      });
       logger.info('Signup', 'Google sign-up success');
       setWelcomeStatus('success');
     } catch (err: unknown) {
@@ -172,6 +193,8 @@ export default function SignupScreen() {
         adminEmail: trimmedEmail,
         password,
         plan: 'trial',
+        acceptedTerms: true,
+        termsVersion: TERMS_VERSION,
       });
       logger.info('Signup', 'Signup success');
       setWelcomeStatus('success');
@@ -312,6 +335,36 @@ export default function SignupScreen() {
                 keyboardType="email-address"
                 editable={!loading}
               />
+              <Pressable
+                style={({ pressed }) => [
+                  styles.termsBox,
+                  { borderColor },
+                  pressed && styles.buttonPressed,
+                ]}
+                onPress={() => setAcceptedTerms((current) => !current)}
+                disabled={loading}
+              >
+                <View style={[styles.checkbox, acceptedTerms && styles.checkboxChecked]}>
+                  {acceptedTerms ? <AppIcon name="check" size={14} color="#fff" /> : null}
+                </View>
+                <Text style={styles.termsText}>
+                  I have read and agree to the ABS{' '}
+                  <Text
+                    style={[styles.termsLink, { color: colors.tint }]}
+                    onPress={() => router.push(TERMS_PATH as any)}
+                  >
+                    Terms and Conditions
+                  </Text>
+                  {' '}and{' '}
+                  <Text
+                    style={[styles.termsLink, { color: colors.tint }]}
+                    onPress={() => router.push(PRIVACY_POLICY_PATH)}
+                  >
+                    Privacy Policy
+                  </Text>
+                  .
+                </Text>
+              </Pressable>
             </>
           ) : (
             <>
@@ -424,6 +477,10 @@ export default function SignupScreen() {
             </Link>
           </View>
           <View style={styles.legalFooter}>
+            <Pressable onPress={() => router.push(TERMS_PATH as any)} disabled={loading}>
+              <Text style={styles.legalLink}>Terms</Text>
+            </Pressable>
+            <Text style={styles.legalSeparator}>•</Text>
             <Pressable onPress={() => router.push('/privacy-policy')} disabled={loading}>
               <Text style={styles.legalLink}>Privacy Policy</Text>
             </Pressable>
@@ -593,6 +650,41 @@ const styles = StyleSheet.create({
   inputInner: {
     flex: 1,
     fontSize: 16,
+  },
+  termsBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
+    marginTop: 8,
+    marginBottom: 16,
+    backgroundColor: '#f9fafb',
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+    marginTop: 1,
+  },
+  checkboxChecked: {
+    borderColor: BRAND_GREEN,
+    backgroundColor: BRAND_GREEN,
+  },
+  termsText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#4b5563',
+  },
+  termsLink: {
+    fontWeight: '700',
   },
   field: {
     marginBottom: 16,

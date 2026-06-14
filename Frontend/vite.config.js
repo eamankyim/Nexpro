@@ -4,7 +4,8 @@ import { VitePWA } from 'vite-plugin-pwa';
 import path from 'path';
 
 const projectRoot = path.resolve(__dirname);
-const LOCAL_API_URL = 'http://127.0.0.1:5000';
+/** Default when probing fails — avoid :5000 (macOS AirPlay Receiver). */
+const LOCAL_API_URL = 'http://127.0.0.1:5001';
 
 const PRODUCTION_API_HOST = 'api.africanbusinesssuite.com';
 
@@ -34,7 +35,7 @@ const resolveDevProxyTargetFromEnv = (envUrl) => {
   return normalized;
 };
 
-/** Probe 5000–5010 for ABS /health (macOS AirPlay often blocks :5000). */
+/** Probe 5001/5002/5000–5010 for ABS /health (macOS AirPlay often blocks :5000). */
 function localBackendProxyPlugin(envUrl) {
   const initialTarget = resolveDevProxyTargetFromEnv(envUrl);
   return {
@@ -42,19 +43,46 @@ function localBackendProxyPlugin(envUrl) {
     async configureServer(server) {
       let target = initialTarget;
       try {
-        const { resolveLocalBackendUrl } = await import('./scripts/resolveLocalBackendUrl.mjs');
+        const { resolveLocalBackendUrl, probeBackendOrigin } = await import(
+          './scripts/resolveLocalBackendUrl.mjs'
+        );
         target = await resolveLocalBackendUrl({ envUrl: envUrl?.trim() || undefined });
+        if (!(await probeBackendOrigin(target))) {
+          console.warn(
+            `[vite] Resolved backend ${target} failed /health; re-scanning local ports…`
+          );
+          target = await resolveLocalBackendUrl({});
+        }
       } catch (err) {
         console.warn('[vite] Could not probe local backend; using', initialTarget, err?.message || err);
       }
       const applyTarget = (key) => {
-        if (server.config.server?.proxy?.[key]) {
-          server.config.server.proxy[key].target = target;
-        }
+        const proxyEntry = server.config.server?.proxy?.[key];
+        if (!proxyEntry) return;
+        proxyEntry.target = target;
+        const priorConfigure = proxyEntry.configure;
+        proxyEntry.configure = (proxy, options) => {
+          priorConfigure?.(proxy, options);
+          proxy.on('error', (err) => {
+            console.warn(
+              `[vite] Proxy error for ${key} → ${target}: ${err?.message || err}. ` +
+                'Is the backend running? On macOS, use PORT=5001 if :5000 is AirPlay.'
+            );
+          });
+        };
       };
       applyTarget('/api');
       applyTarget('/uploads');
-      console.log(`[vite] Dev proxy /api, /uploads → ${target}`);
+      const healthy = await import('./scripts/resolveLocalBackendUrl.mjs').then((m) =>
+        m.probeBackendOrigin(target)
+      );
+      if (!healthy) {
+        console.warn(
+          `[vite] Dev proxy /api, /uploads → ${target} (backend /health not reachable yet — start Backend, then restart Vite)`
+        );
+      } else {
+        console.log(`[vite] Dev proxy /api, /uploads → ${target}`);
+      }
     },
   };
 }

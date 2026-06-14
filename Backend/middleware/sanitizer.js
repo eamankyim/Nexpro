@@ -38,6 +38,10 @@ const SKIP_FIELDS = [
 const URL_PATH_FIELDS = [
   'imageUrl',
   'logoUrl',
+  'bannerImageUrl',
+  'bannerUrl',
+  'heroImageUrl',
+  'coverImageUrl',
   'profilePicture',
   'fileUrl',
   'url',

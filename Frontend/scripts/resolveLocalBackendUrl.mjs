@@ -4,8 +4,20 @@
  */
 import http from 'node:http';
 
-const PROBE_PORTS = [5000, 5001, 5002, 5003, 5004, 5005, 5006, 5007, 5008, 5009, 5010];
-const FALLBACK_ORIGIN = 'http://127.0.0.1:5000';
+/** Prefer 5001/5002 before 5000 — macOS AirPlay Receiver often occupies :5000. */
+const PREFERRED_LOCAL_PORTS = [5001, 5002, 5000];
+const PROBE_PORTS = [
+  ...PREFERRED_LOCAL_PORTS,
+  5003,
+  5004,
+  5005,
+  5006,
+  5007,
+  5008,
+  5009,
+  5010,
+];
+const FALLBACK_ORIGIN = 'http://127.0.0.1:5001';
 
 /**
  * @param {number} port
@@ -53,6 +65,21 @@ export function probeBackendHealth(port, host = '127.0.0.1') {
 }
 
 /**
+ * @param {string} origin
+ * @returns {Promise<boolean>}
+ */
+export async function probeBackendOrigin(origin) {
+  try {
+    const parsed = new URL(origin);
+    const port = Number(parsed.port || (parsed.protocol === 'https:' ? 443 : 80));
+    if (!port) return false;
+    return probeBackendHealth(port, parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * @param {string} hostname
  * @returns {boolean}
  */
@@ -60,6 +87,8 @@ const isLocalHostname = (hostname) =>
   hostname === 'localhost' ||
   hostname === '127.0.0.1' ||
   hostname.startsWith('192.168.');
+
+const PRODUCTION_API_HOSTS = new Set(['api.africanbusinesssuite.com']);
 
 /**
  * Resolve the backend origin for local development (Vite proxy target).
@@ -75,7 +104,7 @@ export async function resolveLocalBackendUrl({ envUrl } = {}) {
         normalized = `${localhostLike ? 'http' : 'https'}://${normalized}`;
       }
       const parsed = new URL(normalized);
-      if (isLocalHostname(parsed.hostname)) {
+      if (!PRODUCTION_API_HOSTS.has(parsed.hostname) && isLocalHostname(parsed.hostname)) {
         const port = Number(parsed.port || 80);
         if (port && (await probeBackendHealth(port, parsed.hostname))) {
           return parsed.origin;

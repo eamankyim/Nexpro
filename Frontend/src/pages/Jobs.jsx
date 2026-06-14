@@ -3,7 +3,7 @@ import { useDebounce } from '../hooks/useDebounce';
 import { useCurrency } from '../hooks/useCurrency';
 import { useResponsive } from '../hooks/useResponsive';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
-import { useForm, useFieldArray } from 'react-hook-form';
+import { useForm, useFieldArray, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Plus, XCircle, Loader2, MinusCircle, FileText, Clock, CheckCircle, User, Edit, PauseCircle, X, Upload, Paperclip, Download, Currency, Eye, ChevronLeft, ChevronRight, Filter, RefreshCw, Briefcase, AlertCircle, Trash2 } from 'lucide-react';
@@ -166,6 +166,37 @@ const jobSchema = z.object({
   items: z.array(jobItemSchema).min(1, 'At least one item is required'),
 });
 
+const toJobMoneyNumber = (value, fallback = 0) => {
+  const parsed = parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const roundJobMoney = (value) => Math.round(toJobMoneyNumber(value) * 100) / 100;
+
+const calculateJobLinePricing = (item = {}) => {
+  const quantity = Math.max(0, toJobMoneyNumber(item.quantity, 0));
+  const unitPrice = Math.max(0, toJobMoneyNumber(item.unitPrice, 0));
+  const subtotal = roundJobMoney(quantity * unitPrice);
+  const requestedDiscount = Math.max(0, toJobMoneyNumber(item.discountAmount, 0));
+  const discount = roundJobMoney(Math.min(requestedDiscount, subtotal));
+  const total = roundJobMoney(Math.max(0, subtotal - discount));
+
+  return { quantity, unitPrice, subtotal, discount, total };
+};
+
+const calculateJobItemsPricing = (items = []) =>
+  (Array.isArray(items) ? items : []).reduce(
+    (totals, item) => {
+      const line = calculateJobLinePricing(item);
+      return {
+        subtotal: roundJobMoney(totals.subtotal + line.subtotal),
+        totalDiscount: roundJobMoney(totals.totalDiscount + line.discount),
+        grandTotal: roundJobMoney(totals.grandTotal + line.total),
+      };
+    },
+    { subtotal: 0, totalDiscount: 0, grandTotal: 0 }
+  );
+
 const assignmentSchema = z.object({
   assignedTo: z.string().optional().nullable(),
 });
@@ -250,6 +281,15 @@ const Jobs = () => {
     control: form.control,
     name: 'items',
   });
+  const watchedItems = useWatch({
+    control: form.control,
+    name: 'items',
+    defaultValue: form.getValues('items'),
+  }) || [];
+  const jobPricingTotals = useMemo(
+    () => calculateJobItemsPricing(watchedItems),
+    [watchedItems]
+  );
   const [jobInvoices, setJobInvoices] = useState({});
   const [selectedJobType, setSelectedJobType] = useState(null);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
@@ -962,31 +1002,39 @@ useEffect(() => {
         dueDate: jobData.dueDate ? (dayjs(jobData.dueDate).isValid() ? dayjs(jobData.dueDate).toDate() : null) : null,
         assignedTo: jobData.assignedTo || null,
         description: jobData.description || '',
-        items: (jobData.items || []).map(item => ({
-          ...item,
-          // Normalize nullable text fields so Zod string schema does not receive null
-          category: item.category ?? '',
-          description: item.description ?? '',
-          paperSize: item.paperSize ?? undefined,
-          pricingMethod: item.pricingMethod ?? undefined,
-          itemUnit: item.itemUnit ?? undefined,
-          discountReason: item.discountReason ?? undefined,
-          // Normalize nullable numeric optional fields
-          itemHeight: item.itemHeight == null ? undefined : Number(item.itemHeight),
-          itemWidth: item.itemWidth == null ? undefined : Number(item.itemWidth),
-          pricePerSquareFoot: item.pricePerSquareFoot == null ? undefined : Number(item.pricePerSquareFoot),
-          discountPercent: item.discountPercent == null ? undefined : Number(item.discountPercent),
-          // Parse unitPrice if it's a string (handle formatted values like "₵ 50,00", "50,00", "50.00", etc.)
-          unitPrice: typeof item.unitPrice === 'string' 
+        items: (jobData.items || []).map(item => {
+          const unitPrice = typeof item.unitPrice === 'string'
             ? parseFloat(item.unitPrice.replace(/[^\d.,-]/g, '').replace(',', '.')) || 0
-            : (typeof item.unitPrice === 'number' ? item.unitPrice : 0),
-          // Ensure quantity is a number
-          quantity: typeof item.quantity === 'string' ? parseFloat(item.quantity) || 1 : (typeof item.quantity === 'number' ? item.quantity : 1),
-          // Ensure discountAmount is a number (handle formatted strings)
-          discountAmount: typeof item.discountAmount === 'string' 
+            : (typeof item.unitPrice === 'number' ? item.unitPrice : 0);
+          const quantity = typeof item.quantity === 'string'
+            ? parseFloat(item.quantity) || 1
+            : (typeof item.quantity === 'number' ? item.quantity : 1);
+          const explicitDiscount = typeof item.discountAmount === 'string'
             ? parseFloat(item.discountAmount.replace(/[^\d.,-]/g, '').replace(',', '.')) || 0
-            : (typeof item.discountAmount === 'number' ? item.discountAmount : 0),
-        }))
+            : (typeof item.discountAmount === 'number' ? item.discountAmount : 0);
+          const gross = quantity * unitPrice;
+          const storedTotal = item.totalPrice == null ? gross : toJobMoneyNumber(item.totalPrice, gross);
+          const derivedDiscount = Math.max(0, gross - storedTotal);
+
+          return {
+            ...item,
+            // Normalize nullable text fields so Zod string schema does not receive null
+            category: item.category ?? '',
+            description: item.description ?? '',
+            paperSize: item.paperSize ?? undefined,
+            pricingMethod: item.pricingMethod ?? undefined,
+            itemUnit: item.itemUnit ?? undefined,
+            discountReason: item.discountReason ?? undefined,
+            // Normalize nullable numeric optional fields
+            itemHeight: item.itemHeight == null ? undefined : Number(item.itemHeight),
+            itemWidth: item.itemWidth == null ? undefined : Number(item.itemWidth),
+            pricePerSquareFoot: item.pricePerSquareFoot == null ? undefined : Number(item.pricePerSquareFoot),
+            discountPercent: item.discountPercent == null ? undefined : Number(item.discountPercent),
+            unitPrice,
+            quantity,
+            discountAmount: roundJobMoney(explicitDiscount > 0 ? explicitDiscount : derivedDiscount),
+          };
+        })
       };
       
         // Set form values
@@ -1316,7 +1364,7 @@ useEffect(() => {
     if (!template || !quantity) return { discountPercent: 0, discountAmount: 0 };
 
     const unitPrice = unitPriceOverride ?? resolveTemplateUnitPrice(template);
-    const subtotal = unitPrice * quantity;
+    const subtotal = Math.max(0, toJobMoneyNumber(unitPrice) * toJobMoneyNumber(quantity));
 
     // Apply discount tiers if available
     if (template.discountTiers && Array.isArray(template.discountTiers) && template.discountTiers.length > 0) {
@@ -1326,18 +1374,33 @@ useEffect(() => {
         
         if (quantity >= minQty && quantity <= maxQty) {
           const discountPercent = parseFloat(tier.discountPercent || 0);
-          const discountAmount = (subtotal * discountPercent) / 100;
+          const discountAmount = Math.min(subtotal, (subtotal * discountPercent) / 100);
           
           if (discountPercent > 0) {
             showInfo(`${discountPercent}% discount applied for quantity ${quantity}!`);
           }
           
-          return { discountPercent, discountAmount };
+          return { discountPercent, discountAmount: roundJobMoney(discountAmount) };
         }
       }
     }
 
     return { discountPercent: 0, discountAmount: 0 };
+  };
+
+  const setJobItemsValue = (items) => {
+    form.setValue('items', items, {
+      shouldDirty: true,
+      shouldTouch: true,
+      shouldValidate: true,
+    });
+  };
+
+  const updateJobItemAtIndex = (itemIndex, updater) => {
+    const items = form.getValues('items') || [];
+    const updatedItems = [...items];
+    updatedItems[itemIndex] = updater(updatedItems[itemIndex] || {});
+    setJobItemsValue(updatedItems);
   };
 
   const handleTemplateSelect = (templateId, itemIndex) => {
@@ -1385,7 +1448,7 @@ useEffect(() => {
         discountPercent: 0,
         discountAmount: 0
       };
-      form.setValue('items', updatedItems);
+      setJobItemsValue(updatedItems);
     } else {
       // Standard unit-based pricing
       const quantity = currentItem.quantity || 1;
@@ -1406,7 +1469,7 @@ useEffect(() => {
         discountPercent: discountPercent,
         discountAmount: discountAmount
       };
-      form.setValue('items', updatedItems);
+      setJobItemsValue(updatedItems);
     }
     
     // Smart auto-fill for job-level fields if first item
@@ -1429,28 +1492,53 @@ useEffect(() => {
   // Handle quantity change with real-time discount recalculation
   const handleQuantityChange = (itemIndex, newQuantity) => {
     const template = selectedTemplates[itemIndex];
-    
-    if (!template) {
-      return; // No template selected, just use the quantity as-is
-    }
 
-    const items = form.getValues('items') || [];
-    const currentItem = items[itemIndex] || {};
-    
-    // Recalculate discount with new quantity (unit price stays same)
-    const currentPrice = parseFloat(currentItem.unitPrice ?? resolveTemplateUnitPrice(template) ?? 0);
-    const { discountPercent, discountAmount } = calculateDiscount(template, newQuantity, currentPrice);
-    
-    // Update the item with new quantity and recalculated discount
-    const updatedItems = [...items];
-    updatedItems[itemIndex] = {
+    updateJobItemAtIndex(itemIndex, (currentItem) => {
+      const quantity = newQuantity === '' ? '' : Math.max(1, toJobMoneyNumber(newQuantity, 1));
+      const currentPrice = toJobMoneyNumber(currentItem.unitPrice ?? resolveTemplateUnitPrice(template), 0);
+      const discount = template
+        ? calculateDiscount(template, quantity || 1, currentPrice)
+        : {
+            discountPercent: currentItem.discountPercent || 0,
+            discountAmount: currentItem.discountAmount || 0,
+          };
+
+      return {
+        ...currentItem,
+        quantity,
+        discountPercent: discount.discountPercent,
+        discountAmount: discount.discountAmount,
+      };
+    });
+  };
+
+  const handleUnitPriceChange = (itemIndex, newUnitPrice) => {
+    const template = selectedTemplates[itemIndex];
+
+    updateJobItemAtIndex(itemIndex, (currentItem) => {
+      const unitPrice = newUnitPrice === '' ? '' : Math.max(0, toJobMoneyNumber(newUnitPrice, 0));
+      const quantity = toJobMoneyNumber(currentItem.quantity, 1);
+      const discount = template
+        ? calculateDiscount(template, quantity, unitPrice || 0)
+        : {
+            discountPercent: currentItem.discountPercent || 0,
+            discountAmount: currentItem.discountAmount || 0,
+          };
+
+      return {
+        ...currentItem,
+        unitPrice,
+        discountPercent: discount.discountPercent,
+        discountAmount: discount.discountAmount,
+      };
+    });
+  };
+
+  const handleDiscountAmountChange = (itemIndex, discountAmount) => {
+    updateJobItemAtIndex(itemIndex, (currentItem) => ({
       ...currentItem,
-      quantity: newQuantity,
-      discountPercent: discountPercent,
-      discountAmount: discountAmount
-    };
-    
-    form.setValue('items', updatedItems);
+      discountAmount: discountAmount === '' ? '' : Math.max(0, toJobMoneyNumber(discountAmount, 0)),
+    }));
   };
 
   const handleSubmit = async (values) => {
@@ -1497,11 +1585,7 @@ useEffect(() => {
           return item;
         });
         
-        calculatedTotal = values.items.reduce((sum, item) => {
-          const subtotal = parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0);
-          const discount = parseFloat(item.discountAmount || 0);
-          return sum + (subtotal - discount);
-        }, 0);
+        calculatedTotal = calculateJobItemsPricing(values.items).grandTotal;
       }
 
       // Auto-generate job title from the first item only if not provided
@@ -1548,13 +1632,23 @@ useEffect(() => {
       const cleanAssignedTo = values.assignedTo === "__NONE__" || !values.assignedTo ? null : values.assignedTo;
 
       // Clean and validate items - ensure required fields are present
-      const cleanedItems = (values.items || []).map(item => ({
-        ...item,
-        quantity: parseFloat(item.quantity) || 1,
-        unitPrice: parseFloat(item.unitPrice) || 0,
-        discountAmount: parseFloat(item.discountAmount) || 0,
-        discountPercent: parseFloat(item.discountPercent) || 0,
-      })).filter(item => item.category && item.description); // Filter out invalid items
+      const cleanedItems = (values.items || []).map(item => {
+        const quantity = parseFloat(item.quantity) || 1;
+        const unitPrice = parseFloat(item.unitPrice) || 0;
+        const linePricing = calculateJobLinePricing({
+          ...item,
+          quantity,
+          unitPrice,
+        });
+
+        return {
+          ...item,
+          quantity,
+          unitPrice,
+          discountAmount: linePricing.discount,
+          discountPercent: parseFloat(item.discountPercent) || 0,
+        };
+      }).filter(item => item.category && item.description); // Filter out invalid items
 
       if (cleanedItems.length === 0) {
         showError('At least one valid job item is required');
@@ -2717,7 +2811,7 @@ useEffect(() => {
                     )}
 
                     {(() => {
-                      const items = form.getValues('items') || [];
+                      const items = watchedItems || [];
                       const currentItem = items[index] || {};
                       const hasTemplate = selectedTemplates[index];
                         
@@ -2807,7 +2901,7 @@ useEffect(() => {
                           <FormControl>
                             <Input
                               placeholder={getItemDescriptionPlaceholder(
-                                (form.getValues('items') || [])[index]?.category
+                                (watchedItems || [])[index]?.category
                               )}
                               list="line-item-description-options"
                               {...field}
@@ -2867,7 +2961,6 @@ useEffect(() => {
                                 value={numberInputValue(field.value)}
                                 onChange={(e) => {
                                   handleIntegerChange(e, (v) => {
-                                    field.onChange(v);
                                     const num = v === '' ? 1 : (typeof v === 'number' ? v : parseInt(String(v), 10) || 1);
                                     handleQuantityChange(index, num);
                                   });
@@ -2894,7 +2987,7 @@ useEffect(() => {
                                   className="pl-12"
                                   {...field}
                                   value={numberInputValue(field.value)}
-                                  onChange={(e) => handleNumberChange(e, field.onChange)}
+                                  onChange={(e) => handleNumberChange(e, (value) => handleUnitPriceChange(index, value))}
                                 />
                               </div>
                             </FormControl>
@@ -2918,7 +3011,7 @@ useEffect(() => {
                                   className="pl-12"
                                   {...field}
                                   value={numberInputValue(field.value)}
-                                  onChange={(e) => handleNumberChange(e, field.onChange)}
+                                  onChange={(e) => handleNumberChange(e, (value) => handleDiscountAmountChange(index, value))}
                                 />
                               </div>
                             </FormControl>
@@ -2930,14 +3023,9 @@ useEffect(() => {
                         <Label>Total</Label>
                         <div className="h-10 px-3 py-2 border border-input rounded-md bg-background flex items-center text-sm font-semibold">
                           {(() => {
-                            const items = form.getValues('items') || [];
+                            const items = watchedItems || [];
                             const currentItem = items[index] || {};
-                            const qty = parseFloat(currentItem.quantity || 1);
-                            const price = parseFloat(currentItem.unitPrice || 0);
-                            const discountAmount = parseFloat(currentItem.discountAmount || 0);
-                            const subtotal = qty * price;
-                            const total = subtotal - discountAmount;
-                            return formatAmount(total);
+                            return formatAmount(calculateJobLinePricing(currentItem).total);
                           })()}
                         </div>
                       </div>
@@ -2985,19 +3073,7 @@ useEffect(() => {
               </div>
 
               {(() => {
-                const items = form.getValues('items') || [];
-              const subtotal = items.reduce((sum, item) => {
-                const qty = parseFloat(item?.quantity || 1);
-                const price = parseFloat(item?.unitPrice || 0);
-                return sum + (qty * price);
-              }, 0);
-              
-              const totalDiscount = items.reduce((sum, item) => {
-                const discount = parseFloat(item?.discountAmount || 0);
-                return sum + discount;
-              }, 0);
-              
-              const total = subtotal - totalDiscount;
+              const { subtotal, totalDiscount, grandTotal } = jobPricingTotals;
               
               return (
                   <div className="bg-muted/50 border border-border rounded-md mb-4 overflow-hidden">
@@ -3016,7 +3092,7 @@ useEffect(() => {
                     <Separator className="w-full" />
                     <div className="p-3 flex justify-between">
                       <span className="text-base font-bold">Grand Total:</span>
-                      <span className="text-lg font-bold">{formatAmount(total)}</span>
+                      <span className="text-lg font-bold">{formatAmount(grandTotal)}</span>
                     </div>
                 </div>
               );

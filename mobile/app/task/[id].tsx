@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -18,15 +18,22 @@ import { userWorkspaceService } from '@/services/userWorkspaceService';
 import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
 import {
-  DetailCard,
+  DetailHeroCard,
+  DetailInfoRow,
   DetailLoading,
   DetailNotFound,
-  DetailRow,
+  DetailSectionCard,
+  DetailFooter,
+  DetailActionButton,
+  DetailMoreActions,
+  type DetailMoreAction,
   EntityDetailHeader,
 } from '@/components/EntityDetailLayout';
+import { useExclusiveAction } from '@/hooks/useExclusiveAction';
 import { refreshAfterTaskChange } from '@/utils/queryInvalidation';
 
 const STATUSES = ['todo', 'in_progress', 'on_hold', 'completed'] as const;
+type TaskAction = 'status' | 'comment' | `status:${(typeof STATUSES)[number]}`;
 
 export default function TaskDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -34,6 +41,7 @@ export default function TaskDetailScreen() {
   const queryClient = useQueryClient();
   const [statusOpen, setStatusOpen] = useState(false);
   const [comment, setComment] = useState('');
+  const { isAnyActionActive, isActionActive, runExclusiveAction } = useExclusiveAction<TaskAction>();
 
   const { data, isLoading } = useQuery({
     queryKey: ['user-workspace', 'task-detail', id],
@@ -78,30 +86,62 @@ export default function TaskDetailScreen() {
   if (isLoading) return <DetailLoading title="Task" />;
   if (!task) return <DetailNotFound title="Task" entityLabel="Task" />;
 
+  const taskStatus = task.status || 'todo';
+  const taskIsCompleted = taskStatus === 'completed';
+  const taskMoreActions: DetailMoreAction[] = taskIsCompleted
+    ? STATUSES.filter((status) => status !== 'completed').map((status) => ({
+        key: `status:${status}`,
+        label: `Mark ${status.replace(/_/g, ' ')}`,
+        onPress: () => runExclusiveAction(`status:${status}`, () => updateMutation.mutateAsync({ status })),
+        loading: isActionActive(`status:${status}`),
+        disabled: isAnyActionActive,
+      }))
+    : [
+        {
+          key: 'status',
+          label: 'Update status',
+          icon: 'refresh',
+          onPress: () => setStatusOpen(true),
+          disabled: isAnyActionActive,
+        },
+      ];
+
   return (
     <>
       <EntityDetailHeader title={task.title || 'Task'} />
-      <ScreenShell scrollable style={styles.container} contentContainerStyle={styles.content}>
-        <DetailCard>
-          <DetailRow label="Status">
+      <ScreenShell style={styles.container}>
+        <ScrollView contentContainerStyle={styles.content}>
+        <DetailHeroCard
+          eyebrow="Task"
+          title={(task.status || 'todo').replace(/_/g, ' ')}
+          message={task.title || task.description || 'Workspace task details.'}
+          metricLabel="Due Date"
+          metricValue={task.dueDate ? String(task.dueDate).slice(0, 10) : 'No due date'}
+          secondaryIcon="comments"
+          secondaryLabel="Comments"
+          secondaryValue={`${comments.length} ${comments.length === 1 ? 'Comment' : 'Comments'}`}
+          showCheck={(task.status || 'todo') === 'completed'}
+        />
+
+        <DetailSectionCard title="Task Details" icon="sticky-note-o">
+          <DetailInfoRow icon="tag" label="Status">
             <Pressable onPress={() => setStatusOpen(true)} style={[styles.statusRow, { borderColor }]}>
               <Text style={[styles.statusText, { color: textColor }]}>
                 {(task.status || 'todo').replace(/_/g, ' ')}
               </Text>
               <AppIcon name="chevron-down" size={14} color={mutedColor} />
             </Pressable>
-          </DetailRow>
+          </DetailInfoRow>
           {task.description ? (
-            <DetailRow label="Description" value={task.description} />
+            <DetailInfoRow icon="file-text" label="Description" value={task.description} />
           ) : null}
           {task.dueDate ? (
-            <DetailRow label="Due date" value={String(task.dueDate).slice(0, 10)} />
+            <DetailInfoRow icon="calendar" label="Due date" value={String(task.dueDate).slice(0, 10)} />
           ) : null}
-          {task.assignee?.name ? <DetailRow label="Assignee" value={task.assignee.name} /> : null}
-        </DetailCard>
+          {task.assignee?.name ? <DetailInfoRow icon="user" label="Assignee" value={task.assignee.name} /> : null}
+        </DetailSectionCard>
 
-        <DetailCard>
-          <Text style={[styles.commentsTitle, { color: textColor }]}>Comments</Text>
+        <DetailSectionCard title="Comments" icon="comments">
           {comments.length === 0 ? (
             <Text style={{ color: mutedColor }}>No comments yet.</Text>
           ) : (
@@ -126,35 +166,70 @@ export default function TaskDetailScreen() {
           <Pressable
             onPress={() => {
               if (!comment.trim()) return;
-              commentMutation.mutate();
+              runExclusiveAction('comment', () => commentMutation.mutateAsync());
             }}
-            style={[styles.sendBtn, { backgroundColor: colors.tint }]}
+            disabled={isAnyActionActive}
+            style={[styles.sendBtn, { backgroundColor: colors.tint, opacity: isAnyActionActive ? 0.6 : 1 }]}
           >
-            {commentMutation.isPending ? (
+            {isActionActive('comment') ? (
               <ActivityIndicator color="#fff" />
             ) : (
               <Text style={{ color: '#fff', fontWeight: '700' }}>Send</Text>
             )}
           </Pressable>
-        </DetailCard>
+        </DetailSectionCard>
+        </ScrollView>
+        <DetailFooter>
+          {taskIsCompleted ? (
+            <DetailActionButton
+              label="Update status"
+              icon="refresh"
+              variant="primary"
+              onPress={() => setStatusOpen(true)}
+              disabled={isAnyActionActive}
+            />
+          ) : (
+            <DetailActionButton
+              label="Complete"
+              icon="check"
+              variant="primary"
+              onPress={() => runExclusiveAction('status:completed', () => updateMutation.mutateAsync({ status: 'completed' }))}
+              loading={isActionActive('status:completed')}
+              disabled={isAnyActionActive}
+            />
+          )}
+          {!taskIsCompleted ? (
+            <DetailMoreActions actions={taskMoreActions} disabled={isAnyActionActive} />
+          ) : taskMoreActions.length > 0 ? (
+            <DetailMoreActions actions={taskMoreActions} disabled={isAnyActionActive} title="Change status" />
+          ) : null}
+        </DetailFooter>
       </ScreenShell>
 
       <Modal visible={statusOpen} transparent animationType="fade">
-        <Pressable style={styles.modalBackdrop} onPress={() => setStatusOpen(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => !isAnyActionActive && setStatusOpen(false)}>
           <View style={[styles.modalCard, { backgroundColor: cardBg, borderColor }]}>
             <Text style={[styles.modalTitle, { color: textColor }]}>Set status</Text>
-            {STATUSES.map((s) => (
-              <Pressable
-                key={s}
-                onPress={() => updateMutation.mutate({ status: s })}
-                style={[styles.modalRow, { borderBottomColor: borderColor }]}
-              >
-                <Text style={{ color: textColor, textTransform: 'capitalize', fontSize: 16 }}>
-                  {s.replace(/_/g, ' ')}
-                </Text>
-                {(task.status || 'todo') === s ? <AppIcon name="check" size={18} color={colors.tint} /> : null}
-              </Pressable>
-            ))}
+            {STATUSES.map((s) => {
+              const actionKey: TaskAction = `status:${s}`;
+              return (
+                <Pressable
+                  key={s}
+                  onPress={() => runExclusiveAction(actionKey, () => updateMutation.mutateAsync({ status: s }))}
+                  disabled={isAnyActionActive}
+                  style={[styles.modalRow, { borderBottomColor: borderColor }]}
+                >
+                  <Text style={{ color: textColor, textTransform: 'capitalize', fontSize: 16 }}>
+                    {s.replace(/_/g, ' ')}
+                  </Text>
+                  {isActionActive(actionKey) ? (
+                    <ActivityIndicator size="small" color={colors.tint} />
+                  ) : (task.status || 'todo') === s ? (
+                    <AppIcon name="check" size={18} color={colors.tint} />
+                  ) : null}
+                </Pressable>
+              );
+            })}
           </View>
         </Pressable>
       </Modal>
@@ -164,7 +239,7 @@ export default function TaskDetailScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { padding: 16, paddingBottom: 40, gap: 12 },
+  content: { padding: 16, paddingBottom: 24, gap: 12 },
   commentsTitle: { fontSize: 16, fontWeight: '700', marginBottom: 8 },
   commentRow: { paddingVertical: 8, borderTopWidth: 1 },
   statusRow: {

@@ -11,7 +11,7 @@ import {
   FlatList,
   DeviceEventEmitter,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { AppIcon, type AppIconName } from '@/components/AppIcon';
@@ -55,6 +55,7 @@ const createDefaultJobItem = (): JobItemDraft => ({
 
 export default function ScanScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ customerId?: string; customerName?: string }>();
   const queryClient = useQueryClient();
   const { activeTenant, activeTenantId, hasFeature } = useAuth();
   const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
@@ -92,6 +93,14 @@ export default function ScanScreen() {
     assignedTo: '',
     items: [createDefaultJobItem()],
   });
+
+  useEffect(() => {
+    if (!params.customerId) return;
+    setJobForm((prev) => ({
+      ...prev,
+      customerId: String(params.customerId),
+    }));
+  }, [params.customerId]);
 
   useEffect(() => {
     const subscription = DeviceEventEmitter.addListener(OPEN_SCAN_CAMERA_EVENT, () => {
@@ -564,7 +573,7 @@ export default function ScanScreen() {
                 />
                 <FormLabel optional>Description</FormLabel>
                 <FormInput
-                  placeholder="Size, material, or service details"
+                  placeholder="Size, specs, or service details"
                   value={item.description}
                   onChangeText={(t) => handleUpdateJobItem(index, 'description', t)}
                 />

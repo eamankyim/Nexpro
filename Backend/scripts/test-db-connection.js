@@ -1,10 +1,10 @@
 require('dotenv').config();
-const { Sequelize } = require('sequelize');
 const {
   DEMO_CANONICAL_DB_HOST,
   isDemoCanonicalDatabaseUrl,
   getDatabaseHost,
 } = require('../config/canonicalDatabase');
+const { sequelize } = require('../config/database');
 
 const testConnection = async () => {
   const dbUrl = process.env.DATABASE_URL;
@@ -35,23 +35,6 @@ const testConnection = async () => {
   } catch (e) {
     console.warn('⚠️  Could not parse hostname from DATABASE_URL');
   }
-
-  const sequelize = new Sequelize(dbUrl, {
-    dialect: 'postgres',
-    logging: false,
-    dialectOptions: {
-      ssl: dbUrl.includes('neon') || dbUrl.includes('amazonaws.com') ? {
-        require: true,
-        rejectUnauthorized: false
-      } : false
-    },
-    pool: {
-      max: 1,
-      min: 0,
-      acquire: 10000,
-      idle: 5000
-    }
-  });
 
   try {
     console.log('🔄 Attempting to connect...');

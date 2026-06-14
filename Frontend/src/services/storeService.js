@@ -17,10 +17,6 @@ const storeService = {
 
   getSetupStatus: async () => api.get('/store/setup-status'),
 
-  getPublicStore: async (slug) => api.get(`/public/store/${encodeURIComponent(slug || '')}`),
-
-  getPublicStoreProducts: async (slug) => api.get(`/public/store/${encodeURIComponent(slug || '')}/products`),
-
   checkSlugAvailability: async (slug) => api.get(`/store/slug-availability?slug=${encodeURIComponent(slug || '')}`),
 
   getListings: async (params = {}) => {
@@ -38,12 +34,32 @@ const storeService = {
     return api.get(query ? `/store/orders/stats?${query}` : '/store/orders/stats');
   },
 
+  exportOrders: async (params = {}) => {
+    const query = buildQuery(params);
+    return api.get(query ? `/store/orders/export?${query}` : '/store/orders/export', {
+      responseType: 'blob',
+    });
+  },
+
   getOrderById: async (id) => api.get(`/store/orders/${id}`),
 
   getOrder: async (id) => api.get(`/store/orders/${id}`),
 
-  updateOrderStatus: async (id, status) => (
-    api.patch(`/store/orders/${id}/status`, { status })
+  updateOrderStatus: async (id, status, payload = {}) => (
+    api.patch(`/store/orders/${id}/status`, { ...payload, status })
+  ),
+
+  getTradeAssuranceDashboard: async (params = {}) => {
+    const query = buildQuery(params);
+    return api.get(query ? `/store/trade-assurance/dashboard?${query}` : '/store/trade-assurance/dashboard');
+  },
+
+  releaseTradeAssurancePayout: async (orderId, payload = {}) => (
+    api.post(`/store/trade-assurance/orders/${orderId}/release`, payload)
+  ),
+
+  refundTradeAssuranceOrder: async (orderId, payload = {}) => (
+    api.post(`/store/trade-assurance/orders/${orderId}/refund`, payload)
   ),
 
   createListing: async (payload) => api.post('/store/listings', payload),
@@ -82,6 +98,37 @@ const storeService = {
     const result = await storeService.uploadListingImages(file ? [file] : []);
     const imageUrls = result?.data?.imageUrls || result?.imageUrls || [];
     return imageUrls[0] || '';
+  },
+
+  generateBanner: async (payload) => api.post('/store/banner/generate', payload),
+
+  getServiceListings: async (params = {}) => {
+    const query = buildQuery(params);
+    return api.get(query ? `/store/service-listings?${query}` : '/store/service-listings');
+  },
+
+  createServiceListing: async (payload) => api.post('/store/service-listings', payload),
+
+  updateServiceListing: async (id, payload) => api.patch(`/store/service-listings/${id}`, payload),
+
+  deleteServiceListing: async (id) => api.delete(`/store/service-listings/${id}`),
+
+  publishServiceListing: async (id) => api.patch(`/store/service-listings/${id}/publish`),
+
+  unpublishServiceListing: async (id) => api.patch(`/store/service-listings/${id}/unpublish`),
+
+  importServiceListingFromPricingTemplate: async (templateId, payload = {}) => (
+    api.post(`/store/service-listings/import/pricing-template/${templateId}`, payload)
+  ),
+
+  uploadServiceListingImages: async (files) => {
+    const formData = new FormData();
+    Array.from(files || []).slice(0, 5).forEach((file) => formData.append('files', file));
+    const query = buildScopedQueryString();
+    const response = await api.post(`/store/service-listings/upload-images${query ? `?${query}` : ''}`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response?.data ?? response;
   },
 };
 

@@ -76,6 +76,17 @@ const {
   updateSupportTicket,
 } = require('../controllers/adminSupportTicketController');
 const {
+  getSabitoOverview,
+  getSabitoStores,
+  getSabitoOrders,
+  getSabitoOrder,
+  getSabitoTradeAssurance,
+  releaseSabitoOrderPayout,
+  getSabitoDisputes,
+  getSabitoCustomers,
+  getSabitoSettings,
+} = require('../controllers/adminSabitoController');
+const {
   startSupportAccess,
   endSupportAccess,
   getActiveSupportAccess,
@@ -280,6 +291,19 @@ router.get('/support-tickets', requirePlatformAdminPermission('tickets.view'), g
 router.get('/support-tickets/:id', requirePlatformAdminPermission('tickets.view'), getSupportTicket);
 router.post('/support-tickets', requirePlatformAdminPermission('tickets.manage'), createSupportTicket);
 router.patch('/support-tickets/:id', requirePlatformAdminPermission('tickets.manage'), updateSupportTicket);
+
+/**
+ * Sabito marketplace/platform operations routes.
+ */
+router.get('/sabito/overview', requirePlatformAdminPermission('overview.view'), getSabitoOverview);
+router.get('/sabito/stores', requirePlatformAdminPermission('tenants.view'), getSabitoStores);
+router.get('/sabito/orders', requirePlatformAdminPermission('tenants.view'), getSabitoOrders);
+router.get('/sabito/orders/:id', requirePlatformAdminPermission('tenants.view'), getSabitoOrder);
+router.get('/sabito/trade-assurance', requirePlatformAdminPermission('tenants.view'), getSabitoTradeAssurance);
+router.post('/sabito/orders/:id/release-payout', requirePlatformAdminPermission('billing.manage'), releaseSabitoOrderPayout);
+router.get('/sabito/disputes', requirePlatformAdminPermission('tenants.view'), getSabitoDisputes);
+router.get('/sabito/customers', requirePlatformAdminPermission('tenants.view'), getSabitoCustomers);
+router.get('/sabito/settings', requirePlatformAdminPermission('settings.view'), getSabitoSettings);
 
 /**
  * @swagger

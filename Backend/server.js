@@ -445,6 +445,14 @@ if (!IS_VERCEL_SERVERLESS) {
     } catch (error) {
       console.error('[Server] Failed to start recurring journal scheduler service:', error);
     }
+    try {
+      require('./services/marketplacePayoutSchedulerService').start();
+      if (config.nodeEnv === 'development') {
+        console.log('[Server] ✅ Marketplace payout scheduler service started');
+      }
+    } catch (error) {
+      console.error('[Server] Failed to start marketplace payout scheduler service:', error);
+    }
   };
 
   const startServer = async () => {

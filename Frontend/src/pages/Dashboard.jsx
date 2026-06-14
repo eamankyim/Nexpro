@@ -56,6 +56,8 @@ import { useNavigate } from 'react-router-dom';
 import dashboardService from '../services/dashboardService';
 import assistantService from '../services/assistantService';
 import productService from '../services/productService';
+import OnlineStoreOrderBanner from '../components/store/OnlineStoreOrderBanner';
+import { useOnlineStoreOrderAttention } from '../hooks/useOnlineStoreOrderAttention';
 import settingsService from '../services/settingsService';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
@@ -676,6 +678,12 @@ const Dashboard = () => {
   const isStaff = tenantRole === 'staff';
   const canViewProfitMetrics = !isStaff;
 
+  const {
+    pendingOrderCount,
+    latestOrder: latestOnlineOrder,
+    showBanner: showOnlineOrderBanner,
+  } = useOnlineStoreOrderAttention({ enabled: scopeReady && isShop });
+
   const { data: staffProductsRaw, isLoading: staffProductsLoading } = useQuery({
     queryKey: ['products', 'active', activeTenantId, activeShopId],
     queryFn: () => productService.getAllActiveProducts(),
@@ -755,6 +763,11 @@ const Dashboard = () => {
     return low + exp;
   }, [stockAlerts]);
   const showStockAlerts = useMemo(() => (isShop || isPharmacy) && stockAlerts && stockAlertsActiveCount > 0, [isShop, isPharmacy, stockAlerts, stockAlertsActiveCount]);
+  const dashboardAlertsActiveCount = stockAlertsActiveCount + (showOnlineOrderBanner ? pendingOrderCount : 0);
+  const showDashboardAlerts = useMemo(
+    () => showStockAlerts || showOnlineOrderBanner,
+    [showOnlineOrderBanner, showStockAlerts]
+  );
 
   const businessHealthContext = useMemo(() => {
     const periodDays = getInclusiveDays(overviewParams.startDate, overviewParams.endDate);
@@ -1183,6 +1196,13 @@ const Dashboard = () => {
         </Card>
       )}
 
+      {showOnlineOrderBanner && (
+        <OnlineStoreOrderBanner
+          pendingOrderCount={pendingOrderCount}
+          latestOrder={latestOnlineOrder}
+        />
+      )}
+
       {isShop && (displayData?.shopData?.shopBreakdown?.length ?? 0) > 0 && (
         <Card className="border border-gray-200">
           <CardHeader className="pb-2">
@@ -1209,8 +1229,8 @@ const Dashboard = () => {
         </Card>
       )}
 
-      {/* Stock & expiry alerts (shop/pharmacy) */}
-      {showStockAlerts && (
+      {/* Alerts (shop/pharmacy stock plus online store orders) */}
+      {showDashboardAlerts && (
         <Card className="border border-gray-200">
           <CardHeader className="pb-2 flex flex-row items-center justify-between">
             <CardTitle className="text-base sm:text-lg flex items-center gap-2">
@@ -1218,12 +1238,22 @@ const Dashboard = () => {
               Alerts
             </CardTitle>
             <Badge variant="secondary" className="shrink-0">
-              {stockAlertsActiveCount} active
+              {dashboardAlertsActiveCount} active
             </Badge>
           </CardHeader>
           <CardContent className="pt-0">
             <ul className="space-y-2">
-              {(stockAlerts.lowStock || [])
+              {showOnlineOrderBanner && (
+                <li className="flex items-center justify-between gap-2 text-sm">
+                  <span className="text-foreground font-medium truncate">
+                    Online store
+                  </span>
+                  <span className="text-emerald-700 shrink-0">
+                    {pendingOrderCount === 1 ? '1 order needs attention' : `${pendingOrderCount} orders need attention`}
+                  </span>
+                </li>
+              )}
+              {(stockAlerts?.lowStock || [])
                 .filter((item) => item && typeof item === 'object')
                 .map((item, idx) => (
                 <li key={`low-${item.id ?? idx}`} className="flex items-center justify-between gap-2 text-sm">
@@ -1233,7 +1263,7 @@ const Dashboard = () => {
                   <span className="text-amber-700 shrink-0">Low stock ({Number(item.quantityOnHand)} left)</span>
                 </li>
               ))}
-              {(stockAlerts.expiring || [])
+              {(stockAlerts?.expiring || [])
                 .filter((item) => item && typeof item === 'object')
                 .map((item, idx) => (
                 <li key={`exp-${item.id ?? idx}`} className="flex items-center justify-between gap-2 text-sm">
@@ -1246,15 +1276,29 @@ const Dashboard = () => {
                 </li>
               ))}
             </ul>
-            <Button
-              variant="outline"
-              size="sm"
-              className="mt-3 w-full"
-              onClick={() => navigate('/products')}
-            >
-              View products
-              <ChevronRight className="h-4 w-4 ml-1" />
-            </Button>
+            <div className="mt-3 grid gap-2 sm:flex sm:justify-end">
+              {showStockAlerts && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full sm:w-auto"
+                  onClick={() => navigate('/products')}
+                >
+                  View products
+                  <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              )}
+              {showOnlineOrderBanner && (
+                <Button
+                  size="sm"
+                  className="w-full sm:w-auto"
+                  onClick={() => navigate('/store/orders')}
+                >
+                  View online orders
+                  <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              )}
+            </div>
           </CardContent>
         </Card>
       )}

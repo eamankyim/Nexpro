@@ -16,8 +16,10 @@ export const TAB_ROUTE_SEARCH_DEFAULTS: Record<string, PageSearchConfig> = {
   tasks: { scope: 'tasks', placeholder: SEARCH_PLACEHOLDERS.TASKS },
   deliveries: { scope: 'deliveries', placeholder: SEARCH_PLACEHOLDERS.DELIVERIES },
   jobs: { scope: 'jobs', placeholder: SEARCH_PLACEHOLDERS.JOBS },
-  materials: { scope: 'materials', placeholder: SEARCH_PLACEHOLDERS.MATERIALS },
   orders: { scope: 'orders', placeholder: SEARCH_PLACEHOLDERS.ORDERS },
+  'online-orders': { scope: 'online-orders', placeholder: SEARCH_PLACEHOLDERS.ONLINE_ORDERS },
+  store: { scope: 'store', placeholder: SEARCH_PLACEHOLDERS.GLOBAL },
+  'store-services': { scope: 'store-services', placeholder: SEARCH_PLACEHOLDERS.GLOBAL },
 };
 
 export function getTabRouteSegment(pathname: string | null | undefined): string {

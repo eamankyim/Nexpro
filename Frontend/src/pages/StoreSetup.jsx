@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -9,16 +9,21 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Copy,
   CreditCard,
+  ExternalLink,
   Globe2,
   ImageIcon,
   Loader2,
   Menu,
   MapPin,
   Monitor,
+  Package,
   PackageCheck,
   Paintbrush,
   Pencil,
+  ShoppingBag,
+  Sparkles,
   Smartphone,
   Store,
   Truck,
@@ -30,11 +35,18 @@ import OnlineStoreWelcome from '../components/store/OnlineStoreWelcome';
 import storeService from '../services/storeService';
 import settingsService from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
+import { STUDIO_LIKE_TYPES } from '../constants/studioLikeTypes';
 import { useDebounce } from '../hooks/useDebounce';
 import { usePaymentSettings, isPaymentConfigured } from '../hooks/usePaymentSettings';
 import { CURRENCY } from '../constants';
 import { showError, showSuccess, getErrorMessage } from '../utils/toast';
 import { resolveImageUrl } from '../utils/fileUtils';
+import { isValidPrimaryColor, normalizePrimaryColor } from '../utils/brandingColors';
+import {
+  buildStorefrontStoreUrl,
+  getStorefrontDisplayBaseUrl,
+  getStorefrontDisplayStoreUrl,
+} from '../utils/storefrontUrl';
 import { cn } from '@/lib/utils';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -50,6 +62,7 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import {
   Select,
@@ -93,6 +106,7 @@ const THEME_PRESETS = [
 
 const CATEGORY_OPTIONS = [
   'Fashion and apparel',
+  'Food and restaurants',
   'Groceries and provisions',
   'Health and pharmacy',
   'Beauty and salon',
@@ -111,7 +125,44 @@ const CATEGORY_BY_BUSINESS_TYPE = {
   salon: 'Beauty and salon',
 };
 
+const CATEGORY_BY_SHOP_TYPE = {
+  restaurant: 'Food and restaurants',
+  bakery: 'Food and restaurants',
+  supermarket: 'Groceries and provisions',
+  groceries: 'Groceries and provisions',
+  grocery: 'Groceries and provisions',
+  convenience: 'Groceries and provisions',
+  electronics: 'Electronics',
+  clothing: 'Fashion and apparel',
+  fashion: 'Fashion and apparel',
+  beauty: 'Beauty and salon',
+  furniture: 'Home and office',
+};
+
+const getTenantShopType = (activeTenant, tenantMetadata = {}) => compactString(
+  activeTenant?.shopType ||
+  tenantMetadata.shopType ||
+  tenantMetadata.businessSubType ||
+  tenantMetadata.shopTypeKey ||
+  tenantMetadata.businessSubtype,
+);
+
+const resolveBusinessCategory = (activeTenant, tenantMetadata = {}) => {
+  const shopType = getTenantShopType(activeTenant, tenantMetadata);
+  return CATEGORY_BY_SHOP_TYPE[shopType] ||
+    CATEGORY_BY_BUSINESS_TYPE[activeTenant?.businessType] ||
+    'Other';
+};
+
+const resolveSavedCategory = (savedCategory, fallbackCategory) => {
+  const saved = compactString(savedCategory);
+  if (!saved) return fallbackCategory;
+  if (saved === 'Other' && fallbackCategory && fallbackCategory !== 'Other') return fallbackCategory;
+  return saved;
+};
+
 const STORE_SETUP_PAYMENTS_RETURN = '/store/setup?step=payments';
+const BANNER_PROMPT_MAX_LENGTH = 500;
 
 const PAYMENT_OPTIONS = [
   {
@@ -230,7 +281,7 @@ const setupSchema = z.object({
   whatsappNumber: z.string().optional(),
   contactPhone: z.string().optional(),
   contactEmail: z.string().email('Enter a valid email').or(z.literal('')).optional(),
-  primaryColor: z.string().min(4, 'Choose a brand color'),
+  primaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Choose a valid brand color'),
   logoUrl: z.string().optional(),
   bannerImageUrl: z.string().optional(),
   currency: z.string().trim().default(CURRENCY.CODE),
@@ -259,20 +310,8 @@ const normalizeSlug = (value) => String(value || '')
   .replace(/^-+|-+$/g, '')
   .slice(0, 80);
 
-const DEFAULT_PUBLIC_STORE_ORIGIN = 'https://www.absghana.com';
 const STORE_SETUP_DRAFT_VERSION = 1;
 const STORE_SETUP_DRAFT_PREFIX = 'abs:store-setup-draft';
-
-const getPublicStoreBaseUrl = () => {
-  const configuredUrl = (
-    import.meta.env.VITE_PUBLIC_STORE_URL ||
-    import.meta.env.VITE_PUBLIC_SITE_URL ||
-    DEFAULT_PUBLIC_STORE_ORIGIN
-  );
-  const trimmedUrl = String(configuredUrl || DEFAULT_PUBLIC_STORE_ORIGIN).trim() || DEFAULT_PUBLIC_STORE_ORIGIN;
-  const withProtocol = /^https?:\/\//i.test(trimmedUrl) ? trimmedUrl : `https://${trimmedUrl}`;
-  return `${withProtocol.replace(/\/+$/g, '').replace(/\/store$/i, '')}/store`;
-};
 
 const getScopedStoragePart = (...values) => (
   values
@@ -315,9 +354,9 @@ const sanitizeStoreSetupDraftValues = (values = {}) => omitFileLikeValues({
   whatsappNumber: values.whatsappNumber || '',
   contactPhone: values.contactPhone || '',
   contactEmail: values.contactEmail || '',
-  primaryColor: values.primaryColor || '#166534',
+  primaryColor: normalizePrimaryColor(values.primaryColor),
   logoUrl: values.logoUrl || '',
-  bannerImageUrl: values.bannerImageUrl || '',
+  bannerImageUrl: resolveStoreBannerImageUrl(values),
   currency: resolveStoreCurrency(values.currency),
   paymentMethods: values.paymentMethods || defaultPaymentMethods,
   deliveryOptions: values.deliveryOptions || defaultDeliveryOptions,
@@ -355,6 +394,25 @@ const writeStoreSetupDraft = (storageKey, draft) => {
   }
 };
 
+const writeStoreSetupValuesDraft = ({
+  storageKey,
+  values,
+  currentStep,
+  highestStepReached,
+  introDismissed,
+  slugManuallyEdited,
+}) => {
+  writeStoreSetupDraft(storageKey, {
+    version: STORE_SETUP_DRAFT_VERSION,
+    savedAt: new Date().toISOString(),
+    values: sanitizeStoreSetupDraftValues(values),
+    currentStep,
+    highestStepReached,
+    introDismissed,
+    slugManuallyEdited,
+  });
+};
+
 const clearStoreSetupDraft = (storageKey) => {
   if (typeof window === 'undefined' || !storageKey) return;
   try {
@@ -364,17 +422,14 @@ const clearStoreSetupDraft = (storageKey) => {
   }
 };
 
-const PUBLIC_STORE_BASE_URL = getPublicStoreBaseUrl();
-const PUBLIC_STORE_DISPLAY_BASE_URL = PUBLIC_STORE_BASE_URL.replace(/^https?:\/\//i, '');
-
 const buildPublicStoreUrl = (slug) => {
   const normalizedSlug = normalizeSlug(slug) || 'store-url';
-  return `${PUBLIC_STORE_BASE_URL}/${encodeURIComponent(normalizedSlug)}`;
+  return buildStorefrontStoreUrl(normalizedSlug);
 };
 
 const getPublicStoreDisplayUrl = (slug) => {
   const normalizedSlug = normalizeSlug(slug) || 'store-url';
-  return `${PUBLIC_STORE_DISPLAY_BASE_URL}/${normalizedSlug}`;
+  return getStorefrontDisplayStoreUrl(normalizedSlug);
 };
 
 const isLikelyGeneratedSlug = (slug) => /^[a-z0-9]+(?:-[a-z0-9]+)*-[a-z0-9]{6}$/.test(slug);
@@ -386,6 +441,17 @@ const getSettledData = (result) => (result?.status === 'fulfilled' ? getResponse
 const compactString = (value) => (typeof value === 'string' ? value.trim() : '');
 
 const firstFilled = (...values) => values.map(compactString).find(Boolean) || '';
+
+const buildDefaultBannerPrompt = (values = {}) => {
+  const storeName = compactString(values.displayName) || 'my online store';
+  const category = compactString(values.category) || 'retail';
+  const description = compactString(values.description);
+  return [
+    `A clean, premium storefront banner for ${storeName}`,
+    `selling ${category.toLowerCase()}`,
+    description ? `with a warm visual feel inspired by: ${description}` : 'with welcoming product-inspired shapes',
+  ].join(', ').slice(0, BANNER_PROMPT_MAX_LENGTH);
+};
 
 const getPlainObject = (value) => (
   value && typeof value === 'object' && !Array.isArray(value) ? value : {}
@@ -435,11 +501,11 @@ const buildStoreSetupDefaults = ({ activeTenant, user, organization, profile }) 
     profile?.email,
     user?.email,
   );
-  const primaryColor = firstFilled(
+  const primaryColor = normalizePrimaryColor(firstFilled(
     organization?.primaryColor,
     tenantMetadata.primaryColor,
     tenantMetadata.brandColor,
-  ) || '#166534';
+  ));
 
   return {
     displayName,
@@ -450,11 +516,9 @@ const buildStoreSetupDefaults = ({ activeTenant, user, organization, profile }) 
       tenantMetadata.description,
       activeTenant?.description,
     ),
-    category: firstFilled(
-      tenantMetadata.storeCategory,
-      tenantMetadata.businessCategory,
-      CATEGORY_BY_BUSINESS_TYPE[activeTenant?.businessType],
-      'Other',
+    category: resolveSavedCategory(
+      firstFilled(tenantMetadata.storeCategory, tenantMetadata.businessCategory),
+      resolveBusinessCategory(activeTenant, tenantMetadata),
     ),
     whatsappNumber: firstFilled(
       tenantMetadata.whatsappNumber,
@@ -464,13 +528,8 @@ const buildStoreSetupDefaults = ({ activeTenant, user, organization, profile }) 
     contactPhone,
     contactEmail,
     primaryColor,
-    logoUrl: firstFilled(
-      organization?.logoUrl,
-      tenantMetadata.logoUrl,
-      tenantMetadata.logo,
-      activeTenant?.logoUrl,
-    ),
-    bannerImageUrl: firstFilled(tenantMetadata.bannerImageUrl, tenantMetadata.coverImageUrl),
+    logoUrl: resolveStoreLogoUrl(organization, tenantMetadata, activeTenant),
+    bannerImageUrl: resolveStoreBannerImageUrl(tenantMetadata),
     currency: CURRENCY.CODE,
     paymentMethods: defaultPaymentMethods,
     deliveryOptions: defaultDeliveryOptions,
@@ -513,6 +572,28 @@ const resolveStoreCurrency = (...values) => {
   const saved = values.map(compactString).find(Boolean);
   return saved || CURRENCY.CODE;
 };
+
+const resolveStoreBannerImageUrl = (...sources) => firstFilled(
+  ...sources.flatMap((source) => [
+    source?.bannerImageUrl,
+    source?.bannerUrl,
+    source?.heroImageUrl,
+    source?.coverImageUrl,
+  ]),
+);
+
+const resolveStoreLogoUrl = (...sources) => firstFilled(
+  ...sources.flatMap((source) => [
+    source?.logoUrl,
+    source?.logo,
+    source?.companyLogoUrl,
+    source?.companyLogo,
+    source?.businessLogoUrl,
+    source?.businessLogo,
+    source?.tenantLogoUrl,
+    source?.tenantLogo,
+  ]),
+);
 
 const resolvePaymentMethods = (savedMethods = {}, paymentCollection = null) => {
   const merged = mergeOptions(defaultPaymentMethods, savedMethods);
@@ -567,13 +648,13 @@ const mergeStoreSetupDraftValues = (baseValues = {}, draftValues = {}) => {
     displayName: firstFilled(sanitizedDraft.displayName, baseValues.displayName),
     slug: firstFilled(sanitizedDraft.slug, baseValues.slug),
     description: firstFilled(sanitizedDraft.description, baseValues.description),
-    category: firstFilled(sanitizedDraft.category, baseValues.category),
+    category: resolveSavedCategory(sanitizedDraft.category, baseValues.category),
     whatsappNumber: firstFilled(sanitizedDraft.whatsappNumber, baseValues.whatsappNumber),
     contactPhone: firstFilled(sanitizedDraft.contactPhone, baseValues.contactPhone),
     contactEmail: firstFilled(sanitizedDraft.contactEmail, baseValues.contactEmail),
-    primaryColor: firstFilled(sanitizedDraft.primaryColor, baseValues.primaryColor),
+    primaryColor: normalizePrimaryColor(firstFilled(sanitizedDraft.primaryColor, baseValues.primaryColor)),
     logoUrl: firstFilled(sanitizedDraft.logoUrl, baseValues.logoUrl),
-    bannerImageUrl: firstFilled(sanitizedDraft.bannerImageUrl, baseValues.bannerImageUrl),
+    bannerImageUrl: resolveStoreBannerImageUrl(sanitizedDraft, baseValues),
     currency: resolveStoreCurrency(sanitizedDraft.currency, baseValues.currency),
     paymentMethods: mergeOptions(baseValues.paymentMethods, sanitizedDraft.paymentMethods),
     deliveryOptions: mergeOptions(baseValues.deliveryOptions, sanitizedDraft.deliveryOptions),
@@ -677,6 +758,7 @@ const UploadField = ({
   previewClassName = 'h-32',
   previewAreaClassName,
   imageClassName,
+  actionSlot = null,
 }) => {
   const previewSrc = resolveImageUrl(value);
   return (
@@ -686,17 +768,20 @@ const UploadField = ({
         <p className="font-medium">{label}</p>
         <p className="text-sm text-muted-foreground">{description}</p>
       </div>
-      <label className="inline-flex min-h-11 cursor-pointer items-center justify-center rounded-xl border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground">
-        {uploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-        Upload
-        <input
-          type="file"
-          accept="image/*"
-          className="sr-only"
-          onChange={(event) => onUpload(event.target.files?.[0])}
-          disabled={uploading}
-        />
-      </label>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <label className="inline-flex min-h-11 cursor-pointer items-center justify-center rounded-xl border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground">
+          {uploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+          Upload
+          <input
+            type="file"
+            accept="image/*"
+            className="sr-only"
+            onChange={(event) => onUpload(event.target.files?.[0])}
+            disabled={uploading}
+          />
+        </label>
+        {actionSlot}
+      </div>
     </div>
     {previewSrc ? (
       <div className={cn('mt-4 overflow-hidden rounded-xl border border-border bg-muted/30', previewAreaClassName)}>
@@ -748,9 +833,11 @@ const StorePreview = ({
         <div className={containerClass}>
           <div className="overflow-hidden rounded-2xl border border-border bg-background">
             <div
-              className="h-28 bg-muted"
-              style={{ background: bannerSrc ? `url(${bannerSrc}) center/cover` : values.primaryColor }}
-            />
+              className="relative h-28 overflow-hidden bg-muted"
+              style={{ backgroundColor: bannerSrc ? undefined : values.primaryColor }}
+            >
+              {bannerSrc && <img src={bannerSrc} alt="" className="h-full w-full object-cover" />}
+            </div>
             <div className="p-5">
               <div className="mb-4 flex items-center gap-3">
                 <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl border border-border bg-muted">
@@ -794,6 +881,105 @@ const StorePreview = ({
         </div>
       </CardContent>
     </Card>
+  );
+};
+
+const BannerGeneratorDialog = ({
+  open,
+  onOpenChange,
+  prompt,
+  onPromptChange,
+  styleHint,
+  onStyleHintChange,
+  generatedBanner,
+  generating,
+  saving,
+  onGenerate,
+  onUseBanner,
+}) => {
+  const previewSrc = resolveImageUrl(generatedBanner?.imageUrl || generatedBanner?.bannerImageUrl);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[min(90dvh,760px)] flex-col gap-0 p-0 sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Generate banner with AI</DialogTitle>
+          <DialogDescription>
+            Describe the storefront mood you want. The generated banner can replace or supplement a manual upload.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="banner-generator-prompt">Banner prompt</Label>
+            <Textarea
+              id="banner-generator-prompt"
+              value={prompt}
+              onChange={(event) => onPromptChange(event.target.value.slice(0, BANNER_PROMPT_MAX_LENGTH))}
+              rows={5}
+              className="rounded-xl"
+              placeholder="A bright banner with product shapes, friendly shopping energy, and a clean green brand accent."
+              disabled={generating}
+            />
+            <div className="text-right text-xs text-muted-foreground">{String(prompt || '').length}/{BANNER_PROMPT_MAX_LENGTH}</div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="banner-generator-style-hint">Style or color hints (optional)</Label>
+            <Input
+              id="banner-generator-style-hint"
+              value={styleHint}
+              onChange={(event) => onStyleHintChange(event.target.value)}
+              className="h-11 rounded-xl"
+              placeholder="Modern, minimal, Ghana-inspired, use #166534 accents"
+              disabled={generating}
+            />
+          </div>
+          {previewSrc ? (
+            <div className="rounded-xl border border-border bg-muted/20 p-3">
+              <p className="mb-2 text-sm font-medium">Generated preview</p>
+              <div className="overflow-hidden rounded-xl border border-border bg-background">
+                <img src={previewSrc} alt="Generated store banner preview" className="h-40 w-full object-cover sm:h-52" />
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Generated as SVG vector artwork using your AI provider. Review before applying it to your public store.
+              </p>
+            </div>
+          ) : (
+            <div className="flex min-h-36 items-center justify-center rounded-xl border border-dashed border-border bg-muted/20 text-sm text-muted-foreground">
+              {generating ? (
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Creating banner...
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-2">
+                  <ImageIcon className="h-4 w-4" />
+                  Your generated banner preview will appear here
+                </span>
+              )}
+            </div>
+          )}
+        </DialogBody>
+        <DialogFooter>
+          <Button type="button" variant="outline" className="rounded-xl" onClick={() => onOpenChange(false)} disabled={generating}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="rounded-xl"
+            onClick={onGenerate}
+            disabled={generating || String(prompt || '').trim().length < 8}
+          >
+            {generating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+            {generatedBanner ? 'Regenerate' : 'Generate'}
+          </Button>
+          <Button type="button" className="rounded-xl" onClick={onUseBanner} disabled={generating || saving || !previewSrc}>
+            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            {saving ? 'Saving banner...' : 'Use this banner'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };
 
@@ -892,6 +1078,7 @@ const StoreSetup = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { activeTenant, user } = useAuth();
+  const isStudioStore = STUDIO_LIKE_TYPES.includes(activeTenant?.businessType);
   const initialStep = getStepIndexFromParam(searchParams.get('step'));
   const [currentStep, setCurrentStep] = useState(initialStep);
   const [highestStepReached, setHighestStepReached] = useState(initialStep);
@@ -904,6 +1091,11 @@ const StoreSetup = () => {
   const [previewMode, setPreviewMode] = useState('desktop');
   const [introDismissed, setIntroDismissed] = useState(false);
   const [activeDeliveryEditor, setActiveDeliveryEditor] = useState(null);
+  const [bannerGeneratorOpen, setBannerGeneratorOpen] = useState(false);
+  const [bannerPrompt, setBannerPrompt] = useState('');
+  const [bannerStyleHint, setBannerStyleHint] = useState('');
+  const [generatedBanner, setGeneratedBanner] = useState(null);
+  const [generatingBanner, setGeneratingBanner] = useState(false);
   const slugEditedRef = useRef(false);
   const draftInitializedRef = useRef(false);
   const {
@@ -938,6 +1130,7 @@ const StoreSetup = () => {
   });
 
   const values = form.watch();
+  const hasUnsavedChanges = form.formState.isDirty;
   const storeSetupDraftKey = useMemo(() => getStoreSetupDraftKey({ activeTenant, user }), [activeTenant, user]);
   const debouncedSlug = useDebounce(values.slug, 500);
   const slugSuggestion = useMemo(() => normalizeSlug(values.displayName), [values.displayName]);
@@ -954,6 +1147,26 @@ const StoreSetup = () => {
     }
     return current || suggested || 'store-url';
   }, [values.displayName, values.slug, slugSuggestion]);
+  const resolvedStoreSlug = useMemo(() => (
+    normalizeSlug(settings?.slug || values.slug || previewSlug)
+  ), [previewSlug, settings?.slug, values.slug]);
+  const publicStoreUrl = useMemo(() => (
+    resolvedStoreSlug ? buildPublicStoreUrl(resolvedStoreSlug) : ''
+  ), [resolvedStoreSlug]);
+  const publicApiPreviewPath = resolvedStoreSlug ? `/api/public/store/${resolvedStoreSlug}` : '';
+  const checklistItems = useMemo(() => ([
+    ['Store information', checklist?.hasBasics],
+    ['Branding', checklist?.brandingReady],
+    ['Contact details', checklist?.hasContact],
+    ['Fulfillment', checklist?.hasFulfillment],
+    ['Published listing', checklist?.hasPublishedListing],
+  ]), [
+    checklist?.brandingReady,
+    checklist?.hasBasics,
+    checklist?.hasContact,
+    checklist?.hasFulfillment,
+    checklist?.hasPublishedListing,
+  ]);
   const storeInfoSummary = useMemo(() => {
     const storeName = compactString(values.displayName);
     const category = compactString(values.category);
@@ -991,7 +1204,7 @@ const StoreSetup = () => {
         compactString(values.contactEmail)
       )
     );
-    const brandingReady = Boolean(values.primaryColor);
+    const brandingReady = isValidPrimaryColor(values.primaryColor);
     const paymentReady = PAYMENT_OPTIONS.some((option) => (
       option.available &&
       values.paymentMethods?.[option.key]?.enabled &&
@@ -1032,8 +1245,10 @@ const StoreSetup = () => {
   const showWelcomeIntro = useMemo(() => (
     !introDismissed &&
     !searchParams.has('step') &&
-    !loading
-  ), [introDismissed, loading, searchParams]);
+    !loading &&
+    !settings?.id &&
+    checklist?.hasSettings !== true
+  ), [checklist?.hasSettings, introDismissed, loading, searchParams, settings?.id]);
 
   const persistDraft = useCallback((overrides = {}) => {
     if (!draftInitializedRef.current || loading || settings?.id) return;
@@ -1140,13 +1355,21 @@ const StoreSetup = () => {
         displayName: resolvedDisplayName,
         slug: resolvedSlug,
         description: savedOrDefault(nextSettings?.description, inferredDefaults.description),
-        category: savedOrDefault(metadata.category, inferredDefaults.category),
+        category: resolveSavedCategory(metadata.category, inferredDefaults.category),
         whatsappNumber: savedOrDefault(nextSettings?.whatsappNumber, inferredDefaults.whatsappNumber),
         contactPhone: savedOrDefault(nextSettings?.contactPhone, inferredDefaults.contactPhone),
         contactEmail: savedOrDefault(nextSettings?.contactEmail, inferredDefaults.contactEmail),
-        primaryColor: savedOrDefault(nextSettings?.primaryColor, inferredDefaults.primaryColor),
-        logoUrl: savedOrDefault(nextSettings?.logoUrl, inferredDefaults.logoUrl),
-        bannerImageUrl: savedOrDefault(nextSettings?.bannerImageUrl, inferredDefaults.bannerImageUrl),
+        primaryColor: normalizePrimaryColor(savedOrDefault(nextSettings?.primaryColor, inferredDefaults.primaryColor)),
+        logoUrl: resolveStoreLogoUrl(
+          nextSettings,
+          statusData?.settings,
+          metadata,
+          organization,
+          activeTenant?.metadata,
+          activeTenant,
+          inferredDefaults,
+        ),
+        bannerImageUrl: resolveStoreBannerImageUrl(nextSettings, metadata, inferredDefaults),
         currency: resolveStoreCurrency(nextSettings?.currency, inferredDefaults.currency),
         paymentMethods: nextSettings?.id
           ? savedPaymentMethods
@@ -1297,6 +1520,20 @@ const StoreSetup = () => {
     moveToStep(step);
   }, [highestStepReached, moveToStep]);
 
+  const handleCopyApiPreview = useCallback(async () => {
+    if (!publicApiPreviewPath) {
+      showError('Set up your store URL before copying the public API path.');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(publicApiPreviewPath);
+      showSuccess('Public API path copied');
+    } catch (error) {
+      showError('Could not copy the public API path');
+    }
+  }, [publicApiPreviewPath]);
+
   const handleNext = useCallback(async () => {
     const valid = await form.trigger(getStepFields(currentStep));
     if (!valid) return;
@@ -1357,6 +1594,50 @@ const StoreSetup = () => {
     }
   }, [form]);
 
+  const handleOpenBannerGenerator = useCallback(() => {
+    setBannerPrompt(buildDefaultBannerPrompt(form.getValues()));
+    setBannerStyleHint(`Use ${form.getValues('primaryColor') || '#166534'} as the main brand accent.`);
+    setGeneratedBanner(null);
+    setBannerGeneratorOpen(true);
+  }, [form]);
+
+  const handleGenerateBanner = useCallback(async () => {
+    const prompt = compactString(bannerPrompt);
+    if (prompt.length < 8 || generatingBanner) return;
+
+    setGeneratingBanner(true);
+    try {
+      const formValues = form.getValues();
+      const response = await storeService.generateBanner({
+        prompt,
+        styleHint: bannerStyleHint,
+        storeName: formValues.displayName,
+        category: formValues.category,
+        description: formValues.description,
+        primaryColor: normalizePrimaryColor(formValues.primaryColor),
+      });
+      const data = getResponseData(response);
+      const imageUrl = data?.imageUrl || data?.bannerImageUrl;
+      if (!imageUrl) throw new Error('AI did not return a banner image');
+      setGeneratedBanner({ ...data, imageUrl });
+      const nextValues = { ...form.getValues(), bannerImageUrl: imageUrl };
+      form.setValue('bannerImageUrl', imageUrl, { shouldDirty: true, shouldValidate: true });
+      writeStoreSetupValuesDraft({
+        storageKey: storeSetupDraftKey,
+        values: nextValues,
+        currentStep,
+        highestStepReached,
+        introDismissed,
+        slugManuallyEdited: slugEditedRef.current,
+      });
+      showSuccess('AI banner generated');
+    } catch (error) {
+      showError(getErrorMessage(error, 'Failed to generate banner'));
+    } finally {
+      setGeneratingBanner(false);
+    }
+  }, [bannerPrompt, bannerStyleHint, currentStep, form, generatingBanner, highestStepReached, introDismissed, storeSetupDraftKey]);
+
   const buildPayload = useCallback((launch = false) => {
     const formValues = form.getValues();
     const resolvedSlug = slugEditedRef.current
@@ -1372,7 +1653,7 @@ const StoreSetup = () => {
       description: formValues.description || null,
       logoUrl: formValues.logoUrl || null,
       bannerImageUrl: formValues.bannerImageUrl || null,
-      primaryColor: formValues.primaryColor,
+      primaryColor: normalizePrimaryColor(formValues.primaryColor),
       contactPhone: formValues.contactPhone || null,
       whatsappNumber: formValues.whatsappNumber || null,
       contactEmail: formValues.contactEmail || null,
@@ -1385,6 +1666,7 @@ const StoreSetup = () => {
       metadata: {
         ...(settings?.metadata || {}),
         category: formValues.category || null,
+        bannerImageUrl: formValues.bannerImageUrl || null,
         slugManuallyEdited: slugEditedRef.current,
         paymentMethods: formValues.paymentMethods,
         deliveryOptions: formValues.deliveryOptions,
@@ -1401,15 +1683,53 @@ const StoreSetup = () => {
     };
   }, [currentStep, form, settings, setupProgress, stepCompletion]);
 
+  const handleUseGeneratedBanner = useCallback(async () => {
+    const imageUrl = generatedBanner?.imageUrl || generatedBanner?.bannerImageUrl;
+    if (!imageUrl || saving) return;
+    const nextValues = { ...form.getValues(), bannerImageUrl: imageUrl };
+    form.setValue('bannerImageUrl', imageUrl, { shouldDirty: true, shouldValidate: true });
+    writeStoreSetupValuesDraft({
+      storageKey: storeSetupDraftKey,
+      values: nextValues,
+      currentStep,
+      highestStepReached,
+      introDismissed,
+      slugManuallyEdited: slugEditedRef.current,
+    });
+    setSaving(true);
+    try {
+      const response = await storeService.updateSettings(buildPayload(false));
+      const savedSettings = getResponseData(response);
+      clearStoreSetupDraft(storeSetupDraftKey);
+      setSettings(savedSettings);
+      setBannerGeneratorOpen(false);
+      showSuccess('AI banner saved');
+      await loadStore();
+    } catch (error) {
+      showError(getErrorMessage(error, 'Failed to save AI banner'));
+    } finally {
+      setSaving(false);
+    }
+  }, [
+    buildPayload,
+    currentStep,
+    form,
+    generatedBanner,
+    highestStepReached,
+    introDismissed,
+    loadStore,
+    saving,
+    storeSetupDraftKey,
+  ]);
+
   const saveStore = useCallback(async (launch = false) => {
     if (launch) {
       const valid = await form.trigger();
       if (!valid || !readiness.launchReady) return;
     } else {
-      writeStoreSetupDraft(storeSetupDraftKey, {
-        version: STORE_SETUP_DRAFT_VERSION,
-        savedAt: new Date().toISOString(),
-        values: sanitizeStoreSetupDraftValues(form.getValues()),
+      writeStoreSetupValuesDraft({
+        storageKey: storeSetupDraftKey,
+        values: form.getValues(),
         currentStep,
         highestStepReached,
         introDismissed,
@@ -1470,7 +1790,7 @@ const StoreSetup = () => {
               <FormControl>
                 <div className="flex min-h-12 overflow-hidden rounded-xl border border-input bg-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
                   <span className="flex items-center whitespace-nowrap border-r border-border bg-muted px-3 text-sm text-muted-foreground">
-                    {PUBLIC_STORE_DISPLAY_BASE_URL}/
+                    {getStorefrontDisplayBaseUrl()}/
                   </span>
                   <Input
                     {...field}
@@ -1595,6 +1915,17 @@ const StoreSetup = () => {
                 onUpload={(file) => handleAssetUpload('bannerImageUrl', file)}
                 uploading={uploadingField === 'bannerImageUrl'}
                 previewClassName="h-36 sm:h-40"
+                actionSlot={(
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11 rounded-xl"
+                    onClick={handleOpenBannerGenerator}
+                  >
+                    <Sparkles className="mr-2 h-4 w-4" />
+                    Generate with AI
+                  </Button>
+                )}
               />
               <FormMessage />
             </FormItem>
@@ -1621,7 +1952,17 @@ const StoreSetup = () => {
                   </button>
                 ))}
               </div>
-              <FormControl><Input type="color" className="mt-3 h-11 w-24 rounded-xl p-1" {...field} /></FormControl>
+              <FormControl>
+                <Input
+                  type="color"
+                  className="mt-3 h-11 w-24 rounded-xl p-1"
+                  value={normalizePrimaryColor(field.value)}
+                  onChange={(event) => field.onChange(event.target.value)}
+                  onBlur={field.onBlur}
+                  name={field.name}
+                  ref={field.ref}
+                />
+              </FormControl>
               <FormMessage />
             </FormItem>
           )} />
@@ -1696,10 +2037,10 @@ const StoreSetup = () => {
           <FormField control={form.control} name="currency" render={({ field }) => (
             <FormItem className="rounded-xl border border-border bg-muted/20 p-4">
               <FormLabel>Currency</FormLabel>
-              <Select value={field.value} onValueChange={field.onChange}>
+              <Select value={resolveStoreCurrency(field.value)} onValueChange={(value) => field.onChange(resolveStoreCurrency(value))}>
                 <FormControl>
                   <SelectTrigger className="h-12 rounded-xl bg-background">
-                    <SelectValue />
+                    <SelectValue placeholder="GHS - Ghanaian Cedi" />
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
@@ -1718,7 +2059,7 @@ const StoreSetup = () => {
                   {method}
                 </Badge>
               ))}
-              <Badge variant="outline" className="rounded-full px-3 py-1">Currency: {values.currency}</Badge>
+              <Badge variant="outline" className="rounded-full px-3 py-1">Currency: {resolveStoreCurrency(values.currency)}</Badge>
             </div>
           </div>
           {!readiness.paymentReady && (
@@ -1934,6 +2275,7 @@ const StoreSetup = () => {
     enabledPaymentMethods,
     form.control,
     handleAssetUpload,
+    handleOpenBannerGenerator,
     handleOpenDeliveryEditor,
     handleOptionToggle,
     handleStepClick,
@@ -1978,6 +2320,76 @@ const StoreSetup = () => {
         </div>
       </div>
 
+      {settings?.id && (
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+          <Card className="border border-border">
+            <CardHeader>
+              <CardTitle>Live store actions</CardTitle>
+              <p className="text-sm text-muted-foreground">Quick links for managing the storefront after launch.</p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {publicStoreUrl && (
+                <div className="rounded-xl border border-border bg-muted/30 p-4">
+                  <p className="text-sm font-medium">Public store link</p>
+                  <p className="mt-1 break-all text-sm text-muted-foreground">{publicStoreUrl}</p>
+                </div>
+              )}
+
+              {publicApiPreviewPath && (
+                <div className="rounded-xl border border-border bg-muted/30 p-4">
+                  <p className="text-sm font-medium">Public API preview</p>
+                  <code className="mt-1 block break-all text-sm text-muted-foreground">{publicApiPreviewPath}</code>
+                  <Button type="button" variant="outline" className="mt-3 w-full bg-background" onClick={handleCopyApiPreview}>
+                    <Copy className="mr-2 h-4 w-4" />
+                    Copy API path
+                  </Button>
+                </div>
+              )}
+
+              <div className="grid gap-2 sm:grid-cols-3">
+                {publicStoreUrl && (
+                  <Button variant="outline" className="justify-start bg-background" asChild>
+                    <a href={publicStoreUrl} target="_blank" rel="noreferrer">
+                      <ExternalLink className="mr-2 h-4 w-4" />
+                      Public store
+                    </a>
+                  </Button>
+                )}
+                {!isStudioStore ? (
+                  <Button variant="outline" className="justify-start bg-background" asChild>
+                    <Link to="/store/orders">
+                      <ShoppingBag className="mr-2 h-4 w-4" />
+                      Online orders
+                    </Link>
+                  </Button>
+                ) : null}
+                <Button className="justify-start" asChild>
+                  <Link to={isStudioStore ? '/store/services' : '/store/listings'}>
+                    <Package className="mr-2 h-4 w-4" />
+                    {isStudioStore ? 'Manage services' : 'Manage listings'}
+                  </Link>
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border border-border">
+            <CardHeader>
+              <CardTitle>Launch checklist</CardTitle>
+              <p className="text-sm text-muted-foreground">Setup completion reference for this store.</p>
+            </CardHeader>
+            <CardContent className="grid gap-3">
+              {checklistItems.map(([label, done]) => (
+                <div key={label} className="flex items-center justify-between rounded-lg border border-border p-3">
+                  <span className="text-sm font-medium">{label}</span>
+                  <Badge variant={done ? 'default' : 'outline'}>{done ? 'Done' : 'Needed'}</Badge>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       <Stepper
         currentStep={currentStep}
         completion={stepCompletion}
@@ -2007,45 +2419,54 @@ const StoreSetup = () => {
               <Form {...form}>
                 <form className="space-y-6" onSubmit={(event) => event.preventDefault()}>
                   {stepContent}
-                  <div className={cn(
-                    'grid gap-3 border-t border-border pt-5 sm:flex sm:flex-row sm:items-center sm:justify-between',
-                    currentStep === 0 ? 'grid-cols-1' : 'grid-cols-2',
-                  )}
-                  >
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className={cn('h-12 rounded-xl sm:h-10', currentStep === 0 && 'hidden sm:inline-flex')}
-                      onClick={handleBack}
-                      disabled={currentStep === 0 || saving}
-                    >
-                      <ChevronLeft className="mr-2 h-4 w-4" />
-                      Back
-                    </Button>
-                    <div className="contents sm:flex sm:gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="hidden h-10 rounded-xl sm:inline-flex"
-                        onClick={() => saveStore(false)}
-                        disabled={saving}
-                      >
-                        {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                        Save as Draft
-                      </Button>
-                      {currentStep < STEPS.length - 1 ? (
-                        <Button type="button" className="h-12 rounded-xl sm:h-10" onClick={handleNext} disabled={saving}>
-                          Continue
-                          <ChevronRight className="ml-2 h-4 w-4" />
-                        </Button>
-                      ) : (
-                        <Button type="button" className="h-12 rounded-xl sm:h-10" onClick={() => saveStore(true)} disabled={saving || !readiness.launchReady}>
-                          {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
-                          Launch Store
-                        </Button>
-                      )}
-                    </div>
-                  </div>
+        <div className={cn(
+          'grid gap-3 border-t border-border pt-5 sm:flex sm:flex-row sm:items-center sm:justify-between',
+          currentStep === 0 ? 'grid-cols-1' : 'grid-cols-2',
+        )}
+        >
+          <Button
+            type="button"
+            variant="outline"
+            className={cn('h-12 rounded-xl sm:h-10', currentStep === 0 && 'hidden sm:inline-flex')}
+            onClick={handleBack}
+            disabled={currentStep === 0 || saving}
+          >
+            <ChevronLeft className="mr-2 h-4 w-4" />
+            Back
+          </Button>
+          <div className="contents sm:flex sm:gap-2">
+            {(!settings?.enabled || hasUnsavedChanges) && (
+              <Button
+                type="button"
+                variant="outline"
+                className="hidden h-10 rounded-xl sm:inline-flex"
+                onClick={() => saveStore(false)}
+                disabled={saving}
+              >
+                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                {settings?.enabled ? 'Save changes' : 'Save as Draft'}
+              </Button>
+            )}
+            {currentStep < STEPS.length - 1 ? (
+              <Button type="button" className="h-12 rounded-xl sm:h-10" onClick={handleNext} disabled={saving}>
+                Continue
+                <ChevronRight className="ml-2 h-4 w-4" />
+              </Button>
+            ) : settings?.enabled ? (
+              <Button type="button" className="h-12 rounded-xl sm:h-10" asChild>
+                <Link to="/store/dashboard">
+                  <Check className="mr-2 h-4 w-4" />
+                  Back to Dashboard
+                </Link>
+              </Button>
+            ) : (
+              <Button type="button" className="h-12 rounded-xl sm:h-10" onClick={() => saveStore(true)} disabled={saving || !readiness.launchReady}>
+                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
+                Launch Store
+              </Button>
+            )}
+          </div>
+        </div>
                 </form>
               </Form>
             )}
@@ -2072,6 +2493,19 @@ const StoreSetup = () => {
         }}
         form={form}
         onSaved={handleDeliveryEditorSaved}
+      />
+      <BannerGeneratorDialog
+        open={bannerGeneratorOpen}
+        onOpenChange={setBannerGeneratorOpen}
+        prompt={bannerPrompt}
+        onPromptChange={setBannerPrompt}
+        styleHint={bannerStyleHint}
+        onStyleHintChange={setBannerStyleHint}
+        generatedBanner={generatedBanner}
+        generating={generatingBanner}
+        saving={saving}
+        onGenerate={handleGenerateBanner}
+        onUseBanner={handleUseGeneratedBanner}
       />
     </div>
   );

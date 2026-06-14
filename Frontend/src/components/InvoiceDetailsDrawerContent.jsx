@@ -68,6 +68,23 @@ function formatPaymentMethod(value) {
     .join(' ');
 }
 
+function getItemProductCode(item) {
+  return String(
+    item?.metadata?.productCode
+      || item?.productCode
+      || item?.code
+      || item?.metadata?.barcode
+      || item?.barcode
+      || item?.sku
+      || item?.metadata?.sku
+      || item?.variant?.barcode
+      || item?.product?.barcode
+      || item?.variant?.sku
+      || item?.product?.sku
+      || ''
+  ).trim();
+}
+
 /**
  * Mobile-first invoice details layout for DetailsDrawer (section cards per design mock).
  * @param {{ invoice: object, showJobDetails?: boolean }} props
@@ -162,6 +179,7 @@ function InvoiceDetailsDrawerContent({ invoice, showJobDetails = true }) {
                   return null;
                 }
                 const lineTotal = parseFloat(item.total || item.unitPrice * (item.quantity || 1) || 0);
+                const productCode = getItemProductCode(item);
                 return (
                   <li
                     key={item.id ?? `${item.description}-${index}`}
@@ -171,8 +189,15 @@ function InvoiceDetailsDrawerContent({ invoice, showJobDetails = true }) {
                       <span className="shrink-0 text-xs font-medium tabular-nums text-muted-foreground">
                         {String(index + 1).padStart(2, '0')}
                       </span>
-                      <span className="text-sm text-foreground">
-                        {item.description || item.category || 'Item'}
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm text-foreground">
+                          {item.description || item.category || 'Item'}
+                        </span>
+                        {productCode && (
+                          <span className="block truncate text-xs text-muted-foreground">
+                            Code: {productCode}
+                          </span>
+                        )}
                       </span>
                     </div>
                     <span className="shrink-0 text-sm font-semibold text-foreground">

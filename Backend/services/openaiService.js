@@ -34,6 +34,108 @@ async function requireAnthropic(options = {}) {
   return client;
 }
 
+const STORE_BANNER_WIDTH = 1600;
+const STORE_BANNER_HEIGHT = 500;
+const STORE_BANNER_PROMPT_MAX_LENGTH = 500;
+
+const stripMarkdownFence = (value = '') => String(value || '')
+  .trim()
+  .replace(/^```(?:svg|xml)?\s*/i, '')
+  .replace(/```$/i, '')
+  .trim();
+
+const extractSvgMarkup = (value = '') => {
+  const text = stripMarkdownFence(value);
+  const match = text.match(/<svg[\s\S]*<\/svg>/i);
+  return match ? match[0].trim() : '';
+};
+
+const sanitizeGeneratedSvg = (value = '') => {
+  const svg = extractSvgMarkup(value);
+  if (!svg || !/^<svg[\s>]/i.test(svg)) {
+    const error = new Error('AI did not return a valid banner image');
+    error.code = 'AI_IMAGE_INVALID_OUTPUT';
+    throw error;
+  }
+
+  const sanitized = svg
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*(['"]).*?\1/gi, '')
+    .replace(/\s(?:href|xlink:href)\s*=\s*(['"])\s*(?:javascript:|https?:\/\/|\/\/).*?\1/gi, '')
+    .replace(/<svg\b([^>]*)>/i, (_match, attrs = '') => {
+      const cleanedAttrs = attrs.replace(/\s(?:width|height|viewBox|xmlns|role|aria-label)\s*=\s*(['"]).*?\1/gi, '');
+      return `<svg${cleanedAttrs} width="${STORE_BANNER_WIDTH}" height="${STORE_BANNER_HEIGHT}" viewBox="0 0 ${STORE_BANNER_WIDTH} ${STORE_BANNER_HEIGHT}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Generated online store banner">`;
+    });
+
+  if (!/^<svg[\s>]/i.test(sanitized) || !/<\/svg>$/i.test(sanitized)) {
+    const error = new Error('AI returned unsafe banner image markup');
+    error.code = 'AI_IMAGE_INVALID_OUTPUT';
+    throw error;
+  }
+
+  return sanitized;
+};
+
+/**
+ * Generate an online storefront banner as SVG using the same Anthropic
+ * integration that powers Ask AI. Anthropic is text-only, so this produces
+ * branded vector artwork rather than photorealistic raster imagery.
+ * @param {Object} options
+ * @returns {Promise<{ svg: string, provider: string, model: string, format: string }>}
+ */
+const generateStoreBannerSvg = async ({
+  prompt,
+  styleHint = '',
+  colorHint = '',
+  storeName = '',
+  category = '',
+  description = '',
+  businessType = 'shop',
+  tenantId = null
+} = {}) => {
+  const safePrompt = String(prompt || '').trim().slice(0, STORE_BANNER_PROMPT_MAX_LENGTH);
+  if (safePrompt.length < 8) {
+    const error = new Error('Describe the banner you want in at least 8 characters');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const model = 'claude-sonnet-4-5-20250929';
+  const anthropic = await requireAnthropic({ tenantId });
+  const system = `You create safe SVG storefront banner artwork for African Business Suite.
+Return only a single complete SVG. No markdown, no commentary, no scripts, no external images, no foreignObject, no embedded fonts, no clickable links.
+Canvas: ${STORE_BANNER_WIDTH}x${STORE_BANNER_HEIGHT}. Use flat vector design with simple shapes, gradients, patterns, and optional short readable text. Do not imitate protected brands or include real people.`;
+  const userPrompt = `Create a polished online storefront hero/banner SVG.
+
+Store name: ${String(storeName || 'Online store').slice(0, 120)}
+Business type: ${String(businessType || 'shop').slice(0, 80)}
+Category: ${String(category || 'General retail').slice(0, 120)}
+Description: ${String(description || '').slice(0, 300)}
+Requested banner: ${safePrompt}
+Style hint: ${String(styleHint || 'clean, modern, welcoming, premium').slice(0, 180)}
+Color hint: ${String(colorHint || 'use the store brand color tastefully').slice(0, 120)}
+
+Make it appropriate for a public ecommerce storefront, with good contrast and no explicit, hateful, violent, political, medical diagnosis, alcohol, gambling, or adult content.`;
+
+  const completion = await anthropic.messages.create({
+    model,
+    max_tokens: 3500,
+    temperature: 0.7,
+    system,
+    messages: [{ role: 'user', content: userPrompt }]
+  });
+  const rawText = completion.content?.find((b) => b.type === 'text')?.text?.trim() || '';
+  return {
+    svg: sanitizeGeneratedSvg(rawText),
+    provider: 'anthropic',
+    model,
+    format: 'svg',
+    width: STORE_BANNER_WIDTH,
+    height: STORE_BANNER_HEIGHT
+  };
+};
+
 /**
  * Normalize parsed AI JSON into the Smart Report analysis shape.
  * @param {Object} aiResponse
@@ -427,5 +529,6 @@ module.exports = {
   analyzeReportData,
   generateExecutiveSummary,
   chatWithContext,
-  draftAutomationRule
+  draftAutomationRule,
+  generateStoreBannerSvg
 };

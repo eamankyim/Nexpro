@@ -673,7 +673,18 @@ const Leads = () => {
       label: 'Source',
       render: (_, record) => {
         const matched = leadSourceOptions.find((option) => option.value === record.source);
-        return matched ? matched.label : record.source || '—';
+        const label = matched ? matched.label : record.source || '—';
+        if (record.source === 'marketplace') {
+          return (
+            <div className="space-y-1">
+              <Badge variant="outline" className="border-green-200 bg-green-50 text-green-800">Sabito marketplace</Badge>
+              {record.metadata?.serviceTitle ? (
+                <p className="text-xs text-muted-foreground">{record.metadata.serviceTitle}</p>
+              ) : null}
+            </div>
+          );
+        }
+        return label;
       }
     },
     {
@@ -821,6 +832,16 @@ const Leads = () => {
                 <DescriptionItem label="Source">
                   <span className="text-foreground">{viewingLead.source || '—'}</span>
                 </DescriptionItem>
+                {viewingLead.metadata?.serviceTitle ? (
+                  <DescriptionItem label="Requested service">
+                    <span className="text-foreground">{viewingLead.metadata.serviceTitle}</span>
+                  </DescriptionItem>
+                ) : null}
+                {viewingLead.metadata?.requestMessage ? (
+                  <DescriptionItem label="Customer message">
+                    <span className="text-foreground">{viewingLead.metadata.requestMessage}</span>
+                  </DescriptionItem>
+                ) : null}
                 <DescriptionItem label="Assigned To">
                   <span className="text-foreground">{viewingLead.assignee?.name || 'Unassigned'}</span>
                 </DescriptionItem>

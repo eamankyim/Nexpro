@@ -1,0 +1,89 @@
+<svg width="1600" height="500" viewBox="0 0 1600 500" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Generated online store banner">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f8f9fa;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#e9ecef;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#2a9d8f;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#264653;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="warmGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#e76f51;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#f4a261;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="1600" height="500" fill="url(#bgGrad)"/>
+  
+  <!-- Decorative circles pattern -->
+  <circle cx="150" cy="100" r="80" fill="#2a9d8f" opacity="0.1"/>
+  <circle cx="1450" cy="400" r="100" fill="#e76f51" opacity="0.1"/>
+  <circle cx="1500" cy="80" r="60" fill="#f4a261" opacity="0.15"/>
+  
+  <!-- Shopping basket icon -->
+  <g transform="translate(200, 180)">
+    <path d="M 0 40 L 10 0 L 90 0 L 100 40 Z" fill="url(#accentGrad)"/>
+    <rect x="0" y="40" width="100" height="60" rx="5" fill="url(#accentGrad)"/>
+    <rect x="10" y="50" width="80" height="40" fill="#fff" opacity="0.2"/>
+    <circle cx="25" cy="110" r="8" fill="#264653"/>
+    <circle cx="75" cy="110" r="8" fill="#264653"/>
+  </g>
+  
+  <!-- Fresh produce icons -->
+  <g transform="translate(350, 200)">
+    <!-- Apple -->
+    <circle cx="0" cy="20" r="25" fill="#e76f51"/>
+    <path d="M 0 -5 Q -5 -10 -3 -15 Q 0 -12 3 -15 Q 5 -10 0 -5" fill="#2a9d8f"/>
+  </g>
+  
+  <g transform="translate(450, 210)">
+    <!-- Bottle -->
+    <rect x="-10" y="0" width="20" height="50" rx="3" fill="#2a9d8f" opacity="0.7"/>
+    <rect x="-8" y="-8" width="16" height="10" rx="2" fill="#264653"/>
+    <rect x="-6" y="10" width="12" height="3" fill="#fff" opacity="0.3"/>
+  </g>
+  
+  <g transform="translate(550, 215)">
+    <!-- Box/Package -->
+    <rect x="-20" y="0" width="40" height="40" fill="#f4a261"/>
+    <path d="M -20 0 L 0 -10 L 20 0 L 0 10 Z" fill="#e76f51"/>
+    <line x1="0" y1="-10" x2="0" y2="40" stroke="#264653" stroke-width="2"/>
+  </g>
+  
+  <!-- Main text container -->
+  <g transform="translate(800, 250)">
+    <text x="0" y="0" font-family="Arial, sans-serif" font-size="72" font-weight="bold" fill="#264653">
+      Nexus Ent
+    </text>
+    <text x="0" y="50" font-family="Arial, sans-serif" font-size="28" fill="#2a9d8f" font-weight="600">
+      Your Neighborhood Store
+    </text>
+    <text x="0" y="90" font-family="Arial, sans-serif" font-size="20" fill="#6c757d">
+      Quality Groceries • Fresh Products • Everyday Essentials
+    </text>
+  </g>
+  
+  <!-- Decorative elements right side -->
+  <g transform="translate(1350, 200)">
+    <!-- Shopping bag -->
+    <path d="M 20 20 L 10 100 L 90 100 L 80 20 Z" fill="url(#warmGrad)"/>
+    <path d="M 30 20 Q 30 0 50 0 Q 70 0 70 20" fill="none" stroke="#264653" stroke-width="3"/>
+    <rect x="25" y="40" width="50" height="3" fill="#fff" opacity="0.4"/>
+    <rect x="25" y="55" width="50" height="3" fill="#fff" opacity="0.4"/>
+  </g>
+  
+  <!-- Accent shapes -->
+  <rect x="100" y="450" width="200" height="8" rx="4" fill="#2a9d8f" opacity="0.3"/>
+  <rect x="1300" y="450" width="200" height="8" rx="4" fill="#e76f51" opacity="0.3"/>
+  
+  <!-- Small decorative dots -->
+  <circle cx="700" cy="120" r="5" fill="#2a9d8f" opacity="0.4"/>
+  <circle cx="730" cy="110" r="4" fill="#e76f51" opacity="0.4"/>
+  <circle cx="755" cy="125" r="6" fill="#f4a261" opacity="0.4"/>
+  
+  <circle cx="1100" cy="380" r="5" fill="#2a9d8f" opacity="0.4"/>
+  <circle cx="1130" cy="390" r="4" fill="#e76f51" opacity="0.4"/>
+  <circle cx="1155" cy="375" r="6" fill="#f4a261" opacity="0.4"/>
+</svg>

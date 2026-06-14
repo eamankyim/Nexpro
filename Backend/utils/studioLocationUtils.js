@@ -137,17 +137,16 @@ const applyStudioLocationFilter = (req, where = {}) => {
  * @param {object} req
  * @param {object} [where]
  */
+const { appendWhereOrGroup } = require('./sequelizeWhereUtils');
+
 const applyStudioLocationReadFilter = (req, where = {}) => {
   if (!req.studioLocationScoped) return where;
 
   if (req.studioLocationFilterId) {
-    return {
-      ...where,
-      [Op.or]: [
-        { studioLocationId: req.studioLocationFilterId },
-        { studioLocationId: null },
-      ],
-    };
+    return appendWhereOrGroup(where, [
+      { studioLocationId: req.studioLocationFilterId },
+      { studioLocationId: null },
+    ]);
   }
 
   if (req.canAccessAllStudioLocations) {
@@ -155,13 +154,10 @@ const applyStudioLocationReadFilter = (req, where = {}) => {
   }
 
   if (req.allowedStudioLocationIds?.length) {
-    return {
-      ...where,
-      [Op.or]: [
-        { studioLocationId: { [Op.in]: req.allowedStudioLocationIds } },
-        { studioLocationId: null },
-      ],
-    };
+    return appendWhereOrGroup(where, [
+      { studioLocationId: { [Op.in]: req.allowedStudioLocationIds } },
+      { studioLocationId: null },
+    ]);
   }
 
   return where;

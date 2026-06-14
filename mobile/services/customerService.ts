@@ -21,6 +21,14 @@ export type CustomerPayload = {
   referralName?: string;
 };
 
+export type CustomerActivityPayload = {
+  type?: 'call' | 'email' | 'meeting' | 'note' | 'task';
+  subject?: string;
+  notes?: string;
+  nextStep?: string;
+  followUpDate?: string;
+};
+
 export const customerService = {
   getCustomers: async (params: CustomerParams = {}) => {
     const query = await buildScopedQueryString(params);
@@ -52,6 +60,23 @@ export const customerService = {
   updateCustomer: async (id: string, data: Partial<CustomerPayload>) => {
     const res = await api.put(`/customers/${id}`, data);
     // Backend returns: { success: true, data: {...} }
+    return res.data;
+  },
+
+  getActivities: async (id: string) => {
+    const res = await api.get(`/customers/${id}/activities`);
+    // Backend returns: { success: true, data: [...] }
+    return res.data;
+  },
+
+  addActivity: async (id: string, data: CustomerActivityPayload) => {
+    const res = await api.post(`/customers/${id}/activities`, data);
+    // Backend returns: { success: true, data: {...} }
+    return res.data;
+  },
+
+  deleteCustomer: async (id: string) => {
+    const res = await api.delete(`/customers/${id}`);
     return res.data;
   },
 

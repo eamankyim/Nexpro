@@ -5,6 +5,9 @@ const {
   JobItem,
   Payment,
   Sale,
+  SaleItem,
+  Product,
+  ProductVariant,
   Prescription,
   Tenant,
   Setting,
@@ -44,6 +47,7 @@ const {
   resolveDocumentOrganization,
   organizationToEmailCompany,
 } = require('../utils/documentOrganizationUtils');
+const { resolveBusinessType } = require('../config/businessTypes');
 
 const branchManagerInclude = () => ({
   model: User,
@@ -129,9 +133,107 @@ const companyFromInvoice = async (invoice) => {
   return organizationToEmailCompany(org);
 };
 
+const plainRecord = (record) => (
+  typeof record?.get === 'function' ? record.get({ plain: true }) : record
+);
+
+const pickTrimmed = (...values) => (
+  values
+    .map((value) => (value == null ? '' : String(value).trim()))
+    .find(Boolean) || ''
+);
+
+const getInvoiceItemOwnProductCode = (item) => pickTrimmed(
+  item?.metadata?.productCode,
+  item?.productCode,
+  item?.code,
+  item?.metadata?.barcode,
+  item?.barcode,
+  item?.sku,
+  item?.metadata?.sku
+);
+
+const getInvoiceItemProductCode = ({ item, saleItem, product, variant }) => pickTrimmed(
+  getInvoiceItemOwnProductCode(item),
+  saleItem?.metadata?.productCode,
+  saleItem?.productCode,
+  variant?.barcode,
+  product?.barcode,
+  saleItem?.sku,
+  variant?.sku,
+  product?.sku
+);
+
+const hydrateInvoiceItemProductCodes = async (invoice, items) => {
+  if (!Array.isArray(items) || items.length === 0) return items;
+
+  const needsSaleItemFallback = invoice.saleId && items.some((item) => !getInvoiceItemOwnProductCode(item));
+  const saleItems = needsSaleItemFallback
+    ? (await SaleItem.findAll({
+        where: { saleId: invoice.saleId },
+        order: [['createdAt', 'ASC']],
+        include: [
+          { model: Product, as: 'product', attributes: ['id', 'sku', 'barcode'], required: false },
+          { model: ProductVariant, as: 'variant', attributes: ['id', 'sku', 'barcode', 'productId'], required: false },
+        ],
+      })).map(plainRecord)
+    : [];
+
+  const productIds = new Set();
+  const variantIds = new Set();
+  items.forEach((item, index) => {
+    const saleItem = saleItems[index] || {};
+    if (item?.productId || item?.metadata?.productId || saleItem.productId) {
+      productIds.add(item.productId || item.metadata?.productId || saleItem.productId);
+    }
+    if (item?.productVariantId || item?.metadata?.productVariantId || saleItem.productVariantId) {
+      variantIds.add(item.productVariantId || item.metadata?.productVariantId || saleItem.productVariantId);
+    }
+  });
+
+  const [products, variants] = await Promise.all([
+    productIds.size
+      ? Product.findAll({
+          where: applyTenantFilter(invoice.tenantId, { id: { [Op.in]: [...productIds] } }),
+          attributes: ['id', 'sku', 'barcode'],
+        })
+      : [],
+    variantIds.size
+      ? ProductVariant.findAll({
+          where: { id: { [Op.in]: [...variantIds] } },
+          attributes: ['id', 'sku', 'barcode', 'productId'],
+        })
+      : [],
+  ]);
+  const productsById = new Map(products.map((product) => [product.id, plainRecord(product)]));
+  const variantsById = new Map(variants.map((variant) => [variant.id, plainRecord(variant)]));
+
+  return items.map((rawItem, index) => {
+    const item = rawItem && typeof rawItem === 'object' ? { ...rawItem } : rawItem;
+    if (!item || typeof item !== 'object') return item;
+
+    const saleItem = saleItems[index] || {};
+    const productId = item.productId || item.metadata?.productId || saleItem.productId || null;
+    const productVariantId = item.productVariantId || item.metadata?.productVariantId || saleItem.productVariantId || null;
+    const product = productsById.get(productId) || saleItem.product || null;
+    const variant = variantsById.get(productVariantId) || saleItem.variant || null;
+    const productCode = getInvoiceItemProductCode({ item, saleItem, product, variant });
+    const sku = pickTrimmed(item.sku, item.metadata?.sku, saleItem.sku, variant?.sku, product?.sku);
+
+    return {
+      ...item,
+      ...(productId && !item.productId ? { productId } : {}),
+      ...(productVariantId && !item.productVariantId ? { productVariantId } : {}),
+      ...(sku && !item.sku ? { sku } : {}),
+      ...(productCode ? { productCode } : {}),
+    };
+  });
+};
+
 const invoiceToResponsePayload = async (invoice) => {
   if (!invoice) return null;
   const payload = typeof invoice.toJSON === 'function' ? invoice.toJSON() : { ...invoice };
+  payload.items = await hydrateInvoiceItemProductCodes(invoice, payload.items);
   payload.organization = await resolveInvoiceOrganization(invoice);
   return payload;
 };
@@ -341,6 +443,50 @@ const logInvoiceDelivery = (event, context, extra = {}, level = 'log') => {
   });
 };
 
+const getInvoiceSourceVisibility = (businessType) => {
+  if (businessType === 'studio') return ['job', 'quote', null];
+  if (businessType === 'shop') return ['sale', 'quote'];
+  if (businessType === 'pharmacy') return ['prescription', 'sale'];
+  return ['all'];
+};
+
+const summarizeInvoiceListFilters = (req, page, limit, offset) => {
+  const businessType = resolveBusinessType(req.tenant?.businessType);
+  return {
+    tenantId: req.tenantId,
+    userId: req.user?.id || null,
+    role: getEffectiveTenantRole(req),
+    businessType,
+    sourceVisibility: getInvoiceSourceVisibility(businessType),
+    requestedSourceType: req.query?.sourceType || null,
+    status: req.query?.status || null,
+    hasSearch: !!req.query?.search,
+    customerId: req.query?.customerId || null,
+    jobId: req.query?.jobId || null,
+    saleId: req.query?.saleId || null,
+    prescriptionId: req.query?.prescriptionId || null,
+    shopScoped: !!req.shopScoped,
+    requestedShopId: req.query?.shopId || req.headers?.['x-shop-id'] || null,
+    shopFilterId: req.shopFilterId || null,
+    defaultShopId: req.defaultShopId || null,
+    canAccessAllShops: !!req.canAccessAllShops,
+    studioLocationScoped: !!req.studioLocationScoped,
+    requestedStudioLocationId: req.query?.studioLocationId || req.headers?.['x-studio-location-id'] || null,
+    studioLocationFilterId: req.studioLocationFilterId || null,
+    defaultStudioLocationId: req.defaultStudioLocationId || null,
+    canAccessAllStudioLocations: !!req.canAccessAllStudioLocations,
+    page,
+    limit,
+    offset,
+  };
+};
+
+const logInvoiceListDebug = (event, data) => {
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[InvoiceList]', event, data);
+  }
+};
+
 // Helper function to generate invoice number
 const generateInvoiceNumber = async (tenantId) => {
   const date = new Date();
@@ -376,14 +522,13 @@ const generateInvoiceNumber = async (tenantId) => {
 const buildInvoiceVisibilityWhere = async (req) => {
   const where = applyTenantFilter(req.tenantId, {});
 
-  const { resolveBusinessType } = require('../config/businessTypes');
   const resolved = resolveBusinessType(req.tenant?.businessType);
   if (resolved === 'studio') {
     where[Op.or] = [{ sourceType: 'job' }, { sourceType: 'quote' }, { sourceType: null }];
   } else if (resolved === 'shop') {
     where[Op.or] = [{ sourceType: 'sale' }, { sourceType: 'quote' }];
   } else if (resolved === 'pharmacy') {
-    where.sourceType = 'prescription';
+    where[Op.or] = [{ sourceType: 'prescription' }, { sourceType: 'sale' }];
   }
 
   if (getEffectiveTenantRole(req) === 'staff') {
@@ -505,6 +650,9 @@ exports.getInvoices = async (req, res, next) => {
     const saleId = req.query.saleId;
     const prescriptionId = req.query.prescriptionId;
     const sourceType = req.query.sourceType;
+    const listLogContext = summarizeInvoiceListFilters(req, page, limit, offset);
+
+    logInvoiceListDebug('GET /api/invoices start', listLogContext);
 
     const where = await buildInvoiceVisibilityWhere(req);
 
@@ -525,6 +673,18 @@ exports.getInvoices = async (req, res, next) => {
     if (saleId) where.saleId = saleId;
     if (prescriptionId) where.prescriptionId = prescriptionId;
     if (sourceType) where.sourceType = sourceType;
+
+    logInvoiceListDebug('GET /api/invoices filters applied', {
+      ...listLogContext,
+      appliedStatus: where.status || null,
+      appliedCustomerId: where.customerId || null,
+      appliedJobId: where.jobId || null,
+      appliedSaleId: where.saleId || null,
+      appliedPrescriptionId: where.prescriptionId || null,
+      appliedSourceType: where.sourceType || null,
+      hasAndConditions: Array.isArray(where[Op.and]) && where[Op.and].length > 0,
+      hasOrConditions: !!where[Op.or],
+    });
 
     // Build includes array
     const include = [
@@ -577,6 +737,16 @@ exports.getInvoices = async (req, res, next) => {
     });
 
     const data = await Promise.all(rows.map((invoice) => invoiceToResponsePayload(invoice)));
+
+    logInvoiceListDebug('GET /api/invoices result', {
+      ...listLogContext,
+      totalCount: count,
+      returnedCount: data.length,
+      totalPages: Math.ceil(count / limit),
+      firstSourceType: data[0]?.sourceType || null,
+      firstShopId: data[0]?.shopId || null,
+      firstStudioLocationId: data[0]?.studioLocationId || null,
+    });
 
     res.status(200).json({
       success: true,
@@ -845,6 +1015,10 @@ exports.createInvoice = async (req, res, next) => {
         const total = Math.max(0, lineGross - lineDiscount);
         return {
           description: item.description || '',
+          productCode: pickTrimmed(item.productCode, item.code, item.barcode, item.sku, item.metadata?.productCode),
+          sku: pickTrimmed(item.sku, item.metadata?.sku),
+          productId: item.productId || undefined,
+          productVariantId: item.productVariantId || item.variantId || undefined,
           quantity: qty,
           unitPrice,
           discountAmount: lineDiscount,
@@ -1812,6 +1986,9 @@ async function createInvoiceFromQuoteInternal(tenantId, quoteId, userId = null) 
         quantity: qi.quantity,
         unitPrice: qi.unitPrice,
         total: lineTotal,
+        productCode: pickTrimmed(qi.metadata?.productCode, qi.metadata?.barcode, qi.metadata?.sku),
+        sku: pickTrimmed(qi.metadata?.sku),
+        productVariantId: qi.metadata?.productVariantId || undefined,
         productId: qi.productId || undefined
       });
     }

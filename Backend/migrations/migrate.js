@@ -91,6 +91,14 @@ const updateEnterprisePlanLimitsCopy = require('./update-enterprise-plan-limits-
 const createOnlineStoreTables = require('./create-online-store-tables');
 const addOnlineStoreOrderIndexes = require('./add-online-store-order-indexes');
 const createStockTransfers = require('./create-stock-transfers');
+const createStorefrontCustomers = require('./create-storefront-customers');
+const backfillStorefrontCustomersActiveUnverified = require('./backfill-storefront-customers-active-unverified');
+const createMarketplaceTradeAssurance = require('./create-marketplace-trade-assurance');
+const createStorefrontWishlistItems = require('./create-storefront-wishlist-items');
+const createStorefrontReviews = require('./create-storefront-reviews');
+const createOnlineServiceListings = require('./create-online-service-listings');
+const extendStorefrontReviewsForServices = require('./extend-storefront-reviews-for-services');
+const addMetadataToJobs = require('./add-metadata-to-jobs');
 
 const migrate = async () => {
   try {
@@ -346,7 +354,15 @@ const migrate = async () => {
     await backfillTrialPlanDefaults.up({ closeConnection: false });
     await updateEnterprisePlanLimitsCopy();
     await createOnlineStoreTables.up({ closeConnection: false });
+    await createStorefrontCustomers({ closeConnection: false });
+    await backfillStorefrontCustomersActiveUnverified({ closeConnection: false });
     await addOnlineStoreOrderIndexes({ closeConnection: false });
+    await createMarketplaceTradeAssurance.up({ closeConnection: false });
+    await createStorefrontWishlistItems.up({ closeConnection: false });
+    await createStorefrontReviews.up({ closeConnection: false });
+    await createOnlineServiceListings.up({ closeConnection: false });
+    await extendStorefrontReviewsForServices.up({ closeConnection: false });
+    await addMetadataToJobs.up();
 
     console.log('\n✅ Database migration completed successfully!');
     console.log('📊 Incremental schema updates applied.');

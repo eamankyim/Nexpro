@@ -1,30 +1,49 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  AlertTriangle,
   ArrowUpRight,
-  CalendarDays,
   ChevronDown,
+  CircleDollarSign,
   Download,
   Eye,
   Filter,
+  Loader2,
   MessageCircle,
-  MoreHorizontal,
   PackageCheck,
   RefreshCw,
-  Search,
+  ShieldCheck,
   ShoppingBag,
-  Truck,
+  WalletCards,
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import storeService from '../services/storeService';
-import { useDebounce } from '../hooks/useDebounce';
 import { formatAmount } from '../utils/formatNumber';
 import { showError, showSuccess } from '../utils/toast';
+import { buildStorefrontStoreUrl } from '../utils/storefrontUrl';
+import { resolveImageUrl } from '../utils/fileUtils';
+import DetailsDrawer from '../components/DetailsDrawer';
+import DrawerSectionCard from '../components/DrawerSectionCard';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
+import {
+  Timeline,
+  TimelineContent,
+  TimelineDescription,
+  TimelineIndicator,
+  TimelineItem,
+  TimelineTime,
+  TimelineTitle,
+} from '@/components/ui/timeline';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Dialog,
   DialogBody,
@@ -34,15 +53,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Table,
   TableBody,
@@ -51,13 +63,13 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { DEBOUNCE_DELAYS, PAGINATION } from '../constants';
+import { PAGINATION } from '../constants';
 
 const STATUS_FILTERS = [
   { label: 'All Orders', value: 'all' },
-  { label: 'Pending', value: 'pending' },
-  { label: 'Paid', value: 'paid' },
+  { label: 'New / Pending', value: 'pending' },
   { label: 'Processing', value: 'processing' },
+  { label: 'Packed', value: 'ready' },
   { label: 'Out For Delivery', value: 'out_for_delivery' },
   { label: 'Delivered', value: 'delivered' },
   { label: 'Cancelled', value: 'cancelled' },
@@ -65,10 +77,21 @@ const STATUS_FILTERS = [
 
 const STATUS_ACTIONS = [
   { label: 'Mark processing', value: 'processing' },
-  { label: 'Mark out for delivery', value: 'out_for_delivery' },
+  { label: 'Mark packed', value: 'packed' },
+  { label: 'Mark shipped / out for delivery', value: 'out_for_delivery' },
   { label: 'Mark delivered', value: 'delivered' },
   { label: 'Cancel order', value: 'cancelled' },
 ];
+
+const STATUS_TRANSITIONS = {
+  pending: ['processing', 'packed', 'out_for_delivery', 'delivered', 'cancelled'],
+  paid: ['processing', 'packed', 'out_for_delivery', 'delivered', 'cancelled'],
+  processing: ['packed', 'out_for_delivery', 'delivered', 'cancelled'],
+  ready: ['out_for_delivery', 'delivered', 'cancelled'],
+  out_for_delivery: ['delivered', 'cancelled'],
+  delivered: [],
+  cancelled: [],
+};
 
 const STATUS_STYLES = {
   pending: 'border-amber-200 bg-amber-50 text-amber-700',
@@ -79,17 +102,50 @@ const STATUS_STYLES = {
   out_for_delivery: 'border-purple-200 bg-purple-50 text-purple-700',
   delivered: 'border-green-200 bg-green-50 text-green-700',
   cancelled: 'border-red-200 bg-red-50 text-red-700',
+  paid_held: 'border-amber-200 bg-amber-50 text-amber-700',
+  released: 'border-green-200 bg-green-50 text-green-700',
+  refunded: 'border-red-200 bg-red-50 text-red-700',
+  disputed: 'border-orange-200 bg-orange-50 text-orange-700',
+};
+
+const STATUS_LABELS = {
+  completed: 'Paid',
+  pending: 'Payment Pending',
+  pending_payment: 'Payment Pending',
+  ready: 'Packed / Ready',
 };
 
 const normalizeStatus = (status) => String(status || 'pending').toLowerCase();
 
-const formatStatusLabel = (status) => (
-  normalizeStatus(status)
+const formatStatusLabel = (status, context) => {
+  const normalized = normalizeStatus(status);
+  if (context === 'fulfillment' && normalized === 'pending') return 'New / Pending';
+  return STATUS_LABELS[normalized] || normalized
     .replace(/_/g, ' ')
-    .replace(/\b\w/g, (char) => char.toUpperCase())
-);
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+};
 
 const getBody = (response) => response?.data ?? response ?? {};
+
+const getListPayload = (response) => {
+  const payload = response?.data ?? response ?? {};
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    if (payload.success === true || payload.stats || payload.pagination || payload.count != null) {
+      return payload;
+    }
+    if (payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data)) {
+      return payload.data;
+    }
+  }
+  return payload;
+};
+
+const getApiErrorMessage = (queryError) => {
+  const message = queryError?.response?.data?.message
+    || queryError?.response?.data?.error
+    || queryError?.message;
+  return String(message || '').trim();
+};
 
 const getOrderRows = (body) => {
   if (Array.isArray(body)) return body;
@@ -107,14 +163,12 @@ const getStats = (body, orders) => {
 
   return {
     totalOrders: stats.totalOrders ?? stats.total ?? orders.length,
-    pendingPayment: stats.pendingPayment ?? orders.filter((order) => {
-      const paymentStatus = normalizeStatus(order.paymentStatus || order.payment?.status);
-      const orderStatus = normalizeStatus(order.status || order.orderStatus);
-      return paymentStatus === 'pending' || orderStatus === 'pending_payment';
-    }).length,
-    processing: stats.processing ?? orders.filter((order) => normalizeStatus(order.status || order.orderStatus) === 'processing').length,
-    delivered: stats.delivered ?? orders.filter((order) => normalizeStatus(order.status || order.orderStatus) === 'delivered').length,
-    cancelled: stats.cancelled ?? orders.filter((order) => normalizeStatus(order.status || order.orderStatus) === 'cancelled').length,
+    pendingFulfillment: stats.pendingFulfillment ?? stats.pendingOrders ?? orders.filter((order) => getFulfillmentStatus(order) === 'pending').length,
+    processing: stats.processing ?? orders.filter((order) => getFulfillmentStatus(order) === 'processing').length,
+    ready: stats.ready ?? stats.packed ?? orders.filter((order) => getFulfillmentStatus(order) === 'ready').length,
+    outForDelivery: stats.outForDelivery ?? orders.filter((order) => getFulfillmentStatus(order) === 'out_for_delivery').length,
+    delivered: stats.delivered ?? orders.filter((order) => getFulfillmentStatus(order) === 'delivered').length,
+    cancelled: stats.cancelled ?? orders.filter((order) => getFulfillmentStatus(order) === 'cancelled').length,
     todayRevenue: stats.todayRevenue ?? stats.todaySales ?? todayOrders.reduce((sum, order) => sum + Number(order.total || order.amount || order.grandTotal || 0), 0),
     todayOrderCount: stats.todayOrderCount ?? stats.todayOrders ?? todayOrders.length,
   };
@@ -136,6 +190,28 @@ const getCustomerName = (order) => (
   || order.customer?.businessName
   || 'Guest customer'
 );
+
+const getOrderNumber = (order) => order.orderNumber || order.orderNo || order.saleNumber || 'Online order';
+
+const getOrderTotal = (order) => Number(order.total || order.amount || order.grandTotal || 0);
+
+const getFulfillmentStatus = (order) => {
+  const rawFulfillmentStatus = order.fulfillmentStatus || order.fulfillment_state;
+  if (rawFulfillmentStatus) return normalizeStatus(rawFulfillmentStatus);
+
+  const saleStatus = normalizeStatus(order.status);
+  const orderStatus = normalizeStatus(order.orderStatus);
+  const deliveryStatus = normalizeStatus(order.deliveryStatus);
+
+  if (saleStatus === 'cancelled' || saleStatus === 'refunded' || orderStatus === 'cancelled') return 'cancelled';
+  if (deliveryStatus === 'delivered' || orderStatus === 'completed') return 'delivered';
+  if (deliveryStatus === 'out_for_delivery') return 'out_for_delivery';
+  if (deliveryStatus === 'ready_for_delivery' || orderStatus === 'ready') return 'ready';
+  if (orderStatus === 'received') return 'pending';
+  if (['preparing', 'processing'].includes(orderStatus)) return 'processing';
+  if (saleStatus === 'pending' || saleStatus === 'partially_paid') return 'pending';
+  return 'paid';
+};
 
 const getCustomerPhone = (order) => (
   order.customerPhone
@@ -163,20 +239,70 @@ const getOrderItems = (order) => (
   || []
 );
 
+const getOrderItemName = (item) => item.name || item.productName || item.product?.name || item.title || 'Item';
+
+const getOrderItemImageUrl = (item) => resolveImageUrl(
+  item?.imageUrl
+  || item?.metadata?.imageUrl
+  || item?.product?.imageUrl
+  || item?.productImageUrl
+  || item?.listing?.imageUrl
+  || (Array.isArray(item?.images) ? item.images[0] : '')
+);
+
+const OrderItemThumbnail = ({ item, alt }) => {
+  const imageUrl = getOrderItemImageUrl(item);
+
+  return (
+    <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted/30">
+      {imageUrl ? (
+        <img src={imageUrl} alt={alt} className="h-full w-full object-cover" />
+      ) : (
+        <ShoppingBag className="h-5 w-5 text-muted-foreground" />
+      )}
+    </div>
+  );
+};
+
 const getItemSummary = (order) => {
   const items = getOrderItems(order);
   if (!items.length) return order.itemsSummary || 'No item details';
   const firstItem = items[0];
-  const firstName = firstItem.name || firstItem.productName || firstItem.product?.name || firstItem.title || 'Item';
+  const firstName = getOrderItemName(firstItem);
   const quantity = firstItem.quantity || firstItem.qty || 1;
   const remaining = items.length - 1;
   return `${quantity} x ${firstName}${remaining > 0 ? ` +${remaining} more` : ''}`;
 };
 
 const getPaymentLabel = (order) => {
-  const paymentStatus = order.paymentStatus || order.payment?.status || order.status;
-  const method = order.paymentMethod || order.payment?.method || 'Online';
-  return `${formatStatusLabel(paymentStatus)} · ${formatStatusLabel(method)}`;
+  const paymentStatus = getPaymentStatus(order);
+  return formatStatusLabel(paymentStatus);
+};
+
+const getPaymentStatus = (order) => {
+  const tradeAssurance = getTradeAssurance(order);
+  return tradeAssurance.paymentStatus || order.marketplacePayment?.status || order.paymentStatus || order.payment?.status || order.status;
+};
+
+const getTradeAssurance = (order = {}) => (
+  order.tradeAssurance
+  || order.metadata?.tradeAssurance
+  || order.marketplacePayment
+  || {}
+);
+
+const getTradeAssuranceStatus = (order = {}) => (
+  getTradeAssurance(order).paymentStatus || order.marketplacePayment?.status || null
+);
+
+const canShowSellerRefund = (order = {}) => getTradeAssurance(order).canSellerRefund === true;
+
+const isServiceOrder = (order = {}) => order.orderType === 'service';
+
+const getExportFilename = (response, fallback) => {
+  const contentDisposition = response?.headers?.['content-disposition'] || '';
+  const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/i);
+  return filenameMatch?.[1] || fallback;
 };
 
 const getWhatsAppHref = (order) => {
@@ -187,43 +313,261 @@ const getWhatsAppHref = (order) => {
   return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
 };
 
+const canApplyStatusAction = (order, status) => {
+  if (isServiceOrder(order) && !['processing', 'delivered', 'cancelled'].includes(status)) {
+    return false;
+  }
+  const currentStatus = getFulfillmentStatus(order);
+  return (STATUS_TRANSITIONS[currentStatus] || []).includes(status);
+};
+
+const getStatusActionProgressLabel = (status) => {
+  const normalized = normalizeStatus(status);
+  if (normalized === 'cancelled') return 'Cancelling order...';
+  return `Updating to ${formatStatusLabel(normalized, 'fulfillment')}...`;
+};
+
 const getPreviewUrl = (settings) => {
   const slug = settings?.slug || settings?.storeSlug;
   if (!slug) return '';
-  return `/store/${encodeURIComponent(slug)}`;
+  return buildStorefrontStoreUrl(slug);
 };
 
-const StatusBadge = ({ status }) => {
+const StatusBadge = ({ status, context }) => {
   const normalized = normalizeStatus(status);
   return (
     <Badge variant="outline" className={STATUS_STYLES[normalized] || 'border-border bg-muted/30 text-foreground'}>
-      {formatStatusLabel(normalized)}
+      {formatStatusLabel(normalized, context)}
     </Badge>
   );
 };
 
-const DetailRow = ({ label, value }) => (
-  <div className="flex items-start justify-between gap-4 border-b border-border py-3 text-sm last:border-b-0">
-    <span className="text-muted-foreground">{label}</span>
-    <span className="text-right font-medium">{value || '—'}</span>
-  </div>
-);
+const formatDateTime = (value, fallback = '—') => {
+  if (!value || !dayjs(value).isValid()) return fallback;
+  return dayjs(value).format('MMM D, YYYY h:mm A');
+};
+
+const ACTIVITY_LABELS = {
+  created: 'Order placed',
+  received: 'Order placed',
+  order_received: 'Order received',
+  paid_held: 'Payment held in trade assurance',
+  payment_held: 'Payment held in trade assurance',
+  preparing: 'Processing',
+  processing: 'Processing',
+  ready: 'Packed / ready',
+  packed: 'Packed / ready',
+  ready_for_delivery: 'Ready for delivery',
+  delivery_assigned: 'Delivery assigned',
+  shipped: 'Out for delivery',
+  out_for_delivery: 'Out for delivery',
+  delivered: 'Order delivered',
+  payout_released: 'Payout released',
+  released: 'Payout released',
+  refunded: 'Payment refunded',
+  disputed: 'Dispute opened',
+  cancelled: 'Order cancelled',
+  updated: 'Order updated',
+};
+
+const getActivityKind = (status, title) => {
+  const normalized = normalizeStatus(status || title);
+  const kindMap = {
+    created: 'order_placed',
+    received: 'order_placed',
+    order_received: 'order_received',
+    paid_held: 'payment_held',
+    payment_held: 'payment_held',
+    preparing: 'processing',
+    processing: 'processing',
+    ready: 'ready',
+    packed: 'ready',
+    ready_for_delivery: 'ready_for_delivery',
+    delivery_assigned: 'delivery_assigned',
+    shipped: 'out_for_delivery',
+    out_for_delivery: 'out_for_delivery',
+    delivered: 'delivered',
+    payout_released: 'payout_released',
+    released: 'payout_released',
+    refunded: 'refunded',
+    disputed: 'disputed',
+    cancelled: 'cancelled',
+  };
+  return kindMap[normalized] || normalized;
+};
+
+const normalizeTimelineText = (value) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .replace(/[_\s-]+/g, ' ');
+
+const isDuplicateTimelineText = (value, ...comparisons) => {
+  const normalized = normalizeTimelineText(value);
+  return normalized && comparisons.some((comparison) => normalizeTimelineText(comparison) === normalized);
+};
+
+const getDeliveryAddressText = (order = {}) => {
+  const address = order.deliveryAddress || order.metadata?.deliveryAddress || {};
+  if (typeof address === 'string') return address;
+  const parts = [
+    address.addressLine1,
+    address.addressLine2,
+    address.street,
+    address.city,
+    address.region,
+    address.country,
+  ].filter(Boolean);
+  return parts.join(', ') || order.deliveryAddressText || '';
+};
+
+const getActivityLabel = (status) => {
+  const normalized = normalizeStatus(status);
+  return ACTIVITY_LABELS[normalized] || formatStatusLabel(normalized);
+};
+
+const getTimelineTitle = (rawTitle, status) => {
+  const statusLabel = getActivityLabel(status);
+  if (!rawTitle || isDuplicateTimelineText(rawTitle, status, statusLabel)) {
+    return statusLabel;
+  }
+  return rawTitle;
+};
+
+const getTimelineDescription = (description, status, title) => {
+  const statusLabel = getActivityLabel(status);
+  const text = String(description || '').trim();
+  if (text && !isDuplicateTimelineText(text, title, status, statusLabel)) return text;
+  return isDuplicateTimelineText(statusLabel, title) ? '' : statusLabel;
+};
+
+const dedupeTimelineEvents = (events) => {
+  const seen = new Set();
+  return events.filter((event) => {
+    const key = `${getActivityKind(event.status, event.title)}-${dayjs(event.at).valueOf()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const buildOrderActivityTimeline = (order = {}) => {
+  const metadata = order.metadata && typeof order.metadata === 'object' ? order.metadata : {};
+  const deliveryTracking = order.deliveryTracking || metadata.deliveryTracking || {};
+  const trackingHistory = Array.isArray(deliveryTracking.history) ? deliveryTracking.history : [];
+  const activities = Array.isArray(order.activities) ? order.activities : [];
+  const tradeAssurance = getTradeAssurance(order);
+
+  const activityEvents = activities.map((activity) => {
+    const status = activity.metadata?.action || activity.type;
+    const title = getTimelineTitle(activity.subject, status);
+    return {
+      id: activity.id,
+      at: activity.createdAt,
+      title,
+      description: getTimelineDescription(activity.notes || activity.nextStep, status, title),
+      status,
+      source: 'Activity log',
+    };
+  });
+
+  const trackingEvents = trackingHistory.map((event, index) => {
+    const title = getActivityLabel(event.status);
+    return {
+      id: `tracking-${event.at || index}-${event.status || 'status'}`,
+      at: event.at,
+      title,
+      description: getTimelineDescription(event.reason || event.note || 'Fulfillment status updated from Online Orders.', event.status, title),
+      status: event.status,
+      source: 'Delivery tracking',
+    };
+  });
+
+  const fallbackEvents = [
+    {
+      id: 'created',
+      at: order.createdAt || order.orderDate,
+      title: 'Order placed',
+      description: `${getCustomerName(order)} placed ${getOrderNumber(order)}.`,
+      status: 'created',
+      source: 'Order timestamp',
+    },
+    tradeAssurance.heldAt && {
+      id: 'payment-held',
+      at: tradeAssurance.heldAt,
+      title: 'Payment held in trade assurance',
+      description: 'Buyer funds were recorded in Sabito Trade Assurance.',
+      status: 'paid_held',
+      source: 'Trade Assurance',
+    },
+    order.deliveryAssignedAt && {
+      id: 'delivery-assigned',
+      at: order.deliveryAssignedAt,
+      title: 'Delivery assigned',
+      description: 'A delivery handoff was recorded for this order.',
+      status: 'out_for_delivery',
+      source: 'Delivery',
+    },
+    order.deliveredAt && {
+      id: 'delivered',
+      at: order.deliveredAt,
+      title: 'Order delivered',
+      description: 'Delivery completion was recorded.',
+      status: 'delivered',
+      source: 'Delivery',
+    },
+    metadata.cancellation?.cancelledAt && {
+      id: 'cancelled',
+      at: metadata.cancellation.cancelledAt,
+      title: 'Order cancelled',
+      description: metadata.cancellation.reason || 'The seller cancelled this order.',
+      status: 'cancelled',
+      source: 'Order metadata',
+    },
+    tradeAssurance.payoutReleasedAt && {
+      id: 'payout-released',
+      at: tradeAssurance.payoutReleasedAt,
+      title: 'Payout released',
+      description: 'Seller payout moved from Trade Assurance hold to payout processing.',
+      status: 'payout_released',
+      source: 'Trade Assurance',
+    },
+    tradeAssurance.payoutPaidOutAt && {
+      id: 'payout-transferred',
+      at: tradeAssurance.payoutPaidOutAt,
+      title: 'Payout transferred',
+      description: 'Paystack confirmed the seller transfer.',
+      status: 'payout_released',
+      source: 'Paystack',
+    },
+  ].filter(Boolean);
+
+  const events = dedupeTimelineEvents(
+    [...activityEvents, ...trackingEvents, ...fallbackEvents]
+      .filter((event) => event.at && dayjs(event.at).isValid())
+      .sort((a, b) => dayjs(b.at).valueOf() - dayjs(a.at).valueOf())
+  );
+
+  return {
+    events,
+    hasBackendActivity: activities.length > 0,
+    hasTrackingHistory: trackingHistory.length > 0,
+  };
+};
 
 const OnlineOrders = () => {
   const queryClient = useQueryClient();
-  const [searchValue, setSearchValue] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
-  const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
+  const [cancelOrderRequest, setCancelOrderRequest] = useState(null);
+  const [cancellationReason, setCancellationReason] = useState('');
 
   const queryParams = useMemo(() => ({
     page,
     limit: PAGINATION.DEFAULT_PAGE_SIZE,
-    search: debouncedSearch,
     status: statusFilter === 'all' ? undefined : statusFilter,
-  }), [debouncedSearch, page, statusFilter]);
+  }), [page, statusFilter]);
 
   const {
     data: response,
@@ -237,26 +581,43 @@ const OnlineOrders = () => {
     retry: 1,
   });
 
+  const {
+    data: tradeAssuranceResponse,
+    error: tradeAssuranceError,
+    isFetching: isTradeAssuranceFetching,
+    isError: isTradeAssuranceError,
+  } = useQuery({
+    queryKey: ['store', 'trade-assurance-dashboard', queryParams],
+    queryFn: () => storeService.getTradeAssuranceDashboard(queryParams),
+    retry: 1,
+  });
+
   const { data: settingsResponse } = useQuery({
     queryKey: ['store', 'settings'],
     queryFn: () => storeService.getSettings(),
     retry: 1,
   });
 
-  const body = useMemo(() => getBody(response), [response]);
+  const body = useMemo(() => getListPayload(response), [response]);
   const orders = useMemo(() => getOrderRows(body), [body]);
   const stats = useMemo(() => getStats(body, orders), [body, orders]);
   const pagination = useMemo(() => getPagination(body, page), [body, page]);
+  const ordersErrorMessage = useMemo(() => getApiErrorMessage(error), [error]);
+  const tradeAssuranceErrorMessage = useMemo(() => getApiErrorMessage(tradeAssuranceError), [tradeAssuranceError]);
+  const tradeAssuranceBody = useMemo(() => getBody(tradeAssuranceResponse), [tradeAssuranceResponse]);
+  const tradeAssuranceDashboard = tradeAssuranceBody.data || tradeAssuranceBody || {};
+  const tradeSummary = tradeAssuranceDashboard.summary || {};
+  const tradeBalances = tradeSummary.balances || {};
+  const tradeCounts = tradeSummary.counts || {};
   const settings = getBody(settingsResponse);
   const previewUrl = getPreviewUrl(settings?.settings || settings);
 
   const kpiCards = useMemo(() => ([
     { label: 'Total online orders', value: stats.totalOrders, icon: ShoppingBag },
-    { label: 'Pending payment', value: stats.pendingPayment, icon: CalendarDays },
+    { label: 'New / pending', value: stats.pendingFulfillment, icon: ShoppingBag },
     { label: 'Processing', value: stats.processing, icon: PackageCheck },
-    { label: 'Delivered', value: stats.delivered, icon: Truck },
-    { label: 'Cancelled', value: stats.cancelled, icon: ShoppingBag },
-  ]), [stats.cancelled, stats.delivered, stats.pendingPayment, stats.processing, stats.totalOrders]);
+    { label: 'Delivered', value: stats.delivered, icon: PackageCheck },
+  ]), [stats.delivered, stats.pendingFulfillment, stats.processing, stats.totalOrders]);
 
   const detailOrder = selectedOrder || {};
   const detailItems = useMemo(() => getOrderItems(detailOrder), [detailOrder]);
@@ -272,22 +633,66 @@ const OnlineOrders = () => {
     const detailBody = getBody(detailQuery.data);
     return detailBody.data || detailBody.order || detailBody || detailOrder;
   }, [detailOrder, detailQuery.data]);
+  const activityTimeline = useMemo(() => buildOrderActivityTimeline(fullDetailOrder), [fullDetailOrder]);
 
   const updateStatusMutation = useMutation({
-    mutationFn: ({ orderId, status }) => storeService.updateOrderStatus(orderId, status),
-    onSuccess: () => {
-      showSuccess('Online order status updated');
+    mutationFn: ({ orderId, status, reason }) => storeService.updateOrderStatus(orderId, status, reason ? { reason } : {}),
+    onSuccess: (updateResponse) => {
+      const updateBody = getBody(updateResponse);
+      const updatedOrder = updateBody.data || updateBody.order || updateBody;
+      showSuccess(updatedOrder?.status === 'refunded' ? 'Online order cancelled and buyer refund recorded' : 'Online order status updated');
       queryClient.invalidateQueries({ queryKey: ['store', 'online-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['store', 'trade-assurance-dashboard'] });
+      setCancelOrderRequest(null);
+      setCancellationReason('');
+      if (updatedOrder?.id) {
+        queryClient.setQueryData(['store', 'online-orders', updatedOrder.id], updateResponse);
+        setSelectedOrder((currentOrder) => (
+          currentOrder?.id === updatedOrder.id ? updatedOrder : currentOrder
+        ));
+      }
     },
     onError: (mutationError) => {
       showError(mutationError, 'Failed to update online order status');
     },
   });
+  const pendingStatusUpdate = updateStatusMutation.isPending ? updateStatusMutation.variables : null;
+  const pendingStatusOrderId = pendingStatusUpdate?.orderId;
+  const pendingStatus = pendingStatusUpdate?.status;
 
-  const handleSearchChange = useCallback((event) => {
-    setSearchValue(event.target.value);
-    setPage(1);
-  }, []);
+  const refundOrderMutation = useMutation({
+    mutationFn: ({ orderId, amount, reason }) => storeService.refundTradeAssuranceOrder(orderId, { amount, reason }),
+    onSuccess: () => {
+      showSuccess('Marketplace refund recorded');
+      queryClient.invalidateQueries({ queryKey: ['store', 'online-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['store', 'trade-assurance-dashboard'] });
+      if (selectedOrder?.id) detailQuery.refetch();
+    },
+    onError: (mutationError) => {
+      showError(mutationError, 'Failed to record marketplace refund');
+    },
+  });
+
+  const exportMutation = useMutation({
+    mutationFn: () => storeService.exportOrders({
+      status: statusFilter === 'all' ? undefined : statusFilter,
+    }),
+    onSuccess: (exportResponse) => {
+      const blob = exportResponse?.data instanceof Blob ? exportResponse.data : new Blob([exportResponse?.data || exportResponse]);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = getExportFilename(exportResponse, `online-orders-${dayjs().format('YYYY-MM-DD')}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      showSuccess('Online orders export downloaded');
+    },
+    onError: (exportError) => {
+      showError(exportError, 'Failed to export online orders');
+    },
+  });
 
   const handleStatusFilterChange = useCallback((status) => {
     setStatusFilter(status);
@@ -300,58 +705,71 @@ const OnlineOrders = () => {
   }, []);
 
   const handleStatusUpdate = useCallback((order, status) => {
+    if (!order?.id || updateStatusMutation.isPending) return;
+    if (status === 'cancelled') {
+      setCancelOrderRequest(order);
+      setCancellationReason('');
+      return;
+    }
     updateStatusMutation.mutate({ orderId: order.id, status });
   }, [updateStatusMutation]);
 
-  const handleExportPlaceholder = useCallback(() => {
-    showSuccess('Export for online orders is coming soon');
+  const handleCloseCancelDialog = useCallback((open) => {
+    if (open || updateStatusMutation.isPending) return;
+    setCancelOrderRequest(null);
+    setCancellationReason('');
+  }, [updateStatusMutation.isPending]);
+
+  const handleConfirmCancellation = useCallback(() => {
+    const reason = cancellationReason.trim();
+    if (!reason) {
+      showError('Enter a cancellation reason for the buyer.');
+      return;
+    }
+    if (!cancelOrderRequest?.id || updateStatusMutation.isPending) return;
+    updateStatusMutation.mutate({
+      orderId: cancelOrderRequest.id,
+      status: 'cancelled',
+      reason,
+    });
+  }, [cancelOrderRequest, cancellationReason, updateStatusMutation]);
+
+  const handleWhatsAppCustomer = useCallback((order) => {
+    const href = getWhatsAppHref(order);
+    if (!href) {
+      showError('This customer does not have a phone number on the order.');
+      return;
+    }
+    window.open(href, '_blank', 'noopener,noreferrer');
   }, []);
+
+  const handleRefundOrder = useCallback((order) => {
+    const amountInput = window.prompt('Refund amount. Leave blank for full remaining refund.');
+    if (amountInput === null) return;
+    const reason = window.prompt('Refund reason', 'buyer_refund');
+    if (reason === null) return;
+    const amount = amountInput.trim() ? Number(amountInput) : undefined;
+    refundOrderMutation.mutate({ orderId: order.id, amount, reason: reason || 'buyer_refund' });
+  }, [refundOrderMutation]);
+
+  const handleExport = useCallback(() => {
+    exportMutation.mutate();
+  }, [exportMutation]);
 
   const handleRefresh = useCallback(() => {
     refetch();
-  }, [refetch]);
+    queryClient.invalidateQueries({ queryKey: ['store', 'trade-assurance-dashboard'] });
+  }, [queryClient, refetch]);
 
-  const renderStatusActions = useCallback((order) => (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-11 w-11 md:h-8 md:w-8">
-          <MoreHorizontal className="h-4 w-4" />
-          <span className="sr-only">Open order actions</span>
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuLabel>Actions</DropdownMenuLabel>
-        <DropdownMenuItem onClick={() => handleViewOrder(order)}>
-          <Eye className="mr-2 h-4 w-4" />
-          View details
-        </DropdownMenuItem>
-        {getWhatsAppHref(order) && (
-          <DropdownMenuItem asChild>
-            <a href={getWhatsAppHref(order)} target="_blank" rel="noreferrer">
-              <MessageCircle className="mr-2 h-4 w-4" />
-              WhatsApp customer
-            </a>
-          </DropdownMenuItem>
-        )}
-        <DropdownMenuSeparator />
-        <DropdownMenuLabel>Update status</DropdownMenuLabel>
-        {STATUS_ACTIONS.map((action) => (
-          <DropdownMenuItem
-            key={action.value}
-            disabled={updateStatusMutation.isPending}
-            onClick={() => handleStatusUpdate(order, action.value)}
-          >
-            {action.label}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  ), [handleStatusUpdate, handleViewOrder, updateStatusMutation.isPending]);
+  const handleCloseDetailDrawer = useCallback(() => {
+    setIsDetailOpen(false);
+    setSelectedOrder(null);
+  }, []);
 
   const renderLoadingSkeleton = () => (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5 md:gap-4">
-        {Array.from({ length: 5 }).map((_, index) => (
+      <div className="grid gap-3 sm:grid-cols-2 md:gap-4 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => (
           <Skeleton key={index} className="h-28 rounded-lg" />
         ))}
       </div>
@@ -366,12 +784,91 @@ const OnlineOrders = () => {
         <h2 className="font-semibold">No online orders found</h2>
         <p className="mt-1 max-w-md text-sm text-muted-foreground">
           {error
-            ? 'The online orders API is not available yet. Orders will appear here when the backend endpoint is ready.'
+            ? (ordersErrorMessage || 'Could not load online orders. Check your connection and try again.')
             : 'Orders from your online storefront will appear here as customers check out.'}
         </p>
       </CardContent>
     </Card>
   );
+
+  const renderTradeAssuranceDashboard = () => {
+    if (isTradeAssuranceError) {
+      return (
+        <Card className="border border-border">
+          <CardHeader className="p-4 pb-2 sm:p-6 sm:pb-2">
+            <CardTitle className="text-base text-primary">Sabito Trade Assurance</CardTitle>
+          </CardHeader>
+          <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+              Trade Assurance balances are unavailable right now{tradeAssuranceErrorMessage ? `: ${tradeAssuranceErrorMessage}` : '.'}
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    const cards = [
+      {
+        label: 'Held pending payout',
+        value: formatAmount(tradeBalances.pending || 0, tradeBalances.currency),
+        helper: `${tradeCounts.held || 0} held orders`,
+        icon: ShieldCheck,
+      },
+      {
+        label: 'Available seller balance',
+        value: formatAmount(tradeBalances.available || 0, tradeBalances.currency),
+        helper: `${tradeCounts.released || 0} released orders`,
+        icon: WalletCards,
+      },
+      {
+        label: 'Sabito fees',
+        value: formatAmount(tradeBalances.fee || 0, tradeBalances.currency),
+        helper: `${tradeSummary.commissionPercent || 0}% commission`,
+        icon: CircleDollarSign,
+      },
+      {
+        label: 'Open disputes',
+        value: tradeCounts.openDisputes || 0,
+        helper: `${tradeCounts.disputed || 0} disputed payments`,
+        icon: AlertTriangle,
+      },
+    ];
+
+    return (
+      <Card className="border border-border">
+        <CardHeader className="p-4 pb-2 sm:p-6 sm:pb-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <CardTitle className="text-base text-primary">Sabito Trade Assurance</CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Buyer funds are held, seller payouts move from pending to available after confirmation or the {tradeSummary.autoReleaseHours || 72}-hour release window.
+              </p>
+            </div>
+            {isTradeAssuranceFetching ? <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
+          </div>
+        </CardHeader>
+        <CardContent className="grid gap-3 p-4 sm:grid-cols-2 sm:p-6 lg:grid-cols-4">
+          {cards.map((card) => {
+            const Icon = card.icon;
+            return (
+              <div key={card.label} className="rounded-xl border border-border bg-muted/20 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{card.label}</p>
+                    <p className="mt-2 text-xl font-semibold">{card.value}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{card.helper}</p>
+                  </div>
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                    <Icon className="h-4 w-4" />
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+    );
+  };
 
   const renderOrderTable = () => (
     <Card className="hidden border border-border md:block">
@@ -391,7 +888,7 @@ const OnlineOrders = () => {
         <TableBody>
           {orders.map((order) => (
             <TableRow key={order.id || order.orderNumber || order.saleNumber}>
-              <TableCell className="font-medium">{order.orderNumber || order.orderNo || order.saleNumber || '—'}</TableCell>
+              <TableCell className="font-medium">{getOrderNumber(order)}</TableCell>
               <TableCell>
                 <div>
                   <div className="font-medium">{getCustomerName(order)}</div>
@@ -399,11 +896,24 @@ const OnlineOrders = () => {
                 </div>
               </TableCell>
               <TableCell className="max-w-[240px] truncate">{getItemSummary(order)}</TableCell>
-              <TableCell className="font-medium">{formatAmount(order.total || order.amount || order.grandTotal || 0)}</TableCell>
-              <TableCell>{getPaymentLabel(order)}</TableCell>
-              <TableCell><StatusBadge status={order.status || order.orderStatus} /></TableCell>
+              <TableCell className="font-medium">{formatAmount(getOrderTotal(order))}</TableCell>
+              <TableCell>
+                <StatusBadge status={getPaymentStatus(order)} />
+              </TableCell>
+              <TableCell><StatusBadge status={getFulfillmentStatus(order)} context="fulfillment" /></TableCell>
               <TableCell>{dayjs(order.createdAt || order.orderDate).format('MMM D, YYYY h:mm A')}</TableCell>
-              <TableCell className="text-right">{renderStatusActions(order)}</TableCell>
+              <TableCell className="text-right">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleViewOrder(order)}
+                  aria-label={`View ${getOrderNumber(order)}`}
+                >
+                  <Eye className="mr-2 h-4 w-4" />
+                  View
+                </Button>
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -423,14 +933,15 @@ const OnlineOrders = () => {
               <div className="min-w-0 flex-1 space-y-1">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold">{order.orderNumber || order.orderNo || order.saleNumber || 'Online order'}</p>
+                    <p className="truncate text-sm font-semibold">{getOrderNumber(order)}</p>
                     <p className="truncate text-xs text-muted-foreground">{getCustomerName(order)}</p>
                   </div>
-                  <p className="shrink-0 text-sm font-semibold">{formatAmount(order.total || order.amount || order.grandTotal || 0)}</p>
+                  <p className="shrink-0 text-sm font-semibold">{formatAmount(getOrderTotal(order))}</p>
                 </div>
                 <p className="truncate text-xs text-muted-foreground">{getItemSummary(order)}</p>
                 <div className="flex flex-wrap items-center gap-2 pt-1">
-                  <StatusBadge status={order.status || order.orderStatus} />
+                  <StatusBadge status={getFulfillmentStatus(order)} context="fulfillment" />
+                  {getTradeAssuranceStatus(order) ? <StatusBadge status={getTradeAssuranceStatus(order)} /> : null}
                   <span className="text-xs text-muted-foreground">{dayjs(order.createdAt || order.orderDate).format('MMM D, YYYY h:mm A')}</span>
                 </div>
                 <div className="flex items-center justify-end gap-2 border-t border-border pt-3">
@@ -442,8 +953,15 @@ const OnlineOrders = () => {
                       </a>
                     </Button>
                   )}
-                  <Button variant="outline" size="sm" className="min-w-16" onClick={() => handleViewOrder(order)}>View</Button>
-                  {renderStatusActions(order)}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="min-w-16"
+                    onClick={() => handleViewOrder(order)}
+                    aria-label={`View ${getOrderNumber(order)}`}
+                  >
+                    View
+                  </Button>
                 </div>
               </div>
             </div>
@@ -481,69 +999,329 @@ const OnlineOrders = () => {
     </div>
   );
 
-  const renderDetailDialog = () => (
-    <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
-      <DialogContent style={{ '--modal-w': 'min(42rem, 94vw)', '--modal-min-h': 'auto', '--modal-max-h': '92vh' }}>
-        <DialogHeader>
-          <DialogTitle>{fullDetailOrder.orderNumber || fullDetailOrder.orderNo || fullDetailOrder.saleNumber || 'Online order'}</DialogTitle>
-          <DialogDescription>Review customer, payment, fulfillment, and item details.</DialogDescription>
-        </DialogHeader>
-        <DialogBody>
-          {detailQuery.isFetching ? (
-            <div className="space-y-3">
-              <Skeleton className="h-16" />
-              <Skeleton className="h-28" />
-              <Skeleton className="h-28" />
-            </div>
-          ) : (
-            <div className="space-y-5">
-              <Card className="border border-border">
-                <CardContent className="p-4">
-                  <DetailRow label="Customer" value={getCustomerName(fullDetailOrder)} />
-                  <DetailRow label="Phone" value={getCustomerPhone(fullDetailOrder)} />
-                  <DetailRow label="Payment" value={getPaymentLabel(fullDetailOrder)} />
-                  <DetailRow label="Status" value={formatStatusLabel(fullDetailOrder.status || fullDetailOrder.orderStatus)} />
-                  <DetailRow label="Amount" value={formatAmount(fullDetailOrder.total || fullDetailOrder.amount || fullDetailOrder.grandTotal || 0)} />
-                  <DetailRow label="Date" value={dayjs(fullDetailOrder.createdAt || fullDetailOrder.orderDate).format('MMM D, YYYY h:mm A')} />
-                </CardContent>
-              </Card>
+  const renderDetailSheet = () => {
+    const visibleItems = getOrderItems(fullDetailOrder).length ? getOrderItems(fullDetailOrder) : detailItems;
+    const tradeAssurance = getTradeAssurance(fullDetailOrder);
+    const tradeStatus = getTradeAssuranceStatus(fullDetailOrder);
+    const canRefundOrder = Boolean(fullDetailOrder?.id && canShowSellerRefund(fullDetailOrder));
+    const whatsappHref = getWhatsAppHref(fullDetailOrder);
+    const isDetailLoading = detailQuery.isFetching && Boolean(selectedOrder?.id);
+    const isUpdatingCurrentOrderStatus = Boolean(
+      pendingStatusUpdate
+      && pendingStatusOrderId === fullDetailOrder?.id
+    );
+    const renderDetailContentWithStatusOverlay = (content) => (
+      <div className="relative min-h-[320px]">
+        <div className={isUpdatingCurrentOrderStatus ? 'pointer-events-none select-none opacity-60' : undefined}>
+          {content}
+        </div>
+      </div>
+    );
+    const orderDrawerPrimaryAction = whatsappHref ? {
+      label: 'WhatsApp',
+      icon: <MessageCircle className="h-4 w-4" />,
+      onClick: () => handleWhatsAppCustomer(fullDetailOrder),
+    } : null;
+    const orderDrawerMoreMenuItems = [
+      ...STATUS_ACTIONS.map((action) => {
+        const isUpdatingThisStatus = isUpdatingCurrentOrderStatus && pendingStatus === action.value;
+        return {
+          key: `status-${action.value}`,
+          label: isUpdatingThisStatus ? getStatusActionProgressLabel(action.value) : action.label,
+          icon: isUpdatingThisStatus
+            ? <Loader2 className="h-4 w-4 animate-spin" />
+            : <PackageCheck className="h-4 w-4" />,
+          className: isUpdatingThisStatus ? 'bg-primary/5 text-primary data-[disabled]:opacity-100' : undefined,
+          disabled: !fullDetailOrder?.id || !canApplyStatusAction(fullDetailOrder, action.value) || updateStatusMutation.isPending,
+          onClick: () => handleStatusUpdate(fullDetailOrder, action.value),
+        };
+      }),
+      ...(canRefundOrder ? [{
+        key: 'refund',
+        label: 'Refund',
+        icon: refundOrderMutation.isPending
+          ? <Loader2 className="h-4 w-4 animate-spin" />
+          : <CircleDollarSign className="h-4 w-4" />,
+        disabled: refundOrderMutation.isPending,
+        onClick: () => handleRefundOrder(fullDetailOrder),
+      }] : []),
+    ];
 
-              <Card className="border border-border">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base">Items</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {(getOrderItems(fullDetailOrder).length ? getOrderItems(fullDetailOrder) : detailItems).map((item, index) => (
-                    <div key={item.id || index} className="flex items-start justify-between gap-4 border-b border-border pb-3 last:border-b-0 last:pb-0">
-                      <div>
-                        <p className="font-medium">{item.name || item.productName || item.product?.name || item.title || 'Item'}</p>
-                        <p className="text-sm text-muted-foreground">Qty {item.quantity || item.qty || 1}</p>
-                      </div>
-                      <p className="font-medium">{formatAmount(item.total || item.amount || item.price || item.unitPrice || 0)}</p>
-                    </div>
-                  ))}
-                  {!getOrderItems(fullDetailOrder).length && !detailItems.length && (
-                    <p className="text-sm text-muted-foreground">No item details are available for this order yet.</p>
+    return (
+      <DetailsDrawer
+        open={isDetailOpen}
+        onClose={handleCloseDetailDrawer}
+        title={getOrderNumber(fullDetailOrder)}
+        description="Review customer, payment, fulfillment, and item details."
+        width={720}
+        primaryAction={orderDrawerPrimaryAction}
+        moreMenuItems={orderDrawerMoreMenuItems}
+        moreMenuLoading={isUpdatingCurrentOrderStatus}
+        moreMenuLoadingLabel="Updating status..."
+        tabs={[
+          {
+            key: 'overview',
+            label: 'Overview',
+            content: renderDetailContentWithStatusOverlay(
+              isDetailLoading ? (
+                <div className="space-y-3 py-2">
+                  <Skeleton className="h-24 rounded-lg" />
+                  <Skeleton className="h-36 rounded-lg" />
+                  <Skeleton className="h-36 rounded-lg" />
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  <DrawerSectionCard title="Order summary">
+                    <Descriptions column={1} className="space-y-0">
+                      <DescriptionItem label="Amount">
+                        <span>{formatAmount(getOrderTotal(fullDetailOrder))}</span>
+                      </DescriptionItem>
+                      <DescriptionItem label="Items">
+                        <span>{visibleItems.length}</span>
+                      </DescriptionItem>
+                      <DescriptionItem label="Date">
+                        <span>{formatDateTime(fullDetailOrder.createdAt || fullDetailOrder.orderDate)}</span>
+                      </DescriptionItem>
+                      <DescriptionItem label="Fulfillment">
+                        <StatusBadge status={getFulfillmentStatus(fullDetailOrder)} context="fulfillment" />
+                      </DescriptionItem>
+                      <DescriptionItem label="Payment">
+                        <StatusBadge status={getPaymentStatus(fullDetailOrder)} />
+                      </DescriptionItem>
+                    </Descriptions>
+                  </DrawerSectionCard>
+
+                  <DrawerSectionCard title="Customer details">
+                    <Descriptions column={1} className="space-y-0">
+                      <DescriptionItem label="Name">
+                        <span>{getCustomerName(fullDetailOrder)}</span>
+                      </DescriptionItem>
+                      <DescriptionItem label="Phone">
+                        <span>{getCustomerPhone(fullDetailOrder) || '—'}</span>
+                      </DescriptionItem>
+                      <DescriptionItem label="Email">
+                        <span>{fullDetailOrder.customerEmail || fullDetailOrder.customer?.email || '—'}</span>
+                      </DescriptionItem>
+                    </Descriptions>
+                  </DrawerSectionCard>
+
+                <DrawerSectionCard title="Payment and fulfillment">
+                  <Descriptions column={1} className="space-y-0">
+                    <DescriptionItem label="Payment">
+                      <StatusBadge status={getPaymentStatus(fullDetailOrder)} />
+                    </DescriptionItem>
+                    <DescriptionItem label="Fulfillment">
+                      <StatusBadge status={getFulfillmentStatus(fullDetailOrder)} context="fulfillment" />
+                    </DescriptionItem>
+                    <DescriptionItem label="Shop">
+                      <span>{fullDetailOrder.shop?.name || '—'}</span>
+                    </DescriptionItem>
+                  </Descriptions>
+                </DrawerSectionCard>
+
+                <DrawerSectionCard title="Delivery info">
+                  <Descriptions column={1} className="space-y-0">
+                    <DescriptionItem label="Method">
+                      <span>{formatStatusLabel(fullDetailOrder.fulfillmentMethod || (fullDetailOrder.deliveryRequired ? 'delivery' : 'pickup'))}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Delivery status">
+                      <span>{fullDetailOrder.deliveryStatus ? formatStatusLabel(fullDetailOrder.deliveryStatus) : 'Not assigned'}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Address">
+                      <span>{getDeliveryAddressText(fullDetailOrder) || '—'}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Assigned at">
+                      <span>{formatDateTime(fullDetailOrder.deliveryAssignedAt)}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Delivered at">
+                      <span>{formatDateTime(fullDetailOrder.deliveredAt)}</span>
+                    </DescriptionItem>
+                  </Descriptions>
+                </DrawerSectionCard>
+
+                <DrawerSectionCard title="Totals">
+                  <Descriptions column={1} className="space-y-0">
+                    <DescriptionItem label="Subtotal">
+                      <span>{formatAmount(fullDetailOrder.subtotal || 0)}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Discount">
+                      <span>{formatAmount(fullDetailOrder.discount || 0)}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Tax">
+                      <span>{formatAmount(fullDetailOrder.tax || 0)}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Delivery fee">
+                      <span>{formatAmount(fullDetailOrder.deliveryFee || 0)}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Total">
+                      <span>{formatAmount(getOrderTotal(fullDetailOrder))}</span>
+                    </DescriptionItem>
+                  </Descriptions>
+                </DrawerSectionCard>
+
+                <DrawerSectionCard title="Trade Assurance">
+                  <Descriptions column={1} className="space-y-0">
+                    <DescriptionItem label="Held status">
+                      {tradeStatus ? <StatusBadge status={tradeStatus} /> : <span>Not recorded</span>}
+                    </DescriptionItem>
+                    <DescriptionItem label="Seller net">
+                      <span>{formatAmount(tradeAssurance.netAmount || 0)}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Sabito fee">
+                      <span>{formatAmount(tradeAssurance.feeAmount || 0)}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Gross amount">
+                      <span>{formatAmount(tradeAssurance.grossAmount || getOrderTotal(fullDetailOrder))}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Held at">
+                      <span>{formatDateTime(tradeAssurance.heldAt)}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Release eligible">
+                      <span>
+                        {tradeAssurance.payoutReleaseEligibleAt
+                          ? formatDateTime(tradeAssurance.payoutReleaseEligibleAt)
+                          : (tradeAssurance.payoutReleaseEligible ? 'Now' : 'After delivery window')}
+                      </span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Refunded">
+                      <span>{formatAmount(tradeAssurance.refundedAmount || 0)}</span>
+                    </DescriptionItem>
+                  </Descriptions>
+                </DrawerSectionCard>
+
+                <DrawerSectionCard title="Items">
+                  <div className="space-y-3">
+                    {visibleItems.map((item, index) => {
+                      const itemName = getOrderItemName(item);
+
+                      return (
+                        <div key={item.id || index} className="flex items-start justify-between gap-4 border-b border-border/50 pb-3 last:border-b-0 last:pb-0">
+                          <div className="flex min-w-0 items-start gap-3">
+                            <OrderItemThumbnail item={item} alt={itemName} />
+                            <div className="min-w-0">
+                              <p className="font-medium text-foreground">{itemName}</p>
+                              <p className="text-sm text-muted-foreground">Qty {item.quantity || item.qty || 1}</p>
+                              {item.variant?.name ? <p className="text-xs text-muted-foreground">Variant: {item.variant.name}</p> : null}
+                            </div>
+                          </div>
+                          <p className="shrink-0 text-right font-medium text-foreground">{formatAmount(item.total || item.amount || item.price || item.unitPrice || 0)}</p>
+                        </div>
+                      );
+                    })}
+                    {!visibleItems.length && (
+                      <p className="text-sm text-muted-foreground">No item details are available for this order yet.</p>
+                    )}
+                  </div>
+                </DrawerSectionCard>
+                </div>
+              )
+            ),
+          },
+          {
+            key: 'activity',
+            label: 'Activities',
+            content: renderDetailContentWithStatusOverlay((
+              <div className="space-y-4">
+                {!activityTimeline.hasBackendActivity && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                    Full backend activity history is limited for this order, so this timeline also uses available order timestamps and delivery tracking metadata.
+                  </div>
+                )}
+                <DrawerSectionCard title="Order activity">
+                  {activityTimeline.events.length ? (
+                    <Timeline>
+                      {activityTimeline.events.map((event, index) => (
+                        <TimelineItem
+                          key={event.id || `${getActivityKind(event.status, event.title)}-${event.at}-${index}`}
+                          isLast={index === activityTimeline.events.length - 1}
+                        >
+                          <TimelineIndicator />
+                          <TimelineContent>
+                            <TimelineTitle>{event.title}</TimelineTitle>
+                            <TimelineTime>{formatDateTime(event.at)}</TimelineTime>
+                            {event.description ? (
+                              <TimelineDescription>{event.description}</TimelineDescription>
+                            ) : null}
+                            {event.source ? (
+                              <div className="mt-2">
+                                <span className="rounded-full border border-border bg-muted/20 px-2.5 py-0.5 text-xs text-muted-foreground">{event.source}</span>
+                              </div>
+                            ) : null}
+                          </TimelineContent>
+                        </TimelineItem>
+                      ))}
+                    </Timeline>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      No activity events are available for this order yet.
+                    </p>
                   )}
-                </CardContent>
-              </Card>
+                </DrawerSectionCard>
+              </div>
+            )),
+          },
+        ]}
+      />
+    );
+  };
+
+  const renderCancellationDialog = () => {
+    const reason = cancellationReason.trim();
+    const isCancellingOrder = Boolean(
+      pendingStatusUpdate
+      && pendingStatus === 'cancelled'
+      && pendingStatusOrderId === cancelOrderRequest?.id
+    );
+    return (
+      <Dialog open={Boolean(cancelOrderRequest)} onOpenChange={handleCloseCancelDialog}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Cancel online order?</DialogTitle>
+            <DialogDescription>
+              Tell the buyer why {getOrderNumber(cancelOrderRequest || {})} is being cancelled. If the order has a held Trade Assurance payment, the held amount will be refunded.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody>
+            <div className="space-y-2">
+              <label htmlFor="order-cancellation-reason" className="text-sm font-medium">
+                Cancellation reason
+              </label>
+              <Textarea
+                id="order-cancellation-reason"
+                value={cancellationReason}
+                onChange={(event) => setCancellationReason(event.target.value)}
+                placeholder="Example: Item is out of stock and cannot be fulfilled."
+                maxLength={240}
+                rows={5}
+                disabled={isCancellingOrder}
+              />
+              <p className="text-xs text-muted-foreground">
+                This reason is saved on the order record and refund activity.
+              </p>
             </div>
-          )}
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => setIsDetailOpen(false)}>Close</Button>
-          {getWhatsAppHref(fullDetailOrder) && (
-            <Button asChild>
-              <a href={getWhatsAppHref(fullDetailOrder)} target="_blank" rel="noreferrer">
-                <MessageCircle className="mr-2 h-4 w-4" />
-                WhatsApp
-              </a>
+          </DialogBody>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={updateStatusMutation.isPending}
+              onClick={() => handleCloseCancelDialog(false)}
+            >
+              Keep order
             </Button>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
+            <Button
+              type="button"
+              disabled={!reason || updateStatusMutation.isPending}
+              onClick={handleConfirmCancellation}
+            >
+              {isCancellingOrder ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {isCancellingOrder ? 'Cancelling...' : 'Cancel and refund'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  };
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -555,10 +1333,10 @@ const OnlineOrders = () => {
         <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">
           <Button variant="outline" className="w-full sm:w-auto" disabled={!previewUrl} asChild={Boolean(previewUrl)}>
             {previewUrl ? (
-              <Link to={previewUrl}>
+              <a href={previewUrl} target="_blank" rel="noreferrer">
                 <ArrowUpRight className="mr-2 h-4 w-4" />
                 Preview Store
-              </Link>
+              </a>
             ) : (
               <span>
                 <ArrowUpRight className="mr-2 h-4 w-4" />
@@ -566,8 +1344,8 @@ const OnlineOrders = () => {
               </span>
             )}
           </Button>
-          <Button variant="outline" className="w-full sm:w-auto" onClick={handleExportPlaceholder}>
-            <Download className="mr-2 h-4 w-4" />
+          <Button variant="outline" className="w-full sm:w-auto" onClick={handleExport} disabled={exportMutation.isPending}>
+            {exportMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
             Export
           </Button>
           <DropdownMenu>
@@ -596,11 +1374,11 @@ const OnlineOrders = () => {
 
       {isLoading ? renderLoadingSkeleton() : (
         <>
-          <div className="grid grid-cols-2 gap-3 md:gap-4 xl:grid-cols-5">
-            {kpiCards.map((card, index) => {
+          <div className="grid gap-3 sm:grid-cols-2 md:gap-4 lg:grid-cols-4">
+            {kpiCards.map((card) => {
               const Icon = card.icon;
               return (
-                <Card key={card.label} className={`border border-border ${index === kpiCards.length - 1 ? 'col-span-2 md:col-span-1' : ''}`}>
+                <Card key={card.label} className="border border-border">
                   <CardHeader className="flex flex-row items-start justify-between gap-2 p-4 pb-2 sm:p-6 sm:pb-2">
                     <CardTitle className="text-xs font-medium leading-snug text-muted-foreground sm:text-sm">{card.label}</CardTitle>
                     <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
@@ -622,12 +1400,12 @@ const OnlineOrders = () => {
               </CardHeader>
               <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
                 <div className="text-3xl font-semibold sm:text-4xl">{formatAmount(stats.todayRevenue || 0)}</div>
-                <p className="mt-1 text-sm text-muted-foreground">{stats.todayOrderCount || 0} orders today · Trend coming soon</p>
+                <p className="mt-1 text-sm text-muted-foreground">{stats.todayOrderCount || 0} orders placed today</p>
               </CardContent>
             </Card>
             <Card className="border border-border">
               <CardHeader className="p-4 pb-2 sm:p-6 sm:pb-2">
-                <CardTitle className="text-base">Store Activity</CardTitle>
+                <CardTitle className="text-base">Fulfillment Activity</CardTitle>
               </CardHeader>
               <CardContent className="grid grid-cols-3 divide-x divide-border p-4 pt-0 text-center text-xs sm:p-6 sm:pt-0 sm:text-sm lg:grid-cols-1 lg:divide-x-0 lg:text-left">
                 <div className="space-y-1 px-2 first:pl-0 lg:flex lg:items-center lg:justify-between lg:px-0 lg:py-2">
@@ -635,42 +1413,33 @@ const OnlineOrders = () => {
                   <span className="block font-semibold lg:inline">{stats.todayOrderCount || 0}</span>
                 </div>
                 <div className="space-y-1 px-2 lg:flex lg:items-center lg:justify-between lg:px-0 lg:py-2">
-                  <span className="text-muted-foreground">Visitors</span>
-                  <span className="block font-semibold text-muted-foreground lg:inline">Not tracked</span>
+                  <span className="text-muted-foreground">In fulfillment</span>
+                  <span className="block font-semibold lg:inline">{(stats.processing || 0) + (stats.ready || 0) + (stats.outForDelivery || 0)}</span>
                 </div>
                 <div className="space-y-1 px-2 last:pr-0 lg:flex lg:items-center lg:justify-between lg:px-0 lg:py-2">
-                  <span className="text-muted-foreground">Conversion</span>
-                  <span className="block font-semibold text-muted-foreground lg:inline">Not tracked</span>
+                  <span className="text-muted-foreground">Delivered</span>
+                  <span className="block font-semibold lg:inline">{stats.delivered || 0}</span>
                 </div>
               </CardContent>
             </Card>
           </div>
 
+          {renderTradeAssuranceDashboard()}
+
           <Card className="border border-border">
             <CardContent className="space-y-4 p-3 sm:p-6">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="relative w-full lg:max-w-md">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    value={searchValue}
-                    onChange={handleSearchChange}
-                    placeholder="Search by order, customer, phone..."
-                    className="h-11 pl-9"
-                  />
-                </div>
-                <div className="-mx-3 flex gap-2 overflow-x-auto px-3 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
-                  {STATUS_FILTERS.map((filter) => (
-                    <Button
-                      key={filter.value}
-                      variant={statusFilter === filter.value ? 'default' : 'outline'}
-                      size="sm"
-                      className="shrink-0"
-                      onClick={() => handleStatusFilterChange(filter.value)}
-                    >
-                      {filter.label}
-                    </Button>
-                  ))}
-                </div>
+              <div className="-mx-3 flex gap-2 overflow-x-auto px-3 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
+                {STATUS_FILTERS.map((filter) => (
+                  <Button
+                    key={filter.value}
+                    variant={statusFilter === filter.value ? 'default' : 'outline'}
+                    size="sm"
+                    className="shrink-0"
+                    onClick={() => handleStatusFilterChange(filter.value)}
+                  >
+                    {filter.label}
+                  </Button>
+                ))}
               </div>
 
               {orders.length === 0 ? renderEmptyState() : (
@@ -685,7 +1454,8 @@ const OnlineOrders = () => {
         </>
       )}
 
-      {renderDetailDialog()}
+      {renderDetailSheet()}
+      {renderCancellationDialog()}
     </div>
   );
 };

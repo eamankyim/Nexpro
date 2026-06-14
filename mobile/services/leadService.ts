@@ -43,4 +43,9 @@ export const leadService = {
     const res = await api.post(`/leads/${id}/activities`, payload);
     return res.data;
   },
+
+  convertToCustomer: async (id: string) => {
+    const res = await api.post(`/leads/${id}/convert`);
+    return res.data;
+  },
 };

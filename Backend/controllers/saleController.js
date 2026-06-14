@@ -8,7 +8,7 @@ const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const { resolvePaymentNotesFromBody } = require('../utils/paymentNoteUtils');
 const { parseDeliveryStatusInput } = require('../utils/deliveryStatus');
 const { getPagination } = require('../utils/paginationUtils');
-const { invalidateSaleListCache } = require('../middleware/cache');
+const { invalidateSaleListCache, invalidateInvoiceListCache } = require('../middleware/cache');
 const { sequelize } = require('../config/database');
 const config = require('../config/config');
 const { emitNewSale, emitSaleStatusChange, emitInventoryAlert } = require('../services/websocketService');
@@ -25,6 +25,11 @@ const {
   assertShopRecordAccess,
   userCanAccessShopId,
 } = require('../utils/shopUtils');
+const {
+  CUSTOMER_CONFIRMED_DELIVERY_ERROR_CODE,
+  CUSTOMER_CONFIRMED_DELIVERY_ERROR_MESSAGE,
+  hasCustomerConfirmedDelivery,
+} = require('../utils/marketplaceOrderStatus');
 
 /** Throttle check-Paystack calls per sale (avoid hitting Paystack every poll) */
 const paystackCheckLastBySaleId = new Map();
@@ -304,7 +309,10 @@ const autoCreateInvoiceFromSale = async (saleId, tenantId) => {
         return {
           description: item.name || 'Sale item',
           category: 'Sale',
-          productCode: item.metadata?.productCode || null,
+          productId: item.productId || undefined,
+          productVariantId: item.productVariantId || undefined,
+          productCode: item.metadata?.productCode || item.sku || null,
+          sku: item.sku || null,
           quantity: item.quantity,
           unitPrice: unitPriceNet,
           discountAmount: 0,
@@ -359,6 +367,7 @@ const autoCreateInvoiceFromSale = async (saleId, tenantId) => {
     const invoice = await Invoice.create(invoicePayload);
 
     await sale.update({ invoiceId: invoice.id });
+    invalidateInvoiceListCache(tenantId);
 
     try {
       await createInvoiceRevenueJournal(invoice);
@@ -1430,6 +1439,20 @@ exports.updateSale = async (req, res, next) => {
 
     const previousStatus = sale.status;
     const previousDeliveryStatus = sale.deliveryStatus || null;
+    const statusFieldsChanged = (
+      (updateData.status !== undefined && String(updateData.status || '') !== String(previousStatus || '')) ||
+      (updateData.deliveryStatus !== undefined && String(updateData.deliveryStatus || '') !== String(previousDeliveryStatus || '')) ||
+      updateData.metadata !== undefined
+    );
+
+    if (statusFieldsChanged && hasCustomerConfirmedDelivery(sale)) {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: CUSTOMER_CONFIRMED_DELIVERY_ERROR_MESSAGE,
+        errorCode: CUSTOMER_CONFIRMED_DELIVERY_ERROR_CODE,
+      });
+    }
 
     // Validate incremental status progression
     if (updateData.status && updateData.status !== previousStatus) {
@@ -1943,25 +1966,14 @@ exports.generateInvoice = async (req, res, next) => {
       throw accessErr;
     }
 
-    // Check if sale is already paid
-    if (sale.status === 'completed' && sale.amountPaid >= sale.total) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot generate invoice for an already paid sale'
-      });
-    }
-
     // Check if invoice already exists
     const existingInvoice = await Invoice.findOne({
       where: applyTenantFilter(req.tenantId, { saleId: sale.id })
     });
 
     if (existingInvoice) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invoice already exists for this sale',
-        data: existingInvoice
-      });
+      invalidateInvoiceListCache(req.tenantId);
+      return res.status(200).json({ success: true, data: existingInvoice });
     }
 
     if (!sale.customerId) {
@@ -1986,6 +1998,8 @@ exports.generateInvoice = async (req, res, next) => {
         { model: Sale, as: 'sale' }
       ]
     });
+
+    invalidateInvoiceListCache(req.tenantId);
 
     res.status(201).json({
       success: true,

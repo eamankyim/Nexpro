@@ -64,7 +64,7 @@ const VISIBILITY_OPTIONS = [
 
 const listingSchema = z.object({
   title: z.string().trim().min(1, 'Listing title is required'),
-  shortDescription: z.string().max(280, 'Keep the short description under 280 characters').optional(),
+  shortDescription: z.string().trim().min(1, 'Short description is required').max(280, 'Keep the short description under 280 characters'),
   description: z.string().optional(),
   salesCopy: z.string().optional(),
   publicPrice: z.coerce.number().min(0.01, 'Public price must be greater than zero'),
@@ -659,7 +659,7 @@ const StoreListingEditor = () => {
                     name="shortDescription"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Short description (optional)</FormLabel>
+                  <FormLabel>Short description</FormLabel>
                         <FormControl><Input maxLength={280} {...field} /></FormControl>
                         <FormDescription>Shown in product cards and the preview header.</FormDescription>
                         <FormMessage />

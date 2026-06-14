@@ -6,33 +6,37 @@ import {
   ScrollView,
   TextInput,
   Alert,
-  Share,
   Pressable,
 } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 
 import { AppIcon } from '@/components/AppIcon';
 import {
-  DetailCard,
+  DetailHeroCard,
+  DetailInfoRow,
+  DetailSectionCard,
   DetailFooter,
   DetailLoading,
   DetailNotFound,
-  DetailRow,
   DetailActionButton,
+  DetailMoreActions,
+  type DetailMoreAction,
   EntityDetailHeader,
   useEntityDetailTheme,
 } from '@/components/EntityDetailLayout';
 import { ScreenShell } from '@/components/ScreenShell';
 import { useAuth } from '@/context/AuthContext';
+import { useExclusiveAction } from '@/hooks/useExclusiveAction';
 import { useShopOptional } from '@/context/ShopContext';
 import { useStudioLocationOptional } from '@/context/StudioLocationContext';
+import { shareReceiptPdf } from '@/services/pdfDocumentService';
+import { invoiceService } from '@/services/invoiceService';
 import { saleService } from '@/services/saleService';
 import { formatCurrency, formatDate } from '@/utils/formatCurrency';
-import { formatSaleReceiptText } from '@/utils/formatSaleReceipt';
 import { formatStatusLabel } from '@/utils/formatLabels';
-import { parseApiEntity } from '@/utils/parseApiListResponse';
+import { parseApiEntity, parseApiListResponse } from '@/utils/parseApiListResponse';
 import { refreshAfterSale } from '@/utils/queryInvalidation';
 import { resolveImageUrl } from '@/utils/fileUtils';
 import { DeliveryStatusPicker } from '@/components/DeliveryStatusPicker';
@@ -53,6 +57,8 @@ type SaleDetail = {
   total: number;
   amountPaid?: number;
   status: string;
+  invoiceId?: string | null;
+  invoice?: { id?: string; invoiceNumber?: string } | null;
   deliveryStatus?: string | null;
   createdAt: string;
   customer?: { name?: string; phone?: string; email?: string };
@@ -60,6 +66,8 @@ type SaleDetail = {
   studioLocation?: { name?: string };
   items?: SaleItemDetail[];
 };
+
+type SaleAction = 'receipt' | 'payment' | 'cancel' | 'deliveryStatus' | 'invoice' | 'delete';
 
 function getSaleItemImageUrl(item: SaleItemDetail): string | null {
   const raw = item.product?.imageUrl;
@@ -79,8 +87,9 @@ const PAYMENT_METHODS = [
 
 export default function SaleDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
   const queryClient = useQueryClient();
-  const { activeTenant } = useAuth();
+  const { activeTenant, isAdmin } = useAuth();
   const shopContext = useShopOptional();
   const studioContext = useStudioLocationOptional();
   const { bg, colors, cardBg, borderColor, textColor, mutedColor } = useEntityDetailTheme();
@@ -89,8 +98,7 @@ export default function SaleDetailScreen() {
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentReference, setPaymentReference] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<(typeof PAYMENT_METHODS)[number]['value']>('cash');
-  const [actionLoading, setActionLoading] = useState(false);
-  const [cancelLoading, setCancelLoading] = useState(false);
+  const { isAnyActionActive, isActionActive, runExclusiveAction } = useExclusiveAction<SaleAction>();
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['sale', id],
@@ -100,6 +108,19 @@ export default function SaleDetailScreen() {
 
   const sale = useMemo(() => parseApiEntity<SaleDetail>(data), [data]);
 
+  const { data: linkedInvoicesResponse } = useQuery({
+    queryKey: ['invoices', 'sale-link', id],
+    queryFn: () => invoiceService.getInvoices({ saleId: String(id), limit: 1 }),
+    enabled: !!id && !sale?.invoiceId && !sale?.invoice?.id,
+  });
+
+  const linkedInvoiceId = useMemo(() => {
+    if (sale?.invoiceId) return sale.invoiceId;
+    if (sale?.invoice?.id) return sale.invoice.id;
+    const [invoice] = parseApiListResponse<{ id?: string }>(linkedInvoicesResponse);
+    return invoice?.id ?? null;
+  }, [linkedInvoicesResponse, sale?.invoiceId, sale?.invoice?.id]);
+
   const balance = useMemo(() => {
     if (!sale) return 0;
     return Math.max(0, Number(sale.total || 0) - Number(sale.amountPaid || 0));
@@ -108,19 +129,12 @@ export default function SaleDetailScreen() {
   const canRecordPayment =
     sale && balance > 0 && sale.status !== 'cancelled' && sale.status !== 'refunded';
 
-  const itemsWithImages = useMemo(
-    () => (sale?.items ?? []).filter((item) => !!getSaleItemImageUrl(item)),
-    [sale?.items]
-  );
-
   const deliveryStatusMutation = useMutation({
     mutationFn: (deliveryStatus: string | null) =>
       saleService.updateDeliveryStatus(String(id), deliveryStatus),
     onSuccess: async () => {
       await refetch();
-      queryClient.invalidateQueries({ queryKey: ['sales'] });
-      queryClient.invalidateQueries({ queryKey: ['sales', 'infinite'] });
-      queryClient.invalidateQueries({ queryKey: ['deliveries-queue'] });
+      await refreshAfterSale(queryClient);
     },
     onError: (err: Error & { response?: { data?: { message?: string } } }) => {
       Alert.alert('Update failed', err?.response?.data?.message || err?.message || 'Could not update delivery status');
@@ -132,35 +146,29 @@ export default function SaleDetailScreen() {
     await refreshAfterSale(queryClient);
   }, [queryClient, refetch]);
 
-  const handleShareReceipt = useCallback(async () => {
+  const handleDownloadReceipt = useCallback(async () => {
     if (!sale) return;
-    setActionLoading(true);
-    try {
-      let saleForReceipt: SaleDetail = sale;
+    await runExclusiveAction('receipt', async () => {
       try {
-        const res = await saleService.getReceipt(sale.id);
-        const full = res?.data ?? res;
-        if (full && typeof full === 'object') saleForReceipt = full as SaleDetail;
-      } catch {
-        // use sale
-      }
-      await Share.share({
-        message: formatSaleReceiptText({
+        let saleForReceipt: SaleDetail = sale;
+        try {
+          const res = await saleService.getReceipt(sale.id);
+          const full = res?.data ?? res;
+          if (full && typeof full === 'object') saleForReceipt = full as SaleDetail;
+        } catch {
+          // use sale
+        }
+        await shareReceiptPdf({
           ...saleForReceipt,
           shop: saleForReceipt?.shop ?? shopContext?.activeShop ?? undefined,
           studioLocation: saleForReceipt?.studioLocation ?? studioContext?.activeLocation ?? undefined,
           tenantName: activeTenant?.name,
-        }),
-        title: `Receipt ${saleForReceipt.saleNumber || ''}`.trim(),
-      });
-    } catch (err: unknown) {
-      if ((err as { message?: string })?.message !== 'User did not share') {
-        Alert.alert('Error', 'Could not share receipt');
+        });
+      } catch (err: unknown) {
+        Alert.alert('Receipt unavailable', err instanceof Error ? err.message : 'Could not prepare this receipt PDF.');
       }
-    } finally {
-      setActionLoading(false);
-    }
-  }, [activeTenant?.name, sale, shopContext?.activeShop, studioContext?.activeLocation]);
+    });
+  }, [activeTenant?.name, runExclusiveAction, sale, shopContext?.activeShop, studioContext?.activeLocation]);
 
   const handleRecordPayment = useCallback(async () => {
     if (!sale) return;
@@ -173,24 +181,23 @@ export default function SaleDetailScreen() {
       Alert.alert('Error', `Amount cannot exceed balance (${formatCurrency(balance)})`);
       return;
     }
-    setActionLoading(true);
-    try {
-      await saleService.recordPayment(sale.id, {
-        amount,
-        paymentMethod,
-        referenceNumber: paymentReference.trim() || undefined,
-        paymentDate: new Date().toISOString().slice(0, 10),
-      });
-      await refresh();
-      setShowPaymentForm(false);
-      setPaymentAmount('');
-      Alert.alert('Success', 'Payment recorded');
-    } catch (err: unknown) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Failed to record payment');
-    } finally {
-      setActionLoading(false);
-    }
-  }, [balance, paymentAmount, paymentMethod, paymentReference, refresh, sale]);
+    await runExclusiveAction('payment', async () => {
+      try {
+        await saleService.recordPayment(sale.id, {
+          amount,
+          paymentMethod,
+          referenceNumber: paymentReference.trim() || undefined,
+          paymentDate: new Date().toISOString().slice(0, 10),
+        });
+        await refresh();
+        setShowPaymentForm(false);
+        setPaymentAmount('');
+        Alert.alert('Success', 'Payment recorded');
+      } catch (err: unknown) {
+        Alert.alert('Error', err instanceof Error ? err.message : 'Failed to record payment');
+      }
+    });
+  }, [balance, paymentAmount, paymentMethod, paymentReference, refresh, runExclusiveAction, sale]);
 
   const handleCancelSale = useCallback(() => {
     if (!sale) return;
@@ -200,83 +207,166 @@ export default function SaleDetailScreen() {
         text: 'Cancel sale',
         style: 'destructive',
         onPress: async () => {
-          setCancelLoading(true);
-          try {
-            await saleService.cancelSale(sale.id);
-            await refresh();
-            Alert.alert('Success', 'Sale cancelled');
-          } catch (err: unknown) {
-            Alert.alert('Error', err instanceof Error ? err.message : 'Failed to cancel sale');
-          } finally {
-            setCancelLoading(false);
-          }
+          await runExclusiveAction('cancel', async () => {
+            try {
+              await saleService.cancelSale(sale.id);
+              await refresh();
+              Alert.alert('Success', 'Sale cancelled');
+            } catch (err: unknown) {
+              Alert.alert('Error', err instanceof Error ? err.message : 'Failed to cancel sale');
+            }
+          });
         },
       },
     ]);
-  }, [refresh, sale]);
+  }, [refresh, runExclusiveAction, sale]);
+
+  const handleInvoiceAction = useCallback(async () => {
+    if (!sale) return;
+    if (linkedInvoiceId) {
+      router.push(`/invoice/${encodeURIComponent(linkedInvoiceId)}` as never);
+      return;
+    }
+    await runExclusiveAction('invoice', async () => {
+      try {
+        const res = await saleService.generateInvoice(sale.id);
+        await refresh();
+        const payload = res?.data ?? res;
+        const invoiceId =
+          (payload as { invoice?: { id?: string } })?.invoice?.id ??
+          (payload as { id?: string })?.id ??
+          (payload as { invoiceId?: string })?.invoiceId;
+        if (invoiceId) {
+          router.push(`/invoice/${encodeURIComponent(invoiceId)}` as never);
+          return;
+        }
+        Alert.alert('Invoice created', 'The invoice was created for this sale.');
+      } catch (err: unknown) {
+        Alert.alert('Error', err instanceof Error ? err.message : 'Failed to create invoice');
+      }
+    });
+  }, [linkedInvoiceId, refresh, router, runExclusiveAction, sale]);
+
+  const handleDeleteSale = useCallback(() => {
+    if (!sale) return;
+    Alert.alert('Delete sale', 'Delete this sale permanently? This is only allowed when the backend considers it safe.', [
+      { text: 'Keep sale', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () =>
+          runExclusiveAction('delete', async () => {
+            try {
+              await saleService.deleteSale(sale.id);
+              await refreshAfterSale(queryClient);
+              Alert.alert('Deleted', 'Sale deleted');
+              router.back();
+            } catch (err: unknown) {
+              Alert.alert('Error', err instanceof Error ? err.message : 'Failed to delete sale');
+            }
+          }),
+      },
+    ]);
+  }, [queryClient, router, runExclusiveAction, sale]);
 
   if (isLoading) return <DetailLoading title="Sale" />;
   if (!sale) return <DetailNotFound title="Sale" entityLabel="Sale" />;
+
+  const salePrimaryIsPayment = Boolean(canRecordPayment);
+  const saleMoreActions: DetailMoreAction[] = [
+    ...(salePrimaryIsPayment
+      ? [{
+          key: 'receipt',
+          label: 'Download Receipt',
+          icon: 'download' as const,
+          onPress: handleDownloadReceipt,
+          loading: isActionActive('receipt'),
+          disabled: isAnyActionActive,
+        }]
+      : []),
+    {
+      key: 'invoice',
+      label: linkedInvoiceId ? 'View invoice' : 'Create invoice',
+      icon: 'file-text',
+      onPress: handleInvoiceAction,
+      loading: isActionActive('invoice'),
+      disabled: isAnyActionActive,
+    },
+    ...(sale.status !== 'cancelled' && sale.status !== 'refunded'
+      ? [{
+          key: 'cancel',
+          label: 'Cancel',
+          variant: 'danger' as const,
+          onPress: handleCancelSale,
+          loading: isActionActive('cancel'),
+          disabled: isAnyActionActive,
+        }]
+      : []),
+    ...(isAdmin
+      ? [{
+          key: 'delete',
+          label: 'Delete',
+          variant: 'danger' as const,
+          onPress: handleDeleteSale,
+          loading: isActionActive('delete'),
+          disabled: isAnyActionActive,
+        }]
+      : []),
+  ];
 
   return (
     <>
       <EntityDetailHeader title={sale.saleNumber || 'Sale details'} />
       <ScreenShell style={styles.screen}>
         <ScrollView contentContainerStyle={styles.content}>
-          <DetailCard>
-            {itemsWithImages.length > 0 ? (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={styles.thumbRow}
-                contentContainerStyle={styles.thumbRowContent}
-              >
-                {itemsWithImages.map((item, index) => {
-                  const uri = getSaleItemImageUrl(item);
-                  if (!uri) return null;
-                  return (
-                    <Image
-                      key={item.id ?? `${item.name}-${index}`}
-                      source={{ uri }}
-                      style={[styles.thumbImage, { borderColor }]}
-                      contentFit="cover"
-                    />
-                  );
-                })}
-              </ScrollView>
-            ) : null}
-            <DetailRow label="Total" value={formatCurrency(sale.total)} />
+          <DetailHeroCard
+            eyebrow={sale.saleNumber || 'Sale'}
+            title={formatStatusLabel(sale.status)}
+            message={balance > 0 ? 'This sale still has an outstanding balance.' : 'This sale is paid or complete.'}
+            metricLabel="Total Amount"
+            metricValue={formatCurrency(sale.total)}
+            secondaryIcon="archive"
+            secondaryLabel="Items"
+            secondaryValue={`${sale.items?.length || 0} ${(sale.items?.length || 0) === 1 ? 'Item' : 'Items'}`}
+          />
+
+          <DetailSectionCard title="Sale Details" icon="receipt">
+            <DetailInfoRow icon="user" label="Customer" value={sale.customer?.name ?? 'Walk-in'} />
+            <DetailInfoRow icon="calendar" label="Date" value={formatDate(sale.createdAt)} />
+            <DetailInfoRow icon="tag" label="Status" value={formatStatusLabel(sale.status)} />
             {Number(sale.amountPaid || 0) > 0 ? (
-              <DetailRow label="Paid" value={formatCurrency(sale.amountPaid)} />
+              <DetailInfoRow icon="credit-card" label="Paid" value={formatCurrency(sale.amountPaid)} />
             ) : null}
             {balance > 0 ? (
-              <DetailRow label="Balance" value={formatCurrency(balance)} valueColor="#ef4444" />
+              <DetailInfoRow icon="credit-card" label="Balance" value={formatCurrency(balance)} valueColor="#ef4444" />
             ) : null}
-            <DetailRow label="Customer" value={sale.customer?.name ?? 'Walk-in'} />
-            <DetailRow label="Date" value={formatDate(sale.createdAt)} />
-            <DetailRow label="Status" value={formatStatusLabel(sale.status)} />
-            <DetailRow label="Delivery status">
+            <DetailInfoRow icon="truck" label="Delivery status">
               <DeliveryStatusPicker
                 value={sale.deliveryStatus}
-                onChange={(nextStatus) => deliveryStatusMutation.mutate(nextStatus)}
+                onChange={(nextStatus) => {
+                  runExclusiveAction('deliveryStatus', () => deliveryStatusMutation.mutateAsync(nextStatus));
+                }}
                 cardBg={cardBg}
                 borderColor={borderColor}
                 textColor={textColor}
                 mutedColor={mutedColor}
                 tintColor={colors.tint}
-                loading={deliveryStatusMutation.isPending}
-                disabled={sale.status !== 'completed'}
+                loading={isActionActive('deliveryStatus')}
+                disabled={isAnyActionActive || sale.status !== 'completed'}
               />
-            </DetailRow>
-          </DetailCard>
+            </DetailInfoRow>
+          </DetailSectionCard>
           {sale.items && sale.items.length > 0 ? (
-            <DetailCard>
+            <DetailSectionCard title="Sale Items" icon="archive">
               <Text style={[styles.section, { color: textColor }]}>Items</Text>
               {sale.items.map((item, i) => {
                 const imageUri = getSaleItemImageUrl(item);
                 const displayName = item.name || item.product?.name || 'Product';
                 return (
-                  <View key={item.id ?? i} style={styles.itemRow}>
+                  <View
+                    key={item.id ?? i}
+                    style={[styles.itemRow, i > 0 && { borderTopColor: borderColor, borderTopWidth: 1 }]}
+                  >
                     {imageUri ? (
                       <Image
                         source={{ uri: imageUri }}
@@ -304,10 +394,10 @@ export default function SaleDetailScreen() {
                   </View>
                 );
               })}
-            </DetailCard>
+            </DetailSectionCard>
           ) : null}
           {showPaymentForm && canRecordPayment ? (
-            <DetailCard>
+            <DetailSectionCard title="Record Payment" icon="credit-card">
               <Text style={[styles.label, { color: mutedColor }]}>
                 Amount (max {formatCurrency(balance)})
               </Text>
@@ -336,19 +426,24 @@ export default function SaleDetailScreen() {
                   </Pressable>
                 ))}
               </View>
-            </DetailCard>
+            </DetailSectionCard>
           ) : null}
         </ScrollView>
         <DetailFooter>
           {showPaymentForm ? (
             <>
-              <DetailActionButton label="Back" onPress={() => setShowPaymentForm(false)} />
-              <DetailActionButton label="Record" variant="primary" loading={actionLoading} onPress={handleRecordPayment} />
+              <DetailActionButton label="Back" onPress={() => setShowPaymentForm(false)} disabled={isAnyActionActive} />
+              <DetailActionButton
+                label="Record"
+                variant="primary"
+                loading={isActionActive('payment')}
+                disabled={isAnyActionActive}
+                onPress={handleRecordPayment}
+              />
             </>
           ) : (
             <>
-              <DetailActionButton label="Receipt" icon="share" onPress={handleShareReceipt} loading={actionLoading} />
-              {canRecordPayment ? (
+              {salePrimaryIsPayment ? (
                 <DetailActionButton
                   label="Pay"
                   variant="primary"
@@ -356,11 +451,19 @@ export default function SaleDetailScreen() {
                     setPaymentAmount(balance.toFixed(2));
                     setShowPaymentForm(true);
                   }}
+                  disabled={isAnyActionActive}
                 />
-              ) : null}
-              {sale.status !== 'cancelled' && sale.status !== 'refunded' ? (
-                <DetailActionButton label="Cancel" variant="danger" loading={cancelLoading} onPress={handleCancelSale} />
-              ) : null}
+              ) : (
+                <DetailActionButton
+                  label="Download Receipt"
+                  icon="download"
+                  variant="primary"
+                  onPress={handleDownloadReceipt}
+                  loading={isActionActive('receipt')}
+                  disabled={isAnyActionActive}
+                />
+              )}
+              <DetailMoreActions actions={saleMoreActions} disabled={isAnyActionActive} />
             </>
           )}
         </DetailFooter>

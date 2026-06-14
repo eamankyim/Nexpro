@@ -1,5 +1,6 @@
 import { api } from './api';
 import { buildScopedQueryString } from '@/utils/shopScope';
+import { logger } from '@/utils/logger';
 
 type InvoiceParams = {
   page?: number;
@@ -7,14 +8,50 @@ type InvoiceParams = {
   status?: string;
   search?: string;
   customerId?: string;
+  jobId?: string;
+  saleId?: string;
   startDate?: string;
   endDate?: string;
 };
 
+function summarizeInvoiceParams(params: InvoiceParams) {
+  return {
+    page: params.page,
+    limit: params.limit,
+    status: params.status ?? 'all',
+    customerId: params.customerId ?? null,
+    jobId: params.jobId ?? null,
+    saleId: params.saleId ?? null,
+    hasSearch: !!params.search,
+    searchLength: params.search?.length ?? 0,
+    hasDateRange: !!(params.startDate || params.endDate),
+  };
+}
+
+function summarizeInvoiceResponse(data: unknown) {
+  if (!data || typeof data !== 'object') {
+    return { success: undefined, dataShape: typeof data, responseCount: null, dataCount: null };
+  }
+
+  const payload = data as { success?: unknown; data?: unknown; count?: unknown; pagination?: unknown };
+  return {
+    success: payload.success,
+    dataShape: Array.isArray(payload.data) ? 'array' : typeof payload.data,
+    responseCount: typeof payload.count === 'number' ? payload.count : null,
+    dataCount: Array.isArray(payload.data) ? payload.data.length : null,
+    hasPagination: !!payload.pagination,
+  };
+}
+
 export const invoiceService = {
   getInvoices: async (params: InvoiceParams = {}) => {
     const query = await buildScopedQueryString(params);
+    logger.info('InvoicesService', 'GET /invoices request', {
+      params: summarizeInvoiceParams(params),
+      query,
+    });
     const res = await api.get(query ? `/invoices?${query}` : '/invoices');
+    logger.info('InvoicesService', 'GET /invoices response', summarizeInvoiceResponse(res.data));
     return res.data;
   },
 
@@ -47,6 +84,16 @@ export const invoiceService = {
 
   cancel: async (id: string) => {
     const res = await api.post(`/invoices/${id}/cancel`);
+    return res.data;
+  },
+
+  deleteInvoice: async (id: string) => {
+    const res = await api.delete(`/invoices/${id}`);
+    return res.data;
+  },
+
+  deleteCancelledInvoice: async (id: string) => {
+    const res = await api.delete(`/invoices/${id}/cancelled`);
     return res.data;
   },
 

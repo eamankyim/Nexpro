@@ -42,4 +42,17 @@ export const quoteService = {
     const res = await api.post(`/quotes/${id}/convert`);
     return res.data;
   },
+
+  convertToSale: async (id: string, payload: { paymentMethod?: string; shopId?: string | null } = {}) => {
+    const res = await api.post(`/quotes/${id}/convert-to-sale`, {
+      paymentMethod: payload.paymentMethod || 'credit',
+      shopId: payload.shopId || null,
+    });
+    return res.data;
+  },
+
+  deleteQuote: async (id: string) => {
+    const res = await api.delete(`/quotes/${id}`);
+    return res.data;
+  },
 };

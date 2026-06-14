@@ -96,11 +96,22 @@ const Login = () => {
         navigate('/dashboard');
       }
     } catch (error) {
+      const status = error?.response?.status;
       const errorCode = error?.response?.data?.errorCode;
       const message = error?.response?.data?.message;
-      if (errorCode === 'EMAIL_NOT_FOUND' || (error?.response?.status === 404 && message)) {
+      if (errorCode === 'EMAIL_NOT_FOUND' || (status === 404 && message)) {
         setEmailNotFound(true);
         showError(message || 'No account exists for this email. Sign up instead.');
+      } else if (status === 403) {
+        const devProxyHint =
+          import.meta.env.DEV &&
+          (!message || message === 'Invalid request origin' || error?.response?.data?.error === 'Forbidden');
+        showError(
+          error,
+          devProxyHint
+            ? 'Cannot reach the local API (403). The backend is usually on port 5001 or 5002 on macOS — restart the frontend dev server after starting the backend.'
+            : message || 'Access denied. Check your account or try again.'
+        );
       } else {
         showError(error, message || 'Wrong email or password. Check and try again.');
       }

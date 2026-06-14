@@ -740,6 +740,87 @@ const notifyNewOrder = async ({ sale, triggeredBy = null }) => {
 };
 
 /**
+ * Notify shop users when a paid storefront marketplace order is received.
+ */
+const ONLINE_STORE_ORDER_NOTIFY_ROLES = ['owner', 'admin', 'manager', 'staff'];
+
+const notifyOnlineStoreOrderReceived = async ({ sale, shopper = null, store = null, triggeredBy = null }) => {
+  if (!sale || !sale.tenantId) {
+    return [];
+  }
+
+  const tenantId = sale.tenantId;
+  const recipientSet = new Set();
+  if (triggeredBy) recipientSet.add(triggeredBy);
+
+  try {
+    const { UserTenant } = require('../models');
+    const { Op } = require('sequelize');
+    const { sequelize } = require('../config/database');
+    const existingCount = await Notification.count({
+      where: {
+        tenantId,
+        type: 'order',
+        [Op.and]: [
+          sequelize.where(sequelize.literal(`"Notification"."metadata"->>'source'`), 'online_store'),
+          sequelize.where(sequelize.literal(`"Notification"."metadata"->>'saleId'`), String(sale.id)),
+        ],
+      },
+    });
+    if (existingCount > 0) {
+      console.log(`${logPrefix} notifyOnlineStoreOrderReceived skipped (already notified)`, {
+        saleId: sale.id,
+        tenantId,
+      });
+      return [];
+    }
+
+    const memberUsers = await UserTenant.findAll({
+      where: {
+        tenantId,
+        role: { [Op.in]: ONLINE_STORE_ORDER_NOTIFY_ROLES },
+        status: 'active'
+      },
+      attributes: ['userId']
+    });
+    memberUsers.forEach((ut) => { if (ut.userId) recipientSet.add(ut.userId); });
+  } catch (error) {
+    console.error(`${logPrefix} notifyOnlineStoreOrderReceived - failed to fetch users`, error.message);
+  }
+
+  const recipients = Array.from(recipientSet).filter(Boolean);
+  if (recipients.length === 0) {
+    console.warn(`${logPrefix} notifyOnlineStoreOrderReceived no recipients`, {
+      saleId: sale.id,
+      tenantId,
+    });
+    return [];
+  }
+
+  const saleNumber = sale.saleNumber || `Order #${sale.id}`;
+  const shopperName = shopper?.name || shopper?.fullName || shopper?.email || 'A shopper';
+  const storeName = store?.displayName || store?.shop?.name || 'your online store';
+  const payload = {
+    title: 'New Online Store Order',
+    message: `${shopperName} placed ${saleNumber} from ${storeName}. Review it in Online Orders.`,
+    type: 'order',
+    priority: 'high',
+    metadata: {
+      saleId: sale.id,
+      saleNumber,
+      shopId: sale.shopId || null,
+      source: 'online_store',
+      storefrontCustomerId: shopper?.id || null
+    },
+    icon: 'shopping-bag',
+    link: '/store/orders',
+    triggeredBy
+  };
+
+  return notifyUsers({ tenantId, userIds: recipients, payload });
+};
+
+/**
  * Notify relevant users when an order (restaurant sale) status changes.
  * Notifies all admins, managers, and staff in the tenant who may use the Orders/Kitchen page.
  */
@@ -835,6 +916,7 @@ module.exports = {
   notifyInvoiceSent,
   notifyInvoicePaid,
   notifyNewOrder,
+  notifyOnlineStoreOrderReceived,
   notifyOrderStatusChanged
 };
 

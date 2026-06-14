@@ -31,6 +31,18 @@ const getSupportTicket = async (id) => api.get(`/admin/support-tickets/${id}`);
 const createSupportTicket = async (payload) => api.post('/admin/support-tickets', payload);
 const updateSupportTicket = async (id, payload) => api.patch(`/admin/support-tickets/${id}`, payload);
 
+const getSabitoOverview = async () => api.get('/admin/sabito/overview');
+const getSabitoStores = async (params = {}) => api.get('/admin/sabito/stores', { params });
+const getSabitoOrders = async (params = {}) => api.get('/admin/sabito/orders', { params });
+const getSabitoOrder = async (id) => api.get(`/admin/sabito/orders/${id}`);
+const getSabitoTradeAssurance = async (params = {}) => api.get('/admin/sabito/trade-assurance', { params });
+const releaseSabitoOrderPayout = async (orderId, payload = {}) => (
+  api.post(`/admin/sabito/orders/${orderId}/release-payout`, payload)
+);
+const getSabitoDisputes = async (params = {}) => api.get('/admin/sabito/disputes', { params });
+const getSabitoCustomers = async (params = {}) => api.get('/admin/sabito/customers', { params });
+const getSabitoSettings = async () => api.get('/admin/sabito/settings');
+
 const getActiveSupportAccess = async () => api.get('/admin/support-access/active');
 const startSupportAccess = async (tenantId, payload) =>
   api.post(`/admin/tenants/${tenantId}/support-access`, payload);
@@ -214,6 +226,15 @@ export default {
   getSupportTicket,
   createSupportTicket,
   updateSupportTicket,
+  getSabitoOverview,
+  getSabitoStores,
+  getSabitoOrders,
+  getSabitoOrder,
+  getSabitoTradeAssurance,
+  releaseSabitoOrderPayout,
+  getSabitoDisputes,
+  getSabitoCustomers,
+  getSabitoSettings,
   getActiveSupportAccess,
   startSupportAccess,
   endSupportAccess,

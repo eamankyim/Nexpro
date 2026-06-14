@@ -19,6 +19,7 @@ import {
   UserCircle,
   CheckSquare,
   LifeBuoy,
+  ShoppingBag,
 } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -70,6 +71,7 @@ const menuItems = [
   { path: '/admin/reports', icon: FileSearch, label: 'Reports' },
   { path: '/admin/health', icon: AlertTriangle, label: 'System Health' },
   { path: '/admin/support-tickets', icon: LifeBuoy, label: 'Support Tickets' },
+  { path: '/admin/sabito/overview', icon: ShoppingBag, label: 'Sabito Admin', activePrefix: '/admin/sabito' },
   { path: '/admin/tasks', icon: CheckSquare, label: 'Tasks' },
   { path: '/admin/settings', icon: Settings, label: 'Settings' },
 ];
@@ -108,7 +110,9 @@ const AdminLayout = () => {
   const navContent = (
     <nav className="flex-1 overflow-y-auto p-4 space-y-1">
       {visibleMenuItems.map((item) => {
-        const isActive = location.pathname === item.path;
+        const isActive = item.activePrefix
+          ? location.pathname.startsWith(item.activePrefix)
+          : location.pathname === item.path;
         const Icon = item.icon;
         const permissionMap = {
           '/admin': 'overview.view',
@@ -122,6 +126,7 @@ const AdminLayout = () => {
           '/admin/reports': 'reports.view',
           '/admin/health': 'health.view',
           '/admin/support-tickets': 'tickets.view',
+          '/admin/sabito/overview': 'overview.view',
           '/admin/tasks': 'settings.view',
           '/admin/settings': 'settings.view',
         };

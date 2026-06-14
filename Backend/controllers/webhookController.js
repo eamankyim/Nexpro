@@ -2,6 +2,7 @@ const { Customer, Tenant, SabitoTenantMapping } = require('../models');
 const { verifySabitoWebhook } = require('../middleware/webhookAuth');
 const whatsappService = require('../services/whatsappService');
 const paystackService = require('../services/paystackService');
+const { handlePaystackTransferWebhook } = require('../services/marketplacePayoutService');
 const {
   applyPaystackChargeToInvoiceFromTx,
   getPaystackInvoiceLinkMetadata,
@@ -523,6 +524,157 @@ exports.handlePaystackWebhook = async (req, res) => {
           }
           console.log('[Paystack Webhook] POS sale completed:', metadata.sale_id);
         }
+      } else if (String(metadata.type || '').toLowerCase() === 'storefront_order' && metadata.saleId) {
+        const { sequelize } = require('../config/database');
+        const { Sale, StorefrontCustomer, OnlineStoreSettings, SaleActivity } = require('../models');
+        const { recordHeldPaymentForSale } = require('../services/tradeAssuranceService');
+        const { notifyOnlineStoreOrderReceived } = require('../services/notificationService');
+        const transaction = await sequelize.transaction();
+        try {
+          const sale = await Sale.findOne({
+            where: { id: metadata.saleId },
+            transaction,
+            lock: transaction.LOCK.UPDATE,
+          });
+          if (!sale) {
+            await transaction.rollback();
+            console.error('[Paystack Webhook] Storefront order not found:', metadata.saleId);
+          } else {
+            const saleMetadata = sale.metadata && typeof sale.metadata === 'object' ? { ...sale.metadata } : {};
+            const tradeAssurance = saleMetadata.tradeAssurance || {};
+            if (tradeAssurance.paymentStatus === 'paid_held' || sale.status === 'completed') {
+              await transaction.commit();
+              console.log('[Paystack Webhook] Storefront order already paid:', metadata.saleId);
+            } else if (tradeAssurance.paymentStatus === 'awaiting_payment' && sale.status === 'pending') {
+              const expectedPesewas = Math.round(Number(sale.total) * 100);
+              if (Number(tx.amount) !== expectedPesewas) {
+                await transaction.rollback();
+                console.error('[Paystack Webhook] Storefront order amount mismatch:', metadata.saleId);
+              } else {
+                const shopper = metadata.storefrontCustomerId
+                  ? await StorefrontCustomer.findByPk(metadata.storefrontCustomerId, { transaction })
+                  : null;
+                const store = await OnlineStoreSettings.findOne({
+                  where: {
+                    tenantId: sale.tenantId,
+                    slug: metadata.storeSlug || saleMetadata.storeSlug || '',
+                  },
+                  transaction,
+                });
+                await recordHeldPaymentForSale({
+                  sale,
+                  store: store || { currency: 'GHS', slug: metadata.storeSlug },
+                  shopper,
+                  transaction,
+                  provider: 'paystack',
+                  providerReference: reference,
+                });
+                await SaleActivity.create({
+                  saleId: sale.id,
+                  tenantId: sale.tenantId,
+                  type: 'payment',
+                  subject: 'Online order payment confirmed (webhook)',
+                  notes: `Paystack webhook confirmed payment ${reference} for order ${sale.saleNumber}`,
+                  createdBy: null,
+                  metadata: {
+                    source: 'online_store',
+                    storefrontCustomerId: metadata.storefrontCustomerId || null,
+                    paystackReference: reference,
+                  },
+                }, { transaction });
+                await transaction.commit();
+                notifyOnlineStoreOrderReceived({ sale, shopper, store }).catch((notifyError) => {
+                  console.error('[Paystack Webhook] Storefront seller notification failed:', notifyError.message);
+                });
+                console.log('[Paystack Webhook] Storefront order payment confirmed:', metadata.saleId);
+              }
+            } else {
+              await transaction.rollback();
+              console.warn('[Paystack Webhook] Storefront order not awaiting payment:', metadata.saleId);
+            }
+          }
+        } catch (storefrontErr) {
+          if (transaction && !transaction.finished) await transaction.rollback();
+          console.error('[Paystack Webhook] Storefront order handler failed:', storefrontErr.message);
+        }
+      } else if (String(metadata.type || '').toLowerCase() === 'storefront_service_booking' && metadata.jobId) {
+        const { sequelize } = require('../config/database');
+        const { Job, Lead } = require('../models');
+        const transaction = await sequelize.transaction();
+        try {
+          const job = await Job.findOne({
+            where: { id: metadata.jobId, tenantId: metadata.tenantId },
+            transaction,
+            lock: transaction.LOCK.UPDATE,
+          });
+          if (!job) {
+            await transaction.rollback();
+            console.error('[Paystack Webhook] Service booking not found:', metadata.jobId);
+          } else {
+            const jobMetadata = job.metadata && typeof job.metadata === 'object' ? { ...job.metadata } : {};
+            const expectedReference = jobMetadata.paystack?.reference;
+            const paymentStatus = jobMetadata.paymentStatus || jobMetadata.paystack?.status;
+            if (paymentStatus === 'paid' || jobMetadata.paystack?.status === 'success') {
+              await transaction.commit();
+              console.log('[Paystack Webhook] Service booking already paid:', metadata.jobId);
+            } else if (paymentStatus === 'awaiting_payment') {
+              if (expectedReference && expectedReference !== reference && expectedReference !== tx.reference) {
+                await transaction.rollback();
+                console.error('[Paystack Webhook] Service booking reference mismatch:', metadata.jobId);
+              } else if (metadata.expectedAmount && Number(tx.amount || 0) < Number(metadata.expectedAmount)) {
+                await transaction.rollback();
+                console.error('[Paystack Webhook] Service booking amount mismatch:', metadata.jobId);
+              } else {
+                const paidAt = tx.paid_at || tx.paidAt || new Date().toISOString();
+                jobMetadata.paymentStatus = 'paid';
+                jobMetadata.paystack = {
+                  ...(jobMetadata.paystack || {}),
+                  reference: tx.reference || reference,
+                  amount: Number(tx.amount || 0) / 100,
+                  currency: tx.currency || jobMetadata.paystack?.currency || 'GHS',
+                  status: tx.status,
+                  channel: tx.channel || null,
+                  paidAt,
+                };
+                jobMetadata.tradeAssurance = {
+                  status: 'service_paid',
+                  releaseTrigger: 'job_completion',
+                  paidAt,
+                };
+                await job.update({ metadata: jobMetadata }, { transaction });
+
+                if (metadata.leadId) {
+                  const lead = await Lead.findOne({
+                    where: { id: metadata.leadId, tenantId: metadata.tenantId },
+                    transaction,
+                    lock: transaction.LOCK.UPDATE,
+                  });
+                  if (lead) {
+                    const leadMetadata = lead.metadata && typeof lead.metadata === 'object' ? { ...lead.metadata } : {};
+                    await lead.update({
+                      status: 'converted',
+                      metadata: {
+                        ...leadMetadata,
+                        paymentStatus: 'paid',
+                        paidAt,
+                        paystackReference: tx.reference || reference,
+                      },
+                    }, { transaction });
+                  }
+                }
+
+                await transaction.commit();
+                console.log('[Paystack Webhook] Service booking payment confirmed:', metadata.jobId);
+              }
+            } else {
+              await transaction.rollback();
+              console.warn('[Paystack Webhook] Service booking not awaiting payment:', metadata.jobId);
+            }
+          }
+        } catch (serviceBookingErr) {
+          if (transaction && !transaction.finished) await transaction.rollback();
+          console.error('[Paystack Webhook] Service booking handler failed:', serviceBookingErr.message);
+        }
       } else if (
         !metadata.sale_id &&
         (String(metadata.type || '').toLowerCase() === 'invoice' ||
@@ -570,6 +722,15 @@ exports.handlePaystackWebhook = async (req, res) => {
       const inv = data;
       if (inv?.subscription) {
         console.log('[Paystack Webhook] invoice.payment_failed for subscription:', inv.subscription);
+      }
+    } else if (['transfer.success', 'transfer.failed', 'transfer.reversed'].includes(event)) {
+      const outcome = await handlePaystackTransferWebhook(event, data);
+      if (outcome.handled) {
+        console.log('[Paystack Webhook] Marketplace payout transfer event handled:', {
+          event,
+          payoutId: outcome.payoutId,
+          status: outcome.status,
+        });
       }
     }
 

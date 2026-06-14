@@ -68,6 +68,8 @@ import { cn } from '@/lib/utils';
  * @param {String} cancelButtonLabel - Custom cancel button label (default: 'Cancel')
  * @param {Object} primaryAction - When set with moreMenuItems, footer shows only primary button + More dropdown. { label, onClick, disabled, icon }
  * @param {Array} moreMenuItems - When set with primaryAction, items for the More dropdown. [{ label, onClick, icon?, destructive? }]
+ * @param {Boolean} moreMenuLoading - Shows a loading state on the More dropdown trigger
+ * @param {String} moreMenuLoadingLabel - Custom loading label for the More dropdown trigger
  */
 const DetailsDrawer = ({ 
   open, 
@@ -93,7 +95,9 @@ const DetailsDrawer = ({
   deleteButtonLabel = 'Archive',
   cancelButtonLabel = 'Cancel',
   primaryAction = null,
-  moreMenuItems = []
+  moreMenuItems = [],
+  moreMenuLoading = false,
+  moreMenuLoadingLabel = 'Updating...'
 }) => {
   const { isMobile } = useResponsive();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -239,10 +243,19 @@ const DetailsDrawer = ({
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <SecondaryButton
-                        className={cn(isMobile && 'min-h-[44px] flex-1 touch-manipulation')}
+                        disabled={moreMenuLoading}
+                        aria-busy={moreMenuLoading}
+                        className={cn(
+                          isMobile && 'min-h-[44px] flex-1 touch-manipulation',
+                          moreMenuLoading && 'animate-pulse border-primary/40 bg-primary/5 text-primary'
+                        )}
                       >
-                        <MoreVertical className="h-4 w-4 mr-2 shrink-0" />
-                        {isMobile ? 'More Actions' : 'More'}
+                        {moreMenuLoading ? (
+                          <Loader2 className="h-4 w-4 mr-2 shrink-0 animate-spin" />
+                        ) : (
+                          <MoreVertical className="h-4 w-4 mr-2 shrink-0" />
+                        )}
+                        {moreMenuLoading ? moreMenuLoadingLabel : (isMobile ? 'More Actions' : 'More')}
                       </SecondaryButton>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
@@ -259,7 +272,11 @@ const DetailsDrawer = ({
                             key={item.key || index}
                             onClick={handleClick}
                             disabled={item.disabled}
-                            className={cn('flex items-center gap-2', item.destructive && 'text-destructive focus:text-destructive')}
+                            className={cn(
+                              'flex items-center gap-2',
+                              item.destructive && 'text-destructive focus:text-destructive',
+                              item.className
+                            )}
                           >
                             {item.icon && item.icon}
                             {item.label}

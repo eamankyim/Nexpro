@@ -9,7 +9,7 @@ const sections = [
   {
     title: 'Information we collect',
     body:
-      'We collect account information such as your name, email address, profile photo, business name, phone number, address, logo, and workspace settings. We also process business records you add, including customers, products, sales, invoices, expenses, quotes, materials, jobs, and related files.',
+      'We collect account information such as your name, email address, profile photo, business name, phone number, address, logo, and workspace settings. We also process business records you add, including customers, products, sales, invoices, expenses, quotes, jobs, and related files.',
   },
   {
     title: 'How we use information',

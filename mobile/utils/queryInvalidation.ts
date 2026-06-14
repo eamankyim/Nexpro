@@ -52,13 +52,18 @@ export async function refreshRelatedQueries(
 
 /** POS checkout, offline sync, sale payment */
 export async function refreshAfterSale(queryClient: QueryClient) {
-  await invalidatePrefixes(queryClient, [
+  await refreshRelatedQueries(queryClient, [
     ['sales'],
     ['sale'],
     ['products'],
     ['product'],
+    ['invoices'],
+    ['invoice'],
+    ['customers'],
+    ['customer'],
     ['dashboard'],
     ['orders'],
+    ['deliveries-queue'],
   ]);
 }
 
@@ -68,11 +73,17 @@ export async function refreshAfterSale(queryClient: QueryClient) {
  */
 export async function markAfterSaleStale(queryClient: QueryClient) {
   await markPrefixesStale(queryClient, [
+    ['sales'],
     ['sale'],
     ['products'],
     ['product'],
+    ['invoices'],
+    ['invoice'],
+    ['customers'],
+    ['customer'],
     ['dashboard'],
     ['orders'],
+    ['deliveries-queue'],
   ]);
 }
 
@@ -95,6 +106,10 @@ export async function refreshAfterInvoicePayment(queryClient: QueryClient) {
   await refreshRelatedQueries(queryClient, [
     ['invoices'],
     ['invoice'],
+    ['sales'],
+    ['sale'],
+    ['customers'],
+    ['customer'],
     ['dashboard'],
   ]);
 }
@@ -122,12 +137,7 @@ export async function refreshAfterJobChange(queryClient: QueryClient) {
 
 /** Customer create/update / find-or-create at checkout */
 export async function refreshAfterCustomerChange(queryClient: QueryClient) {
-  await refreshRelatedQueries(queryClient, [['customers'], ['customer']]);
-}
-
-/** Material create / restock */
-export async function refreshAfterMaterialChange(queryClient: QueryClient) {
-  await refreshRelatedQueries(queryClient, [['materials'], ['material']]);
+  await refreshRelatedQueries(queryClient, [['customers'], ['customer'], ['dashboard']]);
 }
 
 /** Lead / task workspace updates */
@@ -148,6 +158,20 @@ export async function refreshAfterOrderChange(queryClient: QueryClient) {
   await refreshRelatedQueries(queryClient, [['orders'], ['sales'], ['dashboard']]);
 }
 
+/** Online store order status / refund */
+export async function refreshAfterOnlineOrderChange(queryClient: QueryClient) {
+  await refreshRelatedQueries(queryClient, [
+    ['store', 'online-orders'],
+    ['store', 'order'],
+    ['store', 'dashboard'],
+    ['store', 'trade-assurance'],
+    ['store', 'setup-status'],
+    ['deliveries-queue'],
+    ['sales'],
+    ['dashboard'],
+  ]);
+}
+
 /** List/query prefixes tied to shop or studio branch scope */
 const SCOPED_WORKSPACE_PREFIXES: QueryKeyPrefix[] = [
   ['customers'],
@@ -166,11 +190,12 @@ const SCOPED_WORKSPACE_PREFIXES: QueryKeyPrefix[] = [
   ['quote'],
   ['invoices'],
   ['invoice'],
-  ['materials'],
-  ['material'],
   ['leads'],
   ['lead'],
   ['deliveries-queue'],
+  ['store', 'online-orders'],
+  ['store', 'setup-status'],
+  ['store', 'service-listings'],
 ];
 
 /**

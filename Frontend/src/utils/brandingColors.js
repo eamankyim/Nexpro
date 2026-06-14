@@ -1,10 +1,38 @@
+const HEX_COLOR_PATTERN = /^#[0-9A-Fa-f]{6}$/;
+const HEX_SHORT_COLOR_PATTERN = /^#[0-9A-Fa-f]{3}$/;
+
+/**
+ * Whether a value is a valid 6-digit hex color.
+ * @param {string} value
+ * @returns {boolean}
+ */
+export function isValidPrimaryColor(value) {
+  return HEX_COLOR_PATTERN.test(String(value || '').trim());
+}
+
+/**
+ * Normalize storefront/brand colors to #rrggbb or return fallback.
+ * @param {string} value
+ * @param {string} [fallback='#166534']
+ * @returns {string}
+ */
+export function normalizePrimaryColor(value, fallback = '#166534') {
+  const trimmed = String(value || '').trim();
+  if (HEX_COLOR_PATTERN.test(trimmed)) return trimmed.toLowerCase();
+  if (HEX_SHORT_COLOR_PATTERN.test(trimmed)) {
+    const [, r, g, b] = trimmed.match(/^#([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])$/i) || [];
+    if (r && g && b) return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+  }
+  return fallback;
+}
+
 /**
  * Convert #RRGGBB to H S% L% for shadcn tokens (used as hsl(var(--primary))).
  * @param {string} hex
  * @returns {string|null}
  */
 export function hexToHslTriplet(hex) {
-  if (!hex || !/^#[0-9A-Fa-f]{6}$/.test(hex)) return null;
+  if (!hex || !HEX_COLOR_PATTERN.test(hex)) return null;
   const r = parseInt(hex.slice(1, 3), 16) / 255;
   const g = parseInt(hex.slice(3, 5), 16) / 255;
   const b = parseInt(hex.slice(5, 7), 16) / 255;
@@ -52,7 +80,7 @@ export function relativeLuminance({ r, g, b }) {
  * @returns {string} e.g. "0 0% 100%" or "222 47% 11%"
  */
 export function primaryForegroundHslForHex(hex) {
-  if (!hex || !/^#[0-9A-Fa-f]{6}$/.test(hex)) return '0 0% 100%';
+  if (!hex || !HEX_COLOR_PATTERN.test(hex)) return '0 0% 100%';
   const r = parseInt(hex.slice(1, 3), 16) / 255;
   const g = parseInt(hex.slice(3, 5), 16) / 255;
   const b = parseInt(hex.slice(5, 7), 16) / 255;

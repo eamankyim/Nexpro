@@ -133,7 +133,27 @@ const generateListKey = (prefix) => (req) => {
 
 const generateCustomerListKey = generateListKey('customers');
 const generateSaleListKey = generateListKey('sales');
-const generateInvoiceListKey = generateListKey('invoices');
+const generateInvoiceListKey = (req) => {
+  const key = generateListKey('invoices')(req);
+  logCacheDebug('Invoice list key generated', {
+    key,
+    tenantId: req.tenantId || '',
+    shopScoped: !!req.shopScoped,
+    shopFilterId: req.shopFilterId || null,
+    studioLocationScoped: !!req.studioLocationScoped,
+    studioLocationFilterId: req.studioLocationFilterId || null,
+    query: {
+      page: req.query?.page || null,
+      limit: req.query?.limit || null,
+      status: req.query?.status || null,
+      sourceType: req.query?.sourceType || null,
+      hasSearch: !!req.query?.search,
+      shopId: req.query?.shopId || null,
+      studioLocationId: req.query?.studioLocationId || null,
+    },
+  });
+  return key;
+};
 
 /**
  * Middleware to cache GET requests
@@ -156,6 +176,10 @@ const cacheMiddleware = (ttl = 120, keyGenerator = null) => {
     const cachedData = cache.get(cacheKey);
     if (cachedData) {
       logCacheDebug('Cache HIT', { key: cacheKey, path: req.path });
+      // Prevent Express conditional GET (304) from short-circuiting API list payloads.
+      res.set('Cache-Control', 'no-store');
+      delete req.headers['if-none-match'];
+      delete req.headers['if-modified-since'];
       return res.status(200).json(cachedData);
     }
 
@@ -267,7 +291,9 @@ const invalidateSaleListCache = (tenantId) => {
 };
 
 const invalidateInvoiceListCache = (tenantId) => {
-  return invalidateCache(tenantId, 'invoices:list:.*');
+  const count = invalidateCache(tenantId, 'invoices:list:.*');
+  logCacheDebug('Invoice list invalidation', { tenantId, count });
+  return count;
 };
 
 /**

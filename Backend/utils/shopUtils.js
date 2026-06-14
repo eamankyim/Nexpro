@@ -254,21 +254,20 @@ const applyShopFilter = (req, where = {}) => {
  * @param {object} req
  * @param {object} [where]
  */
+const { appendWhereOrGroup } = require('./sequelizeWhereUtils');
+
 const applyShopReadFilter = (req, where = {}) => {
   if (!req.shopScoped) return where;
 
   if (req.shopFilterId) {
-    return {
-      ...where,
-      [Op.or]: [{ shopId: req.shopFilterId }, { shopId: null }],
-    };
+    return appendWhereOrGroup(where, [{ shopId: req.shopFilterId }, { shopId: null }]);
   }
 
   if (req.allowedShopIds?.length) {
-    return {
-      ...where,
-      [Op.or]: [{ shopId: { [Op.in]: req.allowedShopIds } }, { shopId: null }],
-    };
+    return appendWhereOrGroup(where, [
+      { shopId: { [Op.in]: req.allowedShopIds } },
+      { shopId: null },
+    ]);
   }
 
   return where;

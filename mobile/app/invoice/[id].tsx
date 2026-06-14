@@ -6,24 +6,28 @@ import {
   ScrollView,
   TextInput,
   Alert,
-  Pressable,
-  ActivityIndicator,
 } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
-  DetailCard,
+  DetailHeroCard,
+  DetailInfoRow,
+  DetailSectionCard,
   DetailFooter,
   DetailLoading,
   DetailNotFound,
-  DetailRow,
   DetailActionButton,
+  DetailMoreActions,
+  type DetailMoreAction,
   EntityDetailHeader,
   useEntityDetailTheme,
 } from '@/components/EntityDetailLayout';
 import { ScreenShell } from '@/components/ScreenShell';
+import { useAuth } from '@/context/AuthContext';
+import { useExclusiveAction } from '@/hooks/useExclusiveAction';
 import { invoiceService } from '@/services/invoiceService';
+import { shareInvoicePdf } from '@/services/pdfDocumentService';
 import { formatCurrency, formatDate } from '@/utils/formatCurrency';
 import { formatStatusLabel } from '@/utils/formatLabels';
 import { parseApiEntity } from '@/utils/parseApiListResponse';
@@ -38,18 +42,47 @@ type InvoiceDetail = {
   dueDate?: string;
   createdAt: string;
   customer?: { name?: string };
+  saleId?: string | null;
+  sale?: { id?: string; saleNumber?: string } | null;
   paidAmount?: number;
   amountPaid?: number;
-  items?: Array<{ description: string; quantity: number; unitPrice: number }>;
+  items?: Array<{
+    description: string;
+    quantity: number;
+    unitPrice: number;
+    productCode?: string | null;
+    sku?: string | null;
+    code?: string | null;
+    barcode?: string | null;
+    metadata?: { productCode?: string | null; sku?: string | null; barcode?: string | null } | null;
+  }>;
 };
+
+type InvoiceAction = 'pdf' | 'payment' | 'send' | 'markPaid';
+type InvoiceDangerAction = InvoiceAction | 'cancel' | 'delete';
+
+function getItemProductCode(item: NonNullable<InvoiceDetail['items']>[number]) {
+  return String(
+    item.metadata?.productCode
+      || item.productCode
+      || item.code
+      || item.metadata?.barcode
+      || item.barcode
+      || item.sku
+      || item.metadata?.sku
+      || ''
+  ).trim();
+}
 
 export default function InvoiceDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
   const queryClient = useQueryClient();
-  const { bg, colors, borderColor, textColor, mutedColor } = useEntityDetailTheme();
+  const { isAdmin, isManager } = useAuth();
+  const { borderColor, textColor, mutedColor } = useEntityDetailTheme();
   const [showPaymentInput, setShowPaymentInput] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
-  const [actionLoading, setActionLoading] = useState(false);
+  const { isAnyActionActive, isActionActive, runExclusiveAction } = useExclusiveAction<InvoiceDangerAction>();
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['invoice', id],
@@ -66,64 +99,210 @@ export default function InvoiceDetailScreen() {
     return Math.max(0, total - paid);
   }, [invoice]);
 
+  const linkedSaleId = invoice?.saleId || invoice?.sale?.id || null;
+
   const runAction = useCallback(
-    async (action: () => Promise<unknown>, successMessage: string) => {
+    async (actionKey: InvoiceDangerAction, action: () => Promise<unknown>, successMessage: string) => {
       if (!invoice) return;
-      setActionLoading(true);
-      try {
-        await action();
-        await refetch();
-        await refreshAfterInvoicePayment(queryClient);
-        Alert.alert('Success', successMessage);
-        setShowPaymentInput(false);
-        setPaymentAmount('');
-      } catch (err: unknown) {
-        Alert.alert('Error', err instanceof Error ? err.message : 'Action failed');
-      } finally {
-        setActionLoading(false);
-      }
+      await runExclusiveAction(actionKey, async () => {
+        try {
+          await action();
+          await refetch();
+          await refreshAfterInvoicePayment(queryClient);
+          Alert.alert('Success', successMessage);
+          setShowPaymentInput(false);
+          setPaymentAmount('');
+        } catch (err: unknown) {
+          Alert.alert('Error', err instanceof Error ? err.message : 'Action failed');
+        }
+      });
     },
-    [invoice, queryClient, refetch]
+    [invoice, queryClient, refetch, runExclusiveAction]
   );
+
+  const handleDownloadInvoice = useCallback(async () => {
+    if (!invoice) return;
+    await runExclusiveAction('pdf', async () => {
+      try {
+        await shareInvoicePdf(invoice as unknown as Record<string, unknown>);
+      } catch (err: unknown) {
+        Alert.alert('Invoice unavailable', err instanceof Error ? err.message : 'Could not prepare this invoice PDF.');
+      }
+    });
+  }, [invoice, runExclusiveAction]);
+
+  const handleCancelInvoice = useCallback(() => {
+    if (!invoice) return;
+    Alert.alert('Cancel invoice', 'Cancel this invoice? This keeps the record but stops further payment actions.', [
+      { text: 'Keep invoice', style: 'cancel' },
+      {
+        text: 'Cancel invoice',
+        style: 'destructive',
+        onPress: () =>
+          runAction('cancel', () => invoiceService.cancel(invoice.id), 'Invoice cancelled'),
+      },
+    ]);
+  }, [invoice, runAction]);
+
+  const handleDeleteInvoice = useCallback(() => {
+    if (!invoice) return;
+    const isCancelled = invoice.status === 'cancelled';
+    Alert.alert('Delete invoice', 'Delete this invoice permanently?', [
+      { text: 'Keep invoice', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () =>
+          runExclusiveAction('delete', async () => {
+            try {
+              if (isCancelled) {
+                await invoiceService.deleteCancelledInvoice(invoice.id);
+              } else {
+                await invoiceService.deleteInvoice(invoice.id);
+              }
+              await refreshAfterInvoicePayment(queryClient);
+              Alert.alert('Deleted', 'Invoice deleted');
+              router.back();
+            } catch (err: unknown) {
+              Alert.alert('Error', err instanceof Error ? err.message : 'Failed to delete invoice');
+            }
+          }),
+      },
+    ]);
+  }, [invoice, queryClient, router, runExclusiveAction]);
 
   if (isLoading) return <DetailLoading title="Invoice" />;
   if (!invoice) return <DetailNotFound title="Invoice" entityLabel="Invoice" />;
+
+  const totalAmount = Number(invoice.totalAmount ?? invoice.total ?? 0);
+  const paidAmount = Number(invoice.amountPaid ?? invoice.paidAmount ?? 0);
+  const canRecordInvoicePayment = balance > 0 && invoice.status !== 'cancelled' && invoice.status !== 'paid';
+  const invoiceMoreActions: DetailMoreAction[] = [
+    ...(canRecordInvoicePayment
+      ? [{
+          key: 'download',
+          label: 'Download Invoice',
+          icon: 'download' as const,
+          onPress: handleDownloadInvoice,
+          loading: isActionActive('pdf'),
+          disabled: isAnyActionActive,
+        }]
+      : []),
+    ...(linkedSaleId
+      ? [{
+          key: 'sale',
+          label: 'View sale',
+          icon: 'receipt' as const,
+          onPress: () => router.push(`/sale/${encodeURIComponent(linkedSaleId)}` as any),
+          disabled: isAnyActionActive,
+        }]
+      : []),
+    ...(invoice.status === 'draft'
+      ? [{
+          key: 'send',
+          label: 'Send',
+          onPress: () =>
+            Alert.alert('Send invoice', 'Email this invoice to the customer?', [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Send',
+                onPress: () => runAction('send', () => invoiceService.send(invoice.id), 'Invoice sent'),
+              },
+            ]),
+          loading: isActionActive('send'),
+          disabled: isAnyActionActive,
+        }]
+      : []),
+    ...(isManager && invoice.status !== 'cancelled' && invoice.status !== 'paid'
+      ? [{
+          key: 'cancel',
+          label: 'Cancel',
+          variant: 'danger' as const,
+          onPress: handleCancelInvoice,
+          loading: isActionActive('cancel'),
+          disabled: isAnyActionActive,
+        }]
+      : []),
+    ...(isAdmin && (invoice.status === 'draft' || invoice.status === 'cancelled')
+      ? [{
+          key: 'delete',
+          label: 'Delete',
+          variant: 'danger' as const,
+          onPress: handleDeleteInvoice,
+          loading: isActionActive('delete'),
+          disabled: isAnyActionActive,
+        }]
+      : []),
+    ...(canRecordInvoicePayment
+      ? [{
+          key: 'markPaid',
+          label: 'Mark paid',
+          onPress: () =>
+            Alert.alert('Mark as paid', 'Mark this invoice as fully paid?', [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Mark paid',
+                onPress: () =>
+                  runAction('markPaid', () => invoiceService.markAsPaid(invoice.id), 'Invoice marked as paid'),
+              },
+            ]),
+          loading: isActionActive('markPaid'),
+          disabled: isAnyActionActive,
+        }]
+      : []),
+  ];
 
   return (
     <>
       <EntityDetailHeader title={invoice.invoiceNumber || 'Invoice details'} />
       <ScreenShell style={styles.screen}>
         <ScrollView contentContainerStyle={styles.content}>
-          <DetailCard>
-            <DetailRow label="Total" value={formatCurrency(invoice.totalAmount ?? invoice.total)} valueColor={colors.tint} />
-            {(invoice.amountPaid ?? invoice.paidAmount) ? (
-              <DetailRow label="Paid" value={formatCurrency(invoice.amountPaid ?? invoice.paidAmount)} />
+          <DetailHeroCard
+            eyebrow={invoice.invoiceNumber || 'Invoice'}
+            title={formatStatusLabel(invoice.status)}
+            message={balance > 0 ? 'Payment is still due for this invoice.' : 'This invoice is fully settled.'}
+            metricLabel="Total Amount"
+            metricValue={formatCurrency(totalAmount)}
+            secondaryIcon="credit-card"
+            secondaryLabel={balance > 0 ? 'Balance' : 'Paid'}
+            secondaryValue={formatCurrency(balance > 0 ? balance : paidAmount)}
+          />
+
+          <DetailSectionCard title="Invoice Details" icon="receipt">
+            <DetailInfoRow icon="user" label="Customer" value={invoice.customer?.name ?? '—'} />
+            <DetailInfoRow icon="tag" label="Status" value={formatStatusLabel(invoice.status)} />
+            {invoice.dueDate ? (
+              <DetailInfoRow icon="calendar" label="Due Date" value={formatDate(invoice.dueDate)} />
             ) : null}
-            {balance > 0 ? (
-              <DetailRow label="Balance" value={formatCurrency(balance)} valueColor="#ef4444" />
+            <DetailInfoRow icon="calendar" label="Created" value={formatDate(invoice.createdAt)} />
+            {paidAmount > 0 ? (
+              <DetailInfoRow icon="credit-card" label="Paid" value={formatCurrency(paidAmount)} />
             ) : null}
-            <DetailRow label="Customer" value={invoice.customer?.name ?? '—'} />
-            <DetailRow label="Status" value={formatStatusLabel(invoice.status)} />
-            {invoice.dueDate ? <DetailRow label="Due Date" value={formatDate(invoice.dueDate)} /> : null}
-            <DetailRow label="Created" value={formatDate(invoice.createdAt)} />
-          </DetailCard>
+          </DetailSectionCard>
           {invoice.items && invoice.items.length > 0 ? (
-            <DetailCard>
+            <DetailSectionCard title="Invoice Items" icon="archive">
               <Text style={[styles.section, { color: textColor }]}>Items</Text>
               {invoice.items.map((item, i) => (
-                <View key={i} style={styles.itemRow}>
-                  <Text style={[styles.itemName, { color: textColor }]} numberOfLines={1}>
-                    {item.description} x{item.quantity}
-                  </Text>
+                <View key={i} style={[styles.itemRow, i > 0 && { borderTopColor: borderColor, borderTopWidth: 1 }]}>
+                  <View style={styles.itemInfo}>
+                    <Text style={[styles.itemName, { color: textColor }]} numberOfLines={1}>
+                      {item.description} x{item.quantity}
+                    </Text>
+                    {getItemProductCode(item) ? (
+                      <Text style={[styles.itemCode, { color: mutedColor }]} numberOfLines={1}>
+                        Code: {getItemProductCode(item)}
+                      </Text>
+                    ) : null}
+                  </View>
                   <Text style={[styles.itemTotal, { color: textColor }]}>
                     {formatCurrency(item.unitPrice * item.quantity)}
                   </Text>
                 </View>
               ))}
-            </DetailCard>
+            </DetailSectionCard>
           ) : null}
           {showPaymentInput && balance > 0 ? (
-            <DetailCard>
+            <DetailSectionCard title="Record Payment" icon="credit-card">
               <Text style={[styles.label, { color: mutedColor }]}>
                 Payment amount (balance {formatCurrency(balance)})
               </Text>
@@ -135,17 +314,18 @@ export default function InvoiceDetailScreen() {
                 placeholder={String(balance)}
                 placeholderTextColor={mutedColor}
               />
-            </DetailCard>
+            </DetailSectionCard>
           ) : null}
         </ScrollView>
         <DetailFooter>
           {showPaymentInput ? (
             <>
-              <DetailActionButton label="Back" onPress={() => setShowPaymentInput(false)} disabled={actionLoading} />
+              <DetailActionButton label="Back" onPress={() => setShowPaymentInput(false)} disabled={isAnyActionActive} />
               <DetailActionButton
                 label="Record"
                 variant="primary"
-                loading={actionLoading}
+                loading={isActionActive('payment')}
+                disabled={isAnyActionActive}
                 onPress={() => {
                   const amount = parseFloat(paymentAmount);
                   if (!amount || amount <= 0) {
@@ -157,6 +337,7 @@ export default function InvoiceDetailScreen() {
                     return;
                   }
                   runAction(
+                    'payment',
                     () =>
                       invoiceService.recordPayment(invoice.id, {
                         amount,
@@ -170,48 +351,28 @@ export default function InvoiceDetailScreen() {
             </>
           ) : (
             <>
-              {invoice.status === 'draft' ? (
+              {canRecordInvoicePayment ? (
                 <DetailActionButton
-                  label="Send"
-                  onPress={() =>
-                    Alert.alert('Send invoice', 'Email this invoice to the customer?', [
-                      { text: 'Cancel', style: 'cancel' },
-                      {
-                        text: 'Send',
-                        onPress: () => runAction(() => invoiceService.send(invoice.id), 'Invoice sent'),
-                      },
-                    ])
-                  }
-                  disabled={actionLoading}
+                  label="Pay"
+                  icon="credit-card"
+                  variant="primary"
+                  onPress={() => {
+                    setPaymentAmount(balance.toFixed(2));
+                    setShowPaymentInput(true);
+                  }}
+                  disabled={isAnyActionActive}
                 />
-              ) : null}
-              {balance > 0 && invoice.status !== 'cancelled' && invoice.status !== 'paid' ? (
-                <>
-                  <DetailActionButton
-                    label="Pay"
-                    onPress={() => {
-                      setPaymentAmount(balance.toFixed(2));
-                      setShowPaymentInput(true);
-                    }}
-                    disabled={actionLoading}
-                  />
-                  <DetailActionButton
-                    label="Mark paid"
-                    variant="primary"
-                    onPress={() =>
-                      Alert.alert('Mark as paid', 'Mark this invoice as fully paid?', [
-                        { text: 'Cancel', style: 'cancel' },
-                        {
-                          text: 'Mark paid',
-                          onPress: () =>
-                            runAction(() => invoiceService.markAsPaid(invoice.id), 'Invoice marked as paid'),
-                        },
-                      ])
-                    }
-                    disabled={actionLoading}
-                  />
-                </>
-              ) : null}
+              ) : (
+                <DetailActionButton
+                  label="Download Invoice"
+                  icon="download"
+                  variant="primary"
+                  onPress={handleDownloadInvoice}
+                  loading={isActionActive('pdf')}
+                  disabled={isAnyActionActive}
+                />
+              )}
+              <DetailMoreActions actions={invoiceMoreActions} disabled={isAnyActionActive} />
             </>
           )}
         </DetailFooter>
@@ -225,7 +386,9 @@ const styles = StyleSheet.create({
   content: { padding: 16, paddingBottom: 24 },
   section: { fontSize: 16, fontWeight: '600', marginBottom: 12 },
   itemRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+  itemInfo: { flex: 1, paddingRight: 8 },
   itemName: { flex: 1, fontSize: 14 },
+  itemCode: { fontSize: 12, marginTop: 2 },
   itemTotal: { fontSize: 14, fontWeight: '600' },
   label: { fontSize: 14, marginBottom: 8 },
   input: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16 },

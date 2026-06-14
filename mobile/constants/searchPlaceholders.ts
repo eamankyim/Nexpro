@@ -7,10 +7,10 @@ export const SEARCH_PLACEHOLDERS = {
   JOBS: 'Job #, title, or customer...',
   DELIVERIES: 'Job or sale #, customer, phone, or address...',
   QUOTES: 'Quote #, customer, or title...',
-  MATERIALS: 'Name, SKU, or category...',
   EXPENSES: 'Description, vendor, or category...',
   SALES: 'Sale #, customer, or product...',
   PRODUCTS: 'Name, SKU, or barcode...',
   TASKS: 'Search tasks by title, description, assignee...',
   ORDERS: 'Order # or customer...',
+  ONLINE_ORDERS: 'Order #, customer, or phone...',
 } as const;

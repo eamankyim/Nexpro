@@ -5,27 +5,86 @@ const { sequelize } = require('../config/database');
 const {
   OnlineStoreSettings,
   OnlineProductListing,
+  OnlineServiceListing,
+  Tenant,
   Sale,
   SaleItem,
   SaleActivity,
+  MarketplaceOrderPayment,
   Customer,
+  Lead,
+  Job,
   Product,
+  ProductCategory,
   ProductVariant,
   Shop,
+  Setting,
 } = require('../models');
 const { baseUploadDir, ensureDirExists } = require('../middleware/upload');
+const openaiService = require('../services/openaiService');
 const { applyTenantFilter } = require('../utils/tenantUtils');
 const { getPagination } = require('../utils/paginationUtils');
 const { applyShopReadFilter, attachShopToPayload, assertShopIdAccess } = require('../utils/shopUtils');
+const { applyStudioLocationReadFilter, attachStudioLocationToPayload } = require('../utils/studioLocationUtils');
+const {
+  countPublishedServiceListings,
+  getStudioMarketplaceHomeData,
+  isStudioTenant,
+} = require('./studioStoreController');
 const { invalidateSaleListCache } = require('../middleware/cache');
+const { validateStorageLimit } = require('../utils/storageLimitHelper');
+const {
+  getTradeAssuranceSummary,
+  listPayoutHistory,
+  listTradeAssuranceDisputes,
+  listTradeAssurancePayments,
+  markDeliveryReleaseWindowForSale,
+  refundMarketplaceOrderPayment,
+  releaseMarketplaceOrderPayment,
+} = require('../services/tradeAssuranceService');
+const {
+  attachProductReviewSummaries,
+  attachServiceReviewSummaries,
+  attachStoreReviewSummaries,
+  getPublicReviewSummary,
+} = require('../services/storefrontReviewService');
+const {
+  CUSTOMER_CONFIRMED_DELIVERY_ERROR_CODE,
+  CUSTOMER_CONFIRMED_DELIVERY_ERROR_MESSAGE,
+  fulfillmentStateForOrder,
+  hasCustomerConfirmedDelivery,
+  paymentStatusForMarketplaceOrder,
+} = require('../utils/marketplaceOrderStatus');
 
 const DEFAULT_PRIMARY_COLOR = '#166534';
+const HEX_COLOR_PATTERN = /^#[0-9A-Fa-f]{6}$/;
+const HEX_SHORT_COLOR_PATTERN = /^#[0-9A-Fa-f]{3}$/;
+
+const normalizePrimaryColor = (value, fallback = DEFAULT_PRIMARY_COLOR) => {
+  const trimmed = String(value || '').trim();
+  if (HEX_COLOR_PATTERN.test(trimmed)) return trimmed.toLowerCase();
+  if (HEX_SHORT_COLOR_PATTERN.test(trimmed)) {
+    const [, r, g, b] = trimmed.match(/^#([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])$/i) || [];
+    if (r && g && b) return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+  }
+  return fallback;
+};
+
 const DEFAULT_CURRENCY = 'GHS';
 const LISTING_STATUSES = new Set(['draft', 'published', 'hidden']);
 const INVENTORY_POLICIES = new Set(['track', 'continue', 'deny']);
 const ONLINE_STORE_SOURCE = 'online_store';
-const ORDER_STATUS_FILTERS = new Set(['pending', 'paid', 'processing', 'out_for_delivery', 'delivered', 'cancelled']);
-const STORE_ORDER_STATUS_ACTIONS = new Set(['processing', 'ready', 'out_for_delivery', 'delivered', 'cancelled']);
+const ORDER_STATUS_FILTERS = new Set(['pending', 'paid', 'processing', 'ready', 'packed', 'out_for_delivery', 'delivered', 'cancelled']);
+const STORE_ORDER_STATUS_ACTIONS = new Set(['processing', 'ready', 'packed', 'shipped', 'out_for_delivery', 'delivered', 'cancelled']);
+const BANNER_PROMPT_MAX_LENGTH = 500;
+const BANNER_HINT_MAX_LENGTH = 180;
+const DISALLOWED_BANNER_PROMPT_TERMS = /\b(porn|pornographic|nude|nudity|sexually explicit|gore|blood splatter|weapon|hate symbol|gambling|casino)\b/i;
+
+const firstFilled = (...values) => (
+  values
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .find(Boolean) || ''
+);
 
 const normalizeSlug = (value, fallback = 'store') => {
   const slug = String(value || fallback)
@@ -48,13 +107,591 @@ const normalizeImages = (value) => {
   return [...new Set(images.map((image) => String(image || '').trim()).filter(Boolean))].slice(0, 5);
 };
 
+const parseQuantity = (value) => {
+  const quantity = Number.parseFloat(value);
+  return Number.isFinite(quantity) ? quantity : null;
+};
+
+const buildListingAvailability = (listing, variantsByProductId = new Map()) => {
+  const plain = typeof listing.get === 'function' ? listing.get({ plain: true }) : listing;
+  const product = plain.product || null;
+  const selectedVariant = plain.variant?.productId === product?.id ? plain.variant : null;
+  const productVariants = variantsByProductId.get(product?.id) || [];
+  const selectedVariantMissing = Boolean(plain.productVariantId) && !selectedVariant;
+  let quantityOnHand = null;
+  let source = 'product';
+  let stockAvailable = false;
+
+  if (selectedVariant) {
+    quantityOnHand = parseQuantity(selectedVariant.quantityOnHand);
+    source = 'variant';
+    stockAvailable = product?.trackStock === false
+      || selectedVariant.trackStock === false
+      || (quantityOnHand !== null && quantityOnHand > 0);
+  } else if (selectedVariantMissing) {
+    source = 'variant';
+  } else if (productVariants.length > 0 || product?.hasVariants) {
+    quantityOnHand = productVariants.reduce((total, variant) => {
+      const variantQuantity = parseQuantity(variant.quantityOnHand);
+      return total + Math.max(variantQuantity || 0, 0);
+    }, 0);
+    source = 'variants';
+    stockAvailable = product?.trackStock === false || productVariants.some((variant) => {
+      const variantQuantity = parseQuantity(variant.quantityOnHand);
+      return variant.trackStock === false || (variantQuantity !== null && variantQuantity > 0);
+    });
+  } else {
+    quantityOnHand = parseQuantity(product?.quantityOnHand);
+    stockAvailable = product?.trackStock === false || (quantityOnHand !== null && quantityOnHand > 0);
+  }
+
+  const available = Boolean(product) && !selectedVariantMissing && (plain.inventoryPolicy === 'continue' || stockAvailable);
+  return {
+    ...plain,
+    quantityOnHand,
+    available,
+    availability: {
+      status: available ? 'in_stock' : 'out_of_stock',
+      label: available ? 'Available' : 'Out of stock',
+      message: available ? 'In stock' : 'Not available right now',
+      quantityOnHand,
+      source,
+    },
+  };
+};
+
+const marketplaceLimit = (value, fallback = 12, max = 48) => {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, max);
+};
+
+const marketplacePage = (value) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+};
+
+const publicStoreWhere = (extra = {}) => ({
+  enabled: true,
+  ...extra,
+});
+
+const FOOD_SHOP_TYPES = ['restaurant', 'supermarket', 'convenience'];
+const DRINK_CATEGORY_PATTERN = /\b(drink|beverage|juice|water|soda|coffee|tea|smoothie|wine|beer)\b/i;
+const GROCERY_CATEGORY_PATTERN = /\b(grocery|groceries|produce|pantry|snack|dairy|meat|seafood|bakery|frozen)\b/i;
+
+const parseShopTypeFilter = (value) => {
+  const types = String(value || '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+  if (!types.length) return [];
+  return [...new Set(types)];
+};
+
+const buildPublicStoreInclude = (shopTypes = []) => {
+  const shopWhere = { isActive: true };
+  if (shopTypes.length) {
+    shopWhere.shopType = { [Op.in]: shopTypes };
+  }
+  return [
+    { model: Tenant, as: 'tenant', attributes: ['id', 'name', 'businessType', 'status'], required: true, where: { status: 'active' } },
+    {
+      model: Shop,
+      as: 'shop',
+      attributes: ['id', 'name', 'shopType', 'city', 'country', 'logoUrl', 'isActive'],
+      required: shopTypes.length > 0,
+      where: shopWhere,
+    },
+  ];
+};
+
+const publicStoreInclude = buildPublicStoreInclude();
+
+const parseTimeToMinutes = (value) => {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hours = Number.parseInt(match[1], 10);
+  const minutes = Number.parseInt(match[2], 10);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  return (hours * 60) + minutes;
+};
+
+const computeIsOpenNow = (openingHours) => {
+  if (!openingHours || typeof openingHours !== 'object') return null;
+  const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const dayKey = dayNames[new Date().getDay()];
+  const dayHours = openingHours[dayKey];
+  if (!dayHours || typeof dayHours !== 'object') return null;
+  if (dayHours.closed === true || dayHours.isClosed === true) return false;
+  const openMinutes = parseTimeToMinutes(dayHours.open || dayHours.from);
+  const closeMinutes = parseTimeToMinutes(dayHours.close || dayHours.to);
+  if (openMinutes === null || closeMinutes === null) return null;
+  const now = new Date();
+  const currentMinutes = (now.getHours() * 60) + now.getMinutes();
+  if (closeMinutes <= openMinutes) {
+    return currentMinutes >= openMinutes || currentMinutes < closeMinutes;
+  }
+  return currentMinutes >= openMinutes && currentMinutes < closeMinutes;
+};
+
+const extractFoodMetadata = (store) => {
+  const plain = typeof store?.get === 'function' ? store.get({ plain: true }) : store;
+  const metadata = plain?.metadata && typeof plain.metadata === 'object' ? plain.metadata : {};
+  const cuisineTags = Array.isArray(metadata.cuisineTags)
+    ? metadata.cuisineTags.map((tag) => String(tag || '').trim()).filter(Boolean).slice(0, 8)
+    : (metadata.cuisine ? [String(metadata.cuisine).trim()] : []);
+  const openingHours = metadata.openingHours && typeof metadata.openingHours === 'object'
+    ? metadata.openingHours
+    : null;
+  const parsedPrep = Number.parseInt(metadata.avgPrepMinutes, 10);
+  const avgPrepMinutes = Number.isFinite(parsedPrep) && parsedPrep > 0 ? parsedPrep : null;
+  return {
+    shopType: plain?.shop?.shopType || metadata.shopType || null,
+    cuisineTags,
+    openingHours,
+    avgPrepMinutes,
+    isOpenNow: computeIsOpenNow(openingHours),
+    deliveryFee: normalizeMoney(plain?.deliveryFee, 0),
+    freeDeliveryThreshold: metadata.freeDeliveryThreshold != null
+      ? normalizeMoney(metadata.freeDeliveryThreshold)
+      : null,
+  };
+};
+
+const publicListingIncludes = [
+  {
+    model: Product,
+    as: 'product',
+    attributes: ['id', 'name', 'quantityOnHand', 'unit', 'hasVariants', 'trackStock', 'imageUrl', 'categoryId'],
+    required: true,
+    where: { isActive: true },
+    include: [
+      { model: ProductCategory, as: 'category', attributes: ['id', 'name'], required: false, where: { isActive: true } },
+    ],
+  },
+  {
+    model: ProductVariant,
+    as: 'variant',
+    attributes: ['id', 'productId', 'name', 'quantityOnHand', 'trackStock'],
+    required: false,
+    where: { isActive: true },
+  },
+];
+
+const getStoreCategoryLabel = (store, categoryCounts = new Map()) => {
+  const plain = typeof store?.get === 'function' ? store.get({ plain: true }) : store;
+  const metadata = plain?.metadata && typeof plain.metadata === 'object' ? plain.metadata : {};
+  if (metadata.category || metadata.storeCategory || metadata.industry) {
+    return metadata.category || metadata.storeCategory || metadata.industry;
+  }
+  if (plain?.shop?.shopType) return plain.shop.shopType.replace(/_/g, ' ');
+  const storeKey = `${plain?.tenantId || ''}:${plain?.shopId || ''}`;
+  const topCategory = categoryCounts.get(storeKey)?.[0]?.name;
+  if (topCategory) return topCategory;
+  return plain?.tenant?.businessType ? plain.tenant.businessType.replace(/_/g, ' ') : 'Online store';
+};
+
+const resolvePublicBannerImageUrl = (plain = {}) => {
+  const metadata = plain.metadata && typeof plain.metadata === 'object' ? plain.metadata : {};
+  return plain.bannerImageUrl
+    || metadata.bannerImageUrl
+    || metadata.bannerUrl
+    || metadata.heroImageUrl
+    || metadata.coverImageUrl
+    || null;
+};
+
+const toPublicStoreCard = (store, { listingCount = 0, categoryCounts = new Map() } = {}) => {
+  const plain = typeof store.get === 'function' ? store.get({ plain: true }) : store;
+  const foodMeta = extractFoodMetadata(plain);
+  return {
+    id: plain.id,
+    slug: plain.slug,
+    displayName: plain.displayName,
+    description: plain.description,
+    logoUrl: plain.logoUrl || plain.shop?.logoUrl || null,
+    bannerImageUrl: resolvePublicBannerImageUrl(plain),
+    primaryColor: normalizePrimaryColor(plain.primaryColor),
+    currency: plain.currency || DEFAULT_CURRENCY,
+    category: getStoreCategoryLabel(plain, categoryCounts),
+    city: plain.shop?.city || null,
+    country: plain.shop?.country || null,
+    deliveryEnabled: plain.deliveryEnabled,
+    pickupEnabled: plain.pickupEnabled,
+    productCount: listingCount,
+    rating: plain.rating || plain.reviewSummary?.rating || null,
+    reviewsCount: plain.reviewsCount || plain.reviewSummary?.reviewsCount || 0,
+    shopType: foodMeta.shopType,
+    cuisineTags: foodMeta.cuisineTags,
+    openingHours: foodMeta.openingHours,
+    avgPrepMinutes: foodMeta.avgPrepMinutes,
+    isOpenNow: foodMeta.isOpenNow,
+    deliveryFee: foodMeta.deliveryFee,
+    freeDeliveryThreshold: foodMeta.freeDeliveryThreshold,
+  };
+};
+
+const storeMatchesListing = (store, listing) => {
+  const storePlain = typeof store.get === 'function' ? store.get({ plain: true }) : store;
+  const listingPlain = typeof listing.get === 'function' ? listing.get({ plain: true }) : listing;
+  if (storePlain.tenantId !== listingPlain.tenantId) return false;
+  return storePlain.shopId ? storePlain.shopId === listingPlain.shopId : true;
+};
+
+const buildStoreListingWhere = (stores) => {
+  if (!stores.length) return null;
+  return {
+    status: 'published',
+    [Op.or]: stores.map((store) => ({
+      tenantId: store.tenantId,
+      ...(store.shopId ? { shopId: store.shopId } : {}),
+    })),
+  };
+};
+
+const getVariantMapForListings = async (listings) => {
+  const variantProductIds = [
+    ...new Set(
+      listings
+        .map((listing) => (typeof listing.get === 'function' ? listing.get({ plain: true }) : listing))
+        .map((listing) => listing.product)
+        .filter((product) => product?.hasVariants)
+        .map((product) => product.id)
+    ),
+  ];
+  const variants = variantProductIds.length
+    ? await ProductVariant.findAll({
+      where: {
+        productId: { [Op.in]: variantProductIds },
+        isActive: true,
+      },
+      attributes: ['id', 'productId', 'name', 'quantityOnHand', 'trackStock'],
+    })
+    : [];
+  return variants.reduce((map, variant) => {
+    const plainVariant = variant.get({ plain: true });
+    const productVariants = map.get(plainVariant.productId) || [];
+    productVariants.push(plainVariant);
+    map.set(plainVariant.productId, productVariants);
+    return map;
+  }, new Map());
+};
+
+const getAvailableListingsWithVariants = async (listings) => {
+  const variantsByProductId = await getVariantMapForListings(listings);
+  return {
+    variantsByProductId,
+    listings: listings.filter((listing) => (
+      buildListingAvailability(listing, variantsByProductId).available
+    )),
+  };
+};
+
+const getStoreListingCounts = async (stores) => {
+  const where = buildStoreListingWhere(stores);
+  if (!where) return new Map();
+  const rows = await OnlineProductListing.findAll({
+    where,
+    attributes: ['tenantId', 'shopId', 'productId', 'productVariantId', 'inventoryPolicy'],
+    include: publicListingIncludes,
+  });
+  const { listings } = await getAvailableListingsWithVariants(rows);
+  return listings.reduce((map, row) => {
+    const listing = row.get({ plain: true });
+    stores.forEach((store) => {
+      if (storeMatchesListing(store, listing)) {
+        const key = `${store.tenantId}:${store.shopId || ''}`;
+        map.set(key, (map.get(key) || 0) + 1);
+      }
+    });
+    return map;
+  }, new Map());
+};
+
+const getCategoryCountsForStores = async (stores) => {
+  const where = buildStoreListingWhere(stores);
+  if (!where) return { storeCategories: new Map(), categories: [] };
+  const listings = await OnlineProductListing.findAll({
+    where,
+    attributes: ['tenantId', 'shopId', 'productId', 'productVariantId', 'inventoryPolicy'],
+    include: publicListingIncludes,
+    order: [['publishedAt', 'DESC']],
+    limit: 1000,
+  });
+  const { listings: availableListings } = await getAvailableListingsWithVariants(listings);
+  const categoryTotals = new Map();
+  const storeCategories = new Map();
+
+  availableListings.forEach((row) => {
+    const listing = row.get({ plain: true });
+    const category = listing.product?.category;
+    if (!category?.name) return;
+    const categoryKey = category.id || category.name;
+    const total = categoryTotals.get(categoryKey) || { id: category.id, name: category.name, count: 0 };
+    total.count += 1;
+    categoryTotals.set(categoryKey, total);
+
+    stores.forEach((store) => {
+      if (!storeMatchesListing(store, listing)) return;
+      const storeKey = `${store.tenantId}:${store.shopId || ''}`;
+      const storeList = storeCategories.get(storeKey) || [];
+      const existing = storeList.find((item) => item.name === category.name);
+      if (existing) existing.count += 1;
+      else storeList.push({ name: category.name, count: 1 });
+      storeCategories.set(storeKey, storeList.sort((a, b) => b.count - a.count));
+    });
+  });
+
+  return {
+    storeCategories,
+    categories: [...categoryTotals.values()].sort((a, b) => b.count - a.count),
+  };
+};
+
+const withProductDiscountMeta = (product) => {
+  const compareAt = Number.parseFloat(product.compareAtPrice || 0);
+  const price = Number.parseFloat(product.publicPrice || 0);
+  return {
+    ...product,
+    onSale: compareAt > price,
+    discountPercent: compareAt > price ? Math.round(((compareAt - price) / compareAt) * 100) : null,
+  };
+};
+
+const toMarketplaceProduct = (listing, stores, variantsByProductId = new Map()) => {
+  const availableListing = buildListingAvailability(listing, variantsByProductId);
+  const store = stores.find((candidate) => storeMatchesListing(candidate, availableListing));
+  const storeCard = store ? toPublicStoreCard(store) : null;
+  const product = availableListing.product || {};
+  return withProductDiscountMeta({
+    id: availableListing.id,
+    title: availableListing.title,
+    slug: availableListing.slug,
+    shortDescription: availableListing.shortDescription,
+    description: availableListing.description,
+    publicPrice: availableListing.publicPrice,
+    compareAtPrice: availableListing.compareAtPrice,
+    images: availableListing.images,
+    available: availableListing.available,
+    availability: availableListing.availability,
+    category: product.category ? { id: product.category.id, name: product.category.name } : null,
+    store: storeCard,
+    rating: availableListing.rating || availableListing.reviewSummary?.rating || null,
+    reviewsCount: availableListing.reviewsCount || availableListing.reviewSummary?.reviewsCount || 0,
+    reviewSummary: availableListing.reviewSummary || null,
+    publishedAt: availableListing.publishedAt,
+  });
+};
+
+const toPublicStoreProduct = (listing, store, variantsByProductId = new Map(), salesCount = 0) => ({
+  ...toMarketplaceProduct(listing, [store], variantsByProductId),
+  salesCount,
+});
+
+const getPublicStoreReviewSummary = (store, limit = 20) => getPublicReviewSummary({
+  reviewType: 'store',
+  tenantId: store.tenantId,
+  shopId: store.shopId || null,
+  limit,
+});
+
+const getStoreSalesCounts = async (store, productIds) => {
+  if (!productIds.length) return new Map();
+  const rows = await SaleItem.findAll({
+    where: { productId: { [Op.in]: productIds } },
+    attributes: [
+      'productId',
+      [sequelize.fn('SUM', sequelize.col('quantity')), 'quantitySold'],
+    ],
+    include: [{
+      model: Sale,
+      as: 'sale',
+      attributes: [],
+      required: true,
+      where: {
+        tenantId: store.tenantId,
+        ...(store.shopId ? { shopId: store.shopId } : {}),
+        status: { [Op.notIn]: ['cancelled', 'refunded'] },
+      },
+    }],
+    group: ['SaleItem.productId'],
+  });
+
+  return rows.reduce((map, row) => {
+    const plain = row.get({ plain: true });
+    map.set(plain.productId, Number.parseFloat(plain.quantitySold || 0));
+    return map;
+  }, new Map());
+};
+
+const getStoreCategoriesFromListings = (listings) => {
+  const categories = new Map();
+  listings.forEach((listing) => {
+    const plain = typeof listing.get === 'function' ? listing.get({ plain: true }) : listing;
+    const category = plain.product?.category;
+    if (!category?.name) return;
+    const key = category.id || category.name;
+    const existing = categories.get(key) || { id: category.id || key, name: category.name, count: 0 };
+    existing.count += 1;
+    categories.set(key, existing);
+  });
+  return [...categories.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+};
+
+const toPublicStoreHomeProfile = (store, {
+  productCount = 0,
+  serviceCount = 0,
+  categories = [],
+  reviewSummary = {},
+} = {}) => {
+  const plain = typeof store.get === 'function' ? store.get({ plain: true }) : store;
+  const metadata = plain.metadata && typeof plain.metadata === 'object' ? plain.metadata : {};
+  const businessType = plain.tenant?.businessType || null;
+  const storeMode = isStudioTenant(businessType) || plain.studioLocationId ? 'studio' : 'shop';
+  const profile = toPublicStoreCard(plain, {
+    listingCount: storeMode === 'studio' ? serviceCount : productCount,
+    categoryCounts: new Map([[`${plain.tenantId}:${plain.shopId || ''}`, categories]]),
+  });
+
+  return {
+    ...profile,
+    businessType,
+    storeMode,
+    contactPhone: plain.contactPhone || null,
+    whatsappNumber: plain.whatsappNumber || null,
+    contactEmail: plain.contactEmail || null,
+    deliveryFee: plain.deliveryFee,
+    paymentMethods: metadata.paymentMethods || {},
+    deliveryOptions: metadata.deliveryOptions || {},
+    promo: metadata.promo || metadata.storePromo || null,
+    freeDeliveryThreshold: metadata.freeDeliveryThreshold || null,
+    stats: {
+      productCount,
+      serviceCount,
+      categoryCount: categories.length,
+      rating: reviewSummary.rating || null,
+      reviewsCount: reviewSummary.reviewsCount || 0,
+      positiveReviewsPercent: reviewSummary.positiveReviewsPercent || null,
+    },
+  };
+};
+
+const buildStoreServiceListingWhere = (store) => {
+  if (!store?.tenantId) return null;
+  return {
+    tenantId: store.tenantId,
+    status: 'published',
+    ...(store.studioLocationId ? { studioLocationId: store.studioLocationId } : {}),
+  };
+};
+
+const toPublicStoreService = (listing, store) => {
+  const plain = typeof listing.get === 'function' ? listing.get({ plain: true }) : listing;
+  const storePlain = typeof store.get === 'function' ? store.get({ plain: true }) : store;
+
+  return {
+    id: plain.id,
+    title: plain.title,
+    slug: plain.slug,
+    shortDescription: plain.shortDescription,
+    description: plain.description,
+    category: plain.category,
+    ctaType: plain.ctaType,
+    priceType: plain.priceType,
+    startingPrice: plain.startingPrice,
+    compareAtPrice: plain.compareAtPrice,
+    durationMinutes: plain.durationMinutes,
+    turnaroundLabel: plain.turnaroundLabel,
+    images: plain.images,
+    pickupEnabled: plain.pickupEnabled,
+    deliveryEnabled: plain.deliveryEnabled,
+    rating: plain.rating || plain.reviewSummary?.rating || null,
+    reviewsCount: plain.reviewsCount || plain.reviewSummary?.reviewsCount || 0,
+    reviewSummary: plain.reviewSummary || null,
+    publishedAt: plain.publishedAt,
+    studio: {
+      id: storePlain.id,
+      slug: storePlain.slug,
+      displayName: storePlain.displayName,
+      logoUrl: storePlain.logoUrl,
+      bannerImageUrl: storePlain.bannerImageUrl,
+      primaryColor: storePlain.primaryColor,
+      currency: storePlain.currency,
+    },
+  };
+};
+
+const getServiceCategoriesFromServices = (services = []) => {
+  const counts = services.reduce((map, service) => {
+    if (!service.category) return map;
+    map.set(service.category, (map.get(service.category) || 0) + 1);
+    return map;
+  }, new Map());
+
+  return [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+};
+
+const compactInput = (value, maxLength) => String(value || '').trim().slice(0, maxLength);
+
+const writeGeneratedBannerSvg = async ({ tenantId, svg }) => {
+  const buffer = Buffer.from(svg, 'utf8');
+  const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+
+  if (isServerless) {
+    return `data:image/svg+xml;base64,${buffer.toString('base64')}`;
+  }
+
+  await validateStorageLimit(tenantId, buffer.length, true);
+  const subDir = path.join('store-listings', tenantId);
+  const uploadPath = path.join(baseUploadDir, subDir);
+  ensureDirExists(uploadPath);
+  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-store-banner.svg`;
+  fs.writeFileSync(path.join(uploadPath, filename), buffer);
+  return `/uploads/store-listings/${tenantId}/${filename}`;
+};
+
+const getLatestGeneratedBannerUrl = (tenantId) => {
+  if (!tenantId) return null;
+
+  const uploadPath = path.join(baseUploadDir, 'store-listings', tenantId);
+  if (!fs.existsSync(uploadPath)) return null;
+
+  const latest = fs
+    .readdirSync(uploadPath, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /store-banner\.svg$/i.test(entry.name))
+    .map((entry) => {
+      const filePath = path.join(uploadPath, entry.name);
+      return { name: entry.name, mtimeMs: fs.statSync(filePath).mtimeMs };
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
+
+  return latest ? `/uploads/store-listings/${tenantId}/${latest.name}` : null;
+};
+
 const storeWhereForRequest = (req, extra = {}) => {
   const query = req.query || {};
   let where = applyTenantFilter(req.tenantId, extra);
-  if (req.shopScoped) {
+  if (req.studioLocationScoped) {
+    where = applyStudioLocationReadFilter(req, where);
+  } else if (req.shopScoped) {
     where = applyShopReadFilter(req, where);
+  } else if (query.studioLocationId) {
+    where.studioLocationId = query.studioLocationId;
   } else if (query.shopId) {
     where.shopId = query.shopId;
+  }
+  return where;
+};
+
+/** Tenant/shop scope for online storefront orders (ignore stale dashboard shopId on non-shop tenants). */
+const onlineOrderWhereForRequest = (req, extra = {}) => {
+  let where = applyTenantFilter(req.tenantId, extra);
+  if (req.shopScoped) {
+    where = applyShopReadFilter(req, where);
   }
   return where;
 };
@@ -66,17 +703,35 @@ const addAndCondition = (where, condition) => {
   return where;
 };
 
-const onlineOrderSourceCondition = () => sequelize.where(sequelize.json('metadata.source'), ONLINE_STORE_SOURCE);
+const saleMetadataJsonKey = (key) => sequelize.literal(`"Sale"."metadata"->>'${key}'`);
+
+const onlineOrderSourceCondition = () => sequelize.where(saleMetadataJsonKey('source'), ONLINE_STORE_SOURCE);
 
 const applyOnlineOrderStatusFilter = (where, status) => {
   if (!status || status === 'all' || !ORDER_STATUS_FILTERS.has(status)) return where;
 
   if (status === 'pending') {
-    where.status = { [Op.in]: ['pending', 'partially_paid'] };
+    where.status = { [Op.notIn]: ['cancelled', 'refunded'] };
+    addAndCondition(where, {
+      [Op.or]: [
+        { orderStatus: null },
+        { orderStatus: 'received' },
+      ],
+    });
     return where;
   }
   if (status === 'paid') {
     where.status = 'completed';
+    return where;
+  }
+  if (status === 'ready' || status === 'packed') {
+    where.status = { [Op.notIn]: ['cancelled', 'refunded'] };
+    addAndCondition(where, {
+      [Op.or]: [
+        { deliveryStatus: 'ready_for_delivery' },
+        { orderStatus: 'ready' },
+      ],
+    });
     return where;
   }
   if (status === 'cancelled') {
@@ -101,16 +756,13 @@ const applyOnlineOrderStatusFilter = (where, status) => {
 
   where.status = { [Op.notIn]: ['cancelled', 'refunded'] };
   addAndCondition(where, {
-    [Op.or]: [
-      { deliveryStatus: null },
-      { orderStatus: { [Op.in]: ['received', 'preparing', 'processing'] } },
-    ],
+    orderStatus: { [Op.in]: ['preparing', 'processing'] },
   });
   return where;
 };
 
 const buildOnlineOrderWhere = (req, { includeStatus = true } = {}) => {
-  const where = storeWhereForRequest(req);
+  const where = onlineOrderWhereForRequest(req);
   addAndCondition(where, onlineOrderSourceCondition());
 
   if (includeStatus) {
@@ -143,6 +795,7 @@ const buildOnlineOrderWhere = (req, { includeStatus = true } = {}) => {
 const storeOrderInclude = [
   { model: Shop, as: 'shop', attributes: ['id', 'name'], required: false },
   { model: Customer, as: 'customer', attributes: ['id', 'name', 'phone', 'email'], required: false },
+  { model: MarketplaceOrderPayment, as: 'marketplacePayment', required: false },
   {
     model: SaleItem,
     as: 'items',
@@ -152,6 +805,19 @@ const storeOrderInclude = [
       { model: Product, as: 'product', attributes: ['id', 'name', 'imageUrl'], required: false },
       { model: ProductVariant, as: 'variant', attributes: ['id', 'name', 'sku'], required: false },
     ],
+  },
+];
+
+const storeOrderDetailInclude = [
+  ...storeOrderInclude,
+  {
+    model: SaleActivity,
+    as: 'activities',
+    attributes: ['id', 'type', 'subject', 'notes', 'nextStep', 'followUpDate', 'createdBy', 'metadata', 'createdAt'],
+    required: false,
+    separate: true,
+    limit: 50,
+    order: [['createdAt', 'DESC']],
   },
 ];
 
@@ -168,15 +834,23 @@ const getOnlineOrderStats = async (req) => {
   todayEnd.setHours(23, 59, 59, 999);
   const todayWhere = buildOnlineOrderWhere(req, { includeStatus: false });
   todayWhere.createdAt = { [Op.between]: [todayStart, todayEnd] };
+  const revenueWhere = buildOnlineOrderWhere(req, { includeStatus: false });
+  revenueWhere.status = { [Op.notIn]: ['cancelled', 'refunded'] };
+  const todayRevenueWhere = buildOnlineOrderWhere(req, { includeStatus: false });
+  todayRevenueWhere.createdAt = { [Op.between]: [todayStart, todayEnd] };
+  todayRevenueWhere.status = { [Op.notIn]: ['cancelled', 'refunded'] };
 
   const [
     total,
     pendingPayment,
     paid,
+    pendingFulfillment,
     processing,
+    ready,
     outForDelivery,
     delivered,
     cancelled,
+    totalRevenue,
     todayOrders,
     todayRevenue,
   ] = await Promise.all([
@@ -184,7 +858,15 @@ const getOnlineOrderStats = async (req) => {
     countOnlineOrders(req, { status: { [Op.in]: ['pending', 'partially_paid'] } }),
     countOnlineOrders(req, { status: 'completed' }),
     Sale.count({
+      where: applyOnlineOrderStatusFilter(buildOnlineOrderWhere(req, { includeStatus: false }), 'pending'),
+      include: [{ model: Customer, as: 'customer', attributes: [], required: false }],
+    }),
+    Sale.count({
       where: applyOnlineOrderStatusFilter(buildOnlineOrderWhere(req, { includeStatus: false }), 'processing'),
+      include: [{ model: Customer, as: 'customer', attributes: [], required: false }],
+    }),
+    Sale.count({
+      where: applyOnlineOrderStatusFilter(buildOnlineOrderWhere(req, { includeStatus: false }), 'ready'),
       include: [{ model: Customer, as: 'customer', attributes: [], required: false }],
     }),
     countOnlineOrders(req, { deliveryStatus: 'out_for_delivery', status: { [Op.notIn]: ['cancelled', 'refunded'] } }),
@@ -193,9 +875,13 @@ const getOnlineOrderStats = async (req) => {
       include: [{ model: Customer, as: 'customer', attributes: [], required: false }],
     }),
     countOnlineOrders(req, { status: { [Op.in]: ['cancelled', 'refunded'] } }),
+    Sale.sum('total', {
+      where: revenueWhere,
+      include: [{ model: Customer, as: 'customer', attributes: [], required: false }],
+    }),
     Sale.count({ where: todayWhere, include: [{ model: Customer, as: 'customer', attributes: [], required: false }] }),
     Sale.sum('total', {
-      where: todayWhere,
+      where: todayRevenueWhere,
       include: [{ model: Customer, as: 'customer', attributes: [], required: false }],
     }),
   ]);
@@ -204,13 +890,460 @@ const getOnlineOrderStats = async (req) => {
     total: Number(total || 0),
     pendingPayment: Number(pendingPayment || 0),
     paid: Number(paid || 0),
+    pendingFulfillment: Number(pendingFulfillment || 0),
     processing: Number(processing || 0),
+    ready: Number(ready || 0),
     outForDelivery: Number(outForDelivery || 0),
     delivered: Number(delivered || 0),
     cancelled: Number(cancelled || 0),
+    totalRevenue: Number(totalRevenue || 0),
     todayOrders: Number(todayOrders || 0),
     todayRevenue: Number(todayRevenue || 0),
   };
+};
+
+const serializeStoreOrderItem = (item) => {
+  const plain = typeof item.get === 'function' ? item.get({ plain: true }) : item;
+  const metadata = plain.metadata && typeof plain.metadata === 'object' ? plain.metadata : {};
+  const imageUrl = metadata.imageUrl || plain.product?.imageUrl || null;
+
+  return {
+    ...plain,
+    imageUrl,
+  };
+};
+
+const buildSellerRefundSummary = ({ paymentStatus, payoutReleasedAt, payoutId, grossAmount, refundedAmount }) => {
+  const normalizedStatus = String(paymentStatus || '').toLowerCase();
+  const gross = Number(grossAmount || 0);
+  const refunded = Number(refundedAmount || 0);
+  const fundsReleasedToBusiness = normalizedStatus === 'released' && Boolean(payoutReleasedAt || payoutId);
+
+  return {
+    fundsReleasedToBusiness,
+    canSellerRefund: fundsReleasedToBusiness && refunded < gross,
+  };
+};
+
+const serializeStoreOrder = (order) => {
+  const plain = typeof order.get === 'function' ? order.get({ plain: true }) : order;
+  const metadata = plain.metadata && typeof plain.metadata === 'object' ? plain.metadata : {};
+  const tradeAssuranceMeta = metadata.tradeAssurance && typeof metadata.tradeAssurance === 'object'
+    ? metadata.tradeAssurance
+    : {};
+  const marketplacePayment = plain.marketplacePayment && typeof plain.marketplacePayment === 'object'
+    ? plain.marketplacePayment
+    : null;
+  const paymentStatus = marketplacePayment?.status || tradeAssuranceMeta.paymentStatus || null;
+  const grossAmount = Number(marketplacePayment?.grossAmount ?? tradeAssuranceMeta.grossAmount ?? plain.total ?? 0);
+  const feeAmount = Number(marketplacePayment?.feeAmount ?? tradeAssuranceMeta.feeAmount ?? 0);
+  const netAmount = Number(marketplacePayment?.netAmount ?? tradeAssuranceMeta.netAmount ?? 0);
+  const refundedAmount = Number(marketplacePayment?.refundedAmount ?? tradeAssuranceMeta.refundedAmount ?? 0);
+  const payoutId = marketplacePayment?.metadata?.payoutId || tradeAssuranceMeta.payoutId || null;
+  const payoutReleasedAt = marketplacePayment?.releasedAt || tradeAssuranceMeta.payoutReleasedAt || null;
+  const sellerRefundSummary = buildSellerRefundSummary({
+    paymentStatus,
+    payoutReleasedAt,
+    payoutId,
+    grossAmount,
+    refundedAmount,
+  });
+
+  return {
+    ...plain,
+    items: Array.isArray(plain.items) ? plain.items.map(serializeStoreOrderItem) : [],
+    customer: plain.customer || {},
+    shop: plain.shop || {},
+    fulfillmentStatus: fulfillmentStateForOrder(plain),
+    storeSlug: metadata.storeSlug || null,
+    fulfillmentMethod: metadata.fulfillmentMethod || (plain.deliveryRequired ? 'delivery' : 'pickup'),
+    deliveryAddress: metadata.deliveryAddress || null,
+    deliveryTracking: metadata.deliveryTracking || null,
+    paymentStatus: paymentStatusForMarketplaceOrder(plain),
+    tradeAssurance: {
+      paymentStatus,
+      marketplacePaymentId: marketplacePayment?.id || tradeAssuranceMeta.marketplacePaymentId || null,
+      grossAmount,
+      feeAmount,
+      netAmount,
+      refundedAmount,
+      heldAt: marketplacePayment?.heldAt || tradeAssuranceMeta.heldAt || null,
+      payoutHold: tradeAssuranceMeta.payoutHold === true,
+      payoutReleaseEligible: tradeAssuranceMeta.payoutReleaseEligible === true,
+      payoutReleaseEligibleAt: tradeAssuranceMeta.payoutReleaseEligibleAt || null,
+      payoutReleasedAt,
+      payoutPaidOutAt: tradeAssuranceMeta.payoutPaidOutAt || null,
+      payoutId,
+      payoutTransferReference: tradeAssuranceMeta.payoutTransferReference || null,
+      autoReleaseHours: tradeAssuranceMeta.autoReleaseHours || null,
+      ...sellerRefundSummary,
+    },
+  };
+};
+
+const isStudioStoreRequest = (req) => req && isStudioTenant(req.tenant?.businessType);
+
+const serviceBookingLeadInclude = (req, { required = true } = {}) => {
+  const leadWhere = {
+    [Op.and]: [
+      sequelize.where(
+        sequelize.literal('"adminLead"."metadata"->>\'requestType\''),
+        'paid_service_booking',
+      ),
+    ],
+  };
+
+  const term = String(req.query?.search || '').trim();
+  if (term) {
+    leadWhere[Op.or] = [
+      { name: { [Op.iLike]: `%${term}%` } },
+      { email: { [Op.iLike]: `%${term}%` } },
+      { phone: { [Op.iLike]: `%${term}%` } },
+    ];
+  }
+
+  return {
+    model: Lead,
+    as: 'adminLead',
+    required,
+    attributes: ['id', 'name', 'email', 'phone', 'metadata', 'status'],
+    where: leadWhere,
+  };
+};
+
+const applyServiceBookingStatusFilter = (where, status) => {
+  if (!status || status === 'all' || !ORDER_STATUS_FILTERS.has(status)) return where;
+
+  if (status === 'pending') {
+    where.status = 'new';
+    addAndCondition(where, serviceBookingPaymentCondition(['paid', 'success', 'successful', 'service_paid']));
+    return where;
+  }
+  if (status === 'paid') {
+    addAndCondition(where, serviceBookingPaymentCondition(['paid', 'success', 'successful', 'service_paid']));
+    return where;
+  }
+  if (status === 'processing') {
+    where.status = 'in_progress';
+    return where;
+  }
+  if (status === 'delivered') {
+    where.status = 'completed';
+    return where;
+  }
+  if (status === 'cancelled') {
+    where.status = 'cancelled';
+    return where;
+  }
+
+  return where;
+};
+
+const serviceBookingWhereForRequest = (req, extra = {}, { includeStatus = true } = {}) => {
+  let where = applyTenantFilter(req.tenantId, {
+    ...extra,
+    adminLeadId: { [Op.ne]: null },
+  });
+  if (req.studioLocationScoped) {
+    where = applyStudioLocationReadFilter(req, where);
+  }
+
+  if (includeStatus) {
+    applyServiceBookingStatusFilter(where, req.query?.status);
+  }
+
+  const { startDate, endDate, search } = req.query || {};
+  if (startDate || endDate) {
+    const start = startDate ? new Date(startDate) : new Date(0);
+    const end = endDate ? new Date(endDate) : new Date();
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+    where.createdAt = { [Op.between]: [start, end] };
+  }
+
+  const term = String(search || '').trim();
+  if (term) {
+    addAndCondition(where, {
+      [Op.or]: [
+        { jobNumber: { [Op.iLike]: `%${term}%` } },
+        { title: { [Op.iLike]: `%${term}%` } },
+      ],
+    });
+  }
+
+  return where;
+};
+
+const serviceBookingPaymentStatusLiteral = sequelize.literal(`
+  COALESCE(
+    "Job"."metadata"->>'paymentStatus',
+    "Job"."metadata"->'paystack'->>'status',
+    "adminLead"."metadata"->>'paymentStatus',
+    CASE WHEN "Job"."status" = 'completed' THEN 'paid' ELSE NULL END
+  )
+`);
+
+const serviceBookingPaymentCondition = (statuses) => sequelize.where(
+  serviceBookingPaymentStatusLiteral,
+  { [Op.in]: statuses },
+);
+
+const countServiceBookings = (req, extra = {}, leadInclude = serviceBookingLeadInclude(req)) => (
+  Job.count({
+    where: serviceBookingWhereForRequest(req, extra, { includeStatus: false }),
+    include: [leadInclude],
+    distinct: true,
+  })
+);
+
+const getServiceBookingStats = async (req) => {
+  if (!isStudioStoreRequest(req)) {
+    return {
+      total: 0,
+      pendingPayment: 0,
+      paid: 0,
+      pendingFulfillment: 0,
+      processing: 0,
+      ready: 0,
+      outForDelivery: 0,
+      delivered: 0,
+      cancelled: 0,
+      totalRevenue: 0,
+      todayOrders: 0,
+      todayRevenue: 0,
+    };
+  }
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayEnd = new Date();
+  todayEnd.setHours(23, 59, 59, 999);
+
+  const paidStatuses = ['paid', 'success', 'successful', 'service_paid'];
+  const pendingStatuses = ['awaiting_payment', 'pending', 'pending_payment'];
+  const paidRevenueInclude = serviceBookingLeadInclude(req);
+  const paidRevenueWhere = serviceBookingWhereForRequest(req, {
+    status: { [Op.ne]: 'cancelled' },
+  }, { includeStatus: false });
+  addAndCondition(paidRevenueWhere, serviceBookingPaymentCondition(paidStatuses));
+
+  const todayRevenueWhere = serviceBookingWhereForRequest(req, {
+    status: { [Op.ne]: 'cancelled' },
+    createdAt: { [Op.between]: [todayStart, todayEnd] },
+  }, { includeStatus: false });
+  addAndCondition(todayRevenueWhere, serviceBookingPaymentCondition(paidStatuses));
+
+  const [
+    total,
+    pendingPayment,
+    paid,
+    pendingFulfillment,
+    processing,
+    delivered,
+    cancelled,
+    totalRevenue,
+    todayOrders,
+    todayRevenue,
+  ] = await Promise.all([
+    countServiceBookings(req),
+    countServiceBookings(req, { [Op.and]: [serviceBookingPaymentCondition(pendingStatuses)] }),
+    countServiceBookings(req, { [Op.and]: [serviceBookingPaymentCondition(paidStatuses)] }),
+    countServiceBookings(req, { status: 'new', [Op.and]: [serviceBookingPaymentCondition(paidStatuses)] }),
+    countServiceBookings(req, { status: 'in_progress', [Op.and]: [serviceBookingPaymentCondition(paidStatuses)] }),
+    countServiceBookings(req, { status: 'completed' }),
+    countServiceBookings(req, { status: 'cancelled' }),
+    Job.sum('finalPrice', { where: paidRevenueWhere, include: [paidRevenueInclude] }),
+    countServiceBookings(req, { createdAt: { [Op.between]: [todayStart, todayEnd] } }),
+    Job.sum('finalPrice', { where: todayRevenueWhere, include: [serviceBookingLeadInclude(req)] }),
+  ]);
+
+  return {
+    total: Number(total || 0),
+    pendingPayment: Number(pendingPayment || 0),
+    paid: Number(paid || 0),
+    pendingFulfillment: Number(pendingFulfillment || 0),
+    processing: Number(processing || 0),
+    ready: 0,
+    outForDelivery: 0,
+    delivered: Number(delivered || 0),
+    cancelled: Number(cancelled || 0),
+    totalRevenue: Number(totalRevenue || 0),
+    todayOrders: Number(todayOrders || 0),
+    todayRevenue: Number(todayRevenue || 0),
+  };
+};
+
+const combineOrderStats = (productStats = {}, serviceStats = {}) => ({
+  total: Number(productStats.total || 0) + Number(serviceStats.total || 0),
+  pendingPayment: Number(productStats.pendingPayment || 0) + Number(serviceStats.pendingPayment || 0),
+  paid: Number(productStats.paid || 0) + Number(serviceStats.paid || 0),
+  pendingFulfillment: Number(productStats.pendingFulfillment || 0) + Number(serviceStats.pendingFulfillment || 0),
+  processing: Number(productStats.processing || 0) + Number(serviceStats.processing || 0),
+  ready: Number(productStats.ready || 0) + Number(serviceStats.ready || 0),
+  outForDelivery: Number(productStats.outForDelivery || 0) + Number(serviceStats.outForDelivery || 0),
+  delivered: Number(productStats.delivered || 0) + Number(serviceStats.delivered || 0),
+  cancelled: Number(productStats.cancelled || 0) + Number(serviceStats.cancelled || 0),
+  totalRevenue: Number(productStats.totalRevenue || 0) + Number(serviceStats.totalRevenue || 0),
+  todayOrders: Number(productStats.todayOrders || 0) + Number(serviceStats.todayOrders || 0),
+  todayRevenue: Number(productStats.todayRevenue || 0) + Number(serviceStats.todayRevenue || 0),
+});
+
+const serializeServiceBookingOrder = (job) => {
+  const plain = typeof job.get === 'function' ? job.get({ plain: true }) : job;
+  const lead = plain.adminLead || {};
+  const leadMetadata = lead.metadata && typeof lead.metadata === 'object' ? lead.metadata : {};
+  const jobMetadata = plain.metadata && typeof plain.metadata === 'object' ? plain.metadata : {};
+  const metadata = { ...leadMetadata, ...jobMetadata };
+  const payment = metadata.paystack || {};
+  const appointment = metadata.appointment || {
+    preferredDate: metadata.preferredDate || null,
+    preferredTime: metadata.preferredTime || null,
+    appointmentAt: metadata.appointmentAt || null,
+  };
+  const total = Number.parseFloat(plain.finalPrice || plain.quotedPrice || payment.amount || 0);
+  const paymentStatus = metadata.paymentStatus || payment.status || (plain.status === 'completed' ? 'paid' : 'pending');
+  const fulfillmentStatus = plain.status === 'completed'
+    ? 'delivered'
+    : plain.status === 'cancelled'
+      ? 'cancelled'
+      : plain.status === 'in_progress'
+        ? 'processing'
+        : 'pending';
+
+  return {
+    ...plain,
+    id: plain.id,
+    orderType: 'service',
+    saleNumber: plain.jobNumber,
+    orderNumber: plain.jobNumber,
+    customerName: lead.name || metadata.storefrontCustomerName || metadata.storefrontCustomerEmail || 'Storefront customer',
+    customerPhone: lead.phone || null,
+    customerEmail: lead.email || metadata.storefrontCustomerEmail || null,
+    customer: {
+      id: lead.id || null,
+      name: lead.name || metadata.storefrontCustomerName || 'Storefront customer',
+      phone: lead.phone || null,
+      email: lead.email || metadata.storefrontCustomerEmail || null,
+    },
+    total,
+    subtotal: total,
+    paymentStatus,
+    status: paymentStatus,
+    orderStatus: fulfillmentStatus === 'processing' ? 'processing' : (fulfillmentStatus === 'delivered' ? 'completed' : 'received'),
+    fulfillmentStatus,
+    storeSlug: metadata.studioSlug || null,
+    fulfillmentMethod: 'service',
+    appointment,
+    items: [{
+      id: plain.id,
+      name: metadata.serviceTitle || plain.title,
+      title: metadata.serviceTitle || plain.title,
+      quantity: 1,
+      unitPrice: total,
+      total,
+      metadata: {
+        serviceListingId: metadata.serviceListingId || null,
+        serviceSlug: metadata.serviceSlug || null,
+        preferredDate: appointment.preferredDate || null,
+        preferredTime: appointment.preferredTime || null,
+      },
+    }],
+    tradeAssurance: {
+      paymentStatus,
+      grossAmount: total,
+      feeAmount: 0,
+      netAmount: total,
+      refundedAmount: 0,
+      heldAt: payment.paidAt || null,
+      payoutHold: true,
+      fundsReleasedToBusiness: false,
+      canSellerRefund: false,
+    },
+  };
+};
+
+const getMixedStoreOrders = async (req, { limit, offset }) => {
+  const productWhere = buildOnlineOrderWhere(req);
+  const serviceWhere = serviceBookingWhereForRequest(req);
+  const fetchLimit = offset + limit;
+
+  const [productResult, serviceResult, productStats, serviceStats] = await Promise.all([
+    Sale.findAndCountAll({
+      where: productWhere,
+      attributes: { exclude: ['notes'] },
+      include: storeOrderInclude,
+      distinct: true,
+      subQuery: false,
+      limit: fetchLimit,
+      offset: 0,
+      order: [['createdAt', 'DESC']],
+    }),
+    Job.findAndCountAll({
+      where: serviceWhere,
+      include: [serviceBookingLeadInclude(req)],
+      distinct: true,
+      limit: fetchLimit,
+      offset: 0,
+      order: [['createdAt', 'DESC']],
+    }),
+    getOnlineOrderStats(req),
+    getServiceBookingStats(req),
+  ]);
+
+  const rows = [
+    ...productResult.rows.map(serializeStoreOrder),
+    ...serviceResult.rows.map(serializeServiceBookingOrder),
+  ]
+    .sort((a, b) => new Date(b.createdAt || b.orderDate || 0) - new Date(a.createdAt || a.orderDate || 0))
+    .slice(offset, offset + limit);
+
+  return {
+    count: Number(productResult.count || 0) + Number(serviceResult.count || 0),
+    stats: combineOrderStats(productStats, serviceStats),
+    rows,
+  };
+};
+
+const getStoreOrderExportRows = (orders) => orders.map((order) => {
+  const plain = serializeStoreOrder(order);
+  const items = Array.isArray(plain.items) ? plain.items : [];
+  const itemSummary = items.map((item) => {
+    const quantity = item.quantity || 1;
+    const name = item.name || item.product?.name || 'Item';
+    return `${quantity} x ${name}`;
+  }).join('; ');
+
+  return {
+    ...plain,
+    itemSummary,
+  };
+});
+
+const STORE_ORDER_EXPORT_COLUMNS = [
+  { key: 'saleNumber', header: 'Order #' },
+  { key: 'customer.name', header: 'Customer' },
+  { key: 'customer.phone', header: 'Phone' },
+  { key: 'shop.name', header: 'Shop' },
+  { key: 'createdAt', header: 'Date', type: 'datetime' },
+  { key: 'itemSummary', header: 'Items' },
+  { key: 'subtotal', header: 'Subtotal', type: 'currency' },
+  { key: 'deliveryFee', header: 'Delivery Fee', type: 'currency' },
+  { key: 'total', header: 'Total', type: 'currency' },
+  { key: 'paymentMethod', header: 'Payment Method' },
+  { key: 'status', header: 'Payment Status' },
+  { key: 'orderStatus', header: 'Fulfillment Status' },
+  { key: 'deliveryStatus', header: 'Delivery Status' },
+];
+
+const getTradeAssuranceScope = (req) => ({
+  shopId: req.shopScoped ? (req.shopFilterId || null) : null,
+  includeLegacyShopNull: Boolean(req.shopScoped && req.shopFilterId),
+});
+
+const tradeAssurancePagination = (req, fallbackLimit = 50) => {
+  const page = Math.max(Number.parseInt(req.query?.page, 10) || 1, 1);
+  const limit = Math.min(Math.max(Number.parseInt(req.query?.limit, 10) || fallbackLimit, 1), 100);
+  return { page, limit, offset: (page - 1) * limit };
 };
 
 const fulfillmentUpdateForAction = (action) => {
@@ -218,16 +1351,76 @@ const fulfillmentUpdateForAction = (action) => {
     case 'processing':
       return { orderStatus: 'preparing', deliveryStatus: null };
     case 'ready':
+    case 'packed':
       return { orderStatus: 'ready', deliveryStatus: 'ready_for_delivery' };
+    case 'shipped':
     case 'out_for_delivery':
       return { orderStatus: 'ready', deliveryStatus: 'out_for_delivery' };
     case 'delivered':
-      return { orderStatus: 'completed', deliveryStatus: 'delivered' };
+      return { orderStatus: 'completed', deliveryStatus: 'delivered', deliveredAt: new Date() };
     case 'cancelled':
       return { status: 'cancelled', orderStatus: 'cancelled', deliveryStatus: null };
     default:
       return null;
   }
+};
+
+const targetFulfillmentStateForAction = (action) => {
+  if (action === 'ready' || action === 'packed') return 'ready';
+  if (action === 'shipped' || action === 'out_for_delivery') return 'out_for_delivery';
+  return action;
+};
+
+const STORE_ORDER_STATUS_TRANSITIONS = {
+  pending: ['processing', 'ready', 'out_for_delivery', 'delivered', 'cancelled'],
+  paid: ['processing', 'ready', 'out_for_delivery', 'delivered', 'cancelled'],
+  processing: ['ready', 'out_for_delivery', 'delivered', 'cancelled'],
+  ready: ['out_for_delivery', 'delivered', 'cancelled'],
+  out_for_delivery: ['delivered', 'cancelled'],
+  delivered: [],
+  cancelled: [],
+};
+
+const canTransitionStoreOrder = (order, action) => {
+  const currentState = fulfillmentStateForOrder(order);
+  const targetState = targetFulfillmentStateForAction(action);
+  return (STORE_ORDER_STATUS_TRANSITIONS[currentState] || []).includes(targetState);
+};
+
+const appendDeliveryTrackingMetadata = (metadata, action, actorUserId = null, extra = {}) => {
+  const nextMetadata = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+    ? { ...metadata }
+    : {};
+  const deliveryTracking = nextMetadata.deliveryTracking && typeof nextMetadata.deliveryTracking === 'object'
+    ? { ...nextMetadata.deliveryTracking }
+    : {};
+  const history = Array.isArray(deliveryTracking.history) ? deliveryTracking.history.slice(-19) : [];
+  const trackedStatus = action === 'ready' ? 'packed' : action;
+  const timestamp = new Date().toISOString();
+  nextMetadata.deliveryTracking = {
+    ...deliveryTracking,
+    status: trackedStatus,
+    deliveredAt: trackedStatus === 'delivered' ? timestamp : null,
+    history: [
+      ...history,
+      {
+        status: trackedStatus,
+        at: timestamp,
+        source: 'abs_online_orders',
+        actorUserId,
+        ...extra,
+      },
+    ],
+  };
+  if (action === 'cancelled' && extra.reason) {
+    nextMetadata.cancellation = {
+      reason: extra.reason,
+      cancelledAt: timestamp,
+      cancelledBy: actorUserId,
+      source: 'seller',
+    };
+  }
+  return nextMetadata;
 };
 
 const restoreSaleItemStock = async (saleId, transaction) => {
@@ -256,6 +1449,40 @@ const getCurrentStoreSettings = async (req) => {
     where,
     order: [['createdAt', 'ASC']],
   });
+};
+
+const resolveStoreLogoFallback = async (req) => {
+  const organizationSetting = await Setting.findOne({
+    where: { tenantId: req.tenantId, key: 'organization' },
+    attributes: ['value'],
+  });
+  const organization = organizationSetting?.value || {};
+  const tenantMetadata = req.tenant?.metadata || {};
+
+  return firstFilled(
+    organization.logoUrl,
+    tenantMetadata.logoUrl,
+    tenantMetadata.logo,
+    req.tenant?.logoUrl,
+  ) || null;
+};
+
+const serializeStoreSettings = async (settings, req) => {
+  if (!settings) {
+    return {
+      logoUrl: await resolveStoreLogoFallback(req),
+      bannerImageUrl: getLatestGeneratedBannerUrl(req.tenantId),
+    };
+  }
+
+  const payload = typeof settings.toJSON === 'function' ? settings.toJSON() : { ...settings };
+  payload.bannerImageUrl = resolvePublicBannerImageUrl(payload) || getLatestGeneratedBannerUrl(req.tenantId);
+  if (!payload.logoUrl) {
+    payload.logoUrl = await resolveStoreLogoFallback(req);
+  }
+  payload.primaryColor = normalizePrimaryColor(payload.primaryColor);
+
+  return payload;
 };
 
 const ensureSlugAvailable = async ({ slug, tenantId, currentId = null }) => {
@@ -293,10 +1520,14 @@ const normalizeEnabledMap = (value, defaults = {}) => {
   }, {});
 };
 
-const buildSetupChecklist = async (settings, tenantId) => {
-  const listingsCount = await OnlineProductListing.count({
+const buildSetupChecklist = async (settings, tenantId, req = null) => {
+  const productListingsCount = await OnlineProductListing.count({
     where: { tenantId, status: 'published' },
   });
+  const serviceListingsCount = req && isStudioTenant(req.tenant?.businessType)
+    ? await countPublishedServiceListings(tenantId, settings?.studioLocationId || req.studioLocationFilterId || null)
+    : 0;
+  const listingsCount = productListingsCount + serviceListingsCount;
   const metadata = settings?.metadata && typeof settings.metadata === 'object' ? settings.metadata : {};
   const paymentMethods = normalizeEnabledMap(metadata.paymentMethods, {
     mobileMoney: { enabled: false, configured: false },
@@ -319,7 +1550,7 @@ const buildSetupChecklist = async (settings, tenantId) => {
     settings?.deliveryEnabled ||
     Object.values(deliveryOptions).some((option) => option.enabled)
   );
-  const brandingReady = Boolean(settings?.primaryColor);
+  const brandingReady = HEX_COLOR_PATTERN.test(String(settings?.primaryColor || '').trim());
   const canLaunch = hasSettings && hasBasics && hasContact && hasPaymentMethod && hasFulfillment;
 
   return {
@@ -331,7 +1562,10 @@ const buildSetupChecklist = async (settings, tenantId) => {
     hasFulfillment,
     hasPublishedListing: listingsCount > 0,
     listingsCount,
+    productListingsCount,
+    serviceListingsCount,
     publishedListingWarning: listingsCount < 1,
+    storeMode: req && isStudioTenant(req.tenant?.businessType) ? 'studio' : 'shop',
     canLaunch,
     launched: Boolean(settings?.enabled && settings?.setupCompletedAt),
   };
@@ -388,7 +1622,7 @@ const assertListingPublishable = (listing) => {
 exports.getSettings = async (req, res, next) => {
   try {
     const settings = await getCurrentStoreSettings(req);
-    res.status(200).json({ success: true, data: settings });
+    res.status(200).json({ success: true, data: await serializeStoreSettings(settings, req) });
   } catch (error) {
     next(error);
   }
@@ -411,7 +1645,10 @@ exports.upsertSettings = async (req, res, next) => {
       description: req.body.description || null,
       logoUrl: req.body.logoUrl || null,
       bannerImageUrl: req.body.bannerImageUrl || null,
-      primaryColor: req.body.primaryColor || DEFAULT_PRIMARY_COLOR,
+      primaryColor: normalizePrimaryColor(
+        req.body.primaryColor,
+        normalizePrimaryColor(existing?.primaryColor, DEFAULT_PRIMARY_COLOR),
+      ),
       contactPhone: req.body.contactPhone || null,
       whatsappNumber: req.body.whatsappNumber || null,
       contactEmail: req.body.contactEmail || null,
@@ -422,6 +1659,7 @@ exports.upsertSettings = async (req, res, next) => {
       metadata: {
         ...existingMetadata,
         ...incomingMetadata,
+        bannerImageUrl: req.body.bannerImageUrl || incomingMetadata.bannerImageUrl || existingMetadata.bannerImageUrl || null,
         paymentMethods: incomingMetadata.paymentMethods || existingMetadata.paymentMethods || {},
         deliveryOptions: incomingMetadata.deliveryOptions || existingMetadata.deliveryOptions || {},
         setupProgress: incomingMetadata.setupProgress || existingMetadata.setupProgress || {},
@@ -429,6 +1667,7 @@ exports.upsertSettings = async (req, res, next) => {
     };
 
     attachShopToPayload(req, payload);
+    attachStudioLocationToPayload(req, payload);
     if (payload.shopId) {
       assertShopIdAccess(req, payload.shopId);
     }
@@ -450,7 +1689,7 @@ exports.upsertSettings = async (req, res, next) => {
 exports.getSetupStatus = async (req, res, next) => {
   try {
     const settings = await getCurrentStoreSettings(req);
-    const checklist = await buildSetupChecklist(settings, req.tenantId);
+    const checklist = await buildSetupChecklist(settings, req.tenantId, req);
     res.status(200).json({ success: true, data: { settings, checklist } });
   } catch (error) {
     next(error);
@@ -683,11 +1922,102 @@ exports.uploadListingImages = async (req, res, next) => {
   }
 };
 
+exports.generateBanner = async (req, res, next) => {
+  try {
+    const prompt = compactInput(req.body.prompt, BANNER_PROMPT_MAX_LENGTH);
+    const styleHint = compactInput(req.body.styleHint, BANNER_HINT_MAX_LENGTH);
+    const colorHint = compactInput(req.body.colorHint || req.body.primaryColor, 120);
+
+    if (prompt.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: 'Describe the banner you want in at least 8 characters',
+      });
+    }
+    if (String(req.body.prompt || '').length > BANNER_PROMPT_MAX_LENGTH) {
+      return res.status(400).json({
+        success: false,
+        message: `Banner prompt must be ${BANNER_PROMPT_MAX_LENGTH} characters or less`,
+      });
+    }
+    if (DISALLOWED_BANNER_PROMPT_TERMS.test([prompt, styleHint].join(' '))) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please use a safe storefront banner prompt',
+      });
+    }
+
+    const settings = await getCurrentStoreSettings(req);
+    const metadata = settings?.metadata && typeof settings.metadata === 'object' ? settings.metadata : {};
+    const generated = await openaiService.generateStoreBannerSvg({
+      prompt,
+      styleHint,
+      colorHint,
+      tenantId: req.tenantId,
+      businessType: req.tenant?.businessType || 'shop',
+      storeName: compactInput(req.body.storeName || req.body.displayName || settings?.displayName || req.tenant?.name, 120),
+      category: compactInput(req.body.category || metadata.category, 120),
+      description: compactInput(req.body.description || settings?.description, 300),
+    });
+    const imageUrl = await writeGeneratedBannerSvg({ tenantId: req.tenantId, svg: generated.svg });
+
+    res.status(201).json({
+      success: true,
+      data: {
+        imageUrl,
+        bannerImageUrl: imageUrl,
+        provider: generated.provider,
+        model: generated.model,
+        format: generated.format,
+        width: generated.width,
+        height: generated.height,
+      },
+    });
+  } catch (error) {
+    if (error.code === 'OPENAI_NOT_CONFIGURED') {
+      return res.status(503).json({
+        success: false,
+        message: 'AI banner generation is not configured. Set ANTHROPIC_API_KEY or a tenant AI key to enable it.',
+        code: 'OPENAI_NOT_CONFIGURED',
+      });
+    }
+    if (error.status === 401 || error.code === 'invalid_api_key') {
+      return res.status(503).json({
+        success: false,
+        message: 'Invalid Anthropic API key. Check the workspace AI key or ANTHROPIC_API_KEY in Backend/.env.',
+        code: 'OPENAI_INVALID_KEY',
+      });
+    }
+    if (error.code === 'AI_IMAGE_INVALID_OUTPUT') {
+      return res.status(502).json({
+        success: false,
+        message: 'AI could not generate a usable banner. Please try a different prompt.',
+        code: 'AI_IMAGE_INVALID_OUTPUT',
+      });
+    }
+    next(error);
+  }
+};
+
 exports.getStoreOrders = async (req, res, next) => {
   try {
     const { page, limit, offset } = getPagination(req);
-    const where = buildOnlineOrderWhere(req);
+    if (isStudioStoreRequest(req)) {
+      const { count, rows, stats } = await getMixedStoreOrders(req, { limit, offset });
+      return res.status(200).json({
+        success: true,
+        count,
+        stats,
+        pagination: {
+          page,
+          limit,
+          totalPages: Math.ceil(count / limit),
+        },
+        data: rows,
+      });
+    }
 
+    const where = buildOnlineOrderWhere(req);
     const [{ count, rows }, stats] = await Promise.all([
       Sale.findAndCountAll({
         where,
@@ -711,7 +2041,7 @@ exports.getStoreOrders = async (req, res, next) => {
         limit,
         totalPages: Math.ceil(count / limit),
       },
-      data: rows,
+      data: rows.map(serializeStoreOrder),
     });
   } catch (error) {
     next(error);
@@ -720,8 +2050,46 @@ exports.getStoreOrders = async (req, res, next) => {
 
 exports.getStoreOrderStats = async (req, res, next) => {
   try {
-    const stats = await getOnlineOrderStats(req);
+    const [productStats, serviceStats] = await Promise.all([
+      getOnlineOrderStats(req),
+      getServiceBookingStats(req),
+    ]);
+    const stats = combineOrderStats(productStats, serviceStats);
     res.status(200).json({ success: true, data: stats });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.exportStoreOrders = async (req, res, next) => {
+  try {
+    const { format = 'csv' } = req.query;
+    const { sendCSV, sendExcel } = require('../utils/dataExport');
+    const where = buildOnlineOrderWhere(req);
+
+    const orders = await Sale.findAll({
+      where,
+      attributes: { exclude: ['notes'] },
+      include: storeOrderInclude,
+      order: [['createdAt', 'DESC']],
+    });
+
+    if (orders.length === 0) {
+      return res.status(404).json({ success: false, message: 'No online orders to export' });
+    }
+
+    const rows = getStoreOrderExportRows(orders);
+    const filename = `online_orders_${new Date().toISOString().split('T')[0]}`;
+
+    if (format === 'excel') {
+      await sendExcel(res, rows, `${filename}.xlsx`, {
+        columns: STORE_ORDER_EXPORT_COLUMNS,
+        sheetName: 'Online Orders',
+        title: 'Online Orders',
+      });
+    } else {
+      sendCSV(res, rows, `${filename}.csv`, STORE_ORDER_EXPORT_COLUMNS);
+    }
   } catch (error) {
     next(error);
   }
@@ -729,19 +2097,29 @@ exports.getStoreOrderStats = async (req, res, next) => {
 
 exports.getStoreOrder = async (req, res, next) => {
   try {
-    const where = storeWhereForRequest(req, { id: req.params.id });
+    const where = onlineOrderWhereForRequest(req, { id: req.params.id });
     addAndCondition(where, onlineOrderSourceCondition());
 
     const order = await Sale.findOne({
       where,
-      include: storeOrderInclude,
+      include: storeOrderDetailInclude,
     });
+
+    if (!order && isStudioStoreRequest(req)) {
+      const booking = await Job.findOne({
+        where: serviceBookingWhereForRequest(req, { id: req.params.id }),
+        include: [serviceBookingLeadInclude(req)],
+      });
+      if (booking) {
+        return res.status(200).json({ success: true, data: serializeServiceBookingOrder(booking) });
+      }
+    }
 
     if (!order) {
       return res.status(404).json({ success: false, message: 'Online order not found' });
     }
 
-    res.status(200).json({ success: true, data: order });
+    res.status(200).json({ success: true, data: serializeStoreOrder(order) });
   } catch (error) {
     next(error);
   }
@@ -755,21 +2133,76 @@ exports.updateStoreOrderStatus = async (req, res, next) => {
       await transaction.rollback();
       return res.status(400).json({
         success: false,
-        message: 'Invalid status. Use one of: processing, ready, out_for_delivery, delivered, cancelled',
+        message: 'Invalid status. Use one of: processing, ready, packed, shipped, out_for_delivery, delivered, cancelled',
       });
     }
+    const cancellationReason = compactInput(req.body.reason || req.body.cancellationReason, 240);
+    if (action === 'cancelled' && !cancellationReason) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: 'Cancellation reason is required.' });
+    }
 
-    const where = storeWhereForRequest(req, { id: req.params.id });
+    const where = onlineOrderWhereForRequest(req, { id: req.params.id });
     addAndCondition(where, onlineOrderSourceCondition());
 
+    // Lock Sale row only — FOR UPDATE with optional includes (LEFT JOIN) fails on Postgres.
     const order = await Sale.findOne({
       where,
-      include: [{ model: Customer, as: 'customer', attributes: ['id', 'name', 'phone', 'email'], required: false }],
       transaction,
       lock: transaction.LOCK.UPDATE,
     });
 
     if (!order) {
+      if (isStudioStoreRequest(req)) {
+        const booking = await Job.findOne({
+          where: serviceBookingWhereForRequest(req, { id: req.params.id }),
+          include: [serviceBookingLeadInclude(req)],
+          transaction,
+        });
+
+        if (booking) {
+          if (booking.status === 'cancelled') {
+            await transaction.rollback();
+            return res.status(400).json({ success: false, message: 'Cancelled service orders cannot be updated' });
+          }
+
+          const nextJobStatus = action === 'delivered'
+            ? 'completed'
+            : action === 'cancelled'
+              ? 'cancelled'
+              : 'in_progress';
+          const currentMetadata = booking.metadata && typeof booking.metadata === 'object' ? booking.metadata : {};
+          const fulfillmentHistory = Array.isArray(currentMetadata.fulfillmentHistory)
+            ? currentMetadata.fulfillmentHistory
+            : [];
+          await booking.update({
+            status: nextJobStatus,
+            metadata: {
+              ...currentMetadata,
+              fulfillmentStatus: action,
+              fulfillmentHistory: [
+                ...fulfillmentHistory,
+                {
+                  action,
+                  previousStatus: booking.status,
+                  nextStatus: nextJobStatus,
+                  actorUserId: req.user?.id || null,
+                  at: new Date().toISOString(),
+                  ...(action === 'cancelled' ? { reason: cancellationReason } : {}),
+                },
+              ],
+            },
+          }, { transaction });
+
+          await transaction.commit();
+          const updatedBooking = await Job.findOne({
+            where: serviceBookingWhereForRequest(req, { id: req.params.id }),
+            include: [serviceBookingLeadInclude(req)],
+          });
+          return res.status(200).json({ success: true, data: serializeServiceBookingOrder(updatedBooking) });
+        }
+      }
+
       await transaction.rollback();
       return res.status(404).json({ success: false, message: 'Online order not found' });
     }
@@ -779,7 +2212,30 @@ exports.updateStoreOrderStatus = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Cancelled or refunded orders cannot be updated' });
     }
 
+    if (hasCustomerConfirmedDelivery(order)) {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: CUSTOMER_CONFIRMED_DELIVERY_ERROR_MESSAGE,
+        errorCode: CUSTOMER_CONFIRMED_DELIVERY_ERROR_CODE,
+      });
+    }
+
+    if (!canTransitionStoreOrder(order, action)) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Status transition not allowed from ${fulfillmentStateForOrder(order)} to ${targetFulfillmentStateForAction(action)}`,
+      });
+    }
+
     const updateData = fulfillmentUpdateForAction(action);
+    updateData.metadata = appendDeliveryTrackingMetadata(
+      order.metadata,
+      action,
+      req.user?.id || null,
+      action === 'cancelled' ? { reason: cancellationReason } : {}
+    );
     const previous = {
       status: order.status,
       orderStatus: order.orderStatus || null,
@@ -791,18 +2247,45 @@ exports.updateStoreOrderStatus = async (req, res, next) => {
     }
 
     await order.update(updateData, { transaction });
+    if (action === 'cancelled') {
+      const marketplacePayment = await MarketplaceOrderPayment.findOne({
+        where: { saleId: order.id },
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (marketplacePayment && marketplacePayment.status !== 'refunded') {
+        await refundMarketplaceOrderPayment({
+          tenantId: req.tenantId,
+          shopId: order.shopId || null,
+          saleId: order.id,
+          actorUserId: req.user?.id || null,
+          reason: `seller_cancelled: ${cancellationReason}`,
+          transaction,
+        });
+      }
+    }
+    if (action === 'delivered') {
+      await markDeliveryReleaseWindowForSale({
+        sale: order,
+        deliveredAt: order.deliveredAt || new Date(),
+        transaction,
+      });
+    }
     await SaleActivity.create({
       saleId: order.id,
       tenantId: req.tenantId,
       type: action === 'cancelled' ? 'status_change' : 'note',
       subject: 'Online order status updated',
-      notes: `Online order marked ${action.replace(/_/g, ' ')}`,
+      notes: action === 'cancelled'
+        ? `Online order cancelled by seller. Reason: ${cancellationReason}`
+        : `Online order marked ${action.replace(/_/g, ' ')}`,
       createdBy: req.user?.id || null,
       metadata: {
         source: ONLINE_STORE_SOURCE,
         action,
         previous,
         next: updateData,
+        ...(action === 'cancelled' ? { cancellationReason } : {}),
       },
     }, { transaction });
 
@@ -814,11 +2297,975 @@ exports.updateStoreOrderStatus = async (req, res, next) => {
       include: storeOrderInclude,
     });
 
-    res.status(200).json({ success: true, data: updatedOrder });
+    res.status(200).json({ success: true, data: serializeStoreOrder(updatedOrder) });
   } catch (error) {
     if (transaction && !transaction.finished) {
       await transaction.rollback();
     }
+    next(error);
+  }
+};
+
+exports.getTradeAssuranceDashboard = async (req, res, next) => {
+  try {
+    const scope = getTradeAssuranceScope(req);
+    const { page, limit, offset } = tradeAssurancePagination(req, 25);
+    const [summary, payments, disputes, payouts] = await Promise.all([
+      getTradeAssuranceSummary({ tenantId: req.tenantId, ...scope }),
+      listTradeAssurancePayments({
+        tenantId: req.tenantId,
+        ...scope,
+        status: req.query?.paymentStatus || null,
+        limit,
+        offset,
+      }),
+      listTradeAssuranceDisputes({
+        tenantId: req.tenantId,
+        ...scope,
+        status: req.query?.disputeStatus || null,
+        limit: 20,
+        offset: 0,
+      }),
+      listPayoutHistory({
+        tenantId: req.tenantId,
+        ...scope,
+        limit: 20,
+        offset: 0,
+      }),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        summary,
+        payments: payments.rows,
+        disputes: disputes.rows,
+        payouts: payouts.rows,
+        pagination: {
+          page,
+          limit,
+          total: payments.count,
+          totalPages: Math.ceil(payments.count / limit) || 1,
+        },
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getTradeAssurancePayments = async (req, res, next) => {
+  try {
+    const scope = getTradeAssuranceScope(req);
+    const { page, limit, offset } = tradeAssurancePagination(req);
+    const result = await listTradeAssurancePayments({
+      tenantId: req.tenantId,
+      ...scope,
+      status: req.query?.status || null,
+      limit,
+      offset,
+    });
+    res.status(200).json({
+      success: true,
+      count: result.count,
+      pagination: { page, limit, totalPages: Math.ceil(result.count / limit) || 1 },
+      data: result.rows,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getTradeAssuranceDisputes = async (req, res, next) => {
+  try {
+    const scope = getTradeAssuranceScope(req);
+    const { page, limit, offset } = tradeAssurancePagination(req);
+    const result = await listTradeAssuranceDisputes({
+      tenantId: req.tenantId,
+      ...scope,
+      status: req.query?.status || null,
+      limit,
+      offset,
+    });
+    res.status(200).json({
+      success: true,
+      count: result.count,
+      pagination: { page, limit, totalPages: Math.ceil(result.count / limit) || 1 },
+      data: result.rows,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getTradeAssurancePayouts = async (req, res, next) => {
+  try {
+    const scope = getTradeAssuranceScope(req);
+    const { page, limit, offset } = tradeAssurancePagination(req);
+    const result = await listPayoutHistory({
+      tenantId: req.tenantId,
+      ...scope,
+      limit,
+      offset,
+    });
+    res.status(200).json({
+      success: true,
+      count: result.count,
+      pagination: { page, limit, totalPages: Math.ceil(result.count / limit) || 1 },
+      data: result.rows,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.releaseTradeAssurancePayout = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+  try {
+    const where = onlineOrderWhereForRequest(req, { id: req.params.id });
+    addAndCondition(where, onlineOrderSourceCondition());
+    const order = await Sale.findOne({
+      where,
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!order) {
+      await transaction.rollback();
+      return res.status(404).json({ success: false, message: 'Online marketplace order not found' });
+    }
+
+    const payment = await releaseMarketplaceOrderPayment({
+      tenantId: req.tenantId,
+      shopId: order.shopId || null,
+      saleId: order.id,
+      actorUserId: req.user?.id || null,
+      reason: String(req.body?.reason || 'manual_admin_release').trim().slice(0, 120),
+      transaction,
+    });
+
+    await transaction.commit();
+    invalidateSaleListCache(req.tenantId);
+    res.status(200).json({ success: true, message: 'Marketplace payout released.', data: payment });
+  } catch (error) {
+    if (transaction && !transaction.finished) {
+      await transaction.rollback();
+    }
+    next(error);
+  }
+};
+
+exports.refundTradeAssuranceOrder = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+  try {
+    const where = onlineOrderWhereForRequest(req, { id: req.params.id });
+    addAndCondition(where, onlineOrderSourceCondition());
+    const order = await Sale.findOne({
+      where,
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!order) {
+      await transaction.rollback();
+      return res.status(404).json({ success: false, message: 'Online marketplace order not found' });
+    }
+
+    const payment = await refundMarketplaceOrderPayment({
+      tenantId: req.tenantId,
+      shopId: order.shopId || null,
+      saleId: order.id,
+      amount: req.body?.amount,
+      actorUserId: req.user?.id || null,
+      reason: String(req.body?.reason || 'admin_refund').trim().slice(0, 160),
+      transaction,
+    });
+
+    await transaction.commit();
+    invalidateSaleListCache(req.tenantId);
+    res.status(200).json({ success: true, message: 'Marketplace refund recorded.', data: payment });
+  } catch (error) {
+    if (transaction && !transaction.finished) {
+      await transaction.rollback();
+    }
+    next(error);
+  }
+};
+
+exports.getMarketplaceStores = async (req, res, next) => {
+  try {
+    const page = marketplacePage(req.query.page);
+    const limit = marketplaceLimit(req.query.limit, 12, 48);
+    const offset = (page - 1) * limit;
+    const search = String(req.query.search || '').trim();
+    const shopTypes = parseShopTypeFilter(req.query.shopType);
+    const where = publicStoreWhere();
+
+    if (search) {
+      where[Op.or] = [
+        { displayName: { [Op.iLike]: `%${search}%` } },
+        { description: { [Op.iLike]: `%${search}%` } },
+        { slug: { [Op.iLike]: `%${search}%` } },
+      ];
+    }
+
+    const { count, rows } = await OnlineStoreSettings.findAndCountAll({
+      where,
+      limit,
+      offset,
+      distinct: true,
+      attributes: [
+        'id',
+        'tenantId',
+        'shopId',
+        'studioLocationId',
+        'slug',
+        'displayName',
+        'description',
+        'logoUrl',
+        'bannerImageUrl',
+        'primaryColor',
+        'currency',
+        'pickupEnabled',
+        'deliveryEnabled',
+        'deliveryFee',
+        'metadata',
+      ],
+      include: buildPublicStoreInclude(shopTypes),
+      order: [['createdAt', 'DESC']],
+    });
+
+    const [listingCounts, categoryResult] = await Promise.all([
+      getStoreListingCounts(rows),
+      getCategoryCountsForStores(rows),
+    ]);
+    const storesWithReviews = await attachStoreReviewSummaries(rows);
+    const data = storesWithReviews.map((store) => {
+      const key = `${store.tenantId}:${store.shopId || ''}`;
+      return toPublicStoreCard(store, {
+        listingCount: listingCounts.get(key) || 0,
+        categoryCounts: categoryResult.storeCategories,
+      });
+    });
+
+    res.status(200).json({
+      success: true,
+      count,
+      pagination: { page, limit, totalPages: Math.ceil(count / limit) },
+      data,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getMarketplaceCategories = async (req, res, next) => {
+  try {
+    const stores = await OnlineStoreSettings.findAll({
+      where: publicStoreWhere(),
+      attributes: ['id', 'tenantId', 'shopId'],
+      include: publicStoreInclude,
+      order: [['createdAt', 'DESC']],
+      limit: 200,
+    });
+    const { categories } = await getCategoryCountsForStores(stores);
+    res.status(200).json({ success: true, data: categories });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getMarketplaceProducts = async (req, res, next) => {
+  try {
+    const page = marketplacePage(req.query.page);
+    const limit = marketplaceLimit(req.query.limit, 12, 48);
+    const offset = (page - 1) * limit;
+    const search = String(req.query.search || '').trim();
+    const category = String(req.query.category || '').trim();
+    const storeSlug = String(req.query.storeSlug || '').trim();
+    const shopTypes = parseShopTypeFilter(req.query.shopType);
+    const storeWhere = publicStoreWhere(storeSlug ? { slug: { [Op.iLike]: normalizeSlug(storeSlug) } } : {});
+    const stores = await OnlineStoreSettings.findAll({
+      where: storeWhere,
+      attributes: [
+        'id',
+        'tenantId',
+        'shopId',
+        'slug',
+        'displayName',
+        'description',
+        'logoUrl',
+        'bannerImageUrl',
+        'primaryColor',
+        'currency',
+        'pickupEnabled',
+        'deliveryEnabled',
+        'deliveryFee',
+        'metadata',
+      ],
+      include: buildPublicStoreInclude(shopTypes),
+      limit: 200,
+    });
+    const where = buildStoreListingWhere(stores);
+
+    if (!where) {
+      return res.status(200).json({
+        success: true,
+        count: 0,
+        pagination: { page, limit, totalPages: 0 },
+        data: [],
+      });
+    }
+
+    if (search) {
+      const searchPattern = `%${search}%`;
+      const matchingStores = stores.filter((store) => {
+        const plain = typeof store.get === 'function' ? store.get({ plain: true }) : store;
+        return [plain.displayName, plain.slug, plain.description]
+          .some((value) => String(value || '').toLowerCase().includes(search.toLowerCase()));
+      });
+      const searchConditions = [
+        { title: { [Op.iLike]: searchPattern } },
+        { shortDescription: { [Op.iLike]: searchPattern } },
+        { '$product.name$': { [Op.iLike]: searchPattern } },
+        ...matchingStores.map((store) => ({
+          tenantId: store.tenantId,
+          ...(store.shopId ? { shopId: store.shopId } : {}),
+        })),
+      ];
+      where[Op.and] = [
+        ...(Array.isArray(where[Op.and]) ? where[Op.and] : []),
+        { [Op.or]: searchConditions },
+      ];
+    }
+
+    const productInclude = publicListingIncludes.map((include) => {
+      if (include.as !== 'product' || !category) return include;
+      return {
+        ...include,
+        include: include.include.map((nested) => (
+          nested.as === 'category'
+            ? { ...nested, required: true, where: { ...nested.where, name: { [Op.iLike]: category } } }
+            : nested
+        )),
+      };
+    });
+
+    const rows = await OnlineProductListing.findAll({
+      where,
+      subQuery: false,
+      attributes: [
+        'id',
+        'tenantId',
+        'shopId',
+        'productId',
+        'productVariantId',
+        'title',
+        'slug',
+        'shortDescription',
+        'publicPrice',
+        'compareAtPrice',
+        'images',
+        'inventoryPolicy',
+        'sortOrder',
+        'publishedAt',
+      ],
+      include: productInclude,
+      order: [['sortOrder', 'ASC'], ['publishedAt', 'DESC']],
+    });
+
+    const [availableListingResult, storesWithReviews] = await Promise.all([
+      getAvailableListingsWithVariants(rows),
+      attachStoreReviewSummaries(stores),
+    ]);
+    const count = availableListingResult.listings.length;
+    const pageRows = availableListingResult.listings.slice(offset, offset + limit);
+    const products = pageRows.map((listing) => (
+      toMarketplaceProduct(listing, storesWithReviews, availableListingResult.variantsByProductId)
+    ));
+    const data = await attachProductReviewSummaries(products);
+
+    res.status(200).json({
+      success: true,
+      count,
+      pagination: { page, limit, totalPages: Math.ceil(count / limit) },
+      data,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getMarketplaceProduct = async (req, res, next) => {
+  try {
+    const idOrSlug = String(req.params.idOrSlug || '').trim();
+    if (!idOrSlug) {
+      return res.status(400).json({ success: false, message: 'Product identifier is required.' });
+    }
+
+    const isUuid = /^[0-9a-f-]{36}$/i.test(idOrSlug);
+    const listing = await OnlineProductListing.findOne({
+      where: {
+        status: 'published',
+        ...(isUuid
+          ? { id: idOrSlug }
+          : { slug: { [Op.iLike]: normalizeSlug(idOrSlug) } }),
+      },
+      include: publicListingIncludes,
+    });
+
+    if (!listing) {
+      return res.status(404).json({ success: false, message: 'Product not found.' });
+    }
+
+    const store = await OnlineStoreSettings.findOne({
+      where: {
+        tenantId: listing.tenantId,
+        ...(listing.shopId ? { shopId: listing.shopId } : {}),
+        ...publicStoreWhere(),
+      },
+      attributes: [
+        'id',
+        'tenantId',
+        'shopId',
+        'slug',
+        'displayName',
+        'description',
+        'logoUrl',
+        'bannerImageUrl',
+        'primaryColor',
+        'currency',
+        'pickupEnabled',
+        'deliveryEnabled',
+        'deliveryFee',
+        'metadata',
+      ],
+      include: publicStoreInclude,
+    });
+
+    if (!store) {
+      return res.status(404).json({ success: false, message: 'Store not found for this product.' });
+    }
+
+    const [availableListingResult, storesWithReviews, salesCounts] = await Promise.all([
+      getAvailableListingsWithVariants([listing]),
+      attachStoreReviewSummaries([store]),
+      getStoreSalesCounts(store, [listing.productId].filter(Boolean)),
+    ]);
+
+    const availableListing = availableListingResult.listings[0];
+    if (!availableListing) {
+      return res.status(404).json({ success: false, message: 'Product is not available.' });
+    }
+
+    const product = toPublicStoreProduct(
+      availableListing,
+      storesWithReviews[0] || store,
+      availableListingResult.variantsByProductId,
+      salesCounts.get(listing.productId) || 0,
+    );
+    const [withReviews] = await attachProductReviewSummaries([product]);
+
+    return res.status(200).json({
+      success: true,
+      data: withReviews,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getMarketplaceHome = async (req, res, next) => {
+  try {
+    const stores = await OnlineStoreSettings.findAll({
+      where: publicStoreWhere(),
+      attributes: [
+        'id',
+        'tenantId',
+        'shopId',
+        'slug',
+        'displayName',
+        'description',
+        'logoUrl',
+        'bannerImageUrl',
+        'primaryColor',
+        'currency',
+        'pickupEnabled',
+        'deliveryEnabled',
+        'metadata',
+      ],
+      include: publicStoreInclude,
+      order: [['createdAt', 'DESC']],
+      limit: 24,
+    });
+    const [listingCounts, categoryResult] = await Promise.all([
+      getStoreListingCounts(stores),
+      getCategoryCountsForStores(stores),
+    ]);
+    const storesWithReviews = await attachStoreReviewSummaries(stores);
+    const popularStores = storesWithReviews.map((store) => {
+      const key = `${store.tenantId}:${store.shopId || ''}`;
+      return toPublicStoreCard(store, {
+        listingCount: listingCounts.get(key) || 0,
+        categoryCounts: categoryResult.storeCategories,
+      });
+    }).filter((store) => store.productCount > 0).slice(0, 6);
+
+    const productWhere = buildStoreListingWhere(stores);
+    const featuredRows = productWhere
+      ? await OnlineProductListing.findAll({
+        where: productWhere,
+        attributes: [
+          'id',
+          'tenantId',
+          'shopId',
+          'productId',
+          'productVariantId',
+          'title',
+          'slug',
+          'shortDescription',
+          'publicPrice',
+          'compareAtPrice',
+          'images',
+          'inventoryPolicy',
+          'sortOrder',
+          'publishedAt',
+        ],
+        include: publicListingIncludes,
+        order: [['sortOrder', 'ASC'], ['publishedAt', 'DESC']],
+        limit: 48,
+      })
+      : [];
+    const { variantsByProductId, listings: availableFeaturedRows } = await getAvailableListingsWithVariants(featuredRows);
+    const featuredProducts = await attachProductReviewSummaries(
+      availableFeaturedRows
+        .slice(0, 8)
+        .map((listing) => toMarketplaceProduct(listing, storesWithReviews, variantsByProductId))
+    );
+
+    const studioData = await getStudioMarketplaceHomeData();
+
+    res.status(200).json({
+      success: true,
+      data: {
+        hero: {
+          eyebrow: 'Sabito Store',
+          title: 'One Marketplace. Many Stores. Endless Choices.',
+          description: 'Discover products and services from trusted Sabito businesses in one public marketplace.',
+        },
+        categories: categoryResult.categories.slice(0, 8),
+        popularStores,
+        featuredProducts,
+        serviceCategories: studioData.categories,
+        popularStudios: studioData.popularStudios,
+        featuredServices: studioData.featuredServices,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const buildFoodCuisineChips = (stores) => {
+  const counts = new Map();
+  stores.forEach((store) => {
+    const plain = typeof store.get === 'function' ? store.get({ plain: true }) : store;
+    const { cuisineTags } = extractFoodMetadata(plain);
+    cuisineTags.forEach((tag) => {
+      const key = tag.toLowerCase();
+      counts.set(key, { label: tag, count: (counts.get(key)?.count || 0) + 1 });
+    });
+  });
+  return [...counts.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)).slice(0, 12);
+};
+
+const isFoodStore = (store) => {
+  const plain = typeof store.get === 'function' ? store.get({ plain: true }) : store;
+  const shopType = plain?.shop?.shopType || extractFoodMetadata(plain).shopType;
+  return FOOD_SHOP_TYPES.includes(shopType);
+};
+
+const isGroceryStore = (store) => {
+  const plain = typeof store.get === 'function' ? store.get({ plain: true }) : store;
+  const shopType = plain?.shop?.shopType || extractFoodMetadata(plain).shopType;
+  return shopType === 'supermarket' || shopType === 'convenience';
+};
+
+const isProductStore = (store) => !isFoodStore(store);
+
+exports.getMarketplaceProductsHome = async (req, res, next) => {
+  try {
+    const stores = await OnlineStoreSettings.findAll({
+      where: publicStoreWhere(),
+      attributes: [
+        'id',
+        'tenantId',
+        'shopId',
+        'slug',
+        'displayName',
+        'description',
+        'logoUrl',
+        'bannerImageUrl',
+        'primaryColor',
+        'currency',
+        'pickupEnabled',
+        'deliveryEnabled',
+        'deliveryFee',
+        'metadata',
+      ],
+      include: publicStoreInclude,
+      order: [['createdAt', 'DESC']],
+      limit: 48,
+    });
+
+    const productStores = stores.filter(isProductStore);
+    const [listingCounts, categoryResult] = await Promise.all([
+      getStoreListingCounts(productStores),
+      getCategoryCountsForStores(productStores),
+    ]);
+    const storesWithReviews = await attachStoreReviewSummaries(productStores);
+    const storeCards = storesWithReviews
+      .map((store) => {
+        const key = `${store.tenantId}:${store.shopId || ''}`;
+        return toPublicStoreCard(store, {
+          listingCount: listingCounts.get(key) || 0,
+          categoryCounts: categoryResult.storeCategories,
+        });
+      })
+      .filter((store) => store.productCount > 0);
+
+    const productWhere = buildStoreListingWhere(productStores);
+    const listingRows = productWhere
+      ? await OnlineProductListing.findAll({
+        where: productWhere,
+        attributes: [
+          'id',
+          'tenantId',
+          'shopId',
+          'productId',
+          'productVariantId',
+          'title',
+          'slug',
+          'shortDescription',
+          'publicPrice',
+          'compareAtPrice',
+          'images',
+          'inventoryPolicy',
+          'sortOrder',
+          'publishedAt',
+        ],
+        include: publicListingIncludes,
+        order: [['publishedAt', 'DESC']],
+        limit: 120,
+      })
+      : [];
+    const { variantsByProductId, listings: availableListings } = await getAvailableListingsWithVariants(listingRows);
+    const products = await attachProductReviewSummaries(
+      availableListings.map((listing) => toMarketplaceProduct(listing, storesWithReviews, variantsByProductId))
+    );
+
+    const featuredProducts = products.slice(0, 8);
+    const newArrivals = [...products]
+      .sort((a, b) => new Date(b.publishedAt || 0).getTime() - new Date(a.publishedAt || 0).getTime())
+      .slice(0, 8);
+    const bestDeals = products.filter((product) => product.onSale).slice(0, 8);
+    const deliveryStores = storeCards.filter((store) => store.deliveryEnabled).slice(0, 8);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        hero: {
+          eyebrow: 'Sabito Store Products',
+          title: 'Shop products from trusted local stores',
+          description: 'Browse categories, compare deals, and order from one store at a time with delivery or pickup.',
+        },
+        categories: categoryResult.categories.slice(0, 12),
+        popularStores: storeCards.slice(0, 10),
+        featuredProducts,
+        newArrivals,
+        bestDeals,
+        deliveryStores,
+        hasVendors: storeCards.length > 0,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getMarketplaceFoodHome = async (req, res, next) => {
+  try {
+    const stores = await OnlineStoreSettings.findAll({
+      where: publicStoreWhere(),
+      attributes: [
+        'id',
+        'tenantId',
+        'shopId',
+        'slug',
+        'displayName',
+        'description',
+        'logoUrl',
+        'bannerImageUrl',
+        'primaryColor',
+        'currency',
+        'pickupEnabled',
+        'deliveryEnabled',
+        'deliveryFee',
+        'metadata',
+      ],
+      include: buildPublicStoreInclude(FOOD_SHOP_TYPES),
+      order: [['createdAt', 'DESC']],
+      limit: 48,
+    });
+
+    const [listingCounts, categoryResult] = await Promise.all([
+      getStoreListingCounts(stores),
+      getCategoryCountsForStores(stores),
+    ]);
+    const storesWithReviews = await attachStoreReviewSummaries(stores);
+    const storeCards = storesWithReviews
+      .map((store) => {
+        const key = `${store.tenantId}:${store.shopId || ''}`;
+        return toPublicStoreCard(store, {
+          listingCount: listingCounts.get(key) || 0,
+          categoryCounts: categoryResult.storeCategories,
+        });
+      })
+      .filter((store) => store.productCount > 0);
+
+    const restaurants = storeCards.filter((store) => store.shopType === 'restaurant');
+    const groceries = storeCards.filter((store) => isGroceryStore({ shop: { shopType: store.shopType } }));
+    const openNearYou = storeCards
+      .filter((store) => store.isOpenNow !== false && store.deliveryEnabled)
+      .slice(0, 8);
+    const fastDelivery = [...storeCards]
+      .filter((store) => store.deliveryEnabled && store.avgPrepMinutes)
+      .sort((a, b) => (a.avgPrepMinutes || 999) - (b.avgPrepMinutes || 999))
+      .slice(0, 8);
+
+    const productWhere = buildStoreListingWhere(storesWithReviews);
+    const listingRows = productWhere
+      ? await OnlineProductListing.findAll({
+        where: productWhere,
+        attributes: [
+          'id',
+          'tenantId',
+          'shopId',
+          'productId',
+          'productVariantId',
+          'title',
+          'slug',
+          'shortDescription',
+          'publicPrice',
+          'compareAtPrice',
+          'images',
+          'inventoryPolicy',
+          'sortOrder',
+          'publishedAt',
+        ],
+        include: publicListingIncludes,
+        order: [['publishedAt', 'DESC']],
+        limit: 120,
+      })
+      : [];
+    const { variantsByProductId, listings: availableListings } = await getAvailableListingsWithVariants(listingRows);
+    const products = await attachProductReviewSummaries(
+      availableListings.map((listing) => toMarketplaceProduct(listing, storesWithReviews, variantsByProductId))
+    );
+
+    const restaurantStoreKeys = new Set(
+      storesWithReviews.filter(isFoodStore).map((store) => `${store.tenantId}:${store.shopId || ''}`)
+    );
+    const groceryStoreKeys = new Set(
+      storesWithReviews.filter(isGroceryStore).map((store) => `${store.tenantId}:${store.shopId || ''}`)
+    );
+
+    const popularMeals = products
+      .filter((product) => {
+        const store = storesWithReviews.find((candidate) => candidate.slug === product.store?.slug);
+        if (!store) return false;
+        const key = `${store.tenantId}:${store.shopId || ''}`;
+        return restaurantStoreKeys.has(key);
+      })
+      .slice(0, 12);
+
+    const groceryProducts = products.filter((product) => {
+      const store = storesWithReviews.find((candidate) => candidate.slug === product.store?.slug);
+      if (!store) return false;
+      const key = `${store.tenantId}:${store.shopId || ''}`;
+      if (!groceryStoreKeys.has(key)) return false;
+      const categoryName = product.category?.name || '';
+      return GROCERY_CATEGORY_PATTERN.test(categoryName) || !DRINK_CATEGORY_PATTERN.test(categoryName);
+    }).slice(0, 12);
+
+    const drinkProducts = products.filter((product) => {
+      const categoryName = product.category?.name || '';
+      return DRINK_CATEGORY_PATTERN.test(categoryName) || DRINK_CATEGORY_PATTERN.test(product.title || '');
+    }).slice(0, 12);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        hero: {
+          eyebrow: 'Sabito Store Food',
+          title: 'Order food and groceries near you',
+          description: 'Discover restaurants, meals, drinks, and groceries from trusted Sabito vendors.',
+        },
+        cuisineChips: buildFoodCuisineChips(storesWithReviews),
+        openNearYou: openNearYou.length ? openNearYou : restaurants.slice(0, 8),
+        restaurants: restaurants.slice(0, 12),
+        popularMeals,
+        groceries: groceries.length ? groceries : groceryProducts.map((product) => product.store).filter(Boolean).slice(0, 8),
+        groceryProducts,
+        drinks: drinkProducts,
+        fastDelivery: fastDelivery.length ? fastDelivery : restaurants.filter((store) => store.deliveryEnabled).slice(0, 8),
+        hasVendors: storeCards.length > 0,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getMarketplaceStoreHome = async (req, res, next) => {
+  try {
+    const store = await OnlineStoreSettings.findOne({
+      where: publicStoreWhere({ slug: { [Op.iLike]: normalizeSlug(req.params.slug) } }),
+      attributes: [
+        'id',
+        'tenantId',
+        'shopId',
+        'slug',
+        'displayName',
+        'description',
+        'logoUrl',
+        'bannerImageUrl',
+        'primaryColor',
+        'contactPhone',
+        'whatsappNumber',
+        'contactEmail',
+        'pickupEnabled',
+        'deliveryEnabled',
+        'deliveryFee',
+        'currency',
+        'metadata',
+      ],
+      include: publicStoreInclude,
+    });
+
+    if (!store) {
+      return res.status(404).json({ success: false, message: 'Store not found or not launched' });
+    }
+
+    const listingWhere = buildStoreListingWhere([store]);
+    const serviceListingWhere = buildStoreServiceListingWhere(store);
+    const listings = listingWhere
+      ? await OnlineProductListing.findAll({
+        where: listingWhere,
+        attributes: [
+          'id',
+          'tenantId',
+          'shopId',
+          'productId',
+          'productVariantId',
+          'title',
+          'slug',
+          'shortDescription',
+          'publicPrice',
+          'compareAtPrice',
+          'images',
+          'inventoryPolicy',
+          'sortOrder',
+          'publishedAt',
+        ],
+        include: publicListingIncludes,
+        order: [['sortOrder', 'ASC'], ['publishedAt', 'DESC']],
+        limit: 80,
+      })
+      : [];
+    const serviceListings = serviceListingWhere
+      ? await OnlineServiceListing.findAll({
+        where: serviceListingWhere,
+        attributes: [
+          'id',
+          'tenantId',
+          'studioLocationId',
+          'title',
+          'slug',
+          'shortDescription',
+          'description',
+          'category',
+          'ctaType',
+          'priceType',
+          'startingPrice',
+          'compareAtPrice',
+          'durationMinutes',
+          'turnaroundLabel',
+          'images',
+          'pickupEnabled',
+          'deliveryEnabled',
+          'sortOrder',
+          'publishedAt',
+        ],
+        order: [['sortOrder', 'ASC'], ['publishedAt', 'DESC']],
+        limit: 80,
+      })
+      : [];
+
+    const [availableListingResult, reviewSummary, salesCounts] = await Promise.all([
+      getAvailableListingsWithVariants(listings),
+      getPublicStoreReviewSummary(store),
+      getStoreSalesCounts(
+        store,
+        [...new Set(listings.map((listing) => listing.productId).filter(Boolean))]
+      ),
+    ]);
+    const { variantsByProductId, listings: availableListings } = availableListingResult;
+
+    const products = await attachProductReviewSummaries(availableListings.map((listing) => (
+      toPublicStoreProduct(listing, store, variantsByProductId, salesCounts.get(listing.productId) || 0)
+    )));
+    const services = await attachServiceReviewSummaries(
+      serviceListings.map((listing) => toPublicStoreService(listing, store))
+    );
+    const categories = getStoreCategoriesFromListings(availableListings);
+    const serviceCategories = getServiceCategoriesFromServices(services);
+    const productsBySales = [...products]
+      .filter((product) => Number(product.salesCount || 0) > 0)
+      .sort((a, b) => Number(b.salesCount || 0) - Number(a.salesCount || 0));
+    const newArrivals = [...products].sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0));
+    const discountedProduct = products.find((product) => (
+      Number.parseFloat(product.compareAtPrice || 0) > Number.parseFloat(product.publicPrice || 0)
+    ));
+    const metadata = store.metadata && typeof store.metadata === 'object' ? store.metadata : {};
+
+    res.status(200).json({
+      success: true,
+      data: {
+        store: toPublicStoreHomeProfile(store, {
+          productCount: products.length,
+          serviceCount: services.length,
+          categories: products.length ? categories : serviceCategories,
+          reviewSummary,
+        }),
+        categories,
+        serviceCategories,
+        products,
+        services,
+        featuredProducts: products.slice(0, 8),
+        featuredServices: services.slice(0, 8),
+        secondaryServices: [...services]
+          .sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0))
+          .slice(0, 8),
+        secondaryProducts: (productsBySales.length ? productsBySales : newArrivals).slice(0, 8),
+        secondaryProductsLabel: productsBySales.length ? 'Best Selling Products' : 'New Arrivals',
+        promotionalBanner: metadata.promoBanner || metadata.promotionalBanner || (discountedProduct ? {
+          title: 'Featured deal',
+          description: discountedProduct.shortDescription || discountedProduct.title,
+          product: discountedProduct,
+        } : null),
+        reviews: reviewSummary.reviews,
+      },
+    });
+  } catch (error) {
     next(error);
   }
 };
@@ -843,8 +3290,9 @@ exports.getPublicStore = async (req, res, next) => {
 exports.getPublicStoreProducts = async (req, res, next) => {
   try {
     const store = await OnlineStoreSettings.findOne({
-      where: { slug: { [Op.iLike]: normalizeSlug(req.params.slug) }, enabled: true },
+      where: publicStoreWhere({ slug: { [Op.iLike]: normalizeSlug(req.params.slug) } }),
       attributes: ['tenantId', 'shopId', 'currency'],
+      include: publicStoreInclude,
     });
     if (!store) {
       return res.status(404).json({ success: false, message: 'Store not found or not launched' });
@@ -858,6 +3306,8 @@ exports.getPublicStoreProducts = async (req, res, next) => {
       where,
       attributes: [
         'id',
+        'productId',
+        'productVariantId',
         'title',
         'slug',
         'shortDescription',
@@ -868,9 +3318,33 @@ exports.getPublicStoreProducts = async (req, res, next) => {
         'inventoryPolicy',
         'sortOrder',
       ],
+      include: [
+        {
+          model: Product,
+          as: 'product',
+          attributes: ['id', 'name', 'quantityOnHand', 'unit', 'hasVariants', 'trackStock'],
+          required: true,
+          where: {
+            tenantId: store.tenantId,
+            isActive: true,
+            ...(store.shopId ? { shopId: store.shopId } : {}),
+          },
+        },
+        {
+          model: ProductVariant,
+          as: 'variant',
+          attributes: ['id', 'productId', 'name', 'quantityOnHand', 'trackStock'],
+          required: false,
+          where: { isActive: true },
+        },
+      ],
       order: [['sortOrder', 'ASC'], ['publishedAt', 'DESC']],
     });
-    res.status(200).json({ success: true, data: listings, currency: store.currency });
+    const { variantsByProductId, listings: availableListings } = await getAvailableListingsWithVariants(listings);
+    const payload = await attachProductReviewSummaries(
+      availableListings.map((listing) => buildListingAvailability(listing, variantsByProductId))
+    );
+    res.status(200).json({ success: true, data: payload, currency: store.currency });
   } catch (error) {
     next(error);
   }

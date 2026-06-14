@@ -1,26 +1,33 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TextInput, Alert, ActivityIndicator, Pressable } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { FormSheetModal } from '@/components/FormSheetModal';
 import {
-  DetailCard,
+  DetailHeroCard,
+  DetailInfoRow,
+  DetailSectionCard,
   DetailFooter,
   DetailLoading,
   DetailNotFound,
-  DetailRow,
   DetailActionButton,
+  DetailMoreActions,
+  type DetailMoreAction,
   EntityDetailHeader,
   useEntityDetailTheme,
 } from '@/components/EntityDetailLayout';
 import { ScreenShell } from '@/components/ScreenShell';
+import { useAuth } from '@/context/AuthContext';
+import { useExclusiveAction } from '@/hooks/useExclusiveAction';
+import { resolveBusinessType } from '@/constants';
 import { FORM_LABELS } from '@/constants/formLabels';
 import { customerService, type CustomerPayload } from '@/services/customerService';
 import { customDropdownService } from '@/services/customDropdownService';
 import { settingsService } from '@/services/settings';
 import { getApiErrorMessage, parseApiEntity } from '@/utils/parseApiListResponse';
 import { refreshAfterCustomerChange } from '@/utils/queryInvalidation';
+import { formatCurrency } from '@/utils/formatCurrency';
 
 type CustomerDetail = {
   id: string;
@@ -35,7 +42,35 @@ type CustomerDetail = {
   isActive?: boolean;
   createdAt?: string;
   updatedAt?: string;
+  activities?: CustomerActivity[];
+  jobs?: CustomerJob[];
 };
+
+type CustomerActivity = {
+  id: string;
+  type?: string;
+  subject?: string | null;
+  notes?: string | null;
+  nextStep?: string | null;
+  followUpDate?: string | null;
+  createdAt?: string;
+  createdByUser?: { name?: string; email?: string } | null;
+};
+
+type CustomerJob = {
+  id: string;
+  jobNumber?: string;
+  title?: string;
+  status?: string;
+  finalPrice?: number | string | null;
+  createdAt?: string;
+};
+
+type TimelineActivity = CustomerActivity & {
+  metadata?: Record<string, unknown>;
+};
+
+type CustomerAction = 'edit' | 'note' | 'delete';
 
 const FALLBACK_CUSTOMER_SOURCES = [
   { value: 'Walk-in', label: 'Walk-in' },
@@ -48,9 +83,13 @@ const OTHER_SOURCE_VALUE = '__OTHER__';
 
 export default function CustomerDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
   const queryClient = useQueryClient();
+  const { activeTenant, isAdmin } = useAuth();
   const { cardBg, borderColor, textColor, mutedColor, bg, colors } = useEntityDetailTheme();
   const [editOpen, setEditOpen] = useState(false);
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [noteText, setNoteText] = useState('');
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -61,6 +100,8 @@ export default function CustomerDetailScreen() {
     referralName: '',
   });
   const [customSourceValue, setCustomSourceValue] = useState('');
+  const { isAnyActionActive, isActionActive, runExclusiveAction } = useExclusiveAction<CustomerAction>();
+  const isStudio = resolveBusinessType(activeTenant?.businessType) === 'studio';
 
   const { data, isLoading } = useQuery({
     queryKey: ['customer', id],
@@ -69,6 +110,17 @@ export default function CustomerDetailScreen() {
   });
 
   const customer = useMemo(() => parseApiEntity<CustomerDetail>(data), [data]);
+
+  const { data: activitiesResponse } = useQuery({
+    queryKey: ['customer', id, 'activities'],
+    queryFn: () => customerService.getActivities(String(id)),
+    enabled: !!id,
+  });
+
+  const customerActivities = useMemo(() => {
+    const body = activitiesResponse?.data ?? activitiesResponse;
+    return Array.isArray(body) ? (body as CustomerActivity[]) : customer?.activities || [];
+  }, [activitiesResponse, customer?.activities]);
 
   const { data: customerSourceOptions = [] } = useQuery({
     queryKey: ['settings', 'customer-sources'],
@@ -126,6 +178,26 @@ export default function CustomerDetailScreen() {
     },
   });
 
+  const noteMutation = useMutation({
+    mutationFn: () =>
+      customerService.addActivity(String(id), {
+        type: 'note',
+        subject: 'Mobile note',
+        notes: noteText.trim(),
+      }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['customer', id, 'activities'] }),
+        refreshAfterCustomerChange(queryClient),
+      ]);
+      setNoteOpen(false);
+      setNoteText('');
+    },
+    onError: (err: unknown) => {
+      Alert.alert('Could not save note', getApiErrorMessage(err, 'Failed to add activity'));
+    },
+  });
+
   const resolveSourceValue = useCallback(async () => {
     if (formData.howDidYouHear !== OTHER_SOURCE_VALUE) return formData.howDidYouHear;
     const value = customSourceValue.trim();
@@ -146,42 +218,204 @@ export default function CustomerDetailScreen() {
     try {
       const sourceValue = await resolveSourceValue();
       if (sourceValue === null) return;
-      updateMutation.mutate({
-        name: formData.name.trim(),
-        email: formData.email.trim() || undefined,
-        phone: formData.phone.trim() || undefined,
-        company: formData.company.trim() || undefined,
-        address: formData.address.trim() || undefined,
-        howDidYouHear: sourceValue || undefined,
-        referralName: sourceValue === 'Referral' ? formData.referralName.trim() || undefined : undefined,
+      await runExclusiveAction('edit', () => {
+        return updateMutation.mutateAsync({
+          name: formData.name.trim(),
+          email: formData.email.trim() || undefined,
+          phone: formData.phone.trim() || undefined,
+          company: formData.company.trim() || undefined,
+          address: formData.address.trim() || undefined,
+          howDidYouHear: sourceValue || undefined,
+          referralName: sourceValue === 'Referral' ? formData.referralName.trim() || undefined : undefined,
+        });
       });
     } catch (err) {
       Alert.alert('Error', getApiErrorMessage(err, 'Failed to save customer source'));
     }
-  }, [formData, resolveSourceValue, updateMutation]);
+  }, [formData, resolveSourceValue, runExclusiveAction, updateMutation]);
+
+  const handleCreateJob = useCallback(() => {
+    if (!customer) return;
+    router.push({
+      pathname: '/(tabs)/jobs',
+      params: { add: '1', customerId: customer.id, customerName: customer.name },
+    } as never);
+  }, [customer, router]);
+
+  const handleDeleteCustomer = useCallback(() => {
+    if (!customer) return;
+    Alert.alert('Delete customer', 'Delete this customer permanently? Existing sales, jobs, or invoices may prevent deletion.', [
+      { text: 'Keep customer', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () =>
+          runExclusiveAction('delete', async () => {
+            try {
+              await customerService.deleteCustomer(customer.id);
+              await refreshAfterCustomerChange(queryClient);
+              Alert.alert('Deleted', 'Customer deleted');
+              router.back();
+            } catch (err: unknown) {
+              Alert.alert('Error', getApiErrorMessage(err, 'Failed to delete customer'));
+            }
+          }),
+      },
+    ]);
+  }, [customer, queryClient, router, runExclusiveAction]);
 
   if (isLoading) return <DetailLoading title="Customer" />;
   if (!customer) return <DetailNotFound title="Customer" entityLabel="Customer" />;
+
+  const creationActivity: TimelineActivity | null = customer.createdAt
+    ? {
+        id: 'creation',
+        type: 'creation',
+        subject: `Added customer`,
+        notes: customer.name,
+        createdAt: customer.createdAt,
+      }
+    : null;
+
+  const jobActivities: TimelineActivity[] = (customer.jobs || []).map((job) => ({
+    id: `job-${job.id}`,
+    type: 'job',
+    subject: job.jobNumber ? `Job ${job.jobNumber}` : 'Job created',
+    notes: [
+      job.title,
+      job.status ? `Status: ${job.status.replace(/_/g, ' ')}` : '',
+      Number(job.finalPrice || 0) ? `Amount: ${formatCurrency(job.finalPrice || 0)}` : '',
+    ].filter(Boolean).join(' | '),
+    createdAt: job.createdAt,
+    metadata: { jobId: job.id, jobNumber: job.jobNumber },
+  }));
+
+  const timelineActivities = [
+    ...(creationActivity ? [creationActivity] : []),
+    ...customerActivities,
+    ...jobActivities,
+  ].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+  const customerPrimaryIsCreateJob = isStudio;
+  const customerMoreActions: DetailMoreAction[] = [
+    ...(customerPrimaryIsCreateJob
+      ? [{
+          key: 'edit',
+          label: 'Edit customer',
+          icon: 'edit' as const,
+          onPress: openEdit,
+          disabled: isAnyActionActive,
+        }]
+      : []),
+    ...(isAdmin
+      ? [{
+          key: 'delete',
+          label: 'Delete',
+          icon: 'trash' as const,
+          variant: 'danger' as const,
+          onPress: handleDeleteCustomer,
+          loading: isActionActive('delete'),
+          disabled: isAnyActionActive,
+        }]
+      : []),
+  ];
 
   return (
     <>
       <EntityDetailHeader title={customer.name || 'Customer'} />
       <ScreenShell style={styles.screen}>
         <ScrollView contentContainerStyle={styles.content}>
-          <DetailCard>
-            <DetailRow label={FORM_LABELS.customer.name} value={customer.name} />
-            <DetailRow label={FORM_LABELS.customer.company.replace(' (optional)', '')} value={customer.company || '—'} />
-            <DetailRow label={FORM_LABELS.customer.email.replace(' (optional)', '')} value={customer.email || '—'} />
-            <DetailRow label={FORM_LABELS.customer.phone.replace(' (optional)', '')} value={customer.phone || '—'} />
-            <DetailRow label="Address" value={customer.address || '—'} />
-            <DetailRow label="Source" value={customer.howDidYouHear || '—'} />
+          <DetailHeroCard
+            eyebrow={customer.isActive === false ? 'Inactive customer' : 'Customer'}
+            title={customer.name}
+            message={customer.company || customer.email || customer.phone || 'Customer profile and activity.'}
+            metricLabel="Balance"
+            metricValue={formatCurrency(customer.balance || 0)}
+            secondaryIcon="sticky-note-o"
+            secondaryLabel="Activity"
+            secondaryValue={`${timelineActivities.length} ${timelineActivities.length === 1 ? 'Entry' : 'Entries'}`}
+            showCheck={customer.isActive !== false}
+          />
+
+          <DetailSectionCard title="Customer Details" icon="user">
+            <DetailInfoRow icon="user" label={FORM_LABELS.customer.name} value={customer.name} />
+            <DetailInfoRow
+              icon="briefcase"
+              label={FORM_LABELS.customer.company.replace(' (optional)', '')}
+              value={customer.company || '—'}
+            />
+            <DetailInfoRow icon="mail" label={FORM_LABELS.customer.email.replace(' (optional)', '')} value={customer.email || '—'} />
+            <DetailInfoRow icon="phone" label={FORM_LABELS.customer.phone.replace(' (optional)', '')} value={customer.phone || '—'} />
+            <DetailInfoRow icon="map-pin" label="Address" value={customer.address || '—'} />
+            <DetailInfoRow icon="info" label="Source" value={customer.howDidYouHear || '—'} />
             {customer.howDidYouHear === 'Referral' ? (
-              <DetailRow label="Referral Name" value={customer.referralName || '—'} />
+              <DetailInfoRow icon="user-plus" label="Referral Name" value={customer.referralName || '—'} />
             ) : null}
-          </DetailCard>
+          </DetailSectionCard>
+
+          <DetailSectionCard title="Activity" icon="sticky-note-o">
+            <View style={styles.activityHeader}>
+              <Text style={[styles.sectionTitle, { color: textColor }]}>Recent activity</Text>
+              <Pressable
+                onPress={() => setNoteOpen(true)}
+                disabled={isAnyActionActive}
+                style={({ pressed }) => [
+                  styles.addNoteBtn,
+                  { borderColor, opacity: pressed ? 0.85 : isAnyActionActive ? 0.6 : 1 },
+                ]}
+              >
+                <Text style={[styles.addNoteText, { color: colors.tint }]}>Add note</Text>
+              </Pressable>
+            </View>
+            {timelineActivities.length > 0 ? (
+              timelineActivities.slice(0, 20).map((activity, index) => {
+                const isLast = index === timelineActivities.length - 1;
+                return (
+                  <View key={activity.id} style={styles.activityRow}>
+                    <View style={styles.timelineRail}>
+                      <View style={[styles.timelineDot, { backgroundColor: colors.tint }]} />
+                      {!isLast ? <View style={[styles.timelineLine, { backgroundColor: borderColor }]} /> : null}
+                    </View>
+                    <View style={styles.activityContent}>
+                      <Text style={[styles.activityTitle, { color: textColor }]}>
+                        {getActivityTitle(activity, customer.name)}
+                      </Text>
+                      {activity.notes ? (
+                        <Text style={[styles.activityNotes, { color: mutedColor }]}>
+                          {activity.notes}
+                        </Text>
+                      ) : null}
+                      <Text style={[styles.activityMeta, { color: mutedColor }]}>
+                        {formatActivityDate(activity.createdAt)}
+                        {activity.createdByUser?.name ? ` · ${activity.createdByUser.name}` : ''}
+                      </Text>
+                    </View>
+                  </View>
+                );
+              })
+            ) : (
+              <Text style={[styles.emptyActivity, { color: mutedColor }]}>No customer activity yet.</Text>
+            )}
+          </DetailSectionCard>
         </ScrollView>
         <DetailFooter>
-          <DetailActionButton label="Edit customer" icon="edit" variant="primary" onPress={openEdit} />
+          {customerPrimaryIsCreateJob ? (
+            <DetailActionButton
+              label="Create job"
+              icon="briefcase"
+              variant="primary"
+              onPress={handleCreateJob}
+              disabled={isAnyActionActive}
+            />
+          ) : (
+            <DetailActionButton
+              label="Edit customer"
+              icon="edit"
+              variant="primary"
+              onPress={openEdit}
+              disabled={isAnyActionActive}
+            />
+          )}
+          <DetailMoreActions actions={customerMoreActions} disabled={isAnyActionActive} />
         </DetailFooter>
       </ScreenShell>
 
@@ -196,10 +430,10 @@ export default function CustomerDetailScreen() {
         footer={
           <Pressable
             onPress={handleSave}
-            disabled={updateMutation.isPending}
+            disabled={isAnyActionActive}
             style={[styles.saveBtn, { backgroundColor: colors.tint }]}
           >
-            {updateMutation.isPending ? (
+            {isActionActive('edit') ? (
               <ActivityIndicator color="#fff" />
             ) : (
               <Text style={styles.saveBtnText}>{FORM_LABELS.customer.save}</Text>
@@ -294,13 +528,86 @@ export default function CustomerDetailScreen() {
           </>
         ) : null}
       </FormSheetModal>
+
+      <FormSheetModal
+        visible={noteOpen}
+        title="Add activity note"
+        onClose={() => setNoteOpen(false)}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+        footer={
+          <View style={styles.noteFooter}>
+            <Pressable
+              onPress={() => setNoteOpen(false)}
+              disabled={isAnyActionActive}
+              style={[styles.cancelNoteBtn, { borderColor }]}
+            >
+              <Text style={[styles.cancelNoteText, { color: textColor }]}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                if (!noteText.trim()) {
+                  Alert.alert('Note required', 'Enter a note or cancel.');
+                  return;
+                }
+                runExclusiveAction('note', () => noteMutation.mutateAsync());
+              }}
+              disabled={isAnyActionActive}
+              style={[styles.saveNoteBtn, { backgroundColor: colors.tint }]}
+            >
+              {isActionActive('note') ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.saveNoteText}>Save note</Text>
+              )}
+            </Pressable>
+          </View>
+        }
+      >
+        <Text style={[styles.label, { color: textColor }]}>Note</Text>
+        <TextInput
+          style={[styles.input, styles.noteInput, { color: textColor, borderColor }]}
+          value={noteText}
+          onChangeText={setNoteText}
+          placeholder="Write a customer activity note"
+          placeholderTextColor={mutedColor}
+          multiline
+        />
+      </FormSheetModal>
     </>
   );
 }
 
+function formatActivityDate(value?: string): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function formatActivityType(type?: string): string {
+  return String(type || 'note')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function getActivityTitle(activity: TimelineActivity, customerName: string): string {
+  if (activity.type === 'creation') return `Added customer, ${customerName}`;
+  if (activity.subject) return activity.subject;
+  return formatActivityType(activity.type);
+}
+
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  content: { padding: 16 },
+  content: { padding: 16, paddingBottom: 24 },
   saveBtn: { height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   saveBtnText: { color: '#fff', fontWeight: '600', fontSize: 16 },
   label: { fontSize: 14, fontWeight: '600', marginBottom: 8, marginTop: 4 },
@@ -315,4 +622,47 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   sourceChipText: { fontSize: 14, fontWeight: '500' },
+  activityHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  sectionTitle: { fontSize: 16, fontWeight: '700' },
+  addNoteBtn: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  addNoteText: { fontSize: 13, fontWeight: '600' },
+  activityRow: { flexDirection: 'row', minHeight: 62 },
+  timelineRail: { width: 20, alignItems: 'center' },
+  timelineDot: { width: 9, height: 9, borderRadius: 5, marginTop: 5 },
+  timelineLine: { width: 1, flex: 1, marginTop: 4 },
+  activityContent: { flex: 1, paddingBottom: 14 },
+  activityTitle: { fontSize: 14, fontWeight: '700' },
+  activityNotes: { fontSize: 13, lineHeight: 18, marginTop: 3 },
+  activityMeta: { fontSize: 12, marginTop: 4 },
+  emptyActivity: { fontSize: 14, paddingVertical: 10 },
+  noteFooter: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10 },
+  cancelNoteBtn: {
+    height: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelNoteText: { fontSize: 15, fontWeight: '600' },
+  saveNoteBtn: {
+    height: 48,
+    borderRadius: 12,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 112,
+  },
+  saveNoteText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  noteInput: { minHeight: 120, textAlignVertical: 'top' },
 });

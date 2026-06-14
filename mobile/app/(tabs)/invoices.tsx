@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { useRouter } from 'expo-router';
 import {
   View,
@@ -12,7 +12,7 @@ import {
 import { useQuery } from '@tanstack/react-query';
 
 import { AppIcon, type AppIconName } from '@/components/AppIcon';
-import { ListEmptyState } from '@/components/ListEmptyState';
+import { ListEmptyState, ListActionButton } from '@/components/ListEmptyState';
 import { SEARCH_PLACEHOLDERS } from '@/constants/searchPlaceholders';
 import { useSmartSearch } from '@/context/SmartSearchContext';
 import { useRegisterPageSearch } from '@/hooks/useRegisterPageSearch';
@@ -28,8 +28,9 @@ import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
 import { FilterChipRow } from '@/components/FilterChip';
 import { ListLoadingState, ListErrorState } from '@/components/ListScreenStates';
-import { CURRENCY } from '@/constants';
+import { CURRENCY, resolveBusinessType } from '@/constants';
 import { formatCurrency } from '@/utils/formatCurrency';
+import { logger } from '@/utils/logger';
 
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
@@ -62,8 +63,15 @@ type Invoice = {
 
 export default function InvoicesScreen() {
   const router = useRouter();
-  const { activeTenantId, hasFeature } = useAuth();
-  const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
+  const { activeTenant, activeTenantId, hasFeature } = useAuth();
+  const {
+    activeShopId,
+    activeStudioLocationId,
+    isShopWorkspace,
+    isStudioWorkspace,
+    canAccessAllStudioLocations,
+    scopeReady,
+  } = useWorkspaceScope();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
 
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -71,6 +79,40 @@ export default function InvoicesScreen() {
   const { searchValue } = useSmartSearch();
   useRegisterPageSearch({ scope: 'invoices', placeholder: SEARCH_PLACEHOLDERS.INVOICES });
   const debouncedSearch = useDebounce(searchValue, 400);
+  const invoicesFeatureEnabled = hasFeature('invoices');
+  const invoicesQueryEnabled = !!activeTenantId && invoicesFeatureEnabled && scopeReady;
+
+  const invoiceQueryDiagnostics = useMemo(
+    () => ({
+      tenantId: activeTenantId ?? null,
+      businessType: activeTenant?.businessType ?? null,
+      activeShopId: activeShopId ?? null,
+      activeStudioLocationId: activeStudioLocationId ?? null,
+      isShopWorkspace,
+      isStudioWorkspace,
+      canAccessAllStudioLocations,
+      scopeReady,
+      invoicesFeatureEnabled,
+      queryEnabled: invoicesQueryEnabled,
+      statusFilter,
+      hasSearch: !!debouncedSearch.trim(),
+      searchLength: debouncedSearch.trim().length,
+    }),
+    [
+      activeTenantId,
+      activeTenant?.businessType,
+      activeShopId,
+      activeStudioLocationId,
+      isShopWorkspace,
+      isStudioWorkspace,
+      canAccessAllStudioLocations,
+      scopeReady,
+      invoicesFeatureEnabled,
+      invoicesQueryEnabled,
+      statusFilter,
+      debouncedSearch,
+    ]
+  );
 
   const { data: response, isLoading, refetch, isRefetching, error, isError } = useQuery({
     queryKey: ['invoices', activeTenantId, activeShopId, activeStudioLocationId, statusFilter, debouncedSearch],
@@ -81,9 +123,27 @@ export default function InvoicesScreen() {
         search: debouncedSearch || undefined,
       };
       if (statusFilter !== 'all') params.status = statusFilter;
-      return invoiceService.getInvoices(params);
+      logger.info('Invoices', 'List query start', {
+        ...invoiceQueryDiagnostics,
+        params: {
+          page: params.page,
+          limit: params.limit,
+          status: params.status ?? 'all',
+          hasSearch: !!params.search,
+          searchLength: params.search?.length ?? 0,
+        },
+      });
+      const result = await invoiceService.getInvoices(params);
+      const resultData = result && typeof result === 'object' ? (result as { data?: unknown; count?: unknown }) : null;
+      logger.info('Invoices', 'List query success', {
+        success: result && typeof result === 'object' ? (result as { success?: unknown }).success : undefined,
+        dataShape: Array.isArray(resultData?.data) ? 'array' : typeof resultData?.data,
+        responseCount: typeof resultData?.count === 'number' ? resultData.count : null,
+        dataCount: Array.isArray(resultData?.data) ? resultData.data.length : null,
+      });
+      return result;
     },
-    enabled: !!activeTenantId && hasFeature('invoices') && scopeReady,
+    enabled: invoicesQueryEnabled,
     staleTime: 2 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
     retry: 2,
@@ -95,6 +155,26 @@ export default function InvoicesScreen() {
     () => getApiErrorMessage(error, 'An error occurred while loading invoices. Please try again.'),
     [error]
   );
+
+  useEffect(() => {
+    logger.info('Invoices', 'List query state', {
+      ...invoiceQueryDiagnostics,
+      isLoading,
+      isRefetching,
+      isError,
+      hasResponse: !!response,
+      parsedCount: invoices.length,
+      errorMessage: isError ? loadErrorMessage : null,
+    });
+  }, [
+    invoiceQueryDiagnostics,
+    isLoading,
+    isRefetching,
+    isError,
+    response,
+    invoices.length,
+    loadErrorMessage,
+  ]);
 
   const isEmpty = !isLoading && !isError && invoices.length === 0;
   const hasActiveFilter = statusFilter !== 'all' || !!debouncedSearch.trim();
@@ -130,7 +210,16 @@ export default function InvoicesScreen() {
     [router]
   );
 
-  if (!hasFeature('invoices')) {
+  const handleNewInvoice = useCallback(() => {
+    const resolvedType = resolveBusinessType(activeTenant?.businessType);
+    if (resolvedType === 'studio') {
+      router.push('/quotes-new' as never);
+      return;
+    }
+    router.push('/(tabs)/cart' as never);
+  }, [activeTenant?.businessType, router]);
+
+  if (!invoicesFeatureEnabled) {
     return <FeatureAccessDenied message="Invoices are not enabled for this workspace." />;
   }
 
@@ -192,6 +281,14 @@ export default function InvoicesScreen() {
 
   return (
     <ScreenShell style={styles.container}>
+      {!isLoading && !isError ? (
+        <ListActionButton
+          label="New Invoice"
+          onPress={handleNewInvoice}
+          backgroundColor={colors.tint}
+        />
+      ) : null}
+
       {/* Status filter */}
       {showListFilters(isLoading, isError, invoices.length, hasActiveFilter) && (
         <FilterChipRow options={filterOptions} value={statusFilter} onChange={setStatusFilter} />

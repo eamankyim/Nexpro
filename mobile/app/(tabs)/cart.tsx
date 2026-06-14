@@ -30,7 +30,7 @@ import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
 import { resolveImageUrl } from '@/utils/fileUtils';
 import { formatSaleReceiptText } from '@/utils/formatSaleReceipt';
-import { markAfterSaleStale, refreshAfterCustomerChange } from '@/utils/queryInvalidation';
+import { refreshAfterCustomerChange, refreshAfterSale } from '@/utils/queryInvalidation';
 import { parseDecimalInput } from '@/utils/formatCurrency';
 
 const generateSaleClientId = () =>
@@ -179,6 +179,30 @@ export default function CartScreen() {
       setPaymentModalVisible(false);
 
       const sale = data?.data ?? data;
+      let generatedInvoice = sale?.invoice ?? null;
+      if (sale?.id && sale?.customerId && !sale?.invoiceId) {
+        try {
+          const invoiceResponse = await saleService.generateInvoice(sale.id);
+          generatedInvoice = invoiceResponse?.data ?? invoiceResponse ?? null;
+          if (generatedInvoice?.id) {
+            sale.invoiceId = generatedInvoice.id;
+            sale.invoice = generatedInvoice;
+          }
+          queryClient.invalidateQueries({ queryKey: ['invoices'] });
+          queryClient.invalidateQueries({ queryKey: ['invoice'] });
+          queryClient.invalidateQueries({ queryKey: ['customer'] });
+          queryClient.invalidateQueries({ queryKey: ['customers'] });
+        } catch (invoiceError) {
+          // Do not fail the sale after payment has been recorded; the sale detail can retry invoice generation.
+          console.warn('[ABS] [Cart] Sale invoice generation failed:', invoiceError);
+        }
+      }
+      if (sale?.invoiceId || generatedInvoice?.id) {
+        queryClient.invalidateQueries({ queryKey: ['invoices'] });
+        queryClient.invalidateQueries({ queryKey: ['invoice'] });
+        queryClient.invalidateQueries({ queryKey: ['customer'] });
+        queryClient.invalidateQueries({ queryKey: ['customers'] });
+      }
       if (sale?.id) {
         queryClient.setQueriesData({ queryKey: ['sales'] }, (old: any) => {
           const list = Array.isArray(old?.data) ? old.data : null;
@@ -191,7 +215,7 @@ export default function CartScreen() {
           };
         });
       }
-      markAfterSaleStale(queryClient).catch(() => {});
+      await refreshAfterSale(queryClient);
 
       const offerShare = sale?.id && paymentMethod !== 'credit';
 
@@ -199,7 +223,9 @@ export default function CartScreen() {
         const shareTitle =
           isRestaurant && kitchenSent && sale?.saleNumber
             ? `Order #${sale.saleNumber} sent to kitchen`
-            : 'Sale completed';
+            : generatedInvoice?.id
+              ? 'Sale completed + invoice created'
+              : 'Sale completed';
         const shareSubtitle =
           isRestaurant && kitchenSent
             ? 'Share receipt with customer?'
@@ -239,6 +265,8 @@ export default function CartScreen() {
       const successMsg =
         isRestaurant && kitchenSent && sale?.saleNumber
           ? `Order #${sale.saleNumber} has been sent to the kitchen.`
+          : generatedInvoice?.id
+            ? 'Sale completed and invoice created.'
           : 'Sale completed successfully!';
       Alert.alert('Success', successMsg, [
         { text: 'OK', onPress: () => router.push(isRestaurant && kitchenSent ? '/(tabs)/orders' : '/(tabs)/sales') },

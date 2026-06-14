@@ -21,6 +21,7 @@ import storeService from '../services/storeService';
 import { resolveImageUrl } from '../utils/fileUtils';
 import { formatAmount, formatInteger } from '../utils/formatNumber';
 import { showError, showSuccess } from '../utils/toast';
+import { buildStorefrontProductUrl } from '../utils/storefrontUrl';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -29,24 +30,22 @@ import { Input } from '@/components/ui/input';
 
 const unwrapData = (response) => response?.data?.data || response?.data || response;
 
-const getOrigin = () => {
-  if (typeof window === 'undefined') return '';
-  return window.location.origin.replace(/\/$/, '');
-};
-
 const normalizePhone = (value) => String(value || '').replace(/[^\d]/g, '');
 
 const buildPublicProductUrl = (settings, listing) => {
   const storeSlug = settings?.slug;
   const productSlug = listing?.slug || listing?.id;
   if (!storeSlug || !productSlug) return '';
-  return `${getOrigin()}/store/${encodeURIComponent(storeSlug)}/products/${encodeURIComponent(productSlug)}`;
+  return buildStorefrontProductUrl(storeSlug, productSlug);
 };
 
 const getStockText = (listing, product) => {
-  if (listing?.inventoryPolicy === 'continue') return 'Available for order';
-  if (product?.trackStock === false) return 'Availability confirmed after order';
-  return `${formatInteger(product?.quantityOnHand || 0)} ${product?.unit || 'pcs'} available`;
+  if (listing?.availability?.message) return listing.availability.message;
+  const quantity = Number.parseFloat(listing?.quantityOnHand ?? listing?.variant?.quantityOnHand ?? product?.quantityOnHand);
+  const safeQuantity = Number.isFinite(quantity) ? quantity : 0;
+  return safeQuantity > 0
+    ? `${formatInteger(safeQuantity)} ${product?.unit || 'pcs'} available`
+    : 'Not available right now';
 };
 
 const LiveProductPreview = ({ listing, product, settings }) => {
@@ -54,6 +53,7 @@ const LiveProductPreview = ({ listing, product, settings }) => {
   const title = listing?.title || product?.name || 'Published product';
   const description = listing?.shortDescription || listing?.description || product?.description || 'Product details will appear here.';
   const compareAtPrice = Number(listing?.compareAtPrice || 0);
+  const isAvailable = (listing?.available ?? Number.parseFloat(listing?.quantityOnHand ?? listing?.variant?.quantityOnHand ?? product?.quantityOnHand) > 0) === true;
 
   return (
     <Card className="border border-border lg:sticky lg:top-4">
@@ -97,8 +97,8 @@ const LiveProductPreview = ({ listing, product, settings }) => {
             <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
               {getStockText(listing, product)}
             </p>
-            <Button type="button" className="w-full bg-green-700 hover:bg-green-800">
-              Add to cart
+            <Button type="button" className={isAvailable ? 'w-full bg-green-700 hover:bg-green-800' : 'w-full'} variant={isAvailable ? 'default' : 'outline'} disabled={!isAvailable}>
+              {isAvailable ? 'Add to cart' : 'Out of stock'}
             </Button>
           </div>
         </div>

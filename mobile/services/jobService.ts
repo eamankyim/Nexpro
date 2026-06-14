@@ -58,4 +58,25 @@ export const jobService = {
     const res = await api.put(`/jobs/${id}`, { deliveryStatus });
     return res.data;
   },
+
+  uploadAttachment: async (
+    id: string,
+    file: { uri: string; name: string; mimeType?: string | null }
+  ) => {
+    const formData = new FormData();
+    formData.append('file', {
+      uri: file.uri,
+      name: file.name,
+      type: file.mimeType || 'application/octet-stream',
+    } as unknown as Blob);
+    const res = await api.post(`/jobs/${id}/attachments`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return res.data;
+  },
+
+  deleteJob: async (id: string) => {
+    const res = await api.delete(`/jobs/${id}`);
+    return res.data;
+  },
 };

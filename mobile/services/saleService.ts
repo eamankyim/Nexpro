@@ -36,6 +36,11 @@ export const saleService = {
     return res.data;
   },
 
+  generateInvoice: async (saleId: string) => {
+    const res = await api.post(`/sales/${saleId}/generate-invoice`);
+    return res.data;
+  },
+
   /** Batch sync offline sales (idempotent by clientId) */
   syncBatch: async (items: Array<{ clientId: string; payload: object }>) => {
     const res = await api.post('/sales/sync', { items });
@@ -112,6 +117,11 @@ export const saleService = {
 
   cancelSale: async (saleId: string) => {
     const res = await api.post(`/sales/${saleId}/cancel`);
+    return res.data;
+  },
+
+  deleteSale: async (saleId: string) => {
+    const res = await api.delete(`/sales/${saleId}`);
     return res.data;
   },
 

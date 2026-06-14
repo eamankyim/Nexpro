@@ -7,9 +7,12 @@ import {
   Pressable,
   RefreshControl,
   ActivityIndicator,
+  TextInput,
+  ScrollView,
+  Alert,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { AppIcon, type AppIconName } from '@/components/AppIcon';
 import { ListEmptyState, EmptyStateActionButton, ListActionButton } from '@/components/ListEmptyState';
@@ -18,6 +21,8 @@ import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
+import { FormSheetModal } from '@/components/FormSheetModal';
+import { customerService } from '@/services/customerService';
 import { jobService } from '@/services/jobService';
 import { SEARCH_PLACEHOLDERS } from '@/constants/searchPlaceholders';
 import { useSmartSearch } from '@/context/SmartSearchContext';
@@ -30,6 +35,7 @@ import { getApiErrorMessage, parseApiListResponse } from '@/utils/parseApiListRe
 import { formatStatusLabel } from '@/utils/formatLabels';
 import { showListFilters } from '@/utils/listEmptyLayout';
 import { ListLoadingState, ListErrorState } from '@/components/ListScreenStates';
+import { refreshAfterJobChange } from '@/utils/queryInvalidation';
 
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
@@ -69,12 +75,29 @@ type Job = {
   total?: number;
 };
 
+type CustomerOption = {
+  id: string;
+  name?: string;
+  phone?: string;
+};
+
 export default function JobsScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ openJobId?: string }>();
+  const params = useLocalSearchParams<{ openJobId?: string; add?: string; customerId?: string; customerName?: string }>();
+  const queryClient = useQueryClient();
   const { activeTenant, activeTenantId, hasFeature } = useAuth();
   const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
+  const [addOpen, setAddOpen] = React.useState(params.add === '1');
+  const [jobForm, setJobForm] = React.useState({
+    customerId: typeof params.customerId === 'string' ? params.customerId : '',
+    title: '',
+    description: '',
+    dueDate: '',
+    category: '',
+    quantity: '1',
+    unitPrice: '',
+  });
 
   const resolvedType = resolveBusinessType(activeTenant?.businessType);
   const isStudio = resolvedType === 'studio';
@@ -99,12 +122,24 @@ export default function JobsScreen() {
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
   });
 
+  const { data: customersResponse } = useQuery({
+    queryKey: ['customers', 'job-create-options', activeTenantId, activeShopId, activeStudioLocationId],
+    queryFn: () => customerService.getCustomers({ limit: 50 }),
+    enabled: !!activeTenantId && isStudio && hasFeature('crm') && scopeReady && addOpen,
+    staleTime: 5 * 60 * 1000,
+  });
+
   const jobs = useMemo(() => parseApiListResponse<Job>(response), [response]);
+  const customers = useMemo(() => parseApiListResponse<CustomerOption>(customersResponse), [customersResponse]);
   const loadErrorMessage = useMemo(
     () => getApiErrorMessage(error, 'Could not load jobs. Pull to refresh.'),
     [error]
   );
   const openJobId = typeof params.openJobId === 'string' ? params.openJobId : null;
+  const selectedCustomerName = useMemo(() => {
+    const selected = customers.find((customer) => customer.id === jobForm.customerId);
+    return selected?.name || (typeof params.customerName === 'string' ? params.customerName : '');
+  }, [customers, jobForm.customerId, params.customerName]);
 
   const totalJobs = jobs.length;
   const inProgressJobs = jobs.filter((j) => j.status === 'in_progress').length;
@@ -130,9 +165,82 @@ export default function JobsScreen() {
     }
   }, [openJobId, jobs, router]);
 
+  useEffect(() => {
+    if (params.add !== '1') return;
+    setAddOpen(true);
+    setJobForm((prev) => ({
+      ...prev,
+      customerId: typeof params.customerId === 'string' ? params.customerId : prev.customerId,
+      title: prev.title || (typeof params.customerName === 'string' ? `Job for ${params.customerName}` : ''),
+    }));
+  }, [params.add, params.customerId, params.customerName]);
+
   const handleCreateJob = useCallback(() => {
-    router.push('/(tabs)/scan');
-  }, [router]);
+    setAddOpen(true);
+  }, []);
+
+  const createJobMutation = useMutation({
+    mutationFn: (payload: Parameters<typeof jobService.createJob>[0]) => jobService.createJob(payload),
+    onSuccess: async (res) => {
+      await refreshAfterJobChange(queryClient);
+      setAddOpen(false);
+      setJobForm({
+        customerId: '',
+        title: '',
+        description: '',
+        dueDate: '',
+        category: '',
+        quantity: '1',
+        unitPrice: '',
+      });
+      const payload = res?.data ?? res;
+      const jobId = (payload as { id?: string })?.id ?? (payload as { job?: { id?: string } })?.job?.id;
+      Alert.alert('Success', 'Job created');
+      if (jobId) router.push(`/job/${encodeURIComponent(jobId)}` as any);
+    },
+    onError: (err: unknown) => {
+      Alert.alert('Could not create job', getApiErrorMessage(err, 'Failed to create job'));
+    },
+  });
+
+  const handleSubmitJob = useCallback(() => {
+    const title = jobForm.title.trim();
+    const category = jobForm.category.trim();
+    const quantity = Math.max(1, Number(jobForm.quantity) || 1);
+    const unitPrice = Math.max(0, Number(jobForm.unitPrice) || 0);
+    if (!jobForm.customerId) {
+      Alert.alert('Customer required', 'Select a customer for this job.');
+      return;
+    }
+    if (!title) {
+      Alert.alert('Title required', 'Enter a job title.');
+      return;
+    }
+    if (!category || unitPrice <= 0) {
+      Alert.alert('Line item required', 'Add a category and price for the job.');
+      return;
+    }
+    createJobMutation.mutate({
+      customerId: jobForm.customerId,
+      title,
+      description: jobForm.description.trim() || undefined,
+      dueDate: jobForm.dueDate.trim() || undefined,
+      status: 'new',
+      priority: 'medium',
+      jobType: category,
+      quantity,
+      quotedPrice: quantity * unitPrice,
+      finalPrice: quantity * unitPrice,
+      items: [
+        {
+          category,
+          description: jobForm.description.trim() || category,
+          quantity,
+          unitPrice,
+        },
+      ],
+    });
+  }, [createJobMutation, jobForm]);
 
 
   if (!isStudio) {
@@ -290,6 +398,102 @@ export default function JobsScreen() {
         />
       )}
 
+      <FormSheetModal
+        visible={addOpen}
+        title="Create job"
+        onClose={() => setAddOpen(false)}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+        footer={
+          <Pressable
+            onPress={handleSubmitJob}
+            disabled={createJobMutation.isPending}
+            style={[styles.saveBtn, { backgroundColor: colors.tint }]}
+          >
+            {createJobMutation.isPending ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.saveBtnText}>Create job</Text>
+            )}
+          </Pressable>
+        }
+      >
+        <Text style={[styles.formLabel, { color: textColor }]}>Customer</Text>
+        {selectedCustomerName ? (
+          <Text style={[styles.selectedCustomer, { color: mutedColor }]}>Selected: {selectedCustomerName}</Text>
+        ) : null}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
+          {customers.map((customer) => {
+            const selected = jobForm.customerId === customer.id;
+            return (
+              <Pressable
+                key={customer.id}
+                onPress={() => setJobForm((prev) => ({ ...prev, customerId: customer.id }))}
+                style={[
+                  styles.customerChip,
+                  { borderColor, backgroundColor: selected ? colors.tint : 'transparent' },
+                ]}
+              >
+                <Text style={[styles.customerChipText, { color: selected ? '#fff' : textColor }]}>
+                  {customer.name || customer.phone || 'Customer'}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+        <Text style={[styles.formLabel, { color: textColor }]}>Title</Text>
+        <TextInput
+          style={[styles.input, { color: textColor, borderColor, backgroundColor: inputBg }]}
+          value={jobForm.title}
+          onChangeText={(text) => setJobForm((prev) => ({ ...prev, title: text }))}
+          placeholder="Job title"
+          placeholderTextColor={mutedColor}
+        />
+        <Text style={[styles.formLabel, { color: textColor }]}>Description (optional)</Text>
+        <TextInput
+          style={[styles.input, styles.textArea, { color: textColor, borderColor, backgroundColor: inputBg }]}
+          value={jobForm.description}
+          onChangeText={(text) => setJobForm((prev) => ({ ...prev, description: text }))}
+          placeholder="Job notes"
+          placeholderTextColor={mutedColor}
+          multiline
+        />
+        <Text style={[styles.formLabel, { color: textColor }]}>Due date (optional)</Text>
+        <TextInput
+          style={[styles.input, { color: textColor, borderColor, backgroundColor: inputBg }]}
+          value={jobForm.dueDate}
+          onChangeText={(text) => setJobForm((prev) => ({ ...prev, dueDate: text }))}
+          placeholder="YYYY-MM-DD"
+          placeholderTextColor={mutedColor}
+        />
+        <Text style={[styles.formLabel, { color: textColor }]}>Line item category</Text>
+        <TextInput
+          style={[styles.input, { color: textColor, borderColor, backgroundColor: inputBg }]}
+          value={jobForm.category}
+          onChangeText={(text) => setJobForm((prev) => ({ ...prev, category: text }))}
+          placeholder="e.g., Printing, Repair"
+          placeholderTextColor={mutedColor}
+        />
+        <Text style={[styles.formLabel, { color: textColor }]}>Quantity</Text>
+        <TextInput
+          style={[styles.input, { color: textColor, borderColor, backgroundColor: inputBg }]}
+          value={jobForm.quantity}
+          onChangeText={(text) => setJobForm((prev) => ({ ...prev, quantity: text }))}
+          keyboardType="decimal-pad"
+          placeholderTextColor={mutedColor}
+        />
+        <Text style={[styles.formLabel, { color: textColor }]}>Unit price</Text>
+        <TextInput
+          style={[styles.input, { color: textColor, borderColor, backgroundColor: inputBg }]}
+          value={jobForm.unitPrice}
+          onChangeText={(text) => setJobForm((prev) => ({ ...prev, unitPrice: text }))}
+          keyboardType="decimal-pad"
+          placeholderTextColor={mutedColor}
+        />
+      </FormSheetModal>
+
     </ScreenShell>
   );
 }
@@ -364,4 +568,26 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.8 },
   emptyTitle: { fontSize: 18, fontWeight: '600', marginTop: 16 },
   emptySubtitle: { fontSize: 14, marginTop: 8, textAlign: 'center' },
+  formLabel: { fontSize: 14, fontWeight: '600', marginBottom: 8 },
+  selectedCustomer: { fontSize: 13, marginBottom: 8 },
+  chipScroll: { marginBottom: 12 },
+  customerChip: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginRight: 8,
+  },
+  customerChipText: { fontSize: 13, fontWeight: '600' },
+  input: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 16,
+    marginBottom: 12,
+  },
+  textArea: { minHeight: 90, textAlignVertical: 'top' },
+  saveBtn: { height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
 });

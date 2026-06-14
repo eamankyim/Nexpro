@@ -114,6 +114,7 @@ const MENU_HINTS = {
   '/automations': 'Set rules that run business actions automatically',
   '/store': 'Manage your online shop',
   '/store/listings': 'Products published online',
+  '/store/services': 'Services published on your studio storefront',
   '/store/orders': 'Orders from your online shop',
   '/store/settings': 'Online shop setup and contact details',
 };
@@ -178,16 +179,19 @@ const getMenuItems = (
   }
 
   if (!isPlatformAdmin) {
+    const isStudioStore = STUDIO_LIKE_TYPES.includes(businessType);
     baseItems.push({
       key: 'store',
       icon: Store,
-      label: 'Store',
+      label: isStudioStore ? 'Studio store' : 'Store',
       tooltip: MENU_HINTS['/store'],
       children: [
         { key: '/store', label: 'Dashboard', tooltip: MENU_HINTS['/store'] },
-        { key: '/store/listings', label: 'Store listings', tooltip: MENU_HINTS['/store/listings'] },
-        { key: '/store/orders', label: 'Online orders', tooltip: MENU_HINTS['/store/orders'] },
-        { key: '/store/settings', label: 'Store settings', tooltip: MENU_HINTS['/store/settings'], managerOnly: true },
+        ...(isStudioStore
+          ? [{ key: '/store/services', label: 'Studio services', tooltip: MENU_HINTS['/store/services'] }]
+          : [{ key: '/store/listings', label: 'Store listings', tooltip: MENU_HINTS['/store/listings'] }]),
+        ...(!isStudioStore ? [{ key: '/store/orders', label: 'Online orders', tooltip: MENU_HINTS['/store/orders'] }] : []),
+        { key: '/store/settings', label: isStudioStore ? 'Studio settings' : 'Store settings', tooltip: MENU_HINTS['/store/settings'], managerOnly: true },
       ],
     });
   }
@@ -427,6 +431,7 @@ export function Sidebar({ collapsed, onCollapse }) {
     '/automations': () => import('../../pages/Automations'),
     '/store': () => import('../../pages/StoreDashboard'),
     '/store/listings': () => import('../../pages/StoreListings'),
+    '/store/services': () => import('../../pages/StoreServices'),
     '/store/orders': () => import('../../pages/OnlineOrders'),
     '/store/settings': () => import('../../pages/StoreSettings'),
   }), []);

@@ -16,12 +16,15 @@ import { Image } from 'expo-image';
 import { AppIcon } from '@/components/AppIcon';
 import { FormSheetModal } from '@/components/FormSheetModal';
 import {
-  DetailCard,
+  DetailHeroCard,
+  DetailInfoRow,
+  DetailSectionCard,
   DetailFooter,
   DetailLoading,
   DetailNotFound,
-  DetailRow,
   DetailActionButton,
+  DetailMoreActions,
+  type DetailMoreAction,
   EntityDetailHeader,
   useEntityDetailTheme,
 } from '@/components/EntityDetailLayout';
@@ -202,48 +205,75 @@ export default function ProductDetailScreen() {
           : '#10b981';
   const outOfStock = isProductOutOfStock(product);
   const alternateBarcode = getAlternateBarcode(product);
+  const productMoreActions: DetailMoreAction[] = [
+    {
+      key: 'edit',
+      label: 'Edit',
+      icon: 'edit',
+      onPress: openEdit,
+    },
+  ];
 
   return (
     <>
       <EntityDetailHeader title={product.name || 'Product'} />
       <ScreenShell style={styles.screen}>
         <ScrollView contentContainerStyle={styles.content}>
+          <DetailHeroCard
+            eyebrow={product.sku || product.barcode || 'Product'}
+            title={outOfStock ? 'Out of Stock' : product.isActive === false ? 'Inactive' : 'Available'}
+            message={product.name}
+            metricLabel="Selling Price"
+            metricValue={formatCurrency(product.sellingPrice)}
+            secondaryIcon="archive"
+            secondaryLabel="Stock"
+            secondaryValue={
+              product.trackStock === false
+                ? 'Made to order'
+                : `${product.quantityOnHand ?? 0} Units`
+            }
+            showCheck={!outOfStock && product.isActive !== false}
+          />
+
           {product.imageUrl ? (
-            <Image
-              source={{ uri: resolveImageUrl(product.imageUrl) }}
-              style={styles.heroImage}
-              contentFit="cover"
-            />
+            <DetailSectionCard title="Product Image" icon="image">
+              <Image
+                source={{ uri: resolveImageUrl(product.imageUrl) }}
+                style={[styles.heroImage, { borderColor }]}
+                contentFit="cover"
+              />
+            </DetailSectionCard>
           ) : null}
-          <DetailCard>
-            <DetailRow label="Name" value={product.name} />
-            {product.sku ? <DetailRow label="SKU" value={product.sku} /> : null}
-            {product.barcode ? <DetailRow label="Barcode" value={product.barcode} /> : null}
-            {alternateBarcode ? <DetailRow label="Product Code" value={alternateBarcode} /> : null}
+
+          <DetailSectionCard title="Product Details" icon="archive">
+            <DetailInfoRow icon="archive" label="Name" value={product.name} />
+            {product.sku ? <DetailInfoRow icon="tag" label="SKU" value={product.sku} /> : null}
+            {product.barcode ? <DetailInfoRow icon="tag" label="Barcode" value={product.barcode} /> : null}
+            {alternateBarcode ? <DetailInfoRow icon="tag" label="Product Code" value={alternateBarcode} /> : null}
             {product.costPrice != null ? (
-              <DetailRow label="Cost Price" value={formatCurrency(product.costPrice)} />
+              <DetailInfoRow icon="money" label="Cost Price" value={formatCurrency(product.costPrice)} />
             ) : null}
-            <DetailRow
+            <DetailInfoRow
+              icon="money"
               label="Selling Price"
               value={formatCurrency(product.sellingPrice)}
               valueColor={colors.tint}
             />
             {(product.trackStock === false || product.quantityOnHand !== undefined) && (
-              <DetailRow label="Stock">
+              <DetailInfoRow icon="archive" label="Stock">
                 <Text style={[styles.stockValue, { color: stockColor }]}>
                   {product.trackStock === false
                     ? 'Made to order'
                     : `${product.quantityOnHand} units`}
                 </Text>
-              </DetailRow>
+              </DetailInfoRow>
             )}
             {product.category ? (
-              <DetailRow label="Category" value={product.category.name} />
+              <DetailInfoRow icon="list" label="Category" value={product.category.name} />
             ) : null}
-          </DetailCard>
+          </DetailSectionCard>
         </ScrollView>
         <DetailFooter>
-          <DetailActionButton label="Edit" icon="edit" onPress={openEdit} />
           <DetailActionButton
             label={outOfStock ? 'Out of stock' : 'Add to Cart'}
             icon="shopping-cart"
@@ -251,6 +281,7 @@ export default function ProductDetailScreen() {
             onPress={handleAddToCart}
             disabled={outOfStock}
           />
+          <DetailMoreActions actions={productMoreActions} />
         </DetailFooter>
       </ScreenShell>
 

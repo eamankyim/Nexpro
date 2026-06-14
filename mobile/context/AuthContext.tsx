@@ -40,6 +40,24 @@ type Membership = {
   joinedAt?: string;
 };
 
+type TenantSignupPayload = {
+  companyName?: string;
+  companyEmail: string;
+  adminName: string;
+  adminEmail: string;
+  password: string;
+  plan?: string;
+  acceptedTerms?: boolean;
+  termsVersion?: string;
+};
+
+type GoogleAuthOptions = {
+  signUp?: boolean;
+  companyName?: string;
+  acceptedTerms?: boolean;
+  termsVersion?: string;
+};
+
 type AuthContextType = {
   user: User;
   memberships: Membership[];
@@ -70,9 +88,9 @@ type AuthContextType = {
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   setActiveTenantId: (id: string | null) => Promise<void>;
-  tenantSignup: (payload: { companyName?: string; companyEmail: string; adminName: string; adminEmail: string; password: string; plan?: string }) => Promise<void>;
+  tenantSignup: (payload: TenantSignupPayload) => Promise<void>;
   refreshAuth: () => Promise<void>;
-  googleAuth: (idToken: string, options?: { signUp?: boolean; companyName?: string }) => Promise<void>;
+  googleAuth: (idToken: string, options?: GoogleAuthOptions) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -206,7 +224,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [queryClient]);
 
   const tenantSignup = useCallback(
-    async (payload: { companyName?: string; companyEmail: string; adminName: string; adminEmail: string; password: string; plan?: string }) => {
+    async (payload: TenantSignupPayload) => {
       setSessionSyncing(true);
       const res = await authService.tenantSignup(payload);
       const data = res?.data ?? res;
@@ -230,7 +248,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const googleAuth = useCallback(
-    async (idToken: string, options?: { signUp?: boolean; companyName?: string }) => {
+    async (idToken: string, options?: GoogleAuthOptions) => {
       setSessionSyncing(true);
       const res = await authService.googleAuth(idToken, options ?? {});
       const data = res?.data ?? res;

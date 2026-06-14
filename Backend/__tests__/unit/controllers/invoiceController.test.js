@@ -5,7 +5,7 @@ jest.mock('../../../config/database', () => ({
 }));
 
 jest.mock('../../../models', () => ({
-  Invoice: { findOne: jest.fn(), destroy: jest.fn() },
+  Invoice: { findOne: jest.fn(), findAndCountAll: jest.fn(), destroy: jest.fn() },
   Job: { findAll: jest.fn().mockResolvedValue([]) },
   Sale: { findAll: jest.fn().mockResolvedValue([]) },
   Customer: {},
@@ -678,6 +678,51 @@ describe('invoiceController cancelled invoice access', () => {
     await invoiceController.deleteCancelledInvoice(req, res, next);
 
     expect(cancelledInvoice.destroy).toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(next).not.toHaveBeenCalled();
+  });
+});
+
+describe('invoiceController getInvoices list visibility', () => {
+  const buildRes = () => ({
+    status: jest.fn().mockReturnThis(),
+    json: jest.fn().mockReturnThis(),
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    Job.findAll.mockResolvedValue([]);
+    Sale.findAll.mockResolvedValue([]);
+    Invoice.findAndCountAll.mockResolvedValue({ count: 0, rows: [] });
+  });
+
+  it('applies shop read filter and sale sourceType for shop tenants', async () => {
+    const req = {
+      query: { page: '1', limit: '20', shopId: 'shop-a' },
+      headers: {},
+      tenantId: 'tenant-1',
+      tenant: { businessType: 'shop' },
+      shopScoped: true,
+      shopFilterId: 'shop-a',
+      user: { id: 'user-1', role: 'admin' },
+      tenantRole: 'admin',
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    await invoiceController.getInvoices(req, res, next);
+
+    expect(Invoice.findAndCountAll).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId: 'tenant-1',
+          [Op.and]: expect.arrayContaining([
+            { [Op.or]: [{ sourceType: 'sale' }, { sourceType: 'quote' }] },
+            { [Op.or]: [{ shopId: 'shop-a' }, { shopId: null }] },
+          ]),
+        }),
+      })
+    );
     expect(res.status).toHaveBeenCalledWith(200);
     expect(next).not.toHaveBeenCalled();
   });

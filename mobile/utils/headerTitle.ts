@@ -14,7 +14,6 @@ export const TAB_PAGE_TITLES: Record<string, string> = {
   products: 'Products',
   sales: 'Sales',
   expenses: 'Expenses',
-  materials: 'Materials',
   quotes: 'Quotes',
   leads: 'Leads',
   tasks: 'Tasks',

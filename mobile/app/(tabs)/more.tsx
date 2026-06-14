@@ -52,12 +52,15 @@ export default function MoreScreen() {
     }
     if ((isShop || isPharmacy) && hasFeature('paymentsExpenses')) {
       items.push({ id: 'sales', label: 'Sales', icon: 'shopping-cart', route: '/(tabs)/sales' });
+      items.push({ id: 'store', label: 'Online store', icon: 'shopping-cart', route: '/(tabs)/store' });
+      items.push({ id: 'online-orders', label: 'Online orders', icon: 'package', route: '/(tabs)/online-orders' });
+    }
+    if (isStudio && hasFeature('paymentsExpenses')) {
+      items.push({ id: 'store', label: 'Studio store', icon: 'shopping-cart', route: '/(tabs)/store' });
+      items.push({ id: 'store-services', label: 'Studio services', icon: 'cut-outline', route: '/(tabs)/store-services' });
     }
     if (isRestaurant && hasFeature('orders')) {
       items.push({ id: 'orders', label: 'Orders', icon: 'cutlery', route: '/(tabs)/orders' });
-    }
-    if ((isShop || isPharmacy || isStudio) && hasFeature('materials')) {
-      items.push({ id: 'materials', label: 'Materials', icon: 'archive', route: '/(tabs)/materials' });
     }
     if (hasFeature('expenses')) {
       items.push({ id: 'expenses', label: 'Expenses', icon: 'minus-circle', route: '/(tabs)/expenses' });

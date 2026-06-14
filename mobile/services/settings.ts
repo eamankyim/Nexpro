@@ -7,6 +7,14 @@ export type ProfilePayload = {
   password?: string;
 };
 
+const extensionForMimeType = (mimeType: string) => {
+  if (mimeType.includes('png')) return 'png';
+  if (mimeType.includes('webp')) return 'webp';
+  if (mimeType.includes('heic')) return 'heic';
+  if (mimeType.includes('heif')) return 'heif';
+  return 'jpg';
+};
+
 export const settingsService = {
   getOrganizationSettings: async () => {
     const res = await api.get('/settings/organization');
@@ -37,12 +45,12 @@ export const settingsService = {
     return res.data;
   },
 
-  uploadProfilePicture: async (uri: string, mimeType = 'image/jpeg') => {
+  uploadProfilePicture: async (uri: string, mimeType = 'image/jpeg', fileName?: string | null) => {
     const formData = new FormData();
-    const ext = mimeType.includes('png') ? 'png' : 'jpg';
+    const ext = extensionForMimeType(mimeType);
     formData.append('file', {
       uri,
-      name: `avatar.${ext}`,
+      name: fileName || `avatar.${ext}`,
       type: mimeType,
     } as unknown as Blob);
     const res = await api.post('/settings/profile/avatar', formData, {

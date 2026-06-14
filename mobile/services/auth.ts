@@ -161,6 +161,8 @@ export const authService = {
     adminEmail: string;
     password: string;
     plan?: string;
+    acceptedTerms?: boolean;
+    termsVersion?: string;
   }) => {
     logger.info('Auth', 'Tenant signup attempt:', payload.adminEmail);
     const body = {
@@ -170,6 +172,8 @@ export const authService = {
       adminEmail: payload.adminEmail,
       password: payload.password,
       plan: payload.plan ?? 'trial',
+      ...(payload.acceptedTerms !== undefined && { acceptedTerms: payload.acceptedTerms }),
+      ...(payload.termsVersion && { termsVersion: payload.termsVersion }),
     };
     const response = await api.post('/tenants/signup', body);
     const data = response?.data?.data ?? response?.data ?? response ?? {};
@@ -188,13 +192,18 @@ export const authService = {
     return { ...response, data: { ...data, memberships, defaultTenantId } };
   },
 
-  googleAuth: async (idToken: string, options: { signUp?: boolean; companyName?: string } = {}) => {
-    const { signUp = false, companyName } = options;
+  googleAuth: async (
+    idToken: string,
+    options: { signUp?: boolean; companyName?: string; acceptedTerms?: boolean; termsVersion?: string } = {},
+  ) => {
+    const { signUp = false, companyName, acceptedTerms, termsVersion } = options;
     logger.info('Auth', 'Google auth:', signUp ? 'signUp' : 'signIn');
     const response = await api.post('/auth/google', {
       idToken,
       signUp,
       ...(companyName && { companyName }),
+      ...(acceptedTerms !== undefined && { acceptedTerms }),
+      ...(termsVersion && { termsVersion }),
     });
     const data = response?.data?.data ?? response?.data ?? response ?? {};
     const memberships = data.memberships ?? data.tenantMemberships ?? [];

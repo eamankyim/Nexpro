@@ -1,12 +1,18 @@
 const { Op } = require('sequelize');
-const { Job, Sale, Customer, SaleActivity, User, UserTenant } = require('../models');
+const { Job, Sale, Customer, SaleActivity, User, UserTenant, MarketplaceOrderPayment } = require('../models');
 const { sequelize } = require('../config/database');
 const { applyTenantFilter } = require('../utils/tenantUtils');
-const { applyShopFilter } = require('../utils/shopUtils');
+const { applyShopReadFilter } = require('../utils/shopUtils');
 const { applyStudioLocationFilter } = require('../utils/studioLocationUtils');
 const { parseDeliveryStatusInput } = require('../utils/deliveryStatus');
 const { invalidateSaleListCache } = require('../middleware/cache');
 const { getEffectiveRole } = require('../middleware/auth');
+const { markDeliveryReleaseWindowForSale } = require('../services/tradeAssuranceService');
+const {
+  CUSTOMER_CONFIRMED_DELIVERY_ERROR_CODE,
+  CUSTOMER_CONFIRMED_DELIVERY_ERROR_MESSAGE,
+  hasCustomerConfirmedDelivery,
+} = require('../utils/marketplaceOrderStatus');
 
 const DELIVERY_LABELS = {
   ready_for_delivery: 'Ready for delivery',
@@ -17,6 +23,8 @@ const DELIVERY_LABELS = {
 
 const MAX_BULK_UPDATES = 40;
 const DRIVER_ROLE = 'driver';
+const ONLINE_STORE_SOURCE = 'online_store';
+const PAID_ONLINE_PAYMENT_STATUSES = ['paid_held', 'released', 'disputed'];
 
 const ACTIVE_DELIVERY_OR_NULL = {
   [Op.or]: [
@@ -35,6 +43,32 @@ const DRIVER_ALLOWED_NEXT_STATUSES = {
   out_for_delivery: ['delivered'],
 };
 
+const appendSaleDeliveryTrackingMetadata = (metadata, deliveryStatus, actorUserId = null) => {
+  const nextMetadata = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+    ? { ...metadata }
+    : {};
+  const deliveryTracking = nextMetadata.deliveryTracking && typeof nextMetadata.deliveryTracking === 'object'
+    ? { ...nextMetadata.deliveryTracking }
+    : {};
+  const history = Array.isArray(deliveryTracking.history) ? deliveryTracking.history.slice(-19) : [];
+  const timestamp = new Date().toISOString();
+  nextMetadata.deliveryTracking = {
+    ...deliveryTracking,
+    status: deliveryStatus || null,
+    deliveredAt: deliveryStatus === 'delivered' ? timestamp : null,
+    history: [
+      ...history,
+      {
+        status: deliveryStatus || null,
+        at: timestamp,
+        source: 'abs_delivery_queue',
+        actorUserId,
+      },
+    ],
+  };
+  return nextMetadata;
+};
+
 const isDriverRequest = (req) => getEffectiveRole(req) === DRIVER_ROLE;
 
 const canAssignDriver = (req) => ['admin', 'manager'].includes(getEffectiveRole(req));
@@ -42,6 +76,69 @@ const canAssignDriver = (req) => ['admin', 'manager'].includes(getEffectiveRole(
 const normalizeAssignedDriver = (value) => {
   if (value == null || value === '') return null;
   return String(value);
+};
+
+const getSaleMetadata = (sale) => {
+  const metadata = sale?.metadata || {};
+  return metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {};
+};
+
+const isOnlineStoreSale = (sale) => getSaleMetadata(sale).source === ONLINE_STORE_SOURCE;
+
+const saleMetadataText = (key) => sequelize.literal(`"Sale"."metadata"->>'${key}'`);
+
+const saleMetadataNestedText = (parent, key) => sequelize.literal(`"Sale"."metadata"->'${parent}'->>'${key}'`);
+
+const onlineStoreSourceCondition = () => sequelize.where(saleMetadataText('source'), ONLINE_STORE_SOURCE);
+
+const nonOnlineStoreSourceCondition = () => (
+  sequelize.literal(`COALESCE("Sale"."metadata"->>'source', '') <> '${ONLINE_STORE_SOURCE}'`)
+);
+
+const paidOnlinePaymentCondition = () => ({
+  [Op.or]: [
+    { status: 'completed' },
+    { '$marketplacePayment.status$': { [Op.in]: PAID_ONLINE_PAYMENT_STATUSES } },
+    sequelize.where(
+      saleMetadataNestedText('tradeAssurance', 'paymentStatus'),
+      { [Op.in]: PAID_ONLINE_PAYMENT_STATUSES }
+    ),
+  ],
+});
+
+const onlineDeliveryOrderEligibilityCondition = () => ({
+  [Op.and]: [
+    onlineStoreSourceCondition(),
+    { deliveryRequired: true },
+    paidOnlinePaymentCondition(),
+  ],
+});
+
+const saleDeliveryQueueEligibilityCondition = (deliveryStatusCondition, extraConditions = []) => ({
+  [Op.or]: [
+    {
+      [Op.and]: [
+        { status: 'completed' },
+        nonOnlineStoreSourceCondition(),
+        deliveryStatusCondition,
+        ...extraConditions,
+      ],
+    },
+    {
+      [Op.and]: [
+        onlineDeliveryOrderEligibilityCondition(),
+        deliveryStatusCondition,
+        ...extraConditions,
+      ],
+    },
+  ],
+});
+
+const isPaidOnlineDeliverySale = (sale, payment = null) => {
+  if (!isOnlineStoreSale(sale) || sale.deliveryRequired !== true) return false;
+  const metadata = getSaleMetadata(sale);
+  const paymentStatus = payment?.status || metadata.tradeAssurance?.paymentStatus || null;
+  return sale.status === 'completed' || PAID_ONLINE_PAYMENT_STATUSES.includes(paymentStatus);
 };
 
 const assertAssignedDriverIsValid = async (tenantId, userId) => {
@@ -92,6 +189,17 @@ function formatAddressSummary(customer) {
   return parts.length ? parts.join(', ') : null;
 }
 
+function formatDeliveryAddressSummary(deliveryAddress) {
+  if (!deliveryAddress || typeof deliveryAddress !== 'object') return null;
+  const parts = [
+    deliveryAddress.line1 || deliveryAddress.address,
+    deliveryAddress.line2,
+    deliveryAddress.city,
+    deliveryAddress.region || deliveryAddress.state,
+  ].filter(Boolean);
+  return parts.length ? parts.join(', ') : null;
+}
+
 function formatJobRow(job) {
   const j = job.toJSON ? job.toJSON() : job;
   const c = j.customer;
@@ -116,14 +224,18 @@ function formatJobRow(job) {
 function formatSaleRow(sale) {
   const s = sale.toJSON ? sale.toJSON() : sale;
   const c = s.customer;
+  const metadata = getSaleMetadata(s);
+  const deliveryAddress = metadata.deliveryAddress && typeof metadata.deliveryAddress === 'object'
+    ? metadata.deliveryAddress
+    : null;
   return {
     entityType: 'sale',
     id: s.id,
     reference: s.saleNumber,
-    title: null,
-    customerName: c?.name || c?.company || 'Walk-in',
-    customerPhone: c?.phone || null,
-    addressSummary: formatAddressSummary(c),
+    title: metadata.source === ONLINE_STORE_SOURCE ? 'Online delivery order' : null,
+    customerName: deliveryAddress?.recipientName || c?.name || c?.company || 'Walk-in',
+    customerPhone: deliveryAddress?.phone || c?.phone || null,
+    addressSummary: formatDeliveryAddressSummary(deliveryAddress) || formatAddressSummary(c),
     completedAt: s.updatedAt,
     deliveryStatus: s.deliveryStatus || null,
     deliveryAssignedTo: s.deliveryAssignedTo || null,
@@ -139,7 +251,7 @@ function applyJobScope(req, where) {
 }
 
 function applySaleScope(req, where) {
-  return applyShopFilter(req, where);
+  return applyShopReadFilter(req, where);
 }
 
 /**
@@ -158,16 +270,24 @@ exports.getDeliveryQueue = async (req, res, next) => {
       as: 'customer',
       attributes: ['id', 'name', 'company', 'phone', 'address', 'city', 'state']
     };
+    const marketplacePaymentInclude = {
+      model: MarketplaceOrderPayment,
+      as: 'marketplacePayment',
+      attributes: ['id', 'status'],
+      required: false,
+    };
 
     if (scope === 'active') {
+      const activeSaleDeliveryStatus = isDriver ? DRIVER_ACTIVE_DELIVERY_ONLY : ACTIVE_DELIVERY_OR_NULL;
       const jobWhere = applyJobScope(req, applyTenantFilter(tenantId, {
         status: 'completed',
         ...(isDriver ? DRIVER_ACTIVE_DELIVERY_ONLY : ACTIVE_DELIVERY_OR_NULL),
         ...(isDriver ? { deliveryAssignedTo: req.user.id } : {}),
       }));
       const saleWhere = applySaleScope(req, applyTenantFilter(tenantId, {
-        status: 'completed',
-        ...(isDriver ? DRIVER_ACTIVE_DELIVERY_ONLY : ACTIVE_DELIVERY_OR_NULL),
+        [Op.and]: [
+          saleDeliveryQueueEligibilityCondition(activeSaleDeliveryStatus),
+        ],
         ...(isDriver ? { deliveryAssignedTo: req.user.id } : {}),
       }));
 
@@ -182,7 +302,7 @@ exports.getDeliveryQueue = async (req, res, next) => {
         }),
         Sale.findAll({
           where: saleWhere,
-          include: [customerInclude],
+          include: [customerInclude, marketplacePaymentInclude],
           order: [['updatedAt', 'DESC']]
         })
       ]);
@@ -204,9 +324,12 @@ exports.getDeliveryQueue = async (req, res, next) => {
       ...(isDriver ? { deliveredBy: req.user.id } : {}),
     }));
     const saleWhere = applySaleScope(req, applyTenantFilter(tenantId, {
-      status: 'completed',
-      deliveryStatus: terminal,
-      updatedAt: { [Op.gte]: ninetyDaysAgo },
+      [Op.and]: [
+        saleDeliveryQueueEligibilityCondition(
+          { deliveryStatus: terminal },
+          [{ updatedAt: { [Op.gte]: ninetyDaysAgo } }]
+        ),
+      ],
       ...(isDriver ? { deliveredBy: req.user.id } : {}),
     }));
 
@@ -218,7 +341,7 @@ exports.getDeliveryQueue = async (req, res, next) => {
       }),
       Sale.findAll({
         where: saleWhere,
-        include: [customerInclude],
+        include: [customerInclude, marketplacePaymentInclude],
         order: [['updatedAt', 'DESC']]
       })
     ]);
@@ -329,7 +452,16 @@ async function updateSaleDeliveryStatus(
       await transaction.rollback();
       return { ok: false, message: 'Sale not found' };
     }
-    if (sale.status !== 'completed') {
+    const marketplacePayment = await MarketplaceOrderPayment.findOne({
+      where: { saleId: sale.id },
+      transaction,
+      lock: transaction.LOCK.UPDATE
+    });
+    if (isOnlineStoreSale(sale) && !isPaidOnlineDeliverySale(sale, marketplacePayment)) {
+      await transaction.rollback();
+      return { ok: false, message: 'Only paid online delivery orders can use delivery status here' };
+    }
+    if (!isOnlineStoreSale(sale) && sale.status !== 'completed') {
       await transaction.rollback();
       return { ok: false, message: 'Only completed sales can use delivery status here' };
     }
@@ -339,6 +471,19 @@ async function updateSaleDeliveryStatus(
     }
 
     const previousDeliveryStatus = sale.deliveryStatus || null;
+    const deliveryStatusChanged = (
+      deliveryStatus !== undefined &&
+      String(previousDeliveryStatus || '') !== String(parsed || '')
+    );
+    if (deliveryStatusChanged && hasCustomerConfirmedDelivery(sale)) {
+      await transaction.rollback();
+      return {
+        ok: false,
+        message: CUSTOMER_CONFIRMED_DELIVERY_ERROR_MESSAGE,
+        errorCode: CUSTOMER_CONFIRMED_DELIVERY_ERROR_CODE,
+      };
+    }
+
     if (isDriver) {
       const guard = enforceDriverStatusTransition({
         currentStatus: previousDeliveryStatus,
@@ -361,6 +506,7 @@ async function updateSaleDeliveryStatus(
     const saleUpdates = {};
     if (deliveryStatus !== undefined) {
       saleUpdates.deliveryStatus = parsed;
+      saleUpdates.metadata = appendSaleDeliveryTrackingMetadata(sale.metadata, parsed, userId);
       if (parsed === 'delivered' || parsed === 'returned') {
         saleUpdates.deliveredBy = userId || null;
         saleUpdates.deliveredAt = new Date();
@@ -375,6 +521,13 @@ async function updateSaleDeliveryStatus(
     }
 
     await sale.update(saleUpdates, { transaction });
+    if (parsed === 'delivered') {
+      await markDeliveryReleaseWindowForSale({
+        sale,
+        deliveredAt: saleUpdates.deliveredAt || new Date(),
+        transaction,
+      });
+    }
 
     const oldL = previousDeliveryStatus
       ? DELIVERY_LABELS[previousDeliveryStatus] || previousDeliveryStatus

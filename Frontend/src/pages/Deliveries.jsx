@@ -420,7 +420,7 @@ export default function Deliveries() {
                     : scope === 'active'
                       ? isStudioLike
                         ? 'When jobs are completed, they appear here so you can set delivery status.'
-                        : 'When sales are completed, they appear here so you can set delivery status.'
+                        : 'When sales and paid online delivery orders are ready to dispatch, they appear here so you can set delivery status.'
                       : 'Delivered or returned items from the last 90 days will show in this tab.'
               }
             />

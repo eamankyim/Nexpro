@@ -23,6 +23,14 @@ const OnlineStoreSettings = sequelize.define('OnlineStoreSettings', {
       key: 'id',
     },
   },
+  studioLocationId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'studio_locations',
+      key: 'id',
+    },
+  },
   enabled: {
     type: DataTypes.BOOLEAN,
     allowNull: false,
@@ -100,6 +108,7 @@ const OnlineStoreSettings = sequelize.define('OnlineStoreSettings', {
   indexes: [
     { fields: ['tenantId'] },
     { fields: ['shopId'] },
+    { fields: ['studioLocationId'] },
     { unique: true, fields: ['slug'] },
     { fields: ['enabled'] },
   ],

@@ -18,6 +18,9 @@ export type DeliveryQueueRow = {
   deliveredAt?: string | null;
   completedAt?: string;
   total?: number | null;
+  source?: string | null;
+  isOnlineStore?: boolean;
+  paymentStatus?: string | null;
 };
 
 export type DeliveryStatusUpdate = {

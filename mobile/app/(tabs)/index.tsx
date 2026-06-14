@@ -31,6 +31,8 @@ import { ListErrorState, ListLoadingState } from '@/components/ListScreenStates'
 import { getApiErrorMessage } from '@/utils/parseApiListResponse';
 import { QUERY_STALE } from '@/utils/queryInvalidation';
 import { BRAND_GREEN } from '@/constants/brand';
+import { useOnlineStoreOrderAttention } from '@/hooks/useOnlineStoreOrderAttention';
+import { getCustomerName, getOrderNumber } from '@/utils/marketplaceOrderStatus';
 
 type FilterType = 'today' | 'week' | 'month' | 'year';
 type ComparisonMetric = {
@@ -316,6 +318,14 @@ export default function DashboardScreen() {
   const shopType = activeTenant?.metadata?.shopType;
   const isRestaurant = shopType === SHOP_TYPES.RESTAURANT;
   const canCreateQuote = hasFeature('quoteAutomation') && isQuotesEnabledForTenant(businessType, shopType);
+  const showOnlineStore = (isShop || isPharmacy || isStudio) && hasFeature('paymentsExpenses');
+
+  const {
+    showBanner: showOnlineStoreBanner,
+    pendingOrderCount: onlinePendingCount,
+    latestOrder: latestOnlineOrder,
+    hasStoreSettings,
+  } = useOnlineStoreOrderAttention({ enabled: showOnlineStore });
 
   const todayIso = useMemo(() => new Date().toISOString().split('T')[0], []);
 
@@ -375,8 +385,11 @@ export default function DashboardScreen() {
     if (hasFeature('expenses')) {
       actions.push({ label: 'Add expense', icon: 'minus-circle', route: '/(tabs)/expenses', color: '#ea580c' });
     }
+    if (showOnlineStore && hasStoreSettings) {
+      actions.push({ label: 'Online orders', icon: 'shopping-cart', route: '/(tabs)/online-orders', color: '#7c3aed' });
+    }
     return actions;
-  }, [isShop, isPharmacy, isStudio, isRestaurant, canCreateQuote, hasFeature, colors.tint]);
+  }, [isShop, isPharmacy, isStudio, isRestaurant, canCreateQuote, hasFeature, colors.tint, showOnlineStore, hasStoreSettings]);
 
   const recentSales = useMemo(
     () => (shopData.recentSales ?? []) as RecentSale[],
@@ -662,6 +675,39 @@ export default function DashboardScreen() {
           <AppIcon name="chevron-right" size={14} color={colors.tint} />
         </View>
       </Pressable>
+
+      {showOnlineStoreBanner && (
+        <Pressable
+          onPress={() => router.push('/(tabs)/online-orders' as never)}
+          style={({ pressed }) => [
+            styles.onlineStoreBanner,
+            {
+              backgroundColor: resolvedTheme === 'dark' ? '#422006' : '#fffbeb',
+              borderColor: resolvedTheme === 'dark' ? '#92400e' : '#fde68a',
+            },
+            pressed && styles.pressed,
+          ]}
+        >
+          <View style={[styles.onlineStoreIcon, { backgroundColor: colors.tint }]}>
+            <AppIcon name="shopping-cart" size={18} color="#fff" />
+          </View>
+          <View style={styles.onlineStoreTextCol}>
+            <Text style={[styles.onlineStoreTitle, { color: textColor }]}>
+              {onlinePendingCount} online {onlinePendingCount === 1 ? 'order needs' : 'orders need'} attention
+            </Text>
+            {latestOnlineOrder ? (
+              <Text style={[styles.onlineStoreBody, { color: mutedColor }]} numberOfLines={1}>
+                Latest: {getOrderNumber(latestOnlineOrder)} · {getCustomerName(latestOnlineOrder)}
+              </Text>
+            ) : (
+              <Text style={[styles.onlineStoreBody, { color: mutedColor }]}>
+                Review and fulfill pending online store orders
+              </Text>
+            )}
+          </View>
+          <AppIcon name="chevron-right" size={16} color={colors.tint} />
+        </Pressable>
+      )}
 
       {isRestaurant && hasFeature('orders') && kitchenOrderCounts.total > 0 && (
         <>
@@ -1242,4 +1288,24 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
+  onlineStoreBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 20,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  onlineStoreIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  onlineStoreTextCol: { flex: 1, minWidth: 0 },
+  onlineStoreTitle: { fontSize: 14, fontWeight: '700' },
+  onlineStoreBody: { fontSize: 13, marginTop: 2 },
 });

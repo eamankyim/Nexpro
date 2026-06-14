@@ -189,10 +189,17 @@ export default function DeliveriesScreen() {
     return (
       <View style={[styles.card, { backgroundColor: cardBg, borderColor }]}>
         <View style={styles.rowTop}>
-          <View style={[styles.typeBadge, { borderColor }]}>
-            <Text style={[styles.typeBadgeText, { color: mutedColor }]}>
-              {item.entityType === 'job' ? 'Job' : 'Sale'}
-            </Text>
+          <View style={styles.badgeRow}>
+            <View style={[styles.typeBadge, { borderColor }]}>
+              <Text style={[styles.typeBadgeText, { color: mutedColor }]}>
+                {item.entityType === 'job' ? 'Job' : 'Sale'}
+              </Text>
+            </View>
+            {item.isOnlineStore || item.title === 'Online delivery order' ? (
+              <View style={[styles.onlineBadge, { borderColor: '#fde68a', backgroundColor: '#fffbeb' }]}>
+                <Text style={[styles.onlineBadgeText, { color: '#b45309' }]}>Online store</Text>
+              </View>
+            ) : null}
           </View>
           <Text style={[styles.ref, { color: textColor }]} numberOfLines={1}>
             {item.reference || item.id.slice(0, 8)}
@@ -497,6 +504,7 @@ const styles = StyleSheet.create({
   chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1 },
   card: { borderRadius: 12, borderWidth: 1, padding: 14, marginBottom: 10 },
   rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  badgeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 },
   typeBadge: {
     borderWidth: 1,
     borderRadius: 6,
@@ -504,6 +512,13 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   typeBadgeText: { fontSize: 11, fontWeight: '600' },
+  onlineBadge: {
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  onlineBadgeText: { fontSize: 11, fontWeight: '600' },
   ref: { fontSize: 16, fontWeight: '700', flex: 1 },
   title: { marginTop: 6, fontSize: 14 },
   cust: { marginTop: 6, fontSize: 14, fontWeight: '500' },

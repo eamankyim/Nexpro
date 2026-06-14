@@ -21,6 +21,7 @@ import PWAUpdatePrompt from './components/PWAUpdatePrompt';
 import { useSwipeBack } from './hooks/useSwipeBack';
 import { useIOSKeyboardFix } from './hooks/useKeyboardHandling';
 import { isBootstrapPlatformSuperAdmin } from './utils/platformAdminBootstrap';
+import { getStorefrontBaseUrl } from './utils/storefrontUrl';
 // Lazy load heavy pages for code splitting
 const Products = lazy(() => import('./pages/Products'));
 const TourProvider = lazy(() => import('./components/tour/TourProvider'));
@@ -35,7 +36,6 @@ const ViewQuote = lazy(() => import('./pages/ViewQuote'));
 const TrackJob = lazy(() => import('./pages/TrackJob'));
 const TenantTrackLookup = lazy(() => import('./pages/TenantTrackLookup'));
 const PublicFeedback = lazy(() => import('./pages/PublicFeedback'));
-const PublicStoreProduct = lazy(() => import('./pages/PublicStoreProduct'));
 const Onboarding = lazy(() => import('./pages/Onboarding'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Customers = lazy(() => import('./pages/Customers'));
@@ -82,6 +82,7 @@ const AdminSettings = lazy(() => import('./pages/admin/AdminSettings'));
 const AdminUsers = lazy(() => import('./pages/admin/AdminUsers'));
 const AdminCustomers = lazy(() => import('./pages/admin/AdminCustomers'));
 const AdminSupportTickets = lazy(() => import('./pages/admin/AdminSupportTickets'));
+const SabitoAdmin = lazy(() => import('./pages/admin/SabitoAdmin'));
 const Tasks = lazy(() => import('./pages/Tasks'));
 const Deliveries = lazy(() => import('./pages/Deliveries'));
 const StoreDashboard = lazy(() => import('./pages/StoreDashboard'));
@@ -89,6 +90,8 @@ const StoreSetup = lazy(() => import('./pages/StoreSetup'));
 const StoreListings = lazy(() => import('./pages/StoreListings'));
 const StoreListingEditor = lazy(() => import('./pages/StoreListingEditor'));
 const StoreListingPublished = lazy(() => import('./pages/StoreListingPublished'));
+const StoreServices = lazy(() => import('./pages/StoreServices'));
+const StoreServiceEditor = lazy(() => import('./pages/StoreServiceEditor'));
 const OnlineOrders = lazy(() => import('./pages/OnlineOrders'));
 const StoreSettings = lazy(() => import('./pages/StoreSettings'));
 
@@ -139,6 +142,19 @@ const AdminWorkspaceRedirect = () => {
 const CampaignEditRedirect = () => {
   const { id } = useParams();
   return <Navigate to={`/marketing?campaign=edit&id=${encodeURIComponent(id || '')}`} replace />;
+};
+
+const StorefrontRedirect = ({ type }) => {
+  const { storeSlug, productSlug } = useParams();
+  const baseUrl = getStorefrontBaseUrl();
+  const targetPath = type === 'product'
+    ? `/store/${encodeURIComponent(storeSlug || '')}/products/${encodeURIComponent(productSlug || '')}`
+    : type === 'store'
+      ? `/store/${encodeURIComponent(storeSlug || '')}`
+      : '/';
+
+  window.location.replace(`${baseUrl}${targetPath}`);
+  return <AppLoader label="Opening storefront..." />;
 };
 
 /** Backend Sabito SSO redirects here with ?token=JWT&success=true — must not hit * → /dashboard (strips query). */
@@ -237,7 +253,9 @@ function AppContent() {
             <Route path="/track/:tenantSlug" element={<TenantTrackLookup />} />
             <Route path="/feedback/:tenantSlug" element={<PublicFeedback />} />
             <Route path="/review/:tenantSlug" element={<PublicFeedback />} />
-            <Route path="/store/:storeSlug/products/:productSlug" element={<PublicStoreProduct />} />
+            <Route path="/marketplace" element={<StorefrontRedirect type="home" />} />
+            <Route path="/store/:storeSlug/products/:productSlug" element={<StorefrontRedirect type="product" />} />
+            <Route path="/store/:storeSlug" element={<StorefrontRedirect type="store" />} />
           <Route
             path="/onboarding"
             element={
@@ -300,6 +318,8 @@ function AppContent() {
             <Route path="store/listings" element={<StoreListings />} />
             <Route path="store/listings/:productId/edit" element={<StoreListingEditor />} />
             <Route path="store/listings/:productId/published" element={<StoreListingPublished />} />
+            <Route path="store/services" element={<StoreServices />} />
+            <Route path="store/services/:serviceId/edit" element={<StoreServiceEditor />} />
             <Route path="store/orders" element={<OnlineOrders />} />
             <Route path="store/settings" element={<RequireWorkspaceManager><StoreSettings /></RequireWorkspaceManager>} />
             <Route path="studio-locations" element={<FeatureRoute featureKey="studioLocationsModule"><RequireWorkspaceManager><StudioLocations /></RequireWorkspaceManager></FeatureRoute>} />
@@ -338,6 +358,15 @@ function AppContent() {
             <Route path="reports" element={<AdminReports />} />
             <Route path="health" element={<AdminHealth />} />
             <Route path="support-tickets" element={<AdminSupportTickets />} />
+            <Route path="sabito" element={<Navigate to="/admin/sabito/overview" replace />} />
+            <Route path="sabito/overview" element={<SabitoAdmin section="overview" />} />
+            <Route path="sabito/stores" element={<SabitoAdmin section="stores" />} />
+            <Route path="sabito/orders" element={<SabitoAdmin section="orders" />} />
+            <Route path="sabito/payments" element={<Navigate to="/admin/sabito/trade-assurance" replace />} />
+            <Route path="sabito/trade-assurance" element={<SabitoAdmin section="trade-assurance" />} />
+            <Route path="sabito/disputes" element={<SabitoAdmin section="disputes" />} />
+            <Route path="sabito/customers" element={<SabitoAdmin section="customers" />} />
+            <Route path="sabito/settings" element={<SabitoAdmin section="settings" />} />
             <Route path="workspace" element={<AdminWorkspaceRedirect />} />
             <Route path="tasks" element={<HideForBootstrapSuperAdmin><Tasks /></HideForBootstrapSuperAdmin>} />
             <Route path="settings" element={<AdminSettings />} />

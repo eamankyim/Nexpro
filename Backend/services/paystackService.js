@@ -714,6 +714,24 @@ class PaystackService {
   }
 
   /**
+   * Verify a transfer by Paystack reference.
+   * @param {String} reference - Unique transfer reference
+   * @returns {Promise<Object>} Transfer result
+   */
+  async verifyTransfer(reference) {
+    try {
+      const response = await axios.get(
+        `${this.baseURL}/transfer/verify/${encodeURIComponent(reference)}`,
+        { headers: this.getHeaders() }
+      );
+      return response.data;
+    } catch (error) {
+      logPaystackRequestFailure('verifyTransfer', error, this);
+      throw error;
+    }
+  }
+
+  /**
    * Map MoMo provider to Paystack bank_code (Ghana)
    */
   getMoMoBankCode(provider) {

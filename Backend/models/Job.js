@@ -132,6 +132,10 @@ const Job = sequelize.define('Job', {
     type: DataTypes.JSONB,
     defaultValue: []
   },
+  metadata: {
+    type: DataTypes.JSONB,
+    defaultValue: {}
+  },
   adminLeadId: {
     type: DataTypes.UUID,
     allowNull: true,

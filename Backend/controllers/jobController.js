@@ -36,6 +36,14 @@ const toMoneyNumber = (value) => {
 
 const roundMoney = (value) => Math.round(toMoneyNumber(value) * 100) / 100;
 
+const calculateJobItemTotalPrice = (item = {}) => {
+  const quantity = Math.max(0, toMoneyNumber(item.quantity || 0));
+  const unitPrice = Math.max(0, toMoneyNumber(item.unitPrice || 0));
+  const lineGross = quantity * unitPrice;
+  const discountAmount = Math.max(0, toMoneyNumber(item.discountAmount || 0));
+  return roundMoney(Math.max(0, lineGross - Math.min(discountAmount, lineGross)));
+};
+
 const normalizeBillableJobItems = (items = []) =>
   (Array.isArray(items) ? items : []).map((item) => {
     const quantity = toMoneyNumber(item.quantity);
@@ -78,7 +86,7 @@ const hasBillableJobChange = ({ currentJob, updatePayload, incomingItems }) => {
     ...updatePayload,
     items: incomingItems.map((item) => ({
       ...sanitizePayload(item),
-      totalPrice: toMoneyNumber(item.quantity || 0) * toMoneyNumber(item.unitPrice || 0),
+      totalPrice: calculateJobItemTotalPrice(item),
     })),
   };
 
@@ -974,7 +982,7 @@ exports.createJob = async (req, res, next) => {
           ...sanitizePayload(item),
           jobId: job.id,
           tenantId: req.tenantId,
-          totalPrice: parseFloat(item.quantity) * parseFloat(item.unitPrice)
+          totalPrice: calculateJobItemTotalPrice(item)
         }));
         await JobItem.bulkCreate(jobItems, { transaction });
       }
@@ -1218,7 +1226,7 @@ exports.updateJob = async (req, res, next) => {
             ...sanitizePayload(item),
             jobId: job.id,
             tenantId: req.tenantId,
-            totalPrice: parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)
+            totalPrice: calculateJobItemTotalPrice(item)
           }));
           await JobItem.bulkCreate(jobItems, { transaction });
         }

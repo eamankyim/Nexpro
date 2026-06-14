@@ -25,12 +25,9 @@ export function TimelineIndicator({ className, ...props }) {
   return (
     <div
       className={cn(
-        "absolute left-0 top-1 h-3 w-3 rounded-full bg-green-500 border-2 border-white",
+        "absolute left-0 top-1 h-3 w-3 rounded-full border border-green-600 bg-green-500",
         className
       )}
-      style={{
-        boxShadow: '0 0 0 1px #22c55e'
-      }}
       {...props}
     />
   )

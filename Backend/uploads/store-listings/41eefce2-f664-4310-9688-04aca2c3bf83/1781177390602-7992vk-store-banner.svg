@@ -1,0 +1,104 @@
+<svg width="1600" height="500" viewBox="0 0 1600 500" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Generated online store banner">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f8f9fa;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#e9ecef;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#2a9d8f;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#264653;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="warmGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#e76f51;stop-opacity:0.9" />
+      <stop offset="100%" style="stop-color:#f4a261;stop-opacity:0.9" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="1600" height="500" fill="url(#bgGrad)"/>
+  
+  <!-- Decorative circles pattern -->
+  <circle cx="150" cy="100" r="80" fill="#2a9d8f" opacity="0.1"/>
+  <circle cx="1450" cy="400" r="100" fill="#e76f51" opacity="0.1"/>
+  <circle cx="1500" cy="80" r="60" fill="#f4a261" opacity="0.15"/>
+  
+  <!-- Shopping basket icon -->
+  <g transform="translate(200, 180)">
+    <path d="M20 60 L10 100 L90 100 L80 60 Z" fill="url(#accentGrad)"/>
+    <rect x="15" y="95" width="70" height="8" rx="2" fill="#264653"/>
+    <ellipse cx="30" cy="110" rx="6" ry="6" fill="#264653"/>
+    <ellipse cx="70" cy="110" rx="6" ry="6" fill="#264653"/>
+    <path d="M25 60 L30 30 Q30 20 40 20 L60 20 Q70 20 70 30 L75 60" fill="none" stroke="#264653" stroke-width="3"/>
+    <!-- Items in basket -->
+    <rect x="30" y="65" width="12" height="20" rx="2" fill="#e76f51"/>
+    <circle cx="55" cy="72" r="8" fill="#f4a261"/>
+    <rect x="60" y="68" width="10" height="15" rx="1" fill="#2a9d8f"/>
+  </g>
+  
+  <!-- Fresh produce icons -->
+  <g transform="translate(320, 200)">
+    <!-- Apple -->
+    <circle cx="0" cy="0" r="22" fill="#e76f51"/>
+    <path d="M0 -22 Q-5 -28 -8 -32" fill="none" stroke="#264653" stroke-width="2"/>
+    <ellipse cx="-3" cy="-26" rx="6" ry="4" fill="#2a9d8f" opacity="0.7"/>
+  </g>
+  
+  <g transform="translate(380, 205)">
+    <!-- Carrot -->
+    <path d="M0 0 L-8 35 L0 40 L8 35 Z" fill="#e76f51"/>
+    <path d="M-2 0 L-6 -12 M0 0 L0 -15 M2 0 L6 -12" stroke="#2a9d8f" stroke-width="2" fill="none"/>
+  </g>
+  
+  <!-- Beverage bottle -->
+  <g transform="translate(1300, 220)">
+    <rect x="-15" y="0" width="30" height="70" rx="3" fill="#2a9d8f" opacity="0.8"/>
+    <rect x="-12" y="5" width="24" height="50" rx="2" fill="#ffffff" opacity="0.3"/>
+    <rect x="-18" y="-8" width="36" height="10" rx="2" fill="#264653"/>
+    <ellipse cx="0" cy="72" rx="15" ry="4" fill="#264653" opacity="0.3"/>
+  </g>
+  
+  <!-- Shopping bag -->
+  <g transform="translate(1380, 230)">
+    <rect x="-20" y="10" width="40" height="50" rx="3" fill="url(#warmGrad)"/>
+    <path d="M-15 10 Q-15 -5 0 -5 Q15 -5 15 10" fill="none" stroke="#264653" stroke-width="3"/>
+    <rect x="-18" y="15" width="36" height="4" fill="#ffffff" opacity="0.4"/>
+  </g>
+  
+  <!-- Main content area -->
+  <g transform="translate(550, 180)">
+    <!-- Store name -->
+    <text x="0" y="0" font-family="Arial, sans-serif" font-size="72" font-weight="bold" fill="#264653">
+      Nexus Ent
+    </text>
+    
+    <!-- Tagline -->
+    <text x="0" y="50" font-family="Arial, sans-serif" font-size="28" fill="#2a9d8f" font-weight="600">
+      Your Neighborhood Store
+    </text>
+    
+    <!-- Key features -->
+    <g transform="translate(0, 90)">
+      <circle cx="0" cy="0" r="4" fill="#e76f51"/>
+      <text x="15" y="5" font-family="Arial, sans-serif" font-size="20" fill="#495057">
+        Fresh Quality Products
+      </text>
+    </g>
+    
+    <g transform="translate(0, 125)">
+      <circle cx="0" cy="0" r="4" fill="#f4a261"/>
+      <text x="15" y="5" font-family="Arial, sans-serif" font-size="20" fill="#495057">
+        Affordable Prices
+      </text>
+    </g>
+    
+    <g transform="translate(0, 160)">
+      <circle cx="0" cy="0" r="4" fill="#2a9d8f"/>
+      <text x="15" y="5" font-family="Arial, sans-serif" font-size="20" fill="#495057">
+        Excellent Service
+      </text>
+    </g>
+  </g>
+  
+  <!-- Decorative wave accent bottom -->
+  <path d="M0 450 Q400 430 800 450 T1600 450 L1600 500 L0 500 Z" fill="#2a9d8f" opacity="0.1"/>
+</svg>

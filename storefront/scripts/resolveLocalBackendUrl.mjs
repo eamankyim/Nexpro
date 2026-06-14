@@ -1,0 +1,97 @@
+/**
+ * Find the local ABS backend for Vite dev proxy (macOS often uses :5000 for AirPlay).
+ * @module resolveLocalBackendUrl
+ */
+import http from 'node:http';
+
+const PREFERRED_LOCAL_PORTS = [5002, 5000, 5001];
+const PROBE_PORTS = [...PREFERRED_LOCAL_PORTS, 5003, 5004, 5005, 5006, 5007, 5008, 5009, 5010];
+const FALLBACK_ORIGIN = 'http://127.0.0.1:5002';
+
+/**
+ * @param {number} port
+ * @param {string} [host]
+ * @returns {Promise<boolean>}
+ */
+export function probeBackendHealth(port, host = '127.0.0.1') {
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        hostname: host,
+        port,
+        path: '/health',
+        method: 'GET',
+        timeout: 500,
+      },
+      (res) => {
+        let body = '';
+        res.on('data', (chunk) => {
+          body += chunk;
+        });
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(body);
+            resolve(
+              res.statusCode === 200 &&
+                json?.success === true &&
+                String(json?.message || '')
+                  .toLowerCase()
+                  .includes('running')
+            );
+          } catch {
+            resolve(false);
+          }
+        });
+      }
+    );
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.end();
+  });
+}
+
+/**
+ * @param {string} hostname
+ * @returns {boolean}
+ */
+const isLocalHostname = (hostname) =>
+  hostname === 'localhost' ||
+  hostname === '127.0.0.1' ||
+  hostname.startsWith('192.168.');
+
+/**
+ * Resolve the backend origin for local development (Vite proxy target).
+ * @param {{ envUrl?: string }} [options]
+ * @returns {Promise<string>}
+ */
+export async function resolveLocalBackendUrl({ envUrl } = {}) {
+  if (envUrl) {
+    try {
+      let normalized = envUrl.trim().replace(/\/$/, '').replace(/\/api\/?$/i, '');
+      if (normalized && !/^https?:\/\//i.test(normalized)) {
+        const localhostLike = /^(localhost|127(?:\.\d{1,3}){3}|192\.168\.)/i.test(normalized);
+        normalized = `${localhostLike ? 'http' : 'https'}://${normalized}`;
+      }
+      const parsed = new URL(normalized);
+      if (isLocalHostname(parsed.hostname)) {
+        const port = Number(parsed.port || 80);
+        if (port && (await probeBackendHealth(port, parsed.hostname))) {
+          return parsed.origin;
+        }
+      }
+    } catch {
+      // fall through to port scan
+    }
+  }
+
+  for (const port of PROBE_PORTS) {
+    if (await probeBackendHealth(port)) {
+      return `http://127.0.0.1:${port}`;
+    }
+  }
+
+  return FALLBACK_ORIGIN;
+}

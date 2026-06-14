@@ -17,7 +17,6 @@ const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
 const { shopContext } = require('../middleware/shopContext');
 const { studioLocationContext } = require('../middleware/studioLocationContext');
-const { cacheMiddleware, generateInvoiceListKey } = require('../middleware/cache');
 const { exportLimiter } = require('../middleware/rateLimiter');
 
 const router = express.Router();
@@ -26,11 +25,18 @@ router.use(protect);
 router.use(tenantContext);
 router.use(shopContext);
 router.use(studioLocationContext);
+router.use((req, res, next) => {
+  // Invoice lists must reflect POS/sale writes immediately; avoid Express 304 + stale list cache.
+  res.set('Cache-Control', 'no-store');
+  delete req.headers['if-none-match'];
+  delete req.headers['if-modified-since'];
+  next();
+});
 
 router.get('/stats/summary', getInvoiceStats);
 
 router.route('/')
-  .get(cacheMiddleware(60, generateInvoiceListKey), getInvoices)
+  .get(getInvoices)
   .post(authorize('admin', 'manager', 'staff'), createInvoice);
 
 router.get('/export', exportLimiter, authorize('admin', 'manager'), exportInvoices);

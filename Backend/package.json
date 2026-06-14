@@ -32,6 +32,7 @@
     "stock:increment-sulas-main-shop": "node scripts/increment-sulas-main-shop-stock.js",
     "import:products-csv": "node scripts/import-products-csv-for-tenant.js",
     "copy:products-between-shops": "node scripts/copy-products-between-tenant-shops.js",
+    "fix:main-shop-assignments": "node scripts/assign-users-to-main-shop.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
@@ -55,6 +56,7 @@
   "license": "ISC",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.74.0",
+    "@neondatabase/serverless": "^1.1.0",
     "@sendgrid/mail": "^8.1.6",
     "axios": "^1.7.9",
     "bcryptjs": "^2.4.3",

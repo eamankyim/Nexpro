@@ -87,6 +87,14 @@ const UserStudioLocation = require('./UserStudioLocation');
 const UserShop = require('./UserShop');
 const OnlineStoreSettings = require('./OnlineStoreSettings');
 const OnlineProductListing = require('./OnlineProductListing');
+const OnlineServiceListing = require('./OnlineServiceListing');
+const StorefrontCustomer = require('./StorefrontCustomer');
+const StorefrontWishlistItem = require('./StorefrontWishlistItem');
+const StorefrontReview = require('./StorefrontReview');
+const MarketplaceOrderPayment = require('./MarketplaceOrderPayment');
+const MarketplaceLedgerEntry = require('./MarketplaceLedgerEntry');
+const MarketplacePayout = require('./MarketplacePayout');
+const MarketplaceDispute = require('./MarketplaceDispute');
 
 // Define relationships
 Tenant.hasMany(Customer, { foreignKey: 'tenantId', as: 'customers' });
@@ -547,6 +555,15 @@ Tenant.hasMany(OnlineStoreSettings, { foreignKey: 'tenantId', as: 'onlineStoreSe
 OnlineStoreSettings.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 Shop.hasMany(OnlineStoreSettings, { foreignKey: 'shopId', as: 'onlineStoreSettings' });
 OnlineStoreSettings.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+StudioLocation.hasMany(OnlineStoreSettings, { foreignKey: 'studioLocationId', as: 'onlineStoreSettings' });
+OnlineStoreSettings.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
+
+Tenant.hasMany(OnlineServiceListing, { foreignKey: 'tenantId', as: 'onlineServiceListings' });
+OnlineServiceListing.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+StudioLocation.hasMany(OnlineServiceListing, { foreignKey: 'studioLocationId', as: 'onlineServiceListings' });
+OnlineServiceListing.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
+PricingTemplate.hasMany(OnlineServiceListing, { foreignKey: 'pricingTemplateId', as: 'onlineServiceListings' });
+OnlineServiceListing.belongsTo(PricingTemplate, { foreignKey: 'pricingTemplateId', as: 'pricingTemplate' });
 
 Tenant.hasMany(OnlineProductListing, { foreignKey: 'tenantId', as: 'onlineProductListings' });
 OnlineProductListing.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
@@ -559,6 +576,42 @@ Product.hasMany(ProductVariant, { foreignKey: 'productId', as: 'variants' });
 ProductVariant.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
 ProductVariant.hasMany(OnlineProductListing, { foreignKey: 'productVariantId', as: 'onlineListings' });
 OnlineProductListing.belongsTo(ProductVariant, { foreignKey: 'productVariantId', as: 'variant' });
+
+StorefrontCustomer.hasMany(StorefrontWishlistItem, { foreignKey: 'storefrontCustomerId', as: 'wishlistItems' });
+StorefrontWishlistItem.belongsTo(StorefrontCustomer, { foreignKey: 'storefrontCustomerId', as: 'storefrontCustomer' });
+Tenant.hasMany(StorefrontWishlistItem, { foreignKey: 'tenantId', as: 'storefrontWishlistItems' });
+StorefrontWishlistItem.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Shop.hasMany(StorefrontWishlistItem, { foreignKey: 'shopId', as: 'storefrontWishlistItems' });
+StorefrontWishlistItem.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+OnlineProductListing.hasMany(StorefrontWishlistItem, { foreignKey: 'listingId', as: 'wishlistItems' });
+StorefrontWishlistItem.belongsTo(OnlineProductListing, { foreignKey: 'listingId', as: 'listing' });
+Product.hasMany(StorefrontWishlistItem, { foreignKey: 'productId', as: 'storefrontWishlistItems' });
+StorefrontWishlistItem.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
+ProductVariant.hasMany(StorefrontWishlistItem, { foreignKey: 'productVariantId', as: 'storefrontWishlistItems' });
+StorefrontWishlistItem.belongsTo(ProductVariant, { foreignKey: 'productVariantId', as: 'variant' });
+
+StorefrontCustomer.hasMany(StorefrontReview, { foreignKey: 'storefrontCustomerId', as: 'storefrontReviews' });
+StorefrontReview.belongsTo(StorefrontCustomer, { foreignKey: 'storefrontCustomerId', as: 'storefrontCustomer' });
+Tenant.hasMany(StorefrontReview, { foreignKey: 'tenantId', as: 'storefrontReviews' });
+StorefrontReview.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Shop.hasMany(StorefrontReview, { foreignKey: 'shopId', as: 'storefrontReviews' });
+StorefrontReview.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+OnlineProductListing.hasMany(StorefrontReview, { foreignKey: 'listingId', as: 'storefrontReviews' });
+StorefrontReview.belongsTo(OnlineProductListing, { foreignKey: 'listingId', as: 'listing' });
+Product.hasMany(StorefrontReview, { foreignKey: 'productId', as: 'storefrontReviews' });
+StorefrontReview.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
+ProductVariant.hasMany(StorefrontReview, { foreignKey: 'productVariantId', as: 'storefrontReviews' });
+StorefrontReview.belongsTo(ProductVariant, { foreignKey: 'productVariantId', as: 'variant' });
+Sale.hasMany(StorefrontReview, { foreignKey: 'saleId', as: 'storefrontReviews' });
+StorefrontReview.belongsTo(Sale, { foreignKey: 'saleId', as: 'sale' });
+SaleItem.hasMany(StorefrontReview, { foreignKey: 'saleItemId', as: 'storefrontReviews' });
+StorefrontReview.belongsTo(SaleItem, { foreignKey: 'saleItemId', as: 'saleItem' });
+OnlineServiceListing.hasMany(StorefrontReview, { foreignKey: 'serviceListingId', as: 'storefrontReviews' });
+StorefrontReview.belongsTo(OnlineServiceListing, { foreignKey: 'serviceListingId', as: 'serviceListing' });
+StudioLocation.hasMany(StorefrontReview, { foreignKey: 'studioLocationId', as: 'storefrontReviews' });
+StorefrontReview.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
+Job.hasMany(StorefrontReview, { foreignKey: 'jobId', as: 'storefrontReviews' });
+StorefrontReview.belongsTo(Job, { foreignKey: 'jobId', as: 'job' });
 
 Tenant.hasMany(Barcode, { foreignKey: 'tenantId', as: 'barcodes' });
 Barcode.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
@@ -596,6 +649,50 @@ SaleItem.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
 Product.hasMany(SaleItem, { foreignKey: 'productId', as: 'saleItems' });
 SaleItem.belongsTo(ProductVariant, { foreignKey: 'productVariantId', as: 'variant' });
 ProductVariant.hasMany(SaleItem, { foreignKey: 'productVariantId', as: 'saleItems' });
+
+Tenant.hasMany(MarketplaceOrderPayment, { foreignKey: 'tenantId', as: 'marketplaceOrderPayments' });
+MarketplaceOrderPayment.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Shop.hasMany(MarketplaceOrderPayment, { foreignKey: 'shopId', as: 'marketplaceOrderPayments' });
+MarketplaceOrderPayment.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+Sale.hasOne(MarketplaceOrderPayment, { foreignKey: 'saleId', as: 'marketplacePayment' });
+MarketplaceOrderPayment.belongsTo(Sale, { foreignKey: 'saleId', as: 'sale' });
+StorefrontCustomer.hasMany(MarketplaceOrderPayment, { foreignKey: 'storefrontCustomerId', as: 'marketplaceOrderPayments' });
+MarketplaceOrderPayment.belongsTo(StorefrontCustomer, { foreignKey: 'storefrontCustomerId', as: 'storefrontCustomer' });
+
+Tenant.hasMany(MarketplaceLedgerEntry, { foreignKey: 'tenantId', as: 'marketplaceLedgerEntries' });
+MarketplaceLedgerEntry.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Shop.hasMany(MarketplaceLedgerEntry, { foreignKey: 'shopId', as: 'marketplaceLedgerEntries' });
+MarketplaceLedgerEntry.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+Sale.hasMany(MarketplaceLedgerEntry, { foreignKey: 'saleId', as: 'marketplaceLedgerEntries' });
+MarketplaceLedgerEntry.belongsTo(Sale, { foreignKey: 'saleId', as: 'sale' });
+MarketplaceOrderPayment.hasMany(MarketplaceLedgerEntry, { foreignKey: 'marketplaceOrderPaymentId', as: 'ledgerEntries' });
+MarketplaceLedgerEntry.belongsTo(MarketplaceOrderPayment, { foreignKey: 'marketplaceOrderPaymentId', as: 'marketplaceOrderPayment' });
+
+Tenant.hasMany(MarketplacePayout, { foreignKey: 'tenantId', as: 'marketplacePayouts' });
+MarketplacePayout.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Shop.hasMany(MarketplacePayout, { foreignKey: 'shopId', as: 'marketplacePayouts' });
+MarketplacePayout.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+Sale.hasMany(MarketplacePayout, { foreignKey: 'saleId', as: 'marketplacePayouts' });
+MarketplacePayout.belongsTo(Sale, { foreignKey: 'saleId', as: 'sale' });
+MarketplaceOrderPayment.hasMany(MarketplacePayout, { foreignKey: 'marketplaceOrderPaymentId', as: 'payouts' });
+MarketplacePayout.belongsTo(MarketplaceOrderPayment, { foreignKey: 'marketplaceOrderPaymentId', as: 'marketplaceOrderPayment' });
+User.hasMany(MarketplacePayout, { foreignKey: 'releasedBy', as: 'marketplacePayoutsReleased' });
+MarketplacePayout.belongsTo(User, { foreignKey: 'releasedBy', as: 'releasedByUser' });
+MarketplacePayout.hasMany(MarketplaceLedgerEntry, { foreignKey: 'marketplacePayoutId', as: 'ledgerEntries' });
+MarketplaceLedgerEntry.belongsTo(MarketplacePayout, { foreignKey: 'marketplacePayoutId', as: 'marketplacePayout' });
+
+Tenant.hasMany(MarketplaceDispute, { foreignKey: 'tenantId', as: 'marketplaceDisputes' });
+MarketplaceDispute.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Shop.hasMany(MarketplaceDispute, { foreignKey: 'shopId', as: 'marketplaceDisputes' });
+MarketplaceDispute.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+Sale.hasMany(MarketplaceDispute, { foreignKey: 'saleId', as: 'marketplaceDisputes' });
+MarketplaceDispute.belongsTo(Sale, { foreignKey: 'saleId', as: 'sale' });
+MarketplaceOrderPayment.hasMany(MarketplaceDispute, { foreignKey: 'marketplaceOrderPaymentId', as: 'disputes' });
+MarketplaceDispute.belongsTo(MarketplaceOrderPayment, { foreignKey: 'marketplaceOrderPaymentId', as: 'marketplaceOrderPayment' });
+StorefrontCustomer.hasMany(MarketplaceDispute, { foreignKey: 'storefrontCustomerId', as: 'marketplaceDisputes' });
+MarketplaceDispute.belongsTo(StorefrontCustomer, { foreignKey: 'storefrontCustomerId', as: 'storefrontCustomer' });
+User.hasMany(MarketplaceDispute, { foreignKey: 'resolvedBy', as: 'marketplaceDisputesResolved' });
+MarketplaceDispute.belongsTo(User, { foreignKey: 'resolvedBy', as: 'resolvedByUser' });
 
 // Pharmacy Management Relationships
 Tenant.hasMany(Pharmacy, { foreignKey: 'tenantId', as: 'pharmacies' });
@@ -787,6 +884,14 @@ module.exports = {
   UserShop,
   OnlineStoreSettings,
   OnlineProductListing,
+  OnlineServiceListing,
+  StorefrontCustomer,
+  StorefrontWishlistItem,
+  StorefrontReview,
+  MarketplaceOrderPayment,
+  MarketplaceLedgerEntry,
+  MarketplacePayout,
+  MarketplaceDispute,
 };
 
 

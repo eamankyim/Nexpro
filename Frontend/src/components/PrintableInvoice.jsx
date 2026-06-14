@@ -36,8 +36,17 @@ const getPrintStyles = (printConfig) => {
 const getItemProductCode = (item) => {
   const alias = item?.metadata?.productCode
     || item?.productCode
+    || item?.code
+    || item?.metadata?.barcode
+    || item?.barcode
+    || item?.sku
+    || item?.metadata?.sku
     || item?.product?.productCode
     || item?.variant?.productCode
+    || item?.variant?.barcode
+    || item?.product?.barcode
+    || item?.variant?.sku
+    || item?.product?.sku
     || item?.product?.barcodeAliases?.[0]
     || item?.variant?.barcodeAliases?.[0]
     || item?.product?.barcodes?.find?.((barcode) => barcode?.isActive !== false)?.barcode

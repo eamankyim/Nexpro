@@ -13,7 +13,7 @@ import {
   Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as ImagePicker from 'expo-image-picker';
 
 import { AppIcon } from '@/components/AppIcon';
@@ -32,10 +32,13 @@ type ProfileData = {
   profilePicture?: string;
 };
 
+const PROFILE_QUERY_KEY = ['settings', 'profile'] as const;
+
 const getStringValue = (value: unknown) => (typeof value === 'string' ? value : '');
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { user, refreshAuth } = useAuth();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const [editing, setEditing] = useState(false);
@@ -51,7 +54,7 @@ export default function ProfileScreen() {
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   const { data: profileRes, isLoading: profileLoading } = useQuery({
-    queryKey: ['settings', 'profile'],
+    queryKey: PROFILE_QUERY_KEY,
     queryFn: () => settingsService.getProfile(),
   });
 
@@ -109,13 +112,15 @@ export default function ProfileScreen() {
       setUploadingPhoto(true);
       const response = await settingsService.uploadProfilePicture(
         asset.uri,
-        asset.mimeType ?? 'image/jpeg'
+        asset.mimeType ?? 'image/jpeg',
+        asset.fileName
       );
       const updatedUser = response?.data ?? response;
       const imageUrl = getStringValue(updatedUser?.profilePicture).trim();
       if (!imageUrl) {
         throw new Error('Upload succeeded but no image was returned');
       }
+      queryClient.setQueryData(PROFILE_QUERY_KEY, { success: true, data: updatedUser });
       setProfilePreview(imageUrl);
       await refreshAuth();
       logger.info('Profile', 'Profile picture updated');
@@ -126,12 +131,14 @@ export default function ProfileScreen() {
     } finally {
       setUploadingPhoto(false);
     }
-  }, [refreshAuth]);
+  }, [queryClient, refreshAuth]);
 
   const handleRemovePhoto = useCallback(async () => {
     setUploadingPhoto(true);
     try {
-      await settingsService.updateProfile({ profilePicture: '' });
+      const response = await settingsService.updateProfile({ profilePicture: '' });
+      const updatedUser = response?.data ?? response;
+      queryClient.setQueryData(PROFILE_QUERY_KEY, { success: true, data: updatedUser });
       setProfilePreview('');
       await refreshAuth();
       Alert.alert('Removed', 'Profile picture removed.');
@@ -141,7 +148,7 @@ export default function ProfileScreen() {
     } finally {
       setUploadingPhoto(false);
     }
-  }, [refreshAuth]);
+  }, [queryClient, refreshAuth]);
 
   const handleSave = useCallback(async () => {
     const trimmedName = name.trim();
@@ -170,7 +177,9 @@ export default function ProfileScreen() {
         payload.currentPassword = currentPassword;
       }
 
-      await settingsService.updateProfile(payload);
+      const response = await settingsService.updateProfile(payload);
+      const updatedUser = response?.data ?? response;
+      queryClient.setQueryData(PROFILE_QUERY_KEY, { success: true, data: updatedUser });
       await refreshAuth();
       setCurrentPassword('');
       setNewPassword('');
@@ -184,7 +193,7 @@ export default function ProfileScreen() {
     } finally {
       setSaving(false);
     }
-  }, [name, newPassword, currentPassword, refreshAuth]);
+  }, [name, newPassword, currentPassword, queryClient, refreshAuth]);
 
   const handleResetPassword = useCallback(() => {
     const accountEmail = email.trim() || user?.email || '';
