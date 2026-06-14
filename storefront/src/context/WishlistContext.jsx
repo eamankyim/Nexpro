@@ -19,6 +19,47 @@ const getCurrentReturnTo = () => {
 
 const unwrapWishlist = (response) => response?.data?.data || response?.data || response || {};
 
+const getWishlistSnapshot = (payload) => {
+  const data = unwrapWishlist(payload);
+  const items = Array.isArray(data.items) ? data.items : [];
+  const listingIds = Array.isArray(data.listingIds)
+    ? data.listingIds
+    : items.map((item) => item.listingId).filter(Boolean);
+
+  return { items, listingIds: [...new Set(listingIds)] };
+};
+
+const buildOptimisticWishlistItem = (product, listingId) => ({
+  id: `optimistic-${listingId}`,
+  listingId,
+  product: {
+    ...product,
+    id: product?.id || listingId,
+    listingId,
+  },
+});
+
+const buildWishlistPayload = (items, listingIds) => ({
+  items,
+  listingIds: [...new Set(listingIds.filter(Boolean))],
+});
+
+const buildOptimisticWishlist = (payload, listingId, product, shouldSave) => {
+  const snapshot = getWishlistSnapshot(payload);
+  if (!shouldSave) {
+    return buildWishlistPayload(
+      snapshot.items.filter((item) => item.listingId !== listingId),
+      snapshot.listingIds.filter((id) => id !== listingId),
+    );
+  }
+
+  const nextItems = snapshot.items.some((item) => item.listingId === listingId)
+    ? snapshot.items
+    : [...snapshot.items, buildOptimisticWishlistItem(product, listingId)];
+
+  return buildWishlistPayload(nextItems, [...snapshot.listingIds, listingId]);
+};
+
 export const WishlistProvider = ({ children }) => {
   const queryClient = useQueryClient();
   const { isAuthenticated, isLoading, openShopperAuthModal } = useStorefrontAuth();
@@ -119,6 +160,18 @@ export const WishlistProvider = ({ children }) => {
 
     const wasSaved = isWishlisted(listingId);
     markPending(listingId, true);
+    await queryClient.cancelQueries({ queryKey: SHOPPER_QUERY_KEYS.wishlist });
+    const previousWishlist = queryClient.getQueryData(SHOPPER_QUERY_KEYS.wishlist);
+    const previousSnapshot = { items, listingIds };
+    const optimisticWishlist = buildOptimisticWishlist(
+      previousWishlist || buildWishlistPayload(items, listingIds),
+      listingId,
+      product,
+      !wasSaved,
+    );
+    queryClient.setQueryData(SHOPPER_QUERY_KEYS.wishlist, optimisticWishlist);
+    applyWishlist(optimisticWishlist);
+
     try {
       const response = await storeService.toggleWishlistItem(listingId);
       const data = unwrapWishlist(response);
@@ -128,30 +181,49 @@ export const WishlistProvider = ({ children }) => {
       showSuccess(wasSaved ? 'Removed from wishlist.' : 'Saved to wishlist.');
       return { ok: true, saved: !wasSaved };
     } catch (error) {
+      queryClient.setQueryData(SHOPPER_QUERY_KEYS.wishlist, previousWishlist);
+      setItems(previousSnapshot.items);
+      setListingIds(previousSnapshot.listingIds);
       showError(error, 'Could not update your wishlist.');
       return { ok: false, saved: wasSaved };
     } finally {
       markPending(listingId, false);
     }
-  }, [applyWishlist, isAuthenticated, isWishlisted, markPending, queryClient, requireWishlistAuth]);
+  }, [applyWishlist, isAuthenticated, isWishlisted, items, listingIds, markPending, queryClient, requireWishlistAuth]);
 
   const removeWishlistItem = useCallback(async (listingId) => {
     if (!listingId) return { ok: false };
     markPending(listingId, true);
+    await queryClient.cancelQueries({ queryKey: SHOPPER_QUERY_KEYS.wishlist });
+    const previousWishlist = queryClient.getQueryData(SHOPPER_QUERY_KEYS.wishlist);
+    const previousSnapshot = { items, listingIds };
+    const optimisticWishlist = buildOptimisticWishlist(
+      previousWishlist || buildWishlistPayload(items, listingIds),
+      listingId,
+      null,
+      false,
+    );
+    queryClient.setQueryData(SHOPPER_QUERY_KEYS.wishlist, optimisticWishlist);
+    applyWishlist(optimisticWishlist);
+
     try {
       const response = await storeService.removeWishlistItem(listingId);
-      applyWishlist(response);
-      queryClient.setQueryData(SHOPPER_QUERY_KEYS.wishlist, response);
+      const data = unwrapWishlist(response);
+      applyWishlist(data);
+      queryClient.setQueryData(SHOPPER_QUERY_KEYS.wishlist, data);
       await refreshAfterWishlistChange(queryClient);
       showSuccess('Removed from wishlist.');
       return { ok: true };
     } catch (error) {
+      queryClient.setQueryData(SHOPPER_QUERY_KEYS.wishlist, previousWishlist);
+      setItems(previousSnapshot.items);
+      setListingIds(previousSnapshot.listingIds);
       showError(error, 'Could not remove this item.');
       return { ok: false };
     } finally {
       markPending(listingId, false);
     }
-  }, [applyWishlist, markPending, queryClient]);
+  }, [applyWishlist, items, listingIds, markPending, queryClient]);
 
   const value = useMemo(() => ({
     count: listingIds.length,

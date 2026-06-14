@@ -118,6 +118,11 @@ const STATUS_LABELS = {
 
 const normalizeStatus = (status) => String(status || 'pending').toLowerCase();
 
+const normalizeFulfillmentStatus = (status) => {
+  const normalized = normalizeStatus(status);
+  return normalized === 'packed' ? 'ready' : normalized;
+};
+
 const formatStatusLabel = (status, context) => {
   const normalized = normalizeStatus(status);
   if (context === 'fulfillment' && normalized === 'pending') return 'New / Pending';
@@ -198,7 +203,7 @@ const getOrderTotal = (order) => Number(order.total || order.amount || order.gra
 
 const getFulfillmentStatus = (order) => {
   const rawFulfillmentStatus = order.fulfillmentStatus || order.fulfillment_state;
-  if (rawFulfillmentStatus) return normalizeStatus(rawFulfillmentStatus);
+  if (rawFulfillmentStatus) return normalizeFulfillmentStatus(rawFulfillmentStatus);
 
   const saleStatus = normalizeStatus(order.status);
   const orderStatus = normalizeStatus(order.orderStatus);
@@ -312,6 +317,131 @@ const getWhatsAppHref = (order) => {
   const orderNo = order.orderNumber || order.orderNo || order.saleNumber || order.id;
   const message = `Hi ${getCustomerName(order)}, thanks for your online order ${orderNo}. We are following up on it.`;
   return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+};
+
+const getUpdatedOrderFromResponse = (response) => {
+  const body = getBody(response);
+  const candidate = body.data || body.order || body;
+  return candidate?.order || candidate?.data || candidate;
+};
+
+const updateOrderCollection = (orders, orderId, updater, shouldKeepOrder = () => true) => {
+  if (!Array.isArray(orders)) return { value: orders, changed: false };
+
+  let changed = false;
+  const nextOrders = orders.reduce((result, order) => {
+    if (order?.id !== orderId) {
+      result.push(order);
+      return result;
+    }
+
+    changed = true;
+    const updatedOrder = updater(order);
+    if (shouldKeepOrder(updatedOrder)) result.push(updatedOrder);
+    return result;
+  }, []);
+
+  return { value: changed ? nextOrders : orders, changed };
+};
+
+const updateOrderPayload = (payload, orderId, updater, shouldKeepOrder) => {
+  if (!payload || typeof payload !== 'object') return { value: payload, changed: false };
+
+  const arrayResult = updateOrderCollection(payload, orderId, updater, shouldKeepOrder);
+  if (arrayResult.changed) return arrayResult;
+
+  const candidateKeys = ['orders', 'rows', 'data'];
+  for (const key of candidateKeys) {
+    const value = payload[key];
+    if (Array.isArray(value)) {
+      const result = updateOrderCollection(value, orderId, updater, shouldKeepOrder);
+      if (result.changed) {
+        return {
+          value: { ...payload, [key]: result.value },
+          changed: true,
+        };
+      }
+    }
+
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const result = updateOrderPayload(value, orderId, updater, shouldKeepOrder);
+      if (result.changed) {
+        return {
+          value: { ...payload, [key]: result.value },
+          changed: true,
+        };
+      }
+    }
+  }
+
+  if (payload.id === orderId) {
+    const updatedOrder = updater(payload);
+    return {
+      value: shouldKeepOrder(updatedOrder) ? updatedOrder : payload,
+      changed: true,
+    };
+  }
+
+  return { value: payload, changed: false };
+};
+
+const patchCachedOnlineOrderResponse = (response, orderId, updater, shouldKeepOrder) => {
+  const result = updateOrderPayload(response, orderId, updater, shouldKeepOrder);
+  return result.changed ? result.value : response;
+};
+
+const getStatusFilterFromOrderQueryKey = (queryKey) => {
+  const params = Array.isArray(queryKey) ? queryKey[2] : null;
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return 'all';
+  return params.status || 'all';
+};
+
+const shouldKeepOrderForStatusFilter = (order, statusFilter) => {
+  if (!statusFilter || statusFilter === 'all') return true;
+  return getFulfillmentStatus(order) === statusFilter;
+};
+
+const buildOptimisticStatusOrder = (order, status, reason) => {
+  const fulfillmentStatus = normalizeFulfillmentStatus(status);
+  const now = new Date().toISOString();
+  const metadata = order.metadata && typeof order.metadata === 'object' ? order.metadata : {};
+  const deliveryTracking = metadata.deliveryTracking && typeof metadata.deliveryTracking === 'object'
+    ? metadata.deliveryTracking
+    : {};
+  const trackingHistory = Array.isArray(deliveryTracking.history) ? deliveryTracking.history : [];
+
+  return {
+    ...order,
+    fulfillmentStatus,
+    fulfillment_state: fulfillmentStatus,
+    orderStatus: fulfillmentStatus === 'ready' ? 'ready' : order.orderStatus,
+    deliveryStatus: fulfillmentStatus === 'out_for_delivery' || fulfillmentStatus === 'delivered'
+      ? fulfillmentStatus
+      : order.deliveryStatus,
+    deliveredAt: fulfillmentStatus === 'delivered' ? (order.deliveredAt || now) : order.deliveredAt,
+    status: fulfillmentStatus === 'cancelled' ? 'cancelled' : order.status,
+    metadata: {
+      ...metadata,
+      ...(fulfillmentStatus === 'cancelled' ? {
+        cancellation: {
+          ...(metadata.cancellation || {}),
+          reason: reason || metadata.cancellation?.reason,
+          cancelledAt: metadata.cancellation?.cancelledAt || now,
+        },
+      } : {}),
+      deliveryTracking: {
+        ...deliveryTracking,
+        history: [
+          {
+            status: fulfillmentStatus,
+            at: now,
+            note: reason || 'Status update is syncing.',
+          },
+          ...trackingHistory,
+        ],
+      },
+    },
+  };
 };
 
 const canApplyStatusAction = (order, status) => {
@@ -652,21 +782,58 @@ const OnlineOrders = () => {
 
   const updateStatusMutation = useMutation({
     mutationFn: ({ orderId, status, reason }) => storeService.updateOrderStatus(orderId, status, reason ? { reason } : {}),
+    onMutate: async ({ orderId, status, reason }) => {
+      await queryClient.cancelQueries({ queryKey: ['store', 'online-orders'] });
+
+      const previousOnlineOrders = queryClient.getQueriesData({ queryKey: ['store', 'online-orders'] });
+      const previousSelectedOrder = selectedOrder;
+      const optimisticUpdater = (order) => buildOptimisticStatusOrder(order, status, reason);
+
+      previousOnlineOrders.forEach(([queryKey]) => {
+        const statusFilter = getStatusFilterFromOrderQueryKey(queryKey);
+        queryClient.setQueryData(queryKey, (currentData) => patchCachedOnlineOrderResponse(
+          currentData,
+          orderId,
+          optimisticUpdater,
+          (order) => shouldKeepOrderForStatusFilter(order, statusFilter)
+        ));
+      });
+
+      setSelectedOrder((currentOrder) => (
+        currentOrder?.id === orderId ? optimisticUpdater(currentOrder) : currentOrder
+      ));
+
+      return { previousOnlineOrders, previousSelectedOrder };
+    },
     onSuccess: (updateResponse) => {
-      const updateBody = getBody(updateResponse);
-      const updatedOrder = updateBody.data || updateBody.order || updateBody;
+      const updatedOrder = getUpdatedOrderFromResponse(updateResponse);
       showSuccess(updatedOrder?.status === 'refunded' ? 'Online order cancelled and buyer refund recorded' : 'Online order status updated');
       refreshAfterOnlineOrderChange(queryClient);
       setCancelOrderRequest(null);
       setCancellationReason('');
       if (updatedOrder?.id) {
+        queryClient.getQueriesData({ queryKey: ['store', 'online-orders'] }).forEach(([queryKey]) => {
+          const statusFilter = getStatusFilterFromOrderQueryKey(queryKey);
+          queryClient.setQueryData(queryKey, (currentData) => patchCachedOnlineOrderResponse(
+            currentData,
+            updatedOrder.id,
+            () => updatedOrder,
+            (order) => shouldKeepOrderForStatusFilter(order, statusFilter)
+          ));
+        });
         queryClient.setQueryData(['store', 'online-orders', updatedOrder.id], updateResponse);
         setSelectedOrder((currentOrder) => (
           currentOrder?.id === updatedOrder.id ? updatedOrder : currentOrder
         ));
       }
     },
-    onError: (mutationError) => {
+    onError: (mutationError, variables, context) => {
+      context?.previousOnlineOrders?.forEach(([queryKey, previousData]) => {
+        queryClient.setQueryData(queryKey, previousData);
+      });
+      setSelectedOrder((currentOrder) => (
+        currentOrder?.id === variables?.orderId ? context?.previousSelectedOrder : currentOrder
+      ));
       showError(mutationError, 'Failed to update online order status');
     },
   });

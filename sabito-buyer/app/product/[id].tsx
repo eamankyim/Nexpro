@@ -10,11 +10,51 @@ import { ErrorState, PrimaryButton, Screen, SecondaryButton } from '@/components
 import { useAuth } from '@/context/AuthContext';
 import { useCart } from '@/context/CartContext';
 import { BRAND } from '@/constants';
-import { marketplaceApi } from '@/services/marketplaceApi';
+import { marketplaceApi, type MarketplaceProduct } from '@/services/marketplaceApi';
 import { reviewsApi, wishlistApi } from '@/services/ordersApi';
 import { formatCurrency, resolveImageUrl } from '@/utils/format';
 import { analytics } from '@/utils/analytics';
-import { refreshAfterWishlistChange } from '@/utils/queryInvalidation';
+import { buyerQueryKeys, QUERY_STALE, refreshAfterWishlistChange } from '@/utils/queryInvalidation';
+
+type WishlistItem = {
+  listingId: string;
+  title?: string;
+  publicPrice?: number | string;
+  imageUrl?: string | null;
+  currency?: string;
+};
+
+const getWishlistItems = (payload: unknown): WishlistItem[] => {
+  const data = (payload as { data?: WishlistItem[] } | null)?.data;
+  return Array.isArray(data) ? data : [];
+};
+
+const buildWishlistItem = (product: MarketplaceProduct, listingId: string): WishlistItem => ({
+  listingId,
+  title: product.title,
+  publicPrice: product.publicPrice,
+  imageUrl: product.images?.[0] || null,
+  currency: product.store?.currency || 'GHS',
+});
+
+const getOptimisticWishlist = (
+  previous: unknown,
+  listingId: string,
+  product: MarketplaceProduct | undefined,
+  shouldSave: boolean,
+) => {
+  const items = getWishlistItems(previous);
+  const nextItems = shouldSave
+    ? items.some((item) => item.listingId === listingId)
+      ? items
+      : [...items, product ? buildWishlistItem(product, listingId) : { listingId }]
+    : items.filter((item) => item.listingId !== listingId);
+
+  return {
+    ...(previous as Record<string, unknown> | null),
+    data: nextItems,
+  };
+};
 
 export default function ProductDetailScreen() {
   const queryClient = useQueryClient();
@@ -38,6 +78,15 @@ export default function ProductDetailScreen() {
 
   const product = data?.data;
 
+  const wishlistQuery = useQuery({
+    queryKey: buyerQueryKeys.wishlist,
+    queryFn: () => wishlistApi.list(),
+    enabled: isAuthenticated,
+    staleTime: QUERY_STALE.LIST,
+    refetchOnWindowFocus: false,
+  });
+  const isSavedToWishlist = getWishlistItems(wishlistQuery.data).some((item) => item.listingId === id);
+
   const relatedQuery = useQuery({
     queryKey: ['related-products', product?.store?.slug, product?.category?.name],
     queryFn: () => marketplaceApi.getProducts({
@@ -50,9 +99,31 @@ export default function ProductDetailScreen() {
 
   const wishlistMutation = useMutation({
     mutationFn: () => wishlistApi.toggle(id),
-    onSuccess: async (res) => {
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: buyerQueryKeys.wishlist });
+      const previous = queryClient.getQueryData(buyerQueryKeys.wishlist);
+      const hadPrevious = previous !== undefined;
+      const wasSaved = isSavedToWishlist;
+      const optimistic = getOptimisticWishlist(previous, id, product, !wasSaved);
+      queryClient.setQueryData(buyerQueryKeys.wishlist, optimistic);
+      return { hadPrevious, previous, wasSaved };
+    },
+    onError: (error, _variables, context) => {
+      if (context?.hadPrevious) {
+        queryClient.setQueryData(buyerQueryKeys.wishlist, context.previous);
+      } else {
+        queryClient.removeQueries({ queryKey: buyerQueryKeys.wishlist, exact: true });
+      }
+      Alert.alert('Wishlist update failed', (error as { message?: string }).message || 'Try again');
+    },
+    onSuccess: async (res, _variables, context) => {
+      const saved = typeof res?.data?.saved === 'boolean' ? res.data.saved : !context?.wasSaved;
+      queryClient.setQueryData(
+        buyerQueryKeys.wishlist,
+        (current: unknown) => getOptimisticWishlist(current, id, product, saved),
+      );
       await refreshAfterWishlistChange(queryClient);
-      Alert.alert(res?.data?.saved ? 'Saved to wishlist' : 'Removed from wishlist');
+      Alert.alert(saved ? 'Saved to wishlist' : 'Removed from wishlist');
     },
   });
   const images = useMemo(
@@ -173,7 +244,11 @@ export default function ProductDetailScreen() {
           <View style={styles.actions}>
             <PrimaryButton label={unavailable ? 'Unavailable' : 'Add to cart'} onPress={onAddToCart} disabled={unavailable} />
             {isAuthenticated ? (
-              <SecondaryButton label="Toggle wishlist" onPress={() => wishlistMutation.mutate()} />
+              <SecondaryButton
+                label={isSavedToWishlist ? 'Remove from wishlist' : 'Save to wishlist'}
+                onPress={() => wishlistMutation.mutate()}
+                disabled={wishlistMutation.isPending}
+              />
             ) : (
               <SecondaryButton label="Sign in to save wishlist" onPress={() => router.push('/login')} />
             )}
