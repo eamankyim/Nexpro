@@ -208,6 +208,8 @@ async function dispatchExpoPushToTargets({
         type,
         tenantId,
         link,
+        orderId: metadata?.orderId || metadata?.saleId,
+        saleId: metadata?.saleId,
         metadata
       }
     }));

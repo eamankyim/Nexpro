@@ -23,7 +23,7 @@ import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
 import { getCurrentNetworkOnline, registerReactQueryOnlineManager } from '@/utils/connectivity';
-import { registerPushNotifications } from '@/utils/pushNotifications';
+import { observeSellerNotificationResponses, registerPushNotifications } from '@/utils/pushNotifications';
 
 export { ErrorBoundary } from 'expo-router';
 
@@ -214,6 +214,8 @@ function RootLayoutNav() {
       router.replace('/(tabs)/deliveries');
     }
   }, [isDriver, pathname, router, user]);
+
+  useEffect(() => observeSellerNotificationResponses((route) => router.push(route as never)), [router]);
 
   return (
     <NavigationThemeProvider value={resolvedTheme === 'dark' ? DarkTheme : DefaultTheme}>

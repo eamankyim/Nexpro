@@ -19,6 +19,9 @@ const DEFAULT_STATE: PushRegistrationState = {
   message: 'Push notifications have not been checked yet.',
 };
 
+type NotificationData = Record<string, unknown>;
+export type SellerNotificationRoute = '/(tabs)/online-orders' | '/(tabs)/products' | `/store-order/${string}`;
+
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
@@ -30,6 +33,64 @@ Notifications.setNotificationHandler({
 });
 
 const getPlatform = () => (Platform.OS === 'ios' ? 'ios' : 'android');
+
+const asRecord = (value: unknown): NotificationData | null => (
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as NotificationData) : null
+);
+
+const getRouteId = (value: unknown) => {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return '';
+};
+
+export function getSellerNotificationRoute(data: unknown): SellerNotificationRoute | null {
+  const payload = asRecord(data);
+  if (!payload) return null;
+
+  const metadata = asRecord(payload.metadata);
+  const link = typeof payload.link === 'string' ? payload.link : '';
+  const source = metadata?.source;
+  const saleId = getRouteId(payload.saleId) || getRouteId(metadata?.saleId);
+
+  if (payload.type === 'order' && (source === 'online_store' || link.includes('/store/orders'))) {
+    return saleId ? `/store-order/${encodeURIComponent(saleId)}` : '/(tabs)/online-orders';
+  }
+
+  if (payload.type === 'inventory' && (source === 'stock_alert' || link.includes('/products'))) {
+    return '/(tabs)/products';
+  }
+
+  return null;
+}
+
+export function observeSellerNotificationResponses(onRoute: (route: SellerNotificationRoute) => void) {
+  let isMounted = true;
+
+  const handleResponse = (response: Notifications.NotificationResponse | null) => {
+    if (!response || !isMounted) return;
+    const route = getSellerNotificationRoute(response.notification.request.content.data);
+    if (route) onRoute(route);
+  };
+
+  Notifications.getLastNotificationResponseAsync()
+    .then((response) => {
+      handleResponse(response);
+      if (response) return Notifications.clearLastNotificationResponseAsync();
+      return undefined;
+    })
+    .catch(() => undefined);
+
+  const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+    handleResponse(response);
+    Notifications.clearLastNotificationResponseAsync().catch(() => undefined);
+  });
+
+  return () => {
+    isMounted = false;
+    subscription.remove();
+  };
+}
 
 export async function getStoredPushRegistrationState() {
   try {

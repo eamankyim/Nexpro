@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef } from 'react';
 import { AppState, AppStateStatus, View } from 'react-native';
@@ -8,7 +8,7 @@ import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { CartProvider } from '@/context/CartContext';
 import { BRAND } from '@/constants';
 import { registerReactQueryOnlineManager } from '@/utils/connectivity';
-import { registerPushNotifications } from '@/utils/pushNotifications';
+import { observeBuyerNotificationResponses, registerPushNotifications } from '@/utils/pushNotifications';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -51,6 +51,14 @@ function PushRegistrationSync() {
   return null;
 }
 
+function NotificationTapRouter() {
+  const router = useRouter();
+
+  useEffect(() => observeBuyerNotificationResponses((route) => router.push(route)), [router]);
+
+  return null;
+}
+
 export default function RootLayout() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -60,6 +68,7 @@ export default function RootLayout() {
             <StatusBar style="dark" />
             <ConnectivityBanner />
             <PushRegistrationSync />
+            <NotificationTapRouter />
             <Stack
               screenOptions={{
                 headerStyle: { backgroundColor: '#fff' },
