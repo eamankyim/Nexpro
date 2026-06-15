@@ -48,6 +48,7 @@ const {
   attachStoreReviewSummaries,
   getPublicReviewSummary,
 } = require('../services/storefrontReviewService');
+const { dispatchExpoPushToStorefrontCustomers } = require('../services/pushNotificationService');
 const {
   CUSTOMER_CONFIRMED_DELIVERY_ERROR_CODE,
   CUSTOMER_CONFIRMED_DELIVERY_ERROR_MESSAGE,
@@ -1540,6 +1541,86 @@ const canTransitionStoreOrder = (order, action) => {
   return (STORE_ORDER_STATUS_TRANSITIONS[currentState] || []).includes(targetState);
 };
 
+const BUYER_ORDER_STATUS_COPY = {
+  processing: {
+    title: 'Order update',
+    message: 'Your order is being prepared by the seller.',
+  },
+  ready: {
+    title: 'Order ready',
+    message: 'Your order is packed and ready for delivery.',
+  },
+  packed: {
+    title: 'Order packed',
+    message: 'Your order is packed and ready for delivery.',
+  },
+  shipped: {
+    title: 'Order on the way',
+    message: 'Your order is on the way.',
+  },
+  out_for_delivery: {
+    title: 'Order on the way',
+    message: 'Your order is out for delivery.',
+  },
+  delivered: {
+    title: 'Order delivered',
+    message: 'Your order was marked delivered. Confirm when you have received it.',
+  },
+  cancelled: {
+    title: 'Order cancelled',
+    message: 'Your order was cancelled by the seller.',
+  },
+};
+
+const getStorefrontCustomerIdForOrder = (order) => {
+  const metadata = order?.metadata && typeof order.metadata === 'object' && !Array.isArray(order.metadata)
+    ? order.metadata
+    : {};
+  return metadata.storefrontCustomerId || null;
+};
+
+const dispatchBuyerOrderStatusPush = async ({ tenantId, order, action }) => {
+  const storefrontCustomerId = getStorefrontCustomerIdForOrder(order);
+  if (!tenantId || !order?.id || !storefrontCustomerId) return;
+
+  const copy = BUYER_ORDER_STATUS_COPY[action];
+  if (!copy) return;
+
+  try {
+    const saleNumber = order.saleNumber || `Order #${order.id}`;
+    const result = await dispatchExpoPushToStorefrontCustomers({
+      tenantId,
+      storefrontCustomerIds: [storefrontCustomerId],
+      title: copy.title,
+      message: `${copy.message} ${saleNumber}`,
+      type: 'order_update',
+      priority: action === 'cancelled' || action === 'delivered' ? 'high' : 'normal',
+      metadata: {
+        saleId: order.id,
+        saleNumber,
+        action,
+        source: ONLINE_STORE_SOURCE,
+      },
+      link: `/order/${order.id}`,
+    });
+    if (result.attempted > 0) {
+      console.log('[StorefrontPush] Buyer order status push dispatched', {
+        saleId: order.id,
+        action,
+        attempted: result.attempted,
+        sent: result.sent,
+        invalidTokens: result.invalidTokens,
+      });
+    }
+  } catch (error) {
+    console.error('[StorefrontPush] Buyer order status push failed', {
+      saleId: order.id,
+      action,
+      error: error.message,
+    });
+  }
+};
+
 const appendDeliveryTrackingMetadata = (metadata, action, actorUserId = null, extra = {}) => {
   const nextMetadata = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
     ? { ...metadata }
@@ -2448,6 +2529,7 @@ exports.updateStoreOrderStatus = async (req, res, next) => {
 
     await transaction.commit();
     invalidateSaleListCache(req.tenantId);
+    await dispatchBuyerOrderStatusPush({ tenantId: req.tenantId, order, action });
 
     const updatedOrder = await Sale.findOne({
       where: { id: order.id, tenantId: req.tenantId },

@@ -1,5 +1,5 @@
 const axios = require('axios');
-const { User } = require('../models');
+const { StorefrontCustomer, User } = require('../models');
 const {
   mergeNotificationPreferences,
   isNotificationChannelEnabled,
@@ -69,6 +69,49 @@ async function removeInvalidUserPushTokens(invalidTokensByUserId) {
   }));
 }
 
+const getStorefrontCustomerMetadata = (customer) => (
+  customer?.metadata && typeof customer.metadata === 'object' && !Array.isArray(customer.metadata)
+    ? { ...customer.metadata }
+    : {}
+);
+
+const getStorefrontNotificationPreferences = (customer) => {
+  const metadata = getStorefrontCustomerMetadata(customer);
+  return metadata.notificationPreferences && typeof metadata.notificationPreferences === 'object'
+    ? metadata.notificationPreferences
+    : {};
+};
+
+const isStorefrontOrderUpdatesEnabled = (customer) => (
+  getStorefrontNotificationPreferences(customer).orderUpdates !== false
+);
+
+async function removeInvalidStorefrontCustomerPushTokens(invalidTokensByCustomerId) {
+  const entries = Array.from(invalidTokensByCustomerId.entries()).filter(([, tokens]) => tokens.size > 0);
+  if (entries.length === 0) return;
+
+  await Promise.all(entries.map(async ([customerId, invalidTokens]) => {
+    const customer = await StorefrontCustomer.findByPk(customerId, {
+      attributes: ['id', 'metadata']
+    });
+    if (!customer) return;
+
+    const metadata = getStorefrontCustomerMetadata(customer);
+    const nextDevices = getStoredPushDevices(metadata)
+      .filter((device) => !invalidTokens.has(device.token))
+      .slice(0, MAX_STORED_PUSH_DEVICES);
+
+    if (nextDevices.length !== getStoredPushDevices(metadata).length) {
+      await customer.update({
+        metadata: {
+          ...metadata,
+          pushDevices: nextDevices
+        }
+      });
+    }
+  }));
+}
+
 async function getPushTargetsForUsers({ userIds, tenantId, category }) {
   const uniqueUserIds = [...new Set((userIds || []).filter(Boolean))];
   if (uniqueUserIds.length === 0) return [];
@@ -105,26 +148,54 @@ async function getPushTargetsForUsers({ userIds, tenantId, category }) {
   return targets;
 }
 
-async function dispatchExpoPushToUsers({
+async function getPushTargetsForStorefrontCustomers({ storefrontCustomerIds }) {
+  const uniqueCustomerIds = [...new Set((storefrontCustomerIds || []).filter(Boolean))];
+  if (uniqueCustomerIds.length === 0) return [];
+
+  const customers = await StorefrontCustomer.findAll({
+    where: { id: uniqueCustomerIds },
+    attributes: ['id', 'metadata']
+  });
+
+  const seenTokens = new Set();
+  const targets = [];
+  for (const customer of customers) {
+    if (!isStorefrontOrderUpdatesEnabled(customer)) {
+      continue;
+    }
+
+    const metadata = getStorefrontCustomerMetadata(customer);
+    for (const device of getStoredPushDevices(metadata)) {
+      if (!isExpoPushToken(device.token)) {
+        continue;
+      }
+      if (seenTokens.has(device.token)) {
+        continue;
+      }
+      seenTokens.add(device.token);
+      targets.push({ ownerId: customer.id, token: device.token });
+    }
+  }
+
+  return targets;
+}
+
+async function dispatchExpoPushToTargets({
+  targets,
   tenantId,
-  userIds,
   title,
   message,
   type = 'info',
   priority = 'normal',
   metadata = {},
-  link = null
+  link = null,
+  removeInvalidTokens
 }) {
-  if (!title || !Array.isArray(userIds) || userIds.length === 0) {
+  if (!title || !Array.isArray(targets) || targets.length === 0) {
     return { sent: 0, attempted: 0, invalidTokens: 0 };
   }
 
-  const targets = await getPushTargetsForUsers({ userIds, tenantId, category: type });
-  if (targets.length === 0) {
-    return { sent: 0, attempted: 0, invalidTokens: 0 };
-  }
-
-  const invalidTokensByUserId = new Map();
+  const invalidTokensByOwnerId = new Map();
   let sent = 0;
 
   for (const targetChunk of chunk(targets, EXPO_PUSH_CHUNK_SIZE)) {
@@ -159,9 +230,9 @@ async function dispatchExpoPushToUsers({
           return;
         }
         if (receipt?.details?.error === 'DeviceNotRegistered') {
-          const tokens = invalidTokensByUserId.get(target.userId) || new Set();
+          const tokens = invalidTokensByOwnerId.get(target.ownerId) || new Set();
           tokens.add(target.token);
-          invalidTokensByUserId.set(target.userId, tokens);
+          invalidTokensByOwnerId.set(target.ownerId, tokens);
         }
       });
     } catch (error) {
@@ -172,20 +243,79 @@ async function dispatchExpoPushToUsers({
     }
   }
 
-  await removeInvalidUserPushTokens(invalidTokensByUserId);
+  await removeInvalidTokens(invalidTokensByOwnerId);
 
   return {
     sent,
     attempted: targets.length,
-    invalidTokens: Array.from(invalidTokensByUserId.values()).reduce(
+    invalidTokens: Array.from(invalidTokensByOwnerId.values()).reduce(
       (total, tokens) => total + tokens.size,
       0
     )
   };
 }
 
+async function dispatchExpoPushToUsers({
+  tenantId,
+  userIds,
+  title,
+  message,
+  type = 'info',
+  priority = 'normal',
+  metadata = {},
+  link = null
+}) {
+  if (!title || !Array.isArray(userIds) || userIds.length === 0) {
+    return { sent: 0, attempted: 0, invalidTokens: 0 };
+  }
+
+  const targets = (await getPushTargetsForUsers({ userIds, tenantId, category: type }))
+    .map((target) => ({ ownerId: target.userId, token: target.token }));
+  return dispatchExpoPushToTargets({
+    targets,
+    tenantId,
+    title,
+    message,
+    type,
+    priority,
+    metadata,
+    link,
+    removeInvalidTokens: removeInvalidUserPushTokens
+  });
+}
+
+async function dispatchExpoPushToStorefrontCustomers({
+  tenantId,
+  storefrontCustomerIds,
+  title,
+  message,
+  type = 'order_update',
+  priority = 'normal',
+  metadata = {},
+  link = null
+}) {
+  if (!title || !Array.isArray(storefrontCustomerIds) || storefrontCustomerIds.length === 0) {
+    return { sent: 0, attempted: 0, invalidTokens: 0 };
+  }
+
+  const targets = await getPushTargetsForStorefrontCustomers({ storefrontCustomerIds });
+  return dispatchExpoPushToTargets({
+    targets,
+    tenantId,
+    title,
+    message,
+    type,
+    priority,
+    metadata,
+    link,
+    removeInvalidTokens: removeInvalidStorefrontCustomerPushTokens
+  });
+}
+
 module.exports = {
   dispatchExpoPushToUsers,
+  dispatchExpoPushToStorefrontCustomers,
+  getPushTargetsForStorefrontCustomers,
   getPushTargetsForUsers,
   isExpoPushToken
 };

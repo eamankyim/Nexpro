@@ -60,6 +60,14 @@ jest.mock('../../../services/tradeAssuranceService', () => ({
   releaseMarketplaceOrderPayment: jest.fn(),
 }));
 
+jest.mock('../../../services/pushNotificationService', () => ({
+  dispatchExpoPushToStorefrontCustomers: jest.fn().mockResolvedValue({
+    sent: 1,
+    attempted: 1,
+    invalidTokens: 0,
+  }),
+}));
+
 const { sequelize } = require('../../../config/database');
 const { Sale, SaleActivity, Job } = require('../../../models');
 const { invalidateSaleListCache } = require('../../../middleware/cache');
@@ -70,6 +78,7 @@ const {
   listTradeAssurancePayments,
   markDeliveryReleaseWindowForSale,
 } = require('../../../services/tradeAssuranceService');
+const { dispatchExpoPushToStorefrontCustomers } = require('../../../services/pushNotificationService');
 const storeController = require('../../../controllers/storeController');
 
 describe('storeController online orders', () => {
@@ -360,10 +369,11 @@ describe('storeController online orders', () => {
     sequelize.transaction.mockResolvedValue(transaction);
     const order = {
       id: 'sale-1',
+      saleNumber: 'SALE-1',
       status: 'pending',
       orderStatus: null,
       deliveryStatus: null,
-      metadata: {},
+      metadata: { source: 'online_store', storefrontCustomerId: 'buyer-1' },
       update: jest.fn().mockResolvedValue(undefined),
     };
     Sale.findOne
@@ -409,6 +419,19 @@ describe('storeController online orders', () => {
     );
     expect(transaction.commit).toHaveBeenCalled();
     expect(invalidateSaleListCache).toHaveBeenCalledWith('tenant-1');
+    expect(dispatchExpoPushToStorefrontCustomers).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'tenant-1',
+      storefrontCustomerIds: ['buyer-1'],
+      title: 'Order on the way',
+      message: expect.stringContaining('SALE-1'),
+      type: 'order_update',
+      metadata: expect.objectContaining({
+        saleId: 'sale-1',
+        action: 'out_for_delivery',
+        source: 'online_store',
+      }),
+      link: '/order/sale-1',
+    }));
     expect(res.status).toHaveBeenCalledWith(200);
     expect(next).not.toHaveBeenCalled();
   });
