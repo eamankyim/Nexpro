@@ -1,6 +1,8 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  Clock,
+  CornerDownLeft,
   Lightbulb,
   LogOut,
   Settings,
@@ -39,10 +41,20 @@ export function Header() {
   const navigate = useNavigate();
   const { user, logout, activeTenant, isManager } = useAuth();
   const { hintMode, toggleHintMode } = useHintMode();
-  const { placeholder, scope, searchValue, setSearchValue } = useSmartSearch();
+  const {
+    placeholder,
+    scope,
+    searchValue,
+    setSearchValue,
+    recentSearches,
+    saveRecentSearch,
+    clearRecentSearches,
+  } = useSmartSearch();
   const { isMobile, isTablet } = useResponsive();
   const safeAreaInsets = useSafeAreaInsets();
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
+  const [isSearchSuggestionsOpen, setIsSearchSuggestionsOpen] = useState(false);
+  const [activeRecentIndex, setActiveRecentIndex] = useState(-1);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const searchInputRef = useRef(null);
   const searchContainerRef = useRef(null);
@@ -64,6 +76,8 @@ export function Header() {
 
   const handleSearchClose = () => {
     setIsSearchExpanded(false);
+    setIsSearchSuggestionsOpen(false);
+    setActiveRecentIndex(-1);
     // Optionally clear search on close
     // setSearchValue('');
   };
@@ -86,16 +100,21 @@ export function Header() {
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (
-        isSearchExpanded &&
+        (isSearchExpanded || isSearchSuggestionsOpen) &&
         searchContainerRef.current &&
         !searchContainerRef.current.contains(event.target) &&
         !searchInputRef.current?.contains(event.target)
       ) {
-        handleSearchClose();
+        if (isSearchExpanded) {
+          handleSearchClose();
+        } else {
+          setIsSearchSuggestionsOpen(false);
+          setActiveRecentIndex(-1);
+        }
       }
     };
 
-    if (isSearchExpanded) {
+    if (isSearchExpanded || isSearchSuggestionsOpen) {
       document.addEventListener('mousedown', handleClickOutside);
       document.addEventListener('touchstart', handleClickOutside);
     }
@@ -104,21 +123,134 @@ export function Header() {
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('touchstart', handleClickOutside);
     };
-  }, [isSearchExpanded]);
+  }, [isSearchExpanded, isSearchSuggestionsOpen]);
 
   // Close search on blur if empty
   const handleSearchBlur = (e) => {
-    if (isMobile && !searchValue && !e.currentTarget.contains(e.relatedTarget)) {
-      // Delay to allow click events to fire first
-      setTimeout(() => {
+    if (!e.currentTarget.contains(e.relatedTarget)) {
+      // Delay to allow click events to fire first.
+      window.setTimeout(() => {
         if (!searchValue) {
           handleSearchClose();
         }
+        setIsSearchSuggestionsOpen(false);
+        setActiveRecentIndex(-1);
       }, 200);
     }
   };
 
   const closeMenu = () => setUserMenuOpen(false);
+
+  const recentSearchOptions = useMemo(() => {
+    const term = searchValue.trim().toLowerCase();
+    return (recentSearches || []).filter((recentTerm) => {
+      const normalized = String(recentTerm || '').trim().toLowerCase();
+      if (!normalized) return false;
+      return !term || normalized.includes(term);
+    });
+  }, [recentSearches, searchValue]);
+
+  const hasSearchValue = searchValue.trim().length > 0;
+  const shouldShowRecentSearches = isSearchSuggestionsOpen && recentSearchOptions.length > 0;
+
+  const commitSearchTerm = useCallback((term) => {
+    const nextTerm = String(term || '').trim();
+    if (!nextTerm) return;
+
+    setSearchValue(nextTerm);
+    saveRecentSearch(nextTerm);
+    setIsSearchSuggestionsOpen(false);
+    setActiveRecentIndex(-1);
+    searchInputRef.current?.focus();
+  }, [saveRecentSearch, setSearchValue]);
+
+  const handleSearchChange = useCallback((event) => {
+    setSearchValue(event.target.value);
+    setIsSearchSuggestionsOpen(true);
+    setActiveRecentIndex(-1);
+  }, [setSearchValue]);
+
+  const handleSearchFocus = useCallback(() => {
+    setIsSearchSuggestionsOpen(true);
+  }, []);
+
+  const handleSearchKeyDown = useCallback((event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      const selectedTerm = activeRecentIndex >= 0 ? recentSearchOptions[activeRecentIndex] : searchValue;
+      commitSearchTerm(selectedTerm);
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      setIsSearchSuggestionsOpen(false);
+      setActiveRecentIndex(-1);
+      return;
+    }
+
+    if (!recentSearchOptions.length) return;
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setIsSearchSuggestionsOpen(true);
+      setActiveRecentIndex((current) => (current + 1) % recentSearchOptions.length);
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setIsSearchSuggestionsOpen(true);
+      setActiveRecentIndex((current) => (
+        current <= 0 ? recentSearchOptions.length - 1 : current - 1
+      ));
+    }
+  }, [activeRecentIndex, commitSearchTerm, recentSearchOptions, searchValue]);
+
+  const renderRecentSearches = () => {
+    if (!shouldShowRecentSearches) return null;
+
+    return (
+      <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-50 overflow-hidden rounded-2xl border border-border bg-popover text-popover-foreground">
+        <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
+          <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <Clock className="h-3.5 w-3.5" />
+            Recent searches
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => clearRecentSearches()}
+          >
+            Clear
+          </Button>
+        </div>
+        <div className="py-1">
+          {recentSearchOptions.map((recentTerm, index) => (
+            <button
+              key={`${scope}-${recentTerm}`}
+              type="button"
+              className={cn(
+                'flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors',
+                activeRecentIndex === index ? 'bg-muted text-foreground' : 'hover:bg-muted/70'
+              )}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => commitSearchTerm(recentTerm)}
+            >
+              <span className="truncate">{recentTerm}</span>
+              <CornerDownLeft className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            </button>
+          ))}
+        </div>
+        {hasSearchValue ? (
+          <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
+            Press Enter to search for "{searchValue.trim()}".
+          </div>
+        ) : null}
+      </div>
+    );
+  };
 
   return (
     <header 
@@ -167,7 +299,9 @@ export function Header() {
                     type="search"
                     placeholder={placeholder}
                     value={searchValue}
-                    onChange={(e) => setSearchValue(e.target.value)}
+                    onChange={handleSearchChange}
+                    onFocus={handleSearchFocus}
+                    onKeyDown={handleSearchKeyDown}
                     onBlur={handleSearchBlur}
                     className="pl-10 pr-10 w-full min-h-[44px]"
                     style={{ borderRadius: '32px' }}
@@ -180,6 +314,7 @@ export function Header() {
                       <X className="h-6 w-6 text-muted-foreground" />
                     </button>
                   )}
+                  {renderRecentSearches()}
                 </div>
                 <Button
                   variant="ghost"
@@ -212,10 +347,14 @@ export function Header() {
                 type="search"
                 placeholder={placeholder}
                 value={searchValue}
-                onChange={(e) => setSearchValue(e.target.value)}
+                onChange={handleSearchChange}
+                onFocus={handleSearchFocus}
+                onKeyDown={handleSearchKeyDown}
+                onBlur={handleSearchBlur}
                 className="pl-10 w-full"
                 style={{ borderRadius: '32px' }}
               />
+                  {renderRecentSearches()}
                 </div>
               </TooltipTrigger>
               <TooltipContent side="bottom">Quick search across customers, products, sales, and more</TooltipContent>

@@ -1,6 +1,6 @@
 export default {
   expo: {
-    name: 'ABS Go',
+    name: 'ABS',
     slug: 'abs',
     version: '1.0.0',
     orientation: 'portrait',
@@ -18,8 +18,8 @@ export default {
       buildNumber: '1',
       supportsTablet: true,
       infoPlist: {
-        NSCameraUsageDescription: 'ABS Go (African Business Suite) uses the camera to scan products and attach business images when you choose to use those features.',
-        NSPhotoLibraryUsageDescription: 'ABS Ghana (African Business Suite) uses your photo library to upload logos, profile photos, receipts, and other business images you choose.',
+        NSCameraUsageDescription: 'ABS (African Business Suite) uses the camera to scan products and attach business images when you choose to use those features.',
+        NSPhotoLibraryUsageDescription: 'ABS (African Business Suite) uses your photo library to upload logos, profile photos, receipts, and other business images you choose.',
       },
       config: {
         usesNonExemptEncryption: false,

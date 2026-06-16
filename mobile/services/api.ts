@@ -193,16 +193,22 @@ api.interceptors.response.use(
     const url = error.config?.url?.replace(error.config.baseURL || '', '') || 'unknown';
     const status = error.response?.status;
     const msg = error.response?.data?.error || error.response?.data?.message || error.message;
-    const errorCode = error.response?.data?.code;
+    const errorCode = error.response?.data?.errorCode || error.response?.data?.code;
     const isNetworkError =
       error.code === 'ECONNREFUSED' ||
       error.code === 'ECONNABORTED' ||
       error.message === 'Network Error' ||
       (typeof error.message === 'string' && error.message.toLowerCase().includes('timeout'));
+    const assistantProviderErrorCodes = [
+      'OPENAI_NOT_CONFIGURED',
+      'OPENAI_INVALID_KEY',
+      'AI_PROVIDER_BILLING_REQUIRED',
+      'AI_PROVIDER_UNAVAILABLE',
+    ];
     const isExpectedAssistantConfigError =
       url === '/assistant/chat' &&
-      status === 503 &&
-      ['OPENAI_NOT_CONFIGURED', 'OPENAI_INVALID_KEY'].includes(errorCode);
+      [402, 503].includes(status || 0) &&
+      assistantProviderErrorCodes.includes(errorCode);
 
     if (isNetworkError) {
       logger.warn('API', `← ${url}: ${error.message || 'unreachable'}. Check backend is running and EXPO_PUBLIC_API_URL.`);

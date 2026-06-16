@@ -1,0 +1,174 @@
+jest.mock('../../../config/database', () => ({
+  sequelize: {
+    col: jest.fn((name) => ({ col: name })),
+    fn: jest.fn((name, ...args) => ({ fn: name, args })),
+    literal: jest.fn((value) => ({ literal: value })),
+    where: jest.fn((left, right) => ({ where: [left, right] })),
+    query: jest.fn(),
+    QueryTypes: { SELECT: 'SELECT' },
+  },
+}));
+
+jest.mock('../../../models', () => ({
+  Customer: { count: jest.fn(), findAll: jest.fn() },
+  Invoice: { sum: jest.fn(), count: jest.fn(), findAll: jest.fn() },
+  Expense: { sum: jest.fn() },
+  Job: { count: jest.fn() },
+  Sale: { sum: jest.fn(), findAll: jest.fn() },
+  Tenant: { findByPk: jest.fn() },
+  Setting: { findOne: jest.fn() },
+  Product: { findAll: jest.fn() },
+}));
+
+jest.mock('../../../services/openaiService', () => ({
+  chatWithContext: jest.fn(),
+}));
+
+jest.mock('../../../services/tenantAiSettingsService', () => ({
+  getTenantAnthropicApiKey: jest.fn(),
+}));
+
+const openaiService = require('../../../services/openaiService');
+const { getTenantAnthropicApiKey } = require('../../../services/tenantAiSettingsService');
+const { Customer, Invoice, Expense, Job, Sale, Tenant, Setting, Product } = require('../../../models');
+const { sequelize } = require('../../../config/database');
+const { clearBillingCircuit } = require('../../../utils/aiProviderErrors');
+const { chat } = require('../../../controllers/assistantController');
+
+const mockAssistantContextDependencies = () => {
+  Customer.count.mockResolvedValue(0);
+  Customer.findAll.mockResolvedValue([]);
+  Invoice.sum.mockResolvedValue(0);
+  Invoice.count.mockResolvedValue(0);
+  Invoice.findAll.mockResolvedValue([]);
+  Expense.sum.mockResolvedValue(0);
+  Sale.sum.mockResolvedValue(0);
+  Sale.findAll.mockResolvedValue([]);
+  Product.findAll.mockResolvedValue([]);
+  Job.count.mockResolvedValue(0);
+  sequelize.query.mockResolvedValue([]);
+};
+
+const buildRes = () => {
+  const res = {
+    statusCode: 200,
+    body: null,
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(payload) {
+      this.body = payload;
+      return this;
+    },
+  };
+  return res;
+};
+
+describe('assistantController.chat', () => {
+  const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    clearBillingCircuit('tenant-1');
+    process.env.ANTHROPIC_API_KEY = 'system-key-123456789012345678901234567890';
+    getTenantAnthropicApiKey.mockResolvedValue(null);
+    mockAssistantContextDependencies();
+    Tenant.findByPk.mockResolvedValue({
+      businessType: 'shop',
+      name: 'Test Shop',
+      metadata: {},
+    });
+    Setting.findOne.mockResolvedValue({ value: {} });
+  });
+
+  afterAll(() => {
+    process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
+  });
+
+  it('returns 503 before context building when AI is not configured', async () => {
+    process.env.ANTHROPIC_API_KEY = '';
+    const req = {
+      tenantId: 'tenant-1',
+      tenant: { businessType: 'shop' },
+      body: {
+        messages: [{ role: 'user', content: 'How are sales today?' }],
+      },
+      headers: {},
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    await chat(req, res, next);
+
+    expect(res.statusCode).toBe(503);
+    expect(res.body).toMatchObject({
+      success: false,
+      errorCode: 'OPENAI_NOT_CONFIGURED',
+      code: 'OPENAI_NOT_CONFIGURED',
+    });
+    expect(openaiService.chatWithContext).not.toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('returns 402 for provider billing errors instead of a generic 500', async () => {
+    openaiService.chatWithContext.mockRejectedValue({
+      status: 400,
+      message: 'Your credit balance is too low to access the Anthropic API.',
+      error: {
+        type: 'invalid_request_error',
+        message: 'Your credit balance is too low to access the Anthropic API.',
+      },
+    });
+
+    const req = {
+      tenantId: 'tenant-1',
+      tenant: { businessType: 'shop' },
+      body: {
+        messages: [{ role: 'user', content: 'Summarize this month' }],
+      },
+      headers: {
+        'x-client-submitted-at': String(Date.now() - 250),
+      },
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    await chat(req, res, next);
+
+    expect(res.statusCode).toBe(402);
+    expect(res.body).toMatchObject({
+      success: false,
+      errorCode: 'AI_PROVIDER_BILLING_REQUIRED',
+      code: 'AI_PROVIDER_BILLING_REQUIRED',
+    });
+    expect(res.body.error).toMatch(/temporarily unavailable/i);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('short-circuits repeat billing failures via the circuit breaker', async () => {
+    openaiService.chatWithContext.mockRejectedValue({
+      status: 400,
+      message: 'Your credit balance is too low to access the Anthropic API.',
+    });
+
+    const req = {
+      tenantId: 'tenant-1',
+      tenant: { businessType: 'shop' },
+      body: {
+        messages: [{ role: 'user', content: 'Summarize this month' }],
+      },
+      headers: {},
+    };
+    const res1 = buildRes();
+    const res2 = buildRes();
+    const next = jest.fn();
+
+    await chat(req, res1, next);
+    await chat(req, res2, next);
+
+    expect(res1.statusCode).toBe(402);
+    expect(res2.statusCode).toBe(402);
+    expect(openaiService.chatWithContext).toHaveBeenCalledTimes(1);
+  });
+});

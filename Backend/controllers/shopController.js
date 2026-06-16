@@ -7,6 +7,7 @@ const {
   ensureDefaultShop,
   setAsOnlyDefaultShop,
   isShopTenant,
+  invalidateShopAccessCache,
   hasWorkspaceWideShopAccess,
   setUserShops,
   getUserShopIds,
@@ -201,6 +202,7 @@ exports.createShop = async (req, res, next) => {
     }
 
     await shop.reload({ include: [managerInclude] });
+    invalidateShopAccessCache(req.tenantId);
 
     res.status(201).json({
       success: true,
@@ -249,6 +251,7 @@ exports.updateShop = async (req, res, next) => {
     }
 
     await shop.reload({ include: [managerInclude] });
+    invalidateShopAccessCache(req.tenantId);
 
     res.status(200).json({
       success: true,
@@ -293,6 +296,7 @@ exports.uploadShopLogo = async (req, res, next) => {
     const logoUrl = await fileToDataUrl(req.file);
     await shop.update({ logoUrl });
     await shop.reload({ include: [managerInclude] });
+    invalidateShopAccessCache(req.tenantId);
 
     res.status(200).json({ success: true, data: shop });
   } catch (error) {
@@ -340,6 +344,7 @@ exports.deleteShop = async (req, res, next) => {
         await fallback.update({ isDefault: true });
       }
     }
+    invalidateShopAccessCache(req.tenantId);
 
     res.status(200).json({
       success: true,

@@ -38,12 +38,38 @@ const { getExpenseCategories } = require('../config/expenseCategories');
 const { getPagination } = require('../utils/paginationUtils');
 const activityLogger = require('../services/activityLogger');
 const { createExpenseJournal } = require('../services/expenseAccountingService');
-const { invalidateAfterMutation } = require('../middleware/cache');
+const { invalidateAfterMutation, invalidateExpenseStatsCache } = require('../middleware/cache');
 const { baseUploadDir, ensureDirExists } = require('../middleware/upload');
 const {
   getCreateApprovalDefaults,
   stripCreateApprovalFields
 } = require('../utils/expenseApprovalDefaults');
+
+/**
+ * Validate expense create payload before DB work (fail fast).
+ * @param {Object} payload - Sanitized request body
+ * @returns {string|null} Error message or null when valid
+ */
+const validateCreateExpensePayload = (payload = {}) => {
+  const category = payload.category;
+  if (!category || String(category).trim() === '') {
+    return 'Category is required';
+  }
+
+  const amount = Number(payload.amount);
+  if (payload.amount == null || payload.amount === '' || Number.isNaN(amount) || amount <= 0) {
+    return 'Amount must be greater than 0';
+  }
+
+  return null;
+};
+
+const normalizeExpenseDescription = (payload = {}) => {
+  if (payload.description === undefined || payload.description === null) {
+    payload.description = '';
+  }
+  return payload;
+};
 
 /**
  * Generate unique expense number with optional transaction for advisory lock (prevents race conditions).
@@ -77,13 +103,11 @@ exports.generateExpenseNumber = async (tenantId, transaction = null) => {
     }
 
     const queryResults = await sequelize.query(
-      `SELECT "expenseNumber",
-              CAST(SPLIT_PART("expenseNumber", '-', 3) AS INTEGER) AS sequence
+      `SELECT "expenseNumber"
        FROM expenses
        WHERE "tenantId" = :tenantId
          AND "expenseNumber" LIKE :pattern
-         AND SPLIT_PART("expenseNumber", '-', 3) ~ '^[0-9]+$'
-       ORDER BY CAST(SPLIT_PART("expenseNumber", '-', 3) AS INTEGER) DESC
+       ORDER BY "expenseNumber" DESC
        LIMIT 1`,
       {
         replacements: { tenantId, pattern },
@@ -94,8 +118,8 @@ exports.generateExpenseNumber = async (tenantId, transaction = null) => {
 
     let sequence = 1;
     const result = Array.isArray(queryResults) && queryResults.length > 0 ? queryResults[0] : null;
-    if (result && result.sequence != null) {
-      const maxSeq = parseInt(result.sequence, 10);
+    if (result?.expenseNumber) {
+      const maxSeq = parseInt(String(result.expenseNumber).split('-')[2], 10);
       if (!Number.isNaN(maxSeq) && maxSeq >= 1) {
         sequence = maxSeq + 1;
       }
@@ -487,18 +511,30 @@ exports.getExpense = async (req, res, next) => {
 // @route   POST /api/expenses
 // @access  Private
 exports.createExpense = async (req, res, next) => {
+  const payload = sanitizePayload(req.body);
+  const validationError = validateCreateExpensePayload(payload);
+  if (validationError) {
+    return res.status(400).json({
+      success: false,
+      message: validationError
+    });
+  }
+  normalizeExpenseDescription(payload);
+
   const maxRetries = 3;
   let lastError;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     const transaction = await sequelize.transaction();
     try {
-      const payload = sanitizePayload(req.body);
       const expenseNumber = await exports.generateExpenseNumber(req.tenantId, transaction);
+      let vendorForResponse = null;
+      let jobForResponse = null;
 
       if (payload.vendorId) {
         const vendor = await Vendor.findOne({
           where: applyTenantFilter(req.tenantId, { id: payload.vendorId }),
+          attributes: ['id', 'name', 'company'],
           transaction
         });
         if (!vendor) {
@@ -508,11 +544,13 @@ exports.createExpense = async (req, res, next) => {
             message: 'Vendor not found for this tenant'
           });
         }
+        vendorForResponse = vendor;
       }
 
       if (payload.jobId) {
         const job = await Job.findOne({
           where: jobScopeWhere(req, { id: payload.jobId }),
+          attributes: ['id', 'jobNumber', 'title'],
           transaction
         });
         if (!job) {
@@ -522,6 +560,7 @@ exports.createExpense = async (req, res, next) => {
             message: 'Job not found for this tenant'
           });
         }
+        jobForResponse = job;
       }
 
       const approvalDefaults = getCreateApprovalDefaults(payload, req.userId);
@@ -540,16 +579,21 @@ exports.createExpense = async (req, res, next) => {
         { transaction }
       );
 
-      const expenseWithDetails = await Expense.findOne({
-        where: expenseScopeWhere(req, { id: expense.id }),
-        include: [
-          { model: Vendor, as: 'vendor' },
-          { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] },
-          { model: User, as: 'submitter', attributes: ['id', 'name', 'email'] },
-          { model: User, as: 'approver', attributes: ['id', 'name', 'email'] }
-        ],
-        transaction
-      });
+      const expenseWithDetails = {
+        ...(expense.toJSON ? expense.toJSON() : expense),
+        vendor: vendorForResponse?.toJSON ? vendorForResponse.toJSON() : vendorForResponse,
+        job: jobForResponse?.toJSON ? jobForResponse.toJSON() : jobForResponse,
+        submitter: req.user ? {
+          id: req.user.id,
+          name: req.user.name,
+          email: req.user.email
+        } : null,
+        approver: approvalDefaults.approvedBy && req.user ? {
+          id: req.user.id,
+          name: req.user.name,
+          email: req.user.email
+        } : null
+      };
 
       try {
         await ExpenseActivity.create({
@@ -571,19 +615,24 @@ exports.createExpense = async (req, res, next) => {
 
       await transaction.commit();
       invalidateAfterMutation(req.tenantId);
+      invalidateExpenseStatsCache(req.tenantId);
 
-      if (!approvalDefaults.isExpenseRequest) {
-        try {
-          await createExpenseJournal(expenseWithDetails, req.userId);
-        } catch (journalError) {
-          console.error('Failed to create accounting entry for auto-approved expense', journalError?.message);
-        }
-      }
-
-      return res.status(201).json({
+      const response = res.status(201).json({
         success: true,
         data: expenseWithDetails
       });
+
+      if (!approvalDefaults.isExpenseRequest) {
+        setImmediate(async () => {
+          try {
+            await createExpenseJournal(expenseWithDetails, req.userId);
+          } catch (journalError) {
+            console.error('Failed to create accounting entry for auto-approved expense', journalError?.message);
+          }
+        });
+      }
+
+      return response;
     } catch (error) {
       await transaction.rollback();
       lastError = error;
@@ -741,6 +790,8 @@ exports.createBulkExpenses = async (req, res, next) => {
 
     // Commit transaction
     await transaction.commit();
+    invalidateAfterMutation(req.tenantId);
+    invalidateExpenseStatsCache(req.tenantId);
 
     // Fetch created expenses with details
     const expenseIds = createdExpenses.map(e => e.id);
@@ -952,6 +1003,7 @@ exports.updateExpense = async (req, res, next) => {
 
     // Invalidate cache after updating expense
     invalidateAfterMutation(req.tenantId);
+    invalidateExpenseStatsCache(req.tenantId);
 
     if (updatePayload.approvalStatus === 'approved' && previousStatus !== 'approved') {
       try {
@@ -1027,6 +1079,8 @@ exports.archiveExpense = async (req, res, next) => {
         { model: Shop, as: 'shop', attributes: ['id', 'name'] },
       ]
     });
+    invalidateAfterMutation(req.tenantId);
+    invalidateExpenseStatsCache(req.tenantId);
 
     res.status(200).json({
       success: true,
@@ -1065,20 +1119,6 @@ exports.getExpenseStats = async (req, res, next) => {
 
     const combinedFilters = { ...baseFilters, ...dateFilters, isArchived: false };
 
-    const stats = await Expense.findAll({
-      where: combinedFilters,
-      attributes: [
-        'category',
-        [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
-        [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount']
-      ],
-      group: ['category']
-    });
-
-    // Get total expenses for the period
-    const totalExpensesRaw = await Expense.sum('amount', { where: combinedFilters }) || 0;
-    const totalExpenses = Number(parseFloat(totalExpensesRaw).toFixed(2));
-
     // Get current month expenses
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
@@ -1097,28 +1137,47 @@ exports.getExpenseStats = async (req, res, next) => {
       }
     };
 
-    const thisMonthExpensesRaw = await Expense.sum('amount', { where: monthlyWhereClause }) || 0;
-    const thisMonthExpenses = Number(parseFloat(thisMonthExpensesRaw).toFixed(2));
+    const jobExpensesPromise = jobId
+      ? Expense.findAll({
+          where: expenseScopeWhere(req, { jobId, isArchived: false }),
+          include: [
+            { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] }
+          ],
+          order: [['expenseDate', 'DESC']]
+        })
+      : Promise.resolve(null);
 
-    const categoryCount = stats?.length ?? 0;
-    const pendingRequests = await Expense.count({
-      where: { ...baseFilters, approvalStatus: 'pending_approval', isArchived: false }
-    });
-    const approvedCount = await Expense.count({
-      where: { ...baseFilters, approvalStatus: 'approved', isArchived: false }
-    });
-
-    // Get job-specific expenses if jobId is provided
-    let jobExpenses = null;
-    if (jobId) {
-      jobExpenses = await Expense.findAll({
-        where: expenseScopeWhere(req, { jobId, isArchived: false }),
-        include: [
-          { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] }
+    const [
+      stats,
+      totalExpensesRaw,
+      thisMonthExpensesRaw,
+      pendingRequests,
+      approvedCount,
+      jobExpenses
+    ] = await Promise.all([
+      Expense.findAll({
+        where: combinedFilters,
+        attributes: [
+          'category',
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+          [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount']
         ],
-        order: [['expenseDate', 'DESC']]
-      });
-    }
+        group: ['category']
+      }),
+      Expense.sum('amount', { where: combinedFilters }),
+      Expense.sum('amount', { where: monthlyWhereClause }),
+      Expense.count({
+        where: { ...baseFilters, approvalStatus: 'pending_approval', isArchived: false }
+      }),
+      Expense.count({
+        where: { ...baseFilters, approvalStatus: 'approved', isArchived: false }
+      }),
+      jobExpensesPromise
+    ]);
+
+    const totalExpenses = Number(parseFloat(totalExpensesRaw || 0).toFixed(2));
+    const thisMonthExpenses = Number(parseFloat(thisMonthExpensesRaw || 0).toFixed(2));
+    const categoryCount = stats?.length ?? 0;
 
     res.status(200).json({
       success: true,
@@ -1334,6 +1393,8 @@ exports.approveExpense = async (req, res, next) => {
     } catch (journalError) {
       console.error('Failed to create accounting entry for approved expense', journalError?.message);
     }
+    invalidateAfterMutation(req.tenantId);
+    invalidateExpenseStatsCache(req.tenantId);
 
     res.status(200).json({
       success: true,
@@ -1411,6 +1472,8 @@ exports.rejectExpense = async (req, res, next) => {
     } catch (error) {
       console.error('Failed to log expense rejection activity:', error);
     }
+    invalidateAfterMutation(req.tenantId);
+    invalidateExpenseStatsCache(req.tenantId);
 
     res.status(200).json({
       success: true,

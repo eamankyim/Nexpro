@@ -4,10 +4,12 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Plus, Currency, FileText, Clock, CheckCircle, Printer, Download, Loader2, Share2, Copy, Archive, Trash2, X } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDebounce } from '../hooks/useDebounce';
 import invoiceService from '../services/invoiceService';
 import { guardOnline } from '../utils/onlineRequired';
+import { QUERY_STALE, refreshAfterInvoiceChange } from '../utils/queryInvalidation';
+import { queryKeys } from '../utils/queryKeys';
 import settingsService from '../services/settingsService';
 import customerService from '../services/customerService';
 import customDropdownService from '../services/customDropdownService';
@@ -102,6 +104,21 @@ const canCancelInvoice = (invoice) => [
   INVOICE_STATUSES.OVERDUE,
 ].includes(getInvoiceStatus(invoice)) && !isCancelledInvoice(invoice);
 
+const normalizeInvoicesResponse = (response) => {
+  const payload = response?.data?.data != null ? response.data : response;
+  const data = Array.isArray(payload?.data) ? payload.data : (Array.isArray(payload) ? payload : []);
+
+  return {
+    invoices: data,
+    total: Number(payload?.count ?? payload?.total ?? data.length),
+  };
+};
+
+const normalizeInvoiceStatsResponse = (response) => {
+  const payload = response?.data?.data != null ? response.data : response;
+  return payload?.data || payload || null;
+};
+
 const paymentSchema = z.object({
   amount: numberOrEmptySchema(z).refine((v) => v >= 0.01, 'Payment amount must be greater than 0'),
   paymentMethod: z.string().min(1, 'Payment method is required'),
@@ -137,8 +154,6 @@ const createInvoicePaymentClientRequestId = (prefix, invoiceId) => {
 const Invoices = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const [invoices, setInvoices] = useState([]);
-  const [loading, setLoading] = useState(false);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [filters, setFilters] = useState({ status: '' });
   const [drawerVisible, setDrawerVisible] = useState(false);
@@ -146,10 +161,10 @@ const Invoices = () => {
   const [paymentModalVisible, setPaymentModalVisible] = useState(false);
   const [markAsPaidModalVisible, setMarkAsPaidModalVisible] = useState(false);
   const [printModalVisible, setPrintModalVisible] = useState(false);
-  const [stats, setStats] = useState(null);
   const { isAdmin, isManager, activeTenant, activeTenantId } = useAuth();
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
+  const queryClient = useQueryClient();
   const { activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { isMobile } = useResponsive();
   const businessType = activeTenant?.businessType || 'printing_press';
@@ -157,7 +172,6 @@ const Invoices = () => {
   const isStudioLike = STUDIO_LIKE_TYPES.includes(businessType);
   const canCreateManualInvoice = businessType !== 'shop';
   const [tableViewMode, setTableViewMode] = useState('table');
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [markingAsPaid, setMarkingAsPaid] = useState(false);
   const [sendingInvoice, setSendingInvoice] = useState(false);
   const [invoiceToDelete, setInvoiceToDelete] = useState(null);
@@ -179,10 +193,62 @@ const Invoices = () => {
   const markAsPaidClientRequestIdRef = useRef(null);
   const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
+  const invoicesQueryEnabled = scopeReady && !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId);
+
+  const invoicesQueryParams = useMemo(() => {
+    const params = {
+      page: pagination.current,
+      limit: pagination.pageSize,
+    };
+    if (filters.status) params.status = filters.status;
+    if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
+    return params;
+  }, [pagination.current, pagination.pageSize, filters.status, debouncedSearch]);
+
+  const {
+    data: invoicesQueryResponse,
+    error: invoicesQueryError,
+    isError: invoicesQueryIsError,
+    isLoading: loading,
+    refetch: refetchInvoicesQuery,
+  } = useQuery({
+    queryKey: queryKeys.invoices.list(activeTenantId, activeShopId, activeStudioLocationId, invoicesQueryParams),
+    queryFn: () => invoiceService.getAll(invoicesQueryParams),
+    enabled: invoicesQueryEnabled,
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchInterval: 60 * 1000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+    retry: 1,
+  });
+
+  const {
+    data: invoiceStatsResponse,
+    error: invoiceStatsError,
+    isError: invoiceStatsIsError,
+  } = useQuery({
+    queryKey: queryKeys.invoices.stats(activeTenantId, activeShopId, activeStudioLocationId),
+    queryFn: () => invoiceService.getStats(),
+    enabled: invoicesQueryEnabled,
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchInterval: 60 * 1000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+    retry: 1,
+  });
+
+  const invoicesQueryData = useMemo(() => normalizeInvoicesResponse(invoicesQueryResponse), [invoicesQueryResponse]);
+  const invoices = invoicesQueryData.invoices;
+  const totalInvoicesCount = invoicesQueryData.total;
+  const stats = useMemo(() => normalizeInvoiceStatsResponse(invoiceStatsResponse), [invoiceStatsResponse]);
+
+  const refetchInvoices = useCallback(async () => {
+    await refetchInvoicesQuery();
+  }, [refetchInvoicesQuery]);
 
   // Organization branding for printable invoices
   const { data: organizationData } = useQuery({
-    queryKey: ['settings', 'organization'],
+    queryKey: queryKeys.settings.organization(activeTenantId),
     queryFn: () => settingsService.getOrganization(),
     staleTime: 5 * 60 * 1000,
   });
@@ -217,41 +283,17 @@ const Invoices = () => {
     },
   });
 
-  const fetchInvoices = useCallback(async () => {
-    setLoading(true);
-    try {
-      const cleanFilters = {};
-      if (filters.status) cleanFilters.status = filters.status;
-      if (debouncedSearch.trim()) cleanFilters.search = debouncedSearch.trim();
-
-      const response = await invoiceService.getAll({
-        page: pagination.current,
-        limit: pagination.pageSize,
-        ...cleanFilters,
-      });
-      setInvoices(response.data);
-      setPagination(prev => ({ ...prev, total: response.count }));
-    } catch (error) {
-      showError(error, 'Failed to load invoices');
-    } finally {
-      setLoading(false);
+  useEffect(() => {
+    if (invoicesQueryIsError) {
+      showError(invoicesQueryError, 'Failed to load invoices');
     }
-  }, [pagination.current, pagination.pageSize, filters, activeShopId, activeStudioLocationId, debouncedSearch]);
-
-  const fetchStats = useCallback(async () => {
-    try {
-      const response = await invoiceService.getStats();
-      setStats(response.data);
-    } catch (error) {
-      console.error('Failed to load invoice stats:', error);
-    }
-  }, [activeShopId, activeStudioLocationId]);
+  }, [invoicesQueryIsError, invoicesQueryError]);
 
   useEffect(() => {
-    if (!scopeReady) return;
-    fetchInvoices();
-    fetchStats();
-  }, [scopeReady, activeTenantId, activeShopId, activeStudioLocationId, fetchInvoices, fetchStats, refreshTrigger, shopContext?.isShopWorkspace]);
+    if (invoiceStatsIsError) {
+      console.error('Failed to load invoice stats:', invoiceStatsError);
+    }
+  }, [invoiceStatsIsError, invoiceStatsError]);
 
   useEffect(() => {
     setPageSearchConfig({ scope: 'invoices', placeholder: SEARCH_PLACEHOLDERS.INVOICES });
@@ -438,14 +480,15 @@ const Invoices = () => {
       await persistLineItemDescriptions(normalizedItems);
       showSuccess('Invoice created');
       setCreateModalVisible(false);
-      setRefreshTrigger((prev) => prev + 1);
+      await refreshAfterInvoiceChange(queryClient);
+      refetchInvoices();
       resetCreateInvoiceForm();
     } catch (error) {
       showError(error, 'Failed to create invoice');
     } finally {
       setCreatingInvoice(false);
     }
-  }, [newInvoice, resetCreateInvoiceForm, persistLineItemDescriptions]);
+  }, [newInvoice, resetCreateInvoiceForm, persistLineItemDescriptions, queryClient, refetchInvoices]);
 
   const handleView = useCallback(async (invoice) => {
     setDrawerVisible(true);
@@ -572,7 +615,8 @@ const Invoices = () => {
       );
       markAsPaidClientRequestIdRef.current = null;
       setMarkAsPaidModalVisible(false);
-      setRefreshTrigger(prev => prev + 1);
+      await refreshAfterInvoiceChange(queryClient);
+      refetchInvoices();
     } catch (error) {
       const errorMessage =
         error?.response?.data?.message ||
@@ -607,7 +651,8 @@ const Invoices = () => {
       showSuccess('Payment recorded successfully');
       paymentClientRequestIdRef.current = null;
       setPaymentModalVisible(false);
-      setRefreshTrigger(prev => prev + 1);
+      await refreshAfterInvoiceChange(queryClient);
+      refetchInvoices();
     } catch (error) {
       showError(error, error.error || 'Failed to record payment');
     } finally {
@@ -620,7 +665,8 @@ const Invoices = () => {
       setSendingInvoice(true);
       await invoiceService.send(id);
       showSuccess('Invoice sent. Payment link is ready to share.');
-      setRefreshTrigger(prev => prev + 1);
+      await refreshAfterInvoiceChange(queryClient);
+      refetchInvoices();
       if (viewingInvoice?.id === id) {
         const updated = await invoiceService.getById(id);
         const inv = updated?.data ?? updated;
@@ -730,7 +776,8 @@ const Invoices = () => {
       await invoiceService.cancel(id);
       setInvoiceToCancel(null);
       showSuccess('Invoice cancelled');
-      setRefreshTrigger(prev => prev + 1);
+      await refreshAfterInvoiceChange(queryClient);
+      refetchInvoices();
       if (drawerVisible) handleCloseDrawer();
     } catch (error) {
       showError(error, 'Failed to cancel invoice');
@@ -748,7 +795,8 @@ const Invoices = () => {
         showSuccess('Draft invoice deleted');
       }
       setInvoiceToDelete(null);
-      setRefreshTrigger(prev => prev + 1);
+      await refreshAfterInvoiceChange(queryClient);
+      refetchInvoices();
       if (viewingInvoice?.id === id) handleCloseDrawer();
     } catch (error) {
       showError(error, 'Failed to delete invoice');
@@ -933,7 +981,7 @@ const Invoices = () => {
         title={null}
         emptyState={invoicesEmptyState}
         pageSize={pagination.pageSize}
-        externalPagination={{ current: pagination.current, total: pagination.total }}
+        externalPagination={{ current: pagination.current, total: totalInvoicesCount }}
         onPageChange={(newPagination) => setPagination(prev => ({ ...prev, ...newPagination }))}
         viewMode={tableViewMode}
         onViewModeChange={setTableViewMode}

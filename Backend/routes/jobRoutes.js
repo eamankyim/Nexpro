@@ -17,6 +17,7 @@ const { studioLocationContext } = require('../middleware/studioLocationContext')
 const { exportLimiter } = require('../middleware/rateLimiter');
 const multer = require('multer');
 const { checkStorageLimit } = require('../middleware/upload');
+const { timeCrudAction } = require('../middleware/crudTiming');
 
 const router = express.Router();
 
@@ -29,13 +30,13 @@ router.get('/stats/overview', getJobStats);
 router.get('/export', exportLimiter, authorize('admin', 'manager'), exportJobs);
 
 router.route('/')
-  .get(getJobs)
-  .post(authorize('admin', 'manager', 'staff'), createJob);
+  .get(timeCrudAction('jobs.list'), getJobs)
+  .post(authorize('admin', 'manager', 'staff'), timeCrudAction('jobs.create'), createJob);
 
 router.route('/:id')
-  .get(getJob)
-  .put(authorize('admin', 'manager', 'staff'), updateJob)
-  .delete(authorize('admin'), deleteJob);
+  .get(timeCrudAction('jobs.read'), getJob)
+  .put(authorize('admin', 'manager', 'staff'), timeCrudAction('jobs.update'), updateJob)
+  .delete(authorize('admin'), timeCrudAction('jobs.delete'), deleteJob);
 
 // Use memory storage for job attachments since we store base64 in database
 const jobAttachmentUploader = multer({

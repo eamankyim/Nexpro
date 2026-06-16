@@ -8,17 +8,19 @@ import { OVERVIEW_CARD_BORDER, formatOverviewCurrency } from './overviewUtils';
  */
 export default function ProfitLossSummaryCard({ profitLoss, onViewFullReport }) {
   const revenue = parseFloat(profitLoss?.revenue || 0);
-  const expenses = parseFloat(profitLoss?.expenses || 0);
   const cogs = parseFloat(profitLoss?.cogs || 0);
+  const totalExpenses = parseFloat(profitLoss?.expenses || 0);
+  const operatingExpenses = parseFloat(profitLoss?.operatingExpenses ?? Math.max(0, totalExpenses - cogs));
   const grossProfit = parseFloat(profitLoss?.grossProfit ?? (revenue - cogs));
-  const netProfit = parseFloat(profitLoss?.netProfit ?? (revenue - expenses));
+  const netProfit = parseFloat(profitLoss?.netProfit ?? (revenue - totalExpenses));
   const netMargin = revenue > 0 ? ((netProfit / revenue) * 100).toFixed(1) : '0.0';
 
   const rows = [
     { label: 'Total Revenue', value: revenue },
     { label: 'COGS', value: cogs },
     { label: 'Gross Profit', value: grossProfit, bold: true },
-    { label: 'Total Expenses', value: expenses },
+    { label: 'Operating Expenses', value: operatingExpenses },
+    { label: 'Total Expenses', value: totalExpenses },
     { label: 'Net Profit', value: netProfit, bold: true, highlight: true },
     { label: 'Net Profit Margin', value: `${netMargin}%`, isText: true }
   ];

@@ -4,9 +4,7 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  TextInput,
   Alert,
-  Pressable,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -34,12 +32,22 @@ import { useStudioLocationOptional } from '@/context/StudioLocationContext';
 import { shareReceiptPdf } from '@/services/pdfDocumentService';
 import { invoiceService } from '@/services/invoiceService';
 import { saleService } from '@/services/saleService';
+import { settingsService } from '@/services/settings';
 import { formatCurrency, formatDate } from '@/utils/formatCurrency';
 import { formatStatusLabel } from '@/utils/formatLabels';
+import {
+  getDirectMomoProviders,
+  isPaymentCollectionConfigured,
+  isValidDirectMomoPhone,
+  normalizeDirectMomoPhone,
+  type DirectMomoProvider,
+} from '@/utils/paymentCollection';
 import { parseApiEntity, parseApiListResponse } from '@/utils/parseApiListResponse';
 import { refreshAfterSale } from '@/utils/queryInvalidation';
 import { resolveImageUrl } from '@/utils/fileUtils';
 import { DeliveryStatusPicker } from '@/components/DeliveryStatusPicker';
+import { SaleRecordPaymentSheet } from '@/components/SaleRecordPaymentSheet';
+import { usePaystackReconciliation } from '@/hooks/usePaystackReconciliation';
 
 type SaleItemDetail = {
   id?: string;
@@ -79,25 +87,20 @@ function getSaleItemImageUrl(item: SaleItemDetail): string | null {
   return resolveImageUrl(trimmed);
 }
 
-const PAYMENT_METHODS = [
-  { value: 'cash', label: 'Cash' },
-  { value: 'mobile_money', label: 'Mobile' },
-  { value: 'card', label: 'Card' },
-] as const;
-
 export default function SaleDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { activeTenant, isAdmin } = useAuth();
+  const { activeTenant, activeTenantId, isAdmin } = useAuth();
   const shopContext = useShopOptional();
   const studioContext = useStudioLocationOptional();
-  const { bg, colors, cardBg, borderColor, textColor, mutedColor } = useEntityDetailTheme();
+  const { colors, cardBg, borderColor, textColor, mutedColor } = useEntityDetailTheme();
 
   const [showPaymentForm, setShowPaymentForm] = useState(false);
-  const [paymentAmount, setPaymentAmount] = useState('');
-  const [paymentReference, setPaymentReference] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<(typeof PAYMENT_METHODS)[number]['value']>('cash');
+  const [awaitingPaystackReturn, setAwaitingPaystackReturn] = useState(false);
+  const [directPaymentStatus, setDirectPaymentStatus] = useState<'idle' | 'pending' | 'success' | 'failed'>('idle');
+  const [directPaymentReference, setDirectPaymentReference] = useState<string | null>(null);
+  const [directPaymentMessage, setDirectPaymentMessage] = useState<string | null>(null);
   const { isAnyActionActive, isActionActive, runExclusiveAction } = useExclusiveAction<SaleAction>();
 
   const { data, isLoading, refetch } = useQuery({
@@ -107,6 +110,20 @@ export default function SaleDetailScreen() {
   });
 
   const sale = useMemo(() => parseApiEntity<SaleDetail>(data), [data]);
+
+  const { data: paymentCollectionData, isLoading: paymentCollectionLoading } = useQuery({
+    queryKey: ['settings', 'payment-collection', activeTenantId],
+    queryFn: settingsService.getPaymentCollectionSettings,
+    enabled: Boolean(activeTenantId),
+  });
+  const paymentCollectionConfigured = useMemo(
+    () => isPaymentCollectionConfigured(paymentCollectionData),
+    [paymentCollectionData]
+  );
+  const directMomoProviders = useMemo(
+    () => getDirectMomoProviders(paymentCollectionData),
+    [paymentCollectionData]
+  );
 
   const { data: linkedInvoicesResponse } = useQuery({
     queryKey: ['invoices', 'sale-link', id],
@@ -146,6 +163,43 @@ export default function SaleDetailScreen() {
     await refreshAfterSale(queryClient);
   }, [queryClient, refetch]);
 
+  const reconcileSalePaystack = useCallback(async () => {
+    if (!id || !sale) return;
+    if (balance <= 0) return;
+    try {
+      const res = await saleService.checkPaystackCharge(String(id));
+      const payload = res?.success !== undefined || res?.applied !== undefined ? res : res?.data ?? res;
+      await refresh();
+      const checkedSale = payload?.data ?? null;
+      const completed = payload?.applied === true || checkedSale?.status === 'completed';
+      if (completed) {
+        setDirectPaymentStatus('success');
+        setDirectPaymentMessage('Payment confirmed and recorded on this sale.');
+        setShowPaymentForm(false);
+        Alert.alert('Payment confirmed', 'The mobile money payment was recorded.');
+        return;
+      }
+      const providerStatus = payload?.paystackStatus ? String(payload.paystackStatus).toLowerCase() : '';
+      if (providerStatus && !['pending', 'ongoing'].includes(providerStatus)) {
+        setDirectPaymentStatus('failed');
+        setDirectPaymentMessage('The payment is not complete. Ask the customer to retry approval or start a new prompt.');
+        return;
+      }
+      setDirectPaymentStatus('pending');
+      setDirectPaymentMessage('Still waiting for the customer to approve the MoMo prompt.');
+    } catch {
+      setDirectPaymentStatus('pending');
+      setDirectPaymentMessage('Could not verify yet. Check again after the customer approves the prompt.');
+    } finally {
+      setAwaitingPaystackReturn(false);
+    }
+  }, [balance, id, refresh, sale]);
+
+  usePaystackReconciliation(
+    Boolean(id && sale && balance > 0 && paymentCollectionConfigured && awaitingPaystackReturn),
+    reconcileSalePaystack
+  );
+
   const handleDownloadReceipt = useCallback(async () => {
     if (!sale) return;
     await runExclusiveAction('receipt', async () => {
@@ -170,34 +224,97 @@ export default function SaleDetailScreen() {
     });
   }, [activeTenant?.name, runExclusiveAction, sale, shopContext?.activeShop, studioContext?.activeLocation]);
 
-  const handleRecordPayment = useCallback(async () => {
+  const handleClosePaymentSheet = useCallback(() => {
+    if (!isAnyActionActive) setShowPaymentForm(false);
+  }, [isAnyActionActive]);
+
+  const handleRecordPayment = useCallback(
+    async (payload: { amount: number; paymentMethod: string; referenceNumber?: string }) => {
+      if (!sale) return;
+      const { amount, paymentMethod, referenceNumber } = payload;
+      if (!amount || amount <= 0) {
+        Alert.alert('Error', 'Enter a valid payment amount');
+        return;
+      }
+      if (amount > balance) {
+        Alert.alert('Error', `Amount cannot exceed balance (${formatCurrency(balance)})`);
+        return;
+      }
+      await runExclusiveAction('payment', async () => {
+        try {
+          await saleService.recordPayment(sale.id, {
+            amount,
+            paymentMethod,
+            referenceNumber,
+            paymentDate: new Date().toISOString().slice(0, 10),
+          });
+          await refresh();
+          setShowPaymentForm(false);
+          Alert.alert('Success', 'Payment recorded');
+        } catch (err: unknown) {
+          Alert.alert('Error', err instanceof Error ? err.message : 'Failed to record payment');
+        }
+      });
+    },
+    [balance, refresh, runExclusiveAction, sale]
+  );
+
+  const handleCheckDirectSalePayment = useCallback(() => {
+    void reconcileSalePaystack();
+  }, [reconcileSalePaystack]);
+
+  const handleOpenDirectSalePayment = useCallback(async (payload: { phoneNumber: string; provider: DirectMomoProvider }) => {
     if (!sale) return;
-    const amount = parseFloat(paymentAmount);
-    if (!amount || amount <= 0) {
-      Alert.alert('Error', 'Enter a valid payment amount');
+    if (!paymentCollectionConfigured) {
+      Alert.alert('Direct payment unavailable', 'Set up Payment Collection in Settings before taking direct payments.');
       return;
     }
-    if (amount > balance) {
-      Alert.alert('Error', `Amount cannot exceed balance (${formatCurrency(balance)})`);
+    if (!payload.provider || !directMomoProviders.includes(payload.provider)) {
+      Alert.alert('Direct payment unavailable', 'Choose a supported mobile money network.');
       return;
     }
+    if (!payload.phoneNumber.trim()) {
+      Alert.alert('Phone required', 'Enter the customer mobile money phone number.');
+      return;
+    }
+    const normalizedPhone = normalizeDirectMomoPhone(payload.phoneNumber);
+    if (!isValidDirectMomoPhone(normalizedPhone)) {
+      Alert.alert('Invalid MoMo number', 'Enter a valid Ghana mobile money number, for example 024 XXX XXXX.');
+      return;
+    }
+
     await runExclusiveAction('payment', async () => {
       try {
-        await saleService.recordPayment(sale.id, {
-          amount,
-          paymentMethod,
-          referenceNumber: paymentReference.trim() || undefined,
-          paymentDate: new Date().toISOString().slice(0, 10),
+        const res = await saleService.initiateDirectMobileMoney(sale.id, {
+          phoneNumber: normalizedPhone,
+          provider: payload.provider,
         });
-        await refresh();
-        setShowPaymentForm(false);
-        setPaymentAmount('');
-        Alert.alert('Success', 'Payment recorded');
+        const result = res?.data ?? res;
+        const reference = result?.reference ? String(result.reference) : null;
+        setDirectPaymentReference(reference);
+        setDirectPaymentStatus('pending');
+        setDirectPaymentMessage(
+          result?.message || 'Prompt sent. Ask the customer to approve it on their phone, then check status.'
+        );
+        setAwaitingPaystackReturn(true);
+        setTimeout(() => {
+          void reconcileSalePaystack();
+        }, 2500);
+        Alert.alert(
+          'MoMo prompt sent',
+          'Ask the customer to approve the prompt or enter their PIN on the phone, then tap Check status.'
+        );
       } catch (err: unknown) {
-        Alert.alert('Error', err instanceof Error ? err.message : 'Failed to record payment');
+        const message =
+          typeof err === 'object' && err !== null && 'response' in err
+            ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
+            : undefined;
+        Alert.alert('Direct payment unavailable', message || (err instanceof Error ? err.message : 'Could not start direct payment'));
+        setDirectPaymentStatus('failed');
+        setDirectPaymentMessage(message || 'Could not start direct payment.');
       }
     });
-  }, [balance, paymentAmount, paymentMethod, paymentReference, refresh, runExclusiveAction, sale]);
+  }, [directMomoProviders, paymentCollectionConfigured, reconcileSalePaystack, runExclusiveAction, sale]);
 
   const handleCancelSale = useCallback(() => {
     if (!sale) return;
@@ -396,78 +513,55 @@ export default function SaleDetailScreen() {
               })}
             </DetailSectionCard>
           ) : null}
-          {showPaymentForm && canRecordPayment ? (
-            <DetailSectionCard title="Record Payment" icon="credit-card">
-              <Text style={[styles.label, { color: mutedColor }]}>
-                Amount (max {formatCurrency(balance)})
-              </Text>
-              <TextInput
-                style={[styles.input, { color: textColor, borderColor }]}
-                value={paymentAmount}
-                onChangeText={setPaymentAmount}
-                keyboardType="decimal-pad"
-                placeholder={String(balance)}
-                placeholderTextColor={mutedColor}
-              />
-              <View style={styles.methodRow}>
-                {PAYMENT_METHODS.map((m) => (
-                  <Pressable
-                    key={m.value}
-                    onPress={() => setPaymentMethod(m.value)}
-                    style={[
-                      styles.methodChip,
-                      { borderColor },
-                      paymentMethod === m.value && { backgroundColor: colors.tint, borderColor: colors.tint },
-                    ]}
-                  >
-                    <Text style={{ color: paymentMethod === m.value ? '#fff' : textColor, fontWeight: '600' }}>
-                      {m.label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </DetailSectionCard>
-          ) : null}
         </ScrollView>
         <DetailFooter>
-          {showPaymentForm ? (
-            <>
-              <DetailActionButton label="Back" onPress={() => setShowPaymentForm(false)} disabled={isAnyActionActive} />
-              <DetailActionButton
-                label="Record"
-                variant="primary"
-                loading={isActionActive('payment')}
-                disabled={isAnyActionActive}
-                onPress={handleRecordPayment}
-              />
-            </>
+          {salePrimaryIsPayment ? (
+            <DetailActionButton
+              label="Pay"
+              variant="primary"
+              onPress={() => setShowPaymentForm(true)}
+              disabled={isAnyActionActive}
+            />
           ) : (
-            <>
-              {salePrimaryIsPayment ? (
-                <DetailActionButton
-                  label="Pay"
-                  variant="primary"
-                  onPress={() => {
-                    setPaymentAmount(balance.toFixed(2));
-                    setShowPaymentForm(true);
-                  }}
-                  disabled={isAnyActionActive}
-                />
-              ) : (
-                <DetailActionButton
-                  label="Download Receipt"
-                  icon="download"
-                  variant="primary"
-                  onPress={handleDownloadReceipt}
-                  loading={isActionActive('receipt')}
-                  disabled={isAnyActionActive}
-                />
-              )}
-              <DetailMoreActions actions={saleMoreActions} disabled={isAnyActionActive} />
-            </>
+            <DetailActionButton
+              label="Download Receipt"
+              icon="download"
+              variant="primary"
+              onPress={handleDownloadReceipt}
+              loading={isActionActive('receipt')}
+              disabled={isAnyActionActive}
+            />
           )}
+          <DetailMoreActions actions={saleMoreActions} disabled={isAnyActionActive} />
         </DetailFooter>
       </ScreenShell>
+      <SaleRecordPaymentSheet
+        visible={showPaymentForm && Boolean(canRecordPayment)}
+        balance={balance}
+        onClose={handleClosePaymentSheet}
+        onSubmit={handleRecordPayment}
+        onDirectPayment={handleOpenDirectSalePayment}
+        onCheckDirectStatus={handleCheckDirectSalePayment}
+        directProviders={directMomoProviders}
+        directStatus={directPaymentStatus}
+        directReference={directPaymentReference}
+        directStatusMessage={directPaymentMessage}
+        directPaymentAvailable={paymentCollectionConfigured && directMomoProviders.length > 0 && !paymentCollectionLoading}
+        directUnavailableReason={
+          paymentCollectionLoading
+            ? 'Checking payment collection setup...'
+            : paymentCollectionConfigured
+              ? 'No supported MoMo provider is available for Direct payment.'
+              : 'Set up Payment Collection in Settings before taking direct payments.'
+        }
+        isSubmitting={isActionActive('payment')}
+        disabled={isAnyActionActive}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+        tintColor={colors.tint}
+      />
     </>
   );
 }
@@ -493,8 +587,4 @@ const styles = StyleSheet.create({
   itemName: { fontSize: 14, fontWeight: '500' },
   itemSku: { fontSize: 12, marginTop: 2 },
   itemTotal: { fontSize: 14, fontWeight: '600' },
-  label: { fontSize: 14, marginBottom: 8 },
-  input: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, marginBottom: 12 },
-  methodRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  methodChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1 },
 });

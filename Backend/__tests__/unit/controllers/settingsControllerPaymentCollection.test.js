@@ -2,18 +2,22 @@ jest.mock('../../../config/database', () => ({
   sequelize: {},
 }));
 
-jest.mock('../../../models', () => ({
-  Setting: {
-    findOne: jest.fn(),
-    findOrCreate: jest.fn(),
-  },
-  User: {
-    findByPk: jest.fn(),
-  },
-  Tenant: {
-    findByPk: jest.fn(),
-  },
-}));
+jest.mock('../../../models', () => {
+  const userFindByPk = jest.fn();
+  return {
+    Setting: {
+      findOne: jest.fn(),
+      findOrCreate: jest.fn(),
+    },
+    User: {
+      findByPk: userFindByPk,
+      unscoped: () => ({ findByPk: userFindByPk }),
+    },
+    Tenant: {
+      findByPk: jest.fn(),
+    },
+  };
+});
 
 jest.mock('../../../middleware/upload', () => ({
   baseUploadDir: '/tmp/uploads',

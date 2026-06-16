@@ -823,6 +823,12 @@ const storeOrderDetailInclude = [
   },
 ];
 
+const shouldIncludeOrderStats = (req) => {
+  const value = req.query?.includeStats;
+  if (value === undefined || value === null || value === '') return true;
+  return !['false', '0', 'no'].includes(String(value).toLowerCase());
+};
+
 const countOnlineOrders = (req, extra = {}) => {
   const where = buildOnlineOrderWhere(req, { includeStatus: false });
   Object.assign(where, extra);
@@ -1395,12 +1401,15 @@ const buildMixedOrdersFeedSql = (req, { limit, offset }) => {
   };
 };
 
-const getMixedStoreOrders = async (req, { limit, offset }) => {
+const getMixedStoreOrders = async (req, { limit, offset, includeStats = true }) => {
   const productWhere = buildOnlineOrderWhere(req);
   const serviceWhere = serviceBookingWhereForRequest(req);
   const { sql, replacements } = buildMixedOrdersFeedSql(req, { limit, offset });
+  const statsPromise = includeStats
+    ? Promise.all([getOnlineOrderStats(req), getServiceBookingStats(req)])
+    : Promise.resolve([null, null]);
 
-  const [feedRows, productCount, serviceCount, productStats, serviceStats] = await Promise.all([
+  const [feedRows, productCount, serviceCount, [productStats, serviceStats]] = await Promise.all([
     sequelize.query(sql, {
       replacements,
       type: sequelize.QueryTypes.SELECT,
@@ -1415,8 +1424,7 @@ const getMixedStoreOrders = async (req, { limit, offset }) => {
       include: [serviceBookingLeadInclude(req)],
       distinct: true,
     }),
-    getOnlineOrderStats(req),
-    getServiceBookingStats(req),
+    statsPromise,
   ]);
 
   const productIds = feedRows.filter((row) => row.orderType === 'product').map((row) => row.id);
@@ -1453,7 +1461,7 @@ const getMixedStoreOrders = async (req, { limit, offset }) => {
 
   return {
     count: Number(productCount || 0) + Number(serviceCount || 0),
-    stats: combineOrderStats(productStats, serviceStats),
+    stats: includeStats ? combineOrderStats(productStats, serviceStats) : undefined,
     rows,
   };
 };
@@ -2237,13 +2245,14 @@ exports.getStoreOrders = async (req, res, next) => {
   const finishTiming = startHotPathTimer('online_orders.list', req);
   try {
     const { page, limit, offset } = getPagination(req);
+    const includeStats = shouldIncludeOrderStats(req);
     if (isStudioStoreRequest(req)) {
-      const { count, rows, stats } = await getMixedStoreOrders(req, { limit, offset });
-      finishTiming({ page, limit, count, returned: rows.length, mixed: true });
+      const { count, rows, stats } = await getMixedStoreOrders(req, { limit, offset, includeStats });
+      finishTiming({ page, limit, count, returned: rows.length, mixed: true, includeStats });
       return res.status(200).json({
         success: true,
         count,
-        stats,
+        ...(includeStats ? { stats } : {}),
         pagination: {
           page,
           limit,
@@ -2254,25 +2263,26 @@ exports.getStoreOrders = async (req, res, next) => {
     }
 
     const where = buildOnlineOrderWhere(req);
+    const listPromise = Sale.findAndCountAll({
+      where,
+      attributes: { exclude: ['notes'] },
+      include: storeOrderInclude,
+      distinct: true,
+      subQuery: false,
+      limit,
+      offset,
+      order: [['createdAt', 'DESC']],
+    });
     const [{ count, rows }, stats] = await Promise.all([
-      Sale.findAndCountAll({
-        where,
-        attributes: { exclude: ['notes'] },
-        include: storeOrderInclude,
-        distinct: true,
-        subQuery: false,
-        limit,
-        offset,
-        order: [['createdAt', 'DESC']],
-      }),
-      getOnlineOrderStats(req),
+      listPromise,
+      includeStats ? getOnlineOrderStats(req) : Promise.resolve(null),
     ]);
 
-    finishTiming({ page, limit, count, returned: rows.length, mixed: false });
+    finishTiming({ page, limit, count, returned: rows.length, mixed: false, includeStats });
     res.status(200).json({
       success: true,
       count,
-      stats,
+      ...(includeStats ? { stats } : {}),
       pagination: {
         page,
         limit,

@@ -5,6 +5,7 @@ import { Platform } from 'react-native';
 
 import { STORAGE_KEYS } from '@/constants';
 import { notificationService } from '@/services/notificationService';
+import { resolveNotificationDeepLink, type NotificationDeepLinkRoute } from '@/utils/notificationDeepLinks';
 
 export type PushRegistrationState = {
   status: 'idle' | 'skipped' | 'unsupported' | 'denied' | 'registered' | 'failed';
@@ -19,8 +20,7 @@ const DEFAULT_STATE: PushRegistrationState = {
   message: 'Push notifications have not been checked yet.',
 };
 
-type NotificationData = Record<string, unknown>;
-export type SellerNotificationRoute = '/(tabs)/online-orders' | '/(tabs)/products' | `/store-order/${string}`;
+export type SellerNotificationRoute = NotificationDeepLinkRoute;
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -34,34 +34,8 @@ Notifications.setNotificationHandler({
 
 const getPlatform = () => (Platform.OS === 'ios' ? 'ios' : 'android');
 
-const asRecord = (value: unknown): NotificationData | null => (
-  value && typeof value === 'object' && !Array.isArray(value) ? (value as NotificationData) : null
-);
-
-const getRouteId = (value: unknown) => {
-  if (typeof value === 'string') return value.trim();
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
-  return '';
-};
-
 export function getSellerNotificationRoute(data: unknown): SellerNotificationRoute | null {
-  const payload = asRecord(data);
-  if (!payload) return null;
-
-  const metadata = asRecord(payload.metadata);
-  const link = typeof payload.link === 'string' ? payload.link : '';
-  const source = metadata?.source;
-  const saleId = getRouteId(payload.saleId) || getRouteId(metadata?.saleId);
-
-  if (payload.type === 'order' && (source === 'online_store' || link.includes('/store/orders'))) {
-    return saleId ? `/store-order/${encodeURIComponent(saleId)}` : '/(tabs)/online-orders';
-  }
-
-  if (payload.type === 'inventory' && (source === 'stock_alert' || link.includes('/products'))) {
-    return '/(tabs)/products';
-  }
-
-  return null;
+  return resolveNotificationDeepLink(data);
 }
 
 export function observeSellerNotificationResponses(onRoute: (route: SellerNotificationRoute) => void) {
@@ -129,7 +103,7 @@ export async function registerPushNotifications({ prompt = false } = {}) {
     if (!existingPermission.canAskAgain) {
       return persistPushRegistrationState({
         status: 'denied',
-        message: 'Notifications are blocked. Open device settings to allow alerts from ABS Ghana.',
+        message: 'Notifications are blocked. Open device settings to allow alerts from ABS.',
         canAskAgain: false,
       });
     }
@@ -141,7 +115,7 @@ export async function registerPushNotifications({ prompt = false } = {}) {
       status: 'denied',
       message: finalPermission.canAskAgain
         ? 'Notifications were not enabled. You can try again when you are ready.'
-        : 'Notifications are blocked. Open device settings to allow alerts from ABS Ghana.',
+        : 'Notifications are blocked. Open device settings to allow alerts from ABS.',
       canAskAgain: finalPermission.canAskAgain,
     });
   }

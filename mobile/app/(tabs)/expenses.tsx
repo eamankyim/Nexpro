@@ -44,7 +44,7 @@ function formatDate(dateStr: string): string {
 
 type Expense = {
   id: string;
-  description: string;
+  description?: string;
   amount: number;
   category?: string;
   categoryObj?: { id: string; name: string };
@@ -261,7 +261,7 @@ export default function ExpensesScreen() {
     }
 
     createExpenseMutation.mutate({
-      description: formData.description.trim() || undefined,
+      description: formData.description.trim(),
       amount,
       category: formData.category || defaultCategory,
       expenseDate: formData.expenseDate,
@@ -288,7 +288,7 @@ export default function ExpensesScreen() {
       <View style={styles.expenseRow}>
         <View style={styles.expenseInfo}>
           <Text style={[styles.expenseDescription, { color: textColor }]} numberOfLines={1}>
-            {item.description}
+            {item.description || 'Expense'}
           </Text>
           {(item.category || (item as any).categoryObj?.name) && (
             <Text style={[styles.expenseCategory, { color: mutedColor }]}>

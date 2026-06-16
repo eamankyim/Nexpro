@@ -6,6 +6,7 @@ const {
 } = require('./notificationPreferenceHelper');
 const { dispatchExpoPushToUsers } = require('./pushNotificationService');
 const { formatDecimal } = require('../utils/formatNumber');
+const { invalidateNotificationsCache } = require('../middleware/cache');
 
 const logPrefix = '[Notifications]';
 
@@ -100,6 +101,7 @@ const createNotification = async ({
       title,
       type
     });
+    invalidateNotificationsCache(tenantId, userId);
 
     // Emit to websocket for real-time UI updates
     try {
@@ -194,6 +196,7 @@ const notifyUsers = async ({ tenantId, userIds, payload = {}, transaction = null
       userIds: uniqueUserIds,
       title: payload.title
     });
+    eligibleUserIds.forEach((uid) => invalidateNotificationsCache(tenantId, uid));
     // Emit to websocket for real-time UI updates (fire-and-forget)
     try {
       const { emitNotification } = require('./websocketService');

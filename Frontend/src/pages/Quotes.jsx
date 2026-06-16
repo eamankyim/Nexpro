@@ -38,7 +38,9 @@ import settingsService from '../services/settingsService';
 import userService from '../services/userService';
 import customDropdownService from '../services/customDropdownService';
 import { mergeBranchOrganization } from '../utils/branchOrganization';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { QUERY_STALE, refreshAfterQuoteChange } from '../utils/queryInvalidation';
+import { queryKeys } from '../utils/queryKeys';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
 import DrawerSectionCard from '../components/DrawerSectionCard';
@@ -194,6 +196,30 @@ function normalizeProductsList(res) {
   if (Array.isArray(res.products)) return res.products;
   return [];
 }
+
+const EMPTY_QUOTES_SUMMARY = {
+  totalQuotes: 0,
+  draftQuotes: 0,
+  sentQuotes: 0,
+  acceptedQuotes: 0,
+};
+
+const normalizeQuotesResponse = (response) => {
+  const payload = response?.data?.data != null ? response.data : response;
+  const data = Array.isArray(payload?.data) ? payload.data : (Array.isArray(payload) ? payload : []);
+  const summary = payload?.summary || {};
+
+  return {
+    quotes: data,
+    total: Number(payload?.count ?? payload?.total ?? data.length),
+    summary: {
+      totalQuotes: Number(summary.totalQuotes ?? summary.total ?? data.length ?? EMPTY_QUOTES_SUMMARY.totalQuotes),
+      draftQuotes: Number(summary.draftQuotes ?? data.filter((quote) => quote.status === 'draft').length),
+      sentQuotes: Number(summary.sentQuotes ?? data.filter((quote) => quote.status === 'sent').length),
+      acceptedQuotes: Number(summary.acceptedQuotes ?? data.filter((quote) => quote.status === 'accepted').length),
+    },
+  };
+};
 
 const QuoteProductPicker = forwardRef(({
   value,
@@ -352,8 +378,7 @@ const Quotes = () => {
   const activeShopId = shopContext?.activeShopId ?? null;
   const { activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { isMobile } = useResponsive();
-  const [quotes, setQuotes] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const queryClient = useQueryClient();
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [filters, setFilters] = useState({ status: 'all', customerId: 'all' });
   const [tableViewMode, setTableViewMode] = useState('table');
@@ -364,7 +389,6 @@ const Quotes = () => {
   const [editingQuote, setEditingQuote] = useState(null);
   const [customers, setCustomers] = useState([]);
   const [converting, setConverting] = useState(false);
-  const [refreshingQuotes, setRefreshingQuotes] = useState(false);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [printModalVisible, setPrintModalVisible] = useState(false);
@@ -380,10 +404,63 @@ const Quotes = () => {
   const [quoteToConvert, setQuoteToConvert] = useState(null);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [lineItemDescriptionOptions, setLineItemDescriptionOptions] = useState([]);
+  const quotesQueryEnabled = scopeReady && !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId);
+
+  const quotesQueryParams = useMemo(() => {
+    const params = {
+      page: pagination.current,
+      limit: pagination.pageSize,
+    };
+
+    if (filters.status && filters.status !== 'all') {
+      params.status = filters.status;
+    }
+    if (filters.customerId && filters.customerId !== 'all') {
+      params.customerId = filters.customerId;
+    }
+    if (debouncedSearch.trim()) {
+      params.search = debouncedSearch.trim();
+    }
+
+    return params;
+  }, [
+    pagination.current,
+    pagination.pageSize,
+    filters.status,
+    filters.customerId,
+    debouncedSearch,
+  ]);
+
+  const {
+    data: quotesQueryResponse,
+    error: quotesQueryError,
+    isError: quotesQueryIsError,
+    isFetching: quotesIsFetching,
+    isLoading: loading,
+    refetch: refetchQuotesQuery,
+  } = useQuery({
+    queryKey: queryKeys.quotes.list(activeTenantId, activeShopId, activeStudioLocationId, quotesQueryParams),
+    queryFn: () => quoteService.getAll(quotesQueryParams),
+    enabled: quotesQueryEnabled,
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchInterval: 60 * 1000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+    retry: 1,
+  });
+
+  const quotesQueryData = useMemo(() => normalizeQuotesResponse(quotesQueryResponse), [quotesQueryResponse]);
+  const quotes = quotesQueryData.quotes;
+  const quotesCount = quotesQueryData.total;
+  const refreshingQuotes = quotesIsFetching && !loading;
+
+  const refetchQuotes = useCallback(async () => {
+    await refetchQuotesQuery();
+  }, [refetchQuotesQuery]);
 
   // Organization branding for printable quotes
   const { data: organizationData } = useQuery({
-    queryKey: ['settings', 'organization'],
+    queryKey: queryKeys.settings.organization(activeTenantId),
     queryFn: () => settingsService.getOrganization(),
     staleTime: 5 * 60 * 1000,
   });
@@ -407,7 +484,7 @@ const Quotes = () => {
   });
 
   const { data: notificationChannels } = useQuery({
-    queryKey: ['settings', 'notification-channels'],
+    queryKey: queryKeys.settings.notificationChannels,
     queryFn: () => settingsService.getNotificationChannels(),
     enabled: quoteModalVisible && !editingQuote,
     staleTime: 60 * 1000,
@@ -449,7 +526,7 @@ const Quotes = () => {
   });
 
   const { data: customersQueryData, refetch: refetchCustomers } = useQuery({
-    queryKey: ['customers', 'quotes-picker', activeTenantId, activeShopId, activeStudioLocationId],
+    queryKey: queryKeys.customers.picker(activeTenantId, activeShopId, activeStudioLocationId, 'quotes-picker'),
     queryFn: () => customerService.getAll({ limit: 200, page: 1 }),
     enabled: scopeReady,
     staleTime: 2 * 60 * 1000,
@@ -579,72 +656,24 @@ const Quotes = () => {
   }, [searchValue]);
 
   useEffect(() => {
-    if (!scopeReady) return;
-    fetchQuotes();
-  }, [scopeReady, pagination.current, pagination.pageSize, filters, debouncedSearch, activeShopId, activeStudioLocationId, shopContext?.isShopWorkspace]);
-
-  const fetchQuotes = async (isRefresh = false) => {
-    if (isRefresh) setRefreshingQuotes(true);
-    else setLoading(true);
-    try {
-      const params = {
-        page: pagination.current,
-        limit: pagination.pageSize, // Backend pagination
-        _ts: Date.now(),
-      };
-
-      if (filters.status && filters.status !== 'all') {
-        params.status = filters.status;
-      }
-      if (filters.customerId && filters.customerId !== 'all') {
-        params.customerId = filters.customerId;
-      }
-      if (debouncedSearch) params.search = debouncedSearch;
-
-      const response = await quoteService.getAll(params);
-      const quoteList = Array.isArray(response?.data) ? response.data : [];
-
-      setQuotes(quoteList);
-    } catch (error) {
-      console.error('Failed to load quotes:', error);
-      showError(error, 'Failed to load quotes');
-      setQuotes([]);
-    } finally {
-      if (isRefresh) setRefreshingQuotes(false);
-      else setLoading(false);
+    if (quotesQueryIsError) {
+      showError(quotesQueryError, 'Failed to load quotes');
     }
-  };
+  }, [quotesQueryIsError, quotesQueryError]);
 
-  // Apply client-side filtering
   const filteredQuotes = useMemo(() => {
-    return quotes; // Backend already filters by status and customerId
-  }, [quotes, filters]);
-
-  // Paginate filtered quotes
-  const paginatedQuotes = useMemo(() => {
-    const start = (pagination.current - 1) * pagination.pageSize;
-    const end = start + pagination.pageSize;
-    return filteredQuotes.slice(start, end);
-  }, [filteredQuotes, pagination.current, pagination.pageSize]);
-
-  const quotesCount = filteredQuotes.length;
-
-  // Calculate summary stats
-  const summaryStats = useMemo(() => {
-    const totalQuotes = quotes.length;
-    const draftQuotes = quotes.filter(q => q.status === 'draft').length;
-    const sentQuotes = quotes.filter(q => q.status === 'sent').length;
-    const acceptedQuotes = quotes.filter(q => q.status === 'accepted').length;
-    
-    return {
-      totals: {
-        totalQuotes,
-        draftQuotes,
-        sentQuotes,
-        acceptedQuotes
-      }
-    };
+    return quotes;
   }, [quotes]);
+
+  const paginatedQuotes = useMemo(() => {
+    return filteredQuotes;
+  }, [filteredQuotes]);
+
+  const summaryStats = useMemo(() => {
+    return {
+      totals: quotesQueryData.summary,
+    };
+  }, [quotesQueryData.summary]);
 
   const fetchQuoteDetails = async (quoteId) => {
     try {
@@ -679,7 +708,8 @@ const Quotes = () => {
     try {
       await quoteService.updateStatus(quote.id, newStatus);
       showSuccess(`Quote marked as ${nextStatusLabel(newStatus)}`);
-      fetchQuotes();
+      await refreshAfterQuoteChange(queryClient);
+      refetchQuotes();
       if (viewingQuote?.id === quote.id) {
         const res = await quoteService.getById(quote.id);
         setViewingQuote(res?.data ?? res);
@@ -762,7 +792,8 @@ const Quotes = () => {
       if (!guardOnline(showError)) return;
       await quoteService.delete(deleteQuoteId);
       showSuccess('Quote deleted successfully');
-      fetchQuotes();
+      await refreshAfterQuoteChange(queryClient);
+      refetchQuotes();
       if (viewingQuote?.id === deleteQuoteId) {
         handleCloseDrawer();
       }
@@ -849,7 +880,8 @@ const Quotes = () => {
       }
       setQuoteModalVisible(false);
       form.reset();
-      fetchQuotes();
+      await refreshAfterQuoteChange(queryClient);
+      refetchQuotes();
     } catch (error) {
       console.error('Failed to save quote:', error);
       showError(error, error.error || 'Failed to save quote');
@@ -886,7 +918,8 @@ const Quotes = () => {
       const data = response?.data ?? response;
       const job = data?.data?.job ?? data?.job ?? data;
       showSuccess(`Quote converted to job ${job?.jobNumber || ''}`.trim());
-      fetchQuotes();
+      await refreshAfterQuoteChange(queryClient);
+      refetchQuotes();
       setConvertJobModalOpen(false);
       setQuoteToConvert(null);
       convertJobForm.reset();
@@ -899,7 +932,7 @@ const Quotes = () => {
     } finally {
       setConverting(false);
     }
-  }, [quoteToConvert, fetchQuotes, navigate, convertJobForm]);
+  }, [quoteToConvert, queryClient, refetchQuotes, navigate, convertJobForm]);
 
   const handleConvertToSale = async (quote) => {
     setConverting(true);
@@ -908,7 +941,8 @@ const Quotes = () => {
       const data = response?.data ?? response;
       const sale = data?.data?.sale ?? data?.sale ?? data;
       showSuccess(`Quote converted to sale ${sale?.saleNumber || ''}`.trim());
-      fetchQuotes();
+      await refreshAfterQuoteChange(queryClient);
+      refetchQuotes();
       if (sale) {
         navigate('/sales');
       }
@@ -1137,7 +1171,7 @@ const Quotes = () => {
             <TooltipTrigger asChild>
               <Button 
                 variant="outline" 
-                onClick={() => fetchQuotes(true)}
+                onClick={refetchQuotes}
                 disabled={refreshingQuotes}
                 size={isMobile ? "icon" : "default"}
               >

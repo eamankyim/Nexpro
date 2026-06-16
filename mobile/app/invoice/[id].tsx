@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  TextInput,
   Alert,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -27,11 +26,21 @@ import { ScreenShell } from '@/components/ScreenShell';
 import { useAuth } from '@/context/AuthContext';
 import { useExclusiveAction } from '@/hooks/useExclusiveAction';
 import { invoiceService } from '@/services/invoiceService';
+import { settingsService } from '@/services/settings';
 import { shareInvoicePdf } from '@/services/pdfDocumentService';
 import { formatCurrency, formatDate } from '@/utils/formatCurrency';
 import { formatStatusLabel } from '@/utils/formatLabels';
+import {
+  getDirectMomoProviders,
+  isPaymentCollectionConfigured,
+  isValidDirectMomoPhone,
+  normalizeDirectMomoPhone,
+  type DirectMomoProvider,
+} from '@/utils/paymentCollection';
 import { parseApiEntity } from '@/utils/parseApiListResponse';
 import { refreshAfterInvoicePayment } from '@/utils/queryInvalidation';
+import { InvoiceRecordPaymentSheet } from '@/components/InvoiceRecordPaymentSheet';
+import { usePaystackReconciliation } from '@/hooks/usePaystackReconciliation';
 
 type InvoiceDetail = {
   id: string;
@@ -44,6 +53,7 @@ type InvoiceDetail = {
   customer?: { name?: string };
   saleId?: string | null;
   sale?: { id?: string; saleNumber?: string } | null;
+  paymentToken?: string | null;
   paidAmount?: number;
   amountPaid?: number;
   items?: Array<{
@@ -78,10 +88,13 @@ export default function InvoiceDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { isAdmin, isManager } = useAuth();
-  const { borderColor, textColor, mutedColor } = useEntityDetailTheme();
-  const [showPaymentInput, setShowPaymentInput] = useState(false);
-  const [paymentAmount, setPaymentAmount] = useState('');
+  const { activeTenantId, isAdmin, isManager } = useAuth();
+  const { colors, cardBg, borderColor, textColor, mutedColor } = useEntityDetailTheme();
+  const [showPaymentSheet, setShowPaymentSheet] = useState(false);
+  const [awaitingPaystackReturn, setAwaitingPaystackReturn] = useState(false);
+  const [directPaymentStatus, setDirectPaymentStatus] = useState<'idle' | 'pending' | 'success' | 'failed'>('idle');
+  const [directPaymentReference, setDirectPaymentReference] = useState<string | null>(null);
+  const [directPaymentMessage, setDirectPaymentMessage] = useState<string | null>(null);
   const { isAnyActionActive, isActionActive, runExclusiveAction } = useExclusiveAction<InvoiceDangerAction>();
 
   const { data, isLoading, refetch } = useQuery({
@@ -92,6 +105,20 @@ export default function InvoiceDetailScreen() {
 
   const invoice = useMemo(() => parseApiEntity<InvoiceDetail>(data), [data]);
 
+  const { data: paymentCollectionData, isLoading: paymentCollectionLoading } = useQuery({
+    queryKey: ['settings', 'payment-collection', activeTenantId],
+    queryFn: settingsService.getPaymentCollectionSettings,
+    enabled: Boolean(activeTenantId),
+  });
+  const paymentCollectionConfigured = useMemo(
+    () => isPaymentCollectionConfigured(paymentCollectionData),
+    [paymentCollectionData]
+  );
+  const directMomoProviders = useMemo(
+    () => getDirectMomoProviders(paymentCollectionData),
+    [paymentCollectionData]
+  );
+
   const balance = useMemo(() => {
     if (!invoice) return 0;
     const total = Number(invoice.totalAmount ?? invoice.total ?? 0);
@@ -100,6 +127,49 @@ export default function InvoiceDetailScreen() {
   }, [invoice]);
 
   const linkedSaleId = invoice?.saleId || invoice?.sale?.id || null;
+
+  const refreshInvoice = useCallback(async () => {
+    await refetch();
+    await refreshAfterInvoicePayment(queryClient);
+  }, [queryClient, refetch]);
+
+  const reconcileInvoicePaystack = useCallback(async () => {
+    if (!invoice || balance <= 0) return;
+    try {
+      const res = await invoiceService.verifyPaystackCharge(invoice.id);
+      const body = res?.success !== undefined ? res : res?.data ?? res;
+      const payload = body?.data ?? body;
+      await refreshInvoice();
+      const applied = payload?.applied === true;
+      const checkedInvoice = payload?.invoice ?? null;
+      const paid = applied || checkedInvoice?.status === 'paid';
+      if (paid) {
+        setDirectPaymentStatus('success');
+        setDirectPaymentMessage('Payment confirmed and recorded on this invoice.');
+        setShowPaymentSheet(false);
+        Alert.alert('Payment confirmed', 'The mobile money payment was recorded.');
+        return;
+      }
+      const providerStatus = payload?.paystackStatus ? String(payload.paystackStatus).toLowerCase() : '';
+      if (providerStatus && !['pending', 'ongoing'].includes(providerStatus)) {
+        setDirectPaymentStatus('failed');
+        setDirectPaymentMessage('The payment is not complete. Ask the customer to retry approval or start a new prompt.');
+        return;
+      }
+      setDirectPaymentStatus('pending');
+      setDirectPaymentMessage('Still waiting for the customer to approve the MoMo prompt.');
+    } catch {
+      setDirectPaymentStatus('pending');
+      setDirectPaymentMessage('Could not verify yet. Check again after the customer approves the prompt.');
+    } finally {
+      setAwaitingPaystackReturn(false);
+    }
+  }, [balance, invoice, refreshInvoice]);
+
+  usePaystackReconciliation(
+    Boolean(invoice && balance > 0 && paymentCollectionConfigured && awaitingPaystackReturn),
+    reconcileInvoicePaystack
+  );
 
   const runAction = useCallback(
     async (actionKey: InvoiceDangerAction, action: () => Promise<unknown>, successMessage: string) => {
@@ -110,8 +180,7 @@ export default function InvoiceDetailScreen() {
           await refetch();
           await refreshAfterInvoicePayment(queryClient);
           Alert.alert('Success', successMessage);
-          setShowPaymentInput(false);
-          setPaymentAmount('');
+          setShowPaymentSheet(false);
         } catch (err: unknown) {
           Alert.alert('Error', err instanceof Error ? err.message : 'Action failed');
         }
@@ -170,6 +239,103 @@ export default function InvoiceDetailScreen() {
       },
     ]);
   }, [invoice, queryClient, router, runExclusiveAction]);
+
+  const handleClosePaymentSheet = useCallback(() => {
+    if (!isAnyActionActive) setShowPaymentSheet(false);
+  }, [isAnyActionActive]);
+
+  const handleRecordPayment = useCallback(
+    async (payload: {
+      amount: number;
+      paymentMethod: string;
+      referenceNumber?: string;
+      paymentDate: string;
+    }) => {
+      if (!invoice) return;
+      const { amount, paymentMethod, referenceNumber, paymentDate } = payload;
+      if (!amount || amount <= 0) {
+        Alert.alert('Error', 'Enter a valid payment amount');
+        return;
+      }
+      if (amount > balance) {
+        Alert.alert('Error', 'Payment cannot exceed the balance');
+        return;
+      }
+      if (!paymentDate || Number.isNaN(new Date(paymentDate).getTime())) {
+        Alert.alert('Error', 'Enter a valid payment date');
+        return;
+      }
+      await runAction(
+        'payment',
+        () =>
+          invoiceService.recordPayment(invoice.id, {
+            amount,
+            paymentMethod,
+            referenceNumber,
+            paymentDate,
+          }),
+        'Payment recorded'
+      );
+    },
+    [balance, invoice, runAction]
+  );
+
+  const handleCheckDirectInvoicePayment = useCallback(() => {
+    void reconcileInvoicePaystack();
+  }, [reconcileInvoicePaystack]);
+
+  const handleOpenDirectPayment = useCallback(async (payload: { phoneNumber: string; provider: DirectMomoProvider }) => {
+    if (!invoice) return;
+    if (!paymentCollectionConfigured) {
+      Alert.alert('Direct payment unavailable', 'Set up Payment Collection in Settings before taking direct payments.');
+      return;
+    }
+    if (!payload.provider || !directMomoProviders.includes(payload.provider)) {
+      Alert.alert('Direct payment unavailable', 'Choose a supported mobile money network.');
+      return;
+    }
+    if (!payload.phoneNumber.trim()) {
+      Alert.alert('Phone required', 'Enter the customer mobile money phone number.');
+      return;
+    }
+    const normalizedPhone = normalizeDirectMomoPhone(payload.phoneNumber);
+    if (!isValidDirectMomoPhone(normalizedPhone)) {
+      Alert.alert('Invalid MoMo number', 'Enter a valid Ghana mobile money number, for example 024 XXX XXXX.');
+      return;
+    }
+    await runExclusiveAction('payment', async () => {
+      try {
+        const res = await invoiceService.initiateDirectMobileMoney(invoice.id, {
+          phoneNumber: normalizedPhone,
+          provider: payload.provider,
+        });
+        const result = res?.data ?? res;
+        const reference = result?.reference ? String(result.reference) : null;
+        setDirectPaymentReference(reference);
+        setDirectPaymentStatus('pending');
+        setDirectPaymentMessage(
+          result?.message || 'Prompt sent. Ask the customer to approve it on their phone, then check status.'
+        );
+        setAwaitingPaystackReturn(true);
+        setTimeout(() => {
+          void reconcileInvoicePaystack();
+        }, 2500);
+        Alert.alert(
+          'MoMo prompt sent',
+          'Ask the customer to approve the prompt or enter their PIN on the phone, then tap Check status.'
+        );
+      } catch (err: unknown) {
+        const message =
+          typeof err === 'object' && err !== null && 'response' in err
+            ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
+            : undefined;
+        const fallback = err instanceof Error ? err.message : 'Could not start direct payment';
+        Alert.alert('Direct payment unavailable', message || fallback);
+        setDirectPaymentStatus('failed');
+        setDirectPaymentMessage(message || fallback);
+      }
+    });
+  }, [directMomoProviders, invoice, paymentCollectionConfigured, reconcileInvoicePaystack, runExclusiveAction]);
 
   if (isLoading) return <DetailLoading title="Invoice" />;
   if (!invoice) return <DetailNotFound title="Invoice" entityLabel="Invoice" />;
@@ -301,82 +467,56 @@ export default function InvoiceDetailScreen() {
               ))}
             </DetailSectionCard>
           ) : null}
-          {showPaymentInput && balance > 0 ? (
-            <DetailSectionCard title="Record Payment" icon="credit-card">
-              <Text style={[styles.label, { color: mutedColor }]}>
-                Payment amount (balance {formatCurrency(balance)})
-              </Text>
-              <TextInput
-                style={[styles.input, { color: textColor, borderColor }]}
-                value={paymentAmount}
-                onChangeText={setPaymentAmount}
-                keyboardType="decimal-pad"
-                placeholder={String(balance)}
-                placeholderTextColor={mutedColor}
-              />
-            </DetailSectionCard>
-          ) : null}
         </ScrollView>
         <DetailFooter>
-          {showPaymentInput ? (
-            <>
-              <DetailActionButton label="Back" onPress={() => setShowPaymentInput(false)} disabled={isAnyActionActive} />
-              <DetailActionButton
-                label="Record"
-                variant="primary"
-                loading={isActionActive('payment')}
-                disabled={isAnyActionActive}
-                onPress={() => {
-                  const amount = parseFloat(paymentAmount);
-                  if (!amount || amount <= 0) {
-                    Alert.alert('Error', 'Enter a valid payment amount');
-                    return;
-                  }
-                  if (amount > balance) {
-                    Alert.alert('Error', 'Payment cannot exceed the balance');
-                    return;
-                  }
-                  runAction(
-                    'payment',
-                    () =>
-                      invoiceService.recordPayment(invoice.id, {
-                        amount,
-                        paymentMethod: 'cash',
-                        paymentDate: new Date().toISOString().slice(0, 10),
-                      }),
-                    'Payment recorded'
-                  );
-                }}
-              />
-            </>
+          {canRecordInvoicePayment ? (
+            <DetailActionButton
+              label="Pay"
+              icon="credit-card"
+              variant="primary"
+              onPress={() => setShowPaymentSheet(true)}
+              disabled={isAnyActionActive}
+            />
           ) : (
-            <>
-              {canRecordInvoicePayment ? (
-                <DetailActionButton
-                  label="Pay"
-                  icon="credit-card"
-                  variant="primary"
-                  onPress={() => {
-                    setPaymentAmount(balance.toFixed(2));
-                    setShowPaymentInput(true);
-                  }}
-                  disabled={isAnyActionActive}
-                />
-              ) : (
-                <DetailActionButton
-                  label="Download Invoice"
-                  icon="download"
-                  variant="primary"
-                  onPress={handleDownloadInvoice}
-                  loading={isActionActive('pdf')}
-                  disabled={isAnyActionActive}
-                />
-              )}
-              <DetailMoreActions actions={invoiceMoreActions} disabled={isAnyActionActive} />
-            </>
+            <DetailActionButton
+              label="Download Invoice"
+              icon="download"
+              variant="primary"
+              onPress={handleDownloadInvoice}
+              loading={isActionActive('pdf')}
+              disabled={isAnyActionActive}
+            />
           )}
+          <DetailMoreActions actions={invoiceMoreActions} disabled={isAnyActionActive} />
         </DetailFooter>
       </ScreenShell>
+      <InvoiceRecordPaymentSheet
+        visible={showPaymentSheet && canRecordInvoicePayment}
+        balance={balance}
+        onClose={handleClosePaymentSheet}
+        onSubmit={handleRecordPayment}
+        onDirectPayment={handleOpenDirectPayment}
+        onCheckDirectStatus={handleCheckDirectInvoicePayment}
+        directProviders={directMomoProviders}
+        directStatus={directPaymentStatus}
+        directReference={directPaymentReference}
+        directStatusMessage={directPaymentMessage}
+        directPaymentAvailable={paymentCollectionConfigured && directMomoProviders.length > 0 && !paymentCollectionLoading}
+        directUnavailableReason={
+          paymentCollectionLoading
+            ? 'Checking payment collection setup...'
+            : paymentCollectionConfigured
+              ? 'No supported MoMo provider is available for Direct payment.'
+              : 'Set up Payment Collection in Settings before taking direct payments.'
+        }
+        isSubmitting={isActionActive('payment')}
+        disabled={isAnyActionActive}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+        tintColor={colors.tint}
+      />
     </>
   );
 }
@@ -390,6 +530,4 @@ const styles = StyleSheet.create({
   itemName: { flex: 1, fontSize: 14 },
   itemCode: { fontSize: 12, marginTop: 2 },
   itemTotal: { fontSize: 14, fontWeight: '600' },
-  label: { fontSize: 14, marginBottom: 8 },
-  input: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16 },
 });

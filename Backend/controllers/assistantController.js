@@ -3,6 +3,35 @@ const { Op } = require('sequelize');
 const { sequelize } = require('../config/database');
 const openaiService = require('../services/openaiService');
 const { parseReportDateRange } = require('../utils/reportDateFilter');
+const { startHotPathTimer } = require('../utils/performanceLogger');
+const {
+  assertAiProviderConfigured,
+  buildBillingCircuitError,
+  classifyAiProviderError,
+  openBillingCircuit,
+  toDurationMs,
+} = require('../utils/aiProviderErrors');
+
+const sendAssistantError = (res, error) => {
+  const classified = classifyAiProviderError(error);
+  const statusCode = classified?.statusCode || error.statusCode || 500;
+  const errorCode = classified?.errorCode || error.errorCode || error.code || 'INTERNAL_ERROR';
+  const message = classified?.message || error.message || 'Server Error';
+
+  return res.status(statusCode).json({
+    success: false,
+    error: message,
+    errorCode,
+    code: errorCode,
+  });
+};
+
+const parseClientSubmittedAt = (headerValue) => {
+  if (!headerValue) return null;
+  const parsed = Number(headerValue);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+};
 
 /**
  * Build tenant-scoped context for ABS Assistant (this month, today, receivables, inventory, etc.).
@@ -505,65 +534,112 @@ async function getAssistantContext(tenantId, options = {}) {
  * Chat with ABS Assistant; context is fetched and injected into the system prompt.
  */
 exports.chat = async (req, res, next) => {
+  const finishRequestTiming = startHotPathTimer('assistant.chat', req);
+  const timings = {
+    preflightMs: 0,
+    contextMs: 0,
+    providerMs: 0,
+  };
+  const clientSubmittedAt = parseClientSubmittedAt(req.headers['x-client-submitted-at']);
+  const serverReceivedAt = Date.now();
+
+  const logAssistantTiming = (extra = {}) => {
+    finishRequestTiming({
+      ...timings,
+      clientSubmittedAt,
+      clientToServerMs: clientSubmittedAt ? serverReceivedAt - clientSubmittedAt : null,
+      ...extra,
+    });
+  };
+
   try {
     if (!req.tenantId) {
+      logAssistantTiming({ outcome: 'validation_error' });
       return res.status(400).json({
         success: false,
         error: 'Tenant context is required',
+        errorCode: 'VALIDATION_ERROR',
+        code: 'VALIDATION_ERROR',
       });
     }
 
     const { messages, pageContext, startDate, endDate, periodLabel } = req.body;
     if (!Array.isArray(messages) || messages.length === 0) {
+      logAssistantTiming({ outcome: 'validation_error' });
       return res.status(400).json({
         success: false,
         error: 'messages array is required and must not be empty',
+        errorCode: 'VALIDATION_ERROR',
+        code: 'VALIDATION_ERROR',
       });
     }
 
     const lastMessage = messages[messages.length - 1];
     if (!lastMessage || lastMessage.role !== 'user' || typeof lastMessage.content !== 'string') {
+      logAssistantTiming({ outcome: 'validation_error' });
       return res.status(400).json({
         success: false,
         error: 'Last message must be a user message with content',
+        errorCode: 'VALIDATION_ERROR',
+        code: 'VALIDATION_ERROR',
       });
     }
 
+    const preflightStart = process.hrtime.bigint();
+    const circuitError = buildBillingCircuitError(req.tenantId);
+    if (circuitError) {
+      timings.preflightMs = toDurationMs(preflightStart);
+      logAssistantTiming({ outcome: 'circuit_breaker', errorCode: circuitError.errorCode });
+      return sendAssistantError(res, circuitError);
+    }
+
+    await assertAiProviderConfigured(req.tenantId);
+    timings.preflightMs = toDurationMs(preflightStart);
+
+    const contextStart = process.hrtime.bigint();
     const context = await getAssistantContext(req.tenantId, {
       shopFilterId: req.shopFilterId || null,
       startDate: typeof startDate === 'string' ? startDate : undefined,
       endDate: typeof endDate === 'string' ? endDate : undefined,
       periodLabel: typeof periodLabel === 'string' ? periodLabel : undefined,
     });
+    timings.contextMs = toDurationMs(contextStart);
     const businessType = req.tenant?.businessType || context.businessType;
 
+    const providerStart = process.hrtime.bigint();
     const assistantMessage = await openaiService.chatWithContext(messages, context, {
       businessType,
       tenantId: req.tenantId,
       pageContext: typeof pageContext === 'string' ? pageContext : undefined,
     });
+    timings.providerMs = toDurationMs(providerStart);
 
+    logAssistantTiming({ outcome: 'success' });
     res.status(200).json({
       success: true,
       message: assistantMessage,
     });
   } catch (error) {
-    if (error.code === 'OPENAI_NOT_CONFIGURED') {
-      return res.status(503).json({
-        success: false,
-        error: 'AI assistant is not configured. Set ANTHROPIC_API_KEY in the backend .env to enable.',
-        code: 'OPENAI_NOT_CONFIGURED',
+    const classified = classifyAiProviderError(error);
+    if (error.aiProviderError || classified) {
+      const billingErrorCode = error.errorCode || error.code || classified?.errorCode;
+      if (billingErrorCode === 'AI_PROVIDER_BILLING_REQUIRED') {
+        openBillingCircuit(req.tenantId, error);
+      }
+      logAssistantTiming({
+        outcome: 'provider_error',
+        errorCode: billingErrorCode || null,
+        circuitBreaker: Boolean(error.circuitBreaker),
       });
+      return sendAssistantError(res, error);
     }
-    if (error.code === 'invalid_api_key' || error.status === 401) {
-      return res.status(503).json({
-        success: false,
-        error:
-          'Invalid Anthropic API key. Check the workspace AI key or ANTHROPIC_API_KEY in Backend/.env.',
-        code: 'OPENAI_INVALID_KEY',
-      });
-    }
-    console.error('Error in assistant chat:', error);
+
+    logAssistantTiming({ outcome: 'error' });
+    console.error('Error in assistant chat:', {
+      message: error?.message,
+      code: error?.code,
+      status: error?.status,
+    });
     next(error);
   }
 };

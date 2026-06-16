@@ -26,6 +26,7 @@ import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
+import { RestockProductSheet } from '@/components/RestockProductSheet';
 import { CURRENCY, SHOP_TYPES, resolveBusinessType } from '@/constants';
 import { formatCurrency } from '@/utils/formatCurrency';
 import { resolveImageUrl } from '@/utils/fileUtils';
@@ -47,7 +48,9 @@ type Product = {
   sellingPrice: number;
   costPrice?: number;
   quantityOnHand?: number;
+  reorderLevel?: number;
   trackStock?: boolean;
+  unit?: string;
   imageUrl?: string | null;
   category?: { id: string; name: string };
   isActive?: boolean;
@@ -83,6 +86,7 @@ export default function ProductsScreen() {
   });
   const [imagePreviewUri, setImagePreviewUri] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [productToRestock, setProductToRestock] = useState<Product | null>(null);
 
   useEffect(() => {
     if (params.search) setSearchValue(String(params.search));
@@ -140,6 +144,20 @@ export default function ProductsScreen() {
     },
   });
 
+  const restockProductMutation = useMutation({
+    mutationFn: ({ productId, quantity }: { productId: string; quantity: number }) =>
+      productService.adjustStock(productId, quantity, 'delta', 'Receive stock'),
+    onSuccess: async (_, variables) => {
+      await refreshAfterInventoryChange(queryClient);
+      const name = productToRestock?.name || 'Product';
+      setProductToRestock(null);
+      Alert.alert('Success', `Added ${variables.quantity} to ${name}`);
+    },
+    onError: (error: unknown) => {
+      Alert.alert('Error', getApiErrorMessage(error, 'Failed to restock product'));
+    },
+  });
+
   const products = useMemo(() => parseApiListResponse<Product>(response), [response]);
   const loadErrorMessage = useMemo(
     () => getApiErrorMessage(error, 'Could not load products. Pull to refresh.'),
@@ -152,6 +170,18 @@ export default function ProductsScreen() {
       router.push(`/product/${product.id}` as never);
     },
     [router]
+  );
+
+  const handleOpenRestock = useCallback((product: Product) => {
+    setProductToRestock(product);
+  }, []);
+
+  const handleRestockSubmit = useCallback(
+    (quantity: number) => {
+      if (!productToRestock?.id) return;
+      restockProductMutation.mutate({ productId: productToRestock.id, quantity });
+    },
+    [productToRestock?.id, restockProductMutation]
   );
 
   const uploadProductImageFromAsset = useCallback(async (asset: ImagePicker.ImagePickerAsset) => {
@@ -295,7 +325,13 @@ export default function ProductsScreen() {
                      imageUrl !== 'null' && 
                      imageUrl !== 'undefined' &&
                      !imageUrl.startsWith('undefined');
-    
+    const quantityOnHand = Number(item.quantityOnHand ?? 0);
+    const reorderLevel = Number(item.reorderLevel ?? 10);
+    const shouldShowRestock =
+      item.trackStock !== false &&
+      Number.isFinite(quantityOnHand) &&
+      quantityOnHand <= (Number.isFinite(reorderLevel) && reorderLevel > 0 ? reorderLevel : 10);
+
     return (
       <Pressable
         onPress={() => handleProductPress(item)}
@@ -353,6 +389,18 @@ export default function ProductsScreen() {
           <Text style={[styles.cardPrice, { color: colors.tint }]}>
             {formatCurrency(item.sellingPrice)}
           </Text>
+          {shouldShowRestock ? (
+            <Pressable
+              onPress={(event) => {
+                event.stopPropagation();
+                handleOpenRestock(item);
+              }}
+              style={[styles.restockPill, { borderColor: colors.tint }]}
+            >
+              <AppIcon name="download" size={14} color={colors.tint} />
+              <Text style={[styles.restockPillText, { color: colors.tint }]}>Restock</Text>
+            </Pressable>
+          ) : null}
         </View>
       </Pressable>
     );
@@ -576,6 +624,21 @@ export default function ProductsScreen() {
                   />
                 </View>
       </FormSheetModal>
+      <RestockProductSheet
+        visible={!!productToRestock}
+        product={productToRestock}
+        onClose={() => {
+          if (!restockProductMutation.isPending) setProductToRestock(null);
+        }}
+        onSubmit={handleRestockSubmit}
+        isSubmitting={restockProductMutation.isPending}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+        inputBg={inputBg}
+        tintColor={colors.tint}
+      />
     </ScreenShell>
   );
 }
@@ -631,6 +694,17 @@ const styles = StyleSheet.create({
   cardProductName: { fontSize: 14, fontWeight: '600', marginBottom: 2 },
   cardSku: { fontSize: 11, marginBottom: 4 },
   cardPrice: { fontSize: 15, fontWeight: '700' },
+  restockPill: {
+    marginTop: 10,
+    minHeight: 34,
+    borderWidth: 1,
+    borderRadius: 999,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  restockPillText: { fontSize: 12, fontWeight: '700' },
   stockBadge: {
     position: 'absolute',
     top: 8,

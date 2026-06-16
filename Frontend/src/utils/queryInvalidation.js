@@ -2,6 +2,7 @@
  * Shared React Query invalidation helpers for web.
  * Keep prefixes broad enough to catch page-specific keys, but avoid full-cache invalidation.
  */
+import { queryKeys } from './queryKeys';
 
 export const QUERY_STALE = {
   TRANSACTIONAL: 30 * 1000,
@@ -11,34 +12,40 @@ export const QUERY_STALE = {
 };
 
 const SCOPED_WORKSPACE_PREFIXES = [
-  ['customers'],
-  ['customer'],
-  ['sales'],
-  ['sale'],
-  ['products'],
-  ['product'],
-  ['expenses'],
-  ['expense'],
-  ['dashboard'],
-  ['orders'],
-  ['jobs'],
-  ['job'],
-  ['quotes'],
-  ['quote'],
-  ['invoices'],
-  ['invoice'],
-  ['leads'],
-  ['lead'],
+  queryKeys.customers.all,
+  queryKeys.customers.detailRoot,
+  queryKeys.sales.all,
+  queryKeys.sales.detailRoot,
+  queryKeys.products.all,
+  queryKeys.products.detailRoot,
+  queryKeys.expenses.all,
+  queryKeys.expenses.detailRoot,
+  queryKeys.dashboard.all,
+  queryKeys.orders.all,
+  queryKeys.jobs.all,
+  queryKeys.jobs.detailRoot,
+  queryKeys.quotes.all,
+  queryKeys.quotes.detailRoot,
+  queryKeys.invoices.all,
+  queryKeys.invoices.detailRoot,
+  queryKeys.leads.all,
+  queryKeys.leads.detailRoot,
   ['deliveries-queue'],
-  ['store', 'online-orders'],
-  ['store', 'dashboard'],
-  ['store', 'setup-status'],
+  queryKeys.store.onlineOrders.all,
+  queryKeys.store.dashboard,
+  queryKeys.store.setupStatus,
   ['store', 'service-listings'],
-  ['store', 'trade-assurance-dashboard'],
+  queryKeys.store.tradeAssuranceDashboardRoot,
 ];
 
 const invalidatePrefixes = (queryClient, prefixes, options = {}) => Promise.all(
   prefixes.map((queryKey) => queryClient.invalidateQueries({ queryKey, ...options }))
+);
+
+const markPrefixesStale = (queryClient, prefixes) => invalidatePrefixes(
+  queryClient,
+  prefixes,
+  { refetchType: 'none' }
 );
 
 const refetchActivePrefixes = (queryClient, prefixes) => Promise.all(
@@ -58,24 +65,117 @@ export async function refreshAfterWorkspaceScopeChange(queryClient) {
   ]);
 }
 
+export async function refreshAfterSale(queryClient) {
+  await refreshRelatedQueries(queryClient, [
+    queryKeys.sales.all,
+    queryKeys.sales.detailRoot,
+    queryKeys.products.all,
+    queryKeys.products.detailRoot,
+    queryKeys.invoices.all,
+    queryKeys.invoices.detailRoot,
+    queryKeys.customers.all,
+    queryKeys.customers.detailRoot,
+    queryKeys.dashboard.all,
+    queryKeys.orders.all,
+    ['deliveries-queue'],
+  ]);
+}
+
+export async function markAfterSaleStale(queryClient) {
+  await markPrefixesStale(queryClient, [
+    queryKeys.sales.all,
+    queryKeys.sales.detailRoot,
+    queryKeys.products.all,
+    queryKeys.products.detailRoot,
+    queryKeys.invoices.all,
+    queryKeys.invoices.detailRoot,
+    queryKeys.customers.all,
+    queryKeys.customers.detailRoot,
+    queryKeys.dashboard.all,
+    queryKeys.orders.all,
+    ['deliveries-queue'],
+  ]);
+}
+
+export async function refreshAfterExpense(queryClient) {
+  await refreshRelatedQueries(queryClient, [queryKeys.expenses.all, queryKeys.expenses.detailRoot, queryKeys.dashboard.all]);
+}
+
+export async function refreshAfterInvoiceChange(queryClient) {
+  await refreshRelatedQueries(queryClient, [
+    queryKeys.invoices.all,
+    queryKeys.invoices.detailRoot,
+    queryKeys.customers.all,
+    queryKeys.customers.detailRoot,
+    queryKeys.sales.all,
+    queryKeys.sales.detailRoot,
+    queryKeys.dashboard.all,
+  ]);
+}
+
+export async function refreshAfterQuoteChange(queryClient) {
+  await refreshRelatedQueries(queryClient, [
+    queryKeys.quotes.all,
+    queryKeys.quotes.detailRoot,
+    queryKeys.customers.all,
+    queryKeys.customers.detailRoot,
+    queryKeys.jobs.all,
+    queryKeys.jobs.detailRoot,
+    queryKeys.sales.all,
+    queryKeys.sales.detailRoot,
+    queryKeys.dashboard.all,
+  ]);
+}
+
+export async function refreshAfterCustomerChange(queryClient) {
+  await refreshRelatedQueries(queryClient, [queryKeys.customers.all, queryKeys.customers.detailRoot, queryKeys.dashboard.all]);
+}
+
 export async function refreshAfterInventoryChange(queryClient) {
   await refreshRelatedQueries(queryClient, [
-    ['products'],
-    ['product'],
+    queryKeys.products.all,
+    queryKeys.products.detailRoot,
   ]);
-  await queryClient.invalidateQueries({ queryKey: ['dashboard'], refetchType: 'none' });
+  await queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.all, refetchType: 'none' });
   await queryClient.invalidateQueries({ queryKey: ['notifications'], refetchType: 'active' });
 }
 
-export async function refreshAfterOnlineOrderChange(queryClient) {
+export const refreshAfterProductChange = refreshAfterInventoryChange;
+
+export async function refreshAfterJobChange(queryClient) {
   await refreshRelatedQueries(queryClient, [
-    ['store', 'online-orders'],
-    ['store', 'dashboard'],
-    ['store', 'trade-assurance-dashboard'],
-    ['store', 'setup-status'],
+    queryKeys.jobs.all,
+    queryKeys.jobs.detailRoot,
+    queryKeys.dashboard.all,
+  ]);
+}
+
+export async function refreshAfterLeadChange(queryClient) {
+  await refreshRelatedQueries(queryClient, [
+    queryKeys.leads.all,
+    queryKeys.leads.detailRoot,
+    queryKeys.customers.all,
+    queryKeys.customers.detailRoot,
+  ]);
+}
+
+export async function refreshAfterOrderChange(queryClient) {
+  await refreshRelatedQueries(queryClient, [
+    queryKeys.orders.all,
+    queryKeys.sales.all,
+    queryKeys.dashboard.all,
+  ]);
+}
+
+export async function refreshAfterOnlineOrderChange(queryClient) {
+  await invalidatePrefixes(queryClient, [
+    queryKeys.store.onlineOrders.all,
+    queryKeys.store.dashboard,
+    queryKeys.store.tradeAssuranceDashboardRoot,
+    queryKeys.store.setupStatus,
     ['deliveries-queue'],
-    ['sales'],
-    ['dashboard'],
+    queryKeys.sales.all,
+    queryKeys.dashboard.all,
   ]);
 }
 

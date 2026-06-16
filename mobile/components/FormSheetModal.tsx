@@ -23,6 +23,7 @@ export type FormSheetModalProps = {
   children: React.ReactNode;
   /** Sticky action bar — stays visible above the keyboard; form fields scroll above it. */
   footer?: React.ReactNode;
+  keyboardVerticalOffset?: number;
   cardBg?: string;
   borderColor?: string;
   textColor?: string;
@@ -36,6 +37,7 @@ export function FormSheetModal({
   onClose,
   children,
   footer,
+  keyboardVerticalOffset = 0,
   cardBg: cardBgProp,
   borderColor: borderColorProp,
   textColor: textColorProp,
@@ -49,11 +51,18 @@ export function FormSheetModal({
   const mutedColor = mutedColorProp ?? theme.mutedColor;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
       <View style={styles.overlay}>
         <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close" />
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={keyboardVerticalOffset}
           style={styles.sheetWrap}
         >
           <View style={[styles.sheet, { backgroundColor: cardBg }]}>

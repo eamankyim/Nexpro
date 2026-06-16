@@ -216,7 +216,7 @@ const sanitizeEmail = (email) => {
     return null;
   }
   
-  return validator.normalizeEmail(trimmed);
+  return validator.normalizeEmail(trimmed, { gmail_remove_dots: false });
 };
 
 /**
@@ -276,6 +276,7 @@ const sanitizeFilename = (filename) => {
   
   // Remove special characters
   sanitized = sanitized.replace(/[^a-zA-Z0-9._-]/g, '_');
+  sanitized = sanitized.replace(/_+/g, '_');
   
   // Limit length
   if (sanitized.length > 255) {

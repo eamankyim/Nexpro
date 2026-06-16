@@ -15,6 +15,7 @@ import { Image } from 'expo-image';
 
 import { AppIcon } from '@/components/AppIcon';
 import { FormSheetModal } from '@/components/FormSheetModal';
+import { RestockProductSheet } from '@/components/RestockProductSheet';
 import {
   DetailHeroCard,
   DetailInfoRow,
@@ -47,6 +48,7 @@ type ProductDetail = {
   sellingPrice: number;
   costPrice?: number;
   quantityOnHand?: number;
+  unit?: string;
   trackStock?: boolean;
   imageUrl?: string | null;
   category?: { id: string; name: string };
@@ -73,6 +75,7 @@ export default function ProductDetailScreen() {
   const inputBg = bg === '#f9fafb' ? '#f9fafb' : '#18181b';
 
   const [editOpen, setEditOpen] = useState(false);
+  const [restockOpen, setRestockOpen] = useState(false);
   const [editForm, setEditForm] = useState({
     name: '',
     sku: '',
@@ -138,6 +141,19 @@ export default function ProductDetailScreen() {
     },
   });
 
+  const restockMutation = useMutation({
+    mutationFn: (quantity: number) =>
+      productService.adjustStock(String(id), quantity, 'delta', 'Receive stock'),
+    onSuccess: async (_, quantity) => {
+      await refreshAfterInventoryChange(queryClient);
+      setRestockOpen(false);
+      Alert.alert('Success', `Added ${quantity} to ${product?.name || 'product'}`);
+    },
+    onError: (err: unknown) => {
+      Alert.alert('Error', getApiErrorMessage(err, 'Failed to restock product'));
+    },
+  });
+
   const handleAddToCart = useCallback(() => {
     if (!product) return;
     if (isProductOutOfStock(product)) {
@@ -161,6 +177,11 @@ export default function ProductDetailScreen() {
     }
     Alert.alert('Success', `${product.name} added to cart`);
   }, [addItem, product]);
+
+  const handleOpenRestock = useCallback(() => {
+    if (!product || product.trackStock === false) return;
+    setRestockOpen(true);
+  }, [product]);
 
   const handleSave = useCallback(() => {
     if (!editForm.name.trim()) {
@@ -206,6 +227,17 @@ export default function ProductDetailScreen() {
   const outOfStock = isProductOutOfStock(product);
   const alternateBarcode = getAlternateBarcode(product);
   const productMoreActions: DetailMoreAction[] = [
+    ...(product.trackStock === false
+      ? []
+      : [
+          {
+            key: 'restock',
+            label: 'Restock',
+            icon: 'download' as const,
+            onPress: handleOpenRestock,
+            loading: restockMutation.isPending,
+          },
+        ]),
     {
       key: 'edit',
       label: 'Edit',
@@ -275,11 +307,10 @@ export default function ProductDetailScreen() {
         </ScrollView>
         <DetailFooter>
           <DetailActionButton
-            label={outOfStock ? 'Out of stock' : 'Add to Cart'}
-            icon="shopping-cart"
+            label={outOfStock ? 'Restock' : 'Add to Cart'}
+            icon={outOfStock ? 'download' : 'shopping-cart'}
             variant="primary"
-            onPress={handleAddToCart}
-            disabled={outOfStock}
+            onPress={outOfStock ? handleOpenRestock : handleAddToCart}
           />
           <DetailMoreActions actions={productMoreActions} />
         </DetailFooter>
@@ -382,6 +413,21 @@ export default function ProductDetailScreen() {
           />
         </View>
       </FormSheetModal>
+      <RestockProductSheet
+        visible={restockOpen}
+        product={product}
+        onClose={() => {
+          if (!restockMutation.isPending) setRestockOpen(false);
+        }}
+        onSubmit={(quantity) => restockMutation.mutate(quantity)}
+        isSubmitting={restockMutation.isPending}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+        inputBg={inputBg}
+        tintColor={colors.tint}
+      />
     </>
   );
 }

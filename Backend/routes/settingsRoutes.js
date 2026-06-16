@@ -51,12 +51,19 @@ const {
 } = require('../controllers/settingsController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
+const { cacheMiddleware } = require('../middleware/cache');
 const { createUploader, checkStorageLimit } = require('../middleware/upload');
+const { timeCrudAction } = require('../middleware/crudTiming');
 
 const router = express.Router();
 
 router.use(protect);
 router.use(tenantContext);
+
+const generateTenantSettingsKey = (req) => {
+  const tenantId = req.tenantId || '';
+  return `settings:${tenantId}:${req.path}`;
+};
 
 // Use memory storage for images since we store base64 in database
 const multer = require('multer');
@@ -93,16 +100,16 @@ router.get('/lead-sources', getLeadSources);
 
 router
   .route('/profile')
-  .get(getProfile)
-  .put(updateProfile);
+  .get(timeCrudAction('settings.profile.read'), getProfile)
+  .put(timeCrudAction('settings.profile.update'), updateProfile);
 
 router.post('/profile/avatar', checkStorageLimit, profileUploader.single('file'), uploadProfilePicture);
 router.post('/data-deletion-request', requestDataDeletion);
 
 router
   .route('/organization')
-  .get(getOrganizationSettings)
-  .put(authorize('admin', 'manager'), updateOrganizationSettings);
+  .get(cacheMiddleware(30, generateTenantSettingsKey), timeCrudAction('settings.organization.read'), getOrganizationSettings)
+  .put(authorize('admin', 'manager'), timeCrudAction('settings.organization.update'), updateOrganizationSettings);
 
 router.post(
   '/organization/logo',
@@ -115,23 +122,23 @@ router.post(
 router
   .route('/subscription')
   .get(getSubscriptionSettings)
-  .put(authorize('admin', 'manager'), updateSubscriptionSettings);
+  .put(authorize('admin', 'manager'), timeCrudAction('settings.subscription.update'), updateSubscriptionSettings);
 
 router
   .route('/payroll')
   .get(getPayrollSettings)
-  .put(authorize('admin', 'manager'), updatePayrollSettings);
+  .put(authorize('admin', 'manager'), timeCrudAction('settings.payroll.update'), updatePayrollSettings);
 
 router
   .route('/ai')
   .get(authorize('admin', 'manager'), getAISettings)
-  .put(authorize('admin', 'manager'), updateAISettings)
-  .delete(authorize('admin', 'manager'), deleteAISettings);
+  .put(authorize('admin', 'manager'), timeCrudAction('settings.ai.update'), updateAISettings)
+  .delete(authorize('admin', 'manager'), timeCrudAction('settings.ai.delete'), deleteAISettings);
 
 router
   .route('/whatsapp')
   .get(getWhatsAppSettings)
-  .put(authorize('admin', 'manager'), updateWhatsAppSettings);
+  .put(authorize('admin', 'manager'), timeCrudAction('settings.whatsapp.update'), updateWhatsAppSettings);
 
 router.post(
   '/whatsapp/test',
@@ -142,7 +149,7 @@ router.post(
 router
   .route('/sms')
   .get(getSMSSettings)
-  .put(authorize('admin', 'manager'), updateSMSSettings);
+  .put(authorize('admin', 'manager'), timeCrudAction('settings.sms.update'), updateSMSSettings);
 
 router.post(
   '/sms/test',
@@ -153,7 +160,7 @@ router.post(
 router
   .route('/email')
   .get(getEmailSettings)
-  .put(authorize('admin', 'manager'), updateEmailSettings);
+  .put(authorize('admin', 'manager'), timeCrudAction('settings.email.update'), updateEmailSettings);
 
 router.post(
   '/email/test',
@@ -161,35 +168,36 @@ router.post(
   testEmailConnection
 );
 
-router.get('/notification-channels', getNotificationChannels);
+router.get('/notification-channels', cacheMiddleware(30, generateTenantSettingsKey), getNotificationChannels);
 router
   .route('/message-delivery-rules')
   .get(authorize('admin', 'manager'), getMessageDeliveryRules)
-  .put(authorize('admin', 'manager'), updateMessageDeliveryRules);
+  .put(authorize('admin', 'manager'), timeCrudAction('settings.message_delivery_rules.update'), updateMessageDeliveryRules);
 router
   .route('/delivery')
   .get(getDeliverySettings)
-  .put(authorize('admin', 'manager'), updateDeliverySettings);
+  .put(authorize('admin', 'manager'), timeCrudAction('settings.delivery.update'), updateDeliverySettings);
 router.put(
   '/customer-notification-preferences',
   authorize('admin', 'manager'),
+  timeCrudAction('settings.customer_notification_preferences.update'),
   updateCustomerNotificationPreferences
 );
 
 router
   .route('/quote-workflow')
-  .get(getQuoteWorkflow)
-  .put(authorize('admin', 'manager'), updateQuoteWorkflow);
+  .get(cacheMiddleware(30, generateTenantSettingsKey), getQuoteWorkflow)
+  .put(authorize('admin', 'manager'), timeCrudAction('settings.quote_workflow.update'), updateQuoteWorkflow);
 
 router
   .route('/job-invoice')
   .get(getJobInvoiceSettings)
-  .put(authorize('admin', 'manager'), updateJobInvoiceSettings);
+  .put(authorize('admin', 'manager'), timeCrudAction('settings.job_invoice.update'), updateJobInvoiceSettings);
 
 router
   .route('/pos-config')
   .get(getPOSConfig)
-  .put(authorize('admin', 'manager'), updatePOSConfig);
+  .put(authorize('admin', 'manager'), timeCrudAction('settings.pos_config.update'), updatePOSConfig);
 
 router.get('/payment-collection/banks', getPaymentCollectionBanks);
 router.get(
@@ -214,12 +222,13 @@ router.post(
 );
 router
   .route('/payment-collection')
-  .get(getPaymentCollectionSettings)
-  .put(authorize('admin', 'manager'), updatePaymentCollectionSettings);
+  .get(cacheMiddleware(30, generateTenantSettingsKey), getPaymentCollectionSettings)
+  .put(authorize('admin', 'manager'), timeCrudAction('settings.payment_collection.update'), updatePaymentCollectionSettings);
 
 router.put(
   '/mtn-collection-credentials',
   authorize('admin', 'manager'),
+  timeCrudAction('settings.mtn_collection_credentials.update'),
   updateMtnCollectionCredentials
 );
 router.post(
@@ -230,6 +239,7 @@ router.post(
 router.post(
   '/mtn-collection-credentials/disconnect',
   authorize('admin', 'manager'),
+  timeCrudAction('settings.mtn_collection_credentials.disconnect'),
   disconnectMtnCollectionCredentials
 );
 

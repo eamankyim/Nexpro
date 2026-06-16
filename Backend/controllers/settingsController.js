@@ -31,6 +31,14 @@ const {
 } = require('../utils/tenantClassification');
 const { sequelize } = require('../config/database');
 const { Op } = require('sequelize');
+const {
+  getCacheValue,
+  setCacheValue,
+  getOrganizationSettingsCacheKey,
+  getNotificationChannelsCacheKey,
+  invalidateAuthBootstrapCache,
+  invalidateCache
+} = require('../middleware/cache');
 
 /** In-memory cache for payment integration OTP (best-effort); source of truth is DB for serverless safety. */
 const paymentOtpStore = new Map();
@@ -157,6 +165,50 @@ const getSettingValue = async (tenantId, key, fallback = {}) => {
   return setting ? setting.value : fallback;
 };
 
+const invalidateTenantSettingsCache = (tenantId) => {
+  try {
+    invalidateCache(tenantId, 'settings:*');
+    invalidateAuthBootstrapCache({ tenantId });
+  } catch (cacheErr) {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[Settings] cache invalidation failed:', cacheErr?.message);
+    }
+  }
+};
+
+const buildOrganizationPayload = (organizationSettings = {}, tenant = null) => {
+  const tenantMetadata = tenant?.metadata || {};
+  return {
+    name: (organizationSettings.name !== undefined && organizationSettings.name !== null)
+      ? organizationSettings.name
+      : (tenant?.name || ''),
+    legalName: organizationSettings.legalName || '',
+    email: (organizationSettings.email !== undefined && organizationSettings.email !== null)
+      ? organizationSettings.email
+      : (tenantMetadata.email || ''),
+    phone: (organizationSettings.phone !== undefined && organizationSettings.phone !== null)
+      ? organizationSettings.phone
+      : (tenantMetadata.phone || ''),
+    website: (organizationSettings.website !== undefined && organizationSettings.website !== null)
+      ? organizationSettings.website
+      : (tenantMetadata.website || ''),
+    logoUrl: organizationSettings.logoUrl || tenantMetadata.logo || '',
+    invoiceFooter: organizationSettings.invoiceFooter || '',
+    paymentDetails: organizationSettings.paymentDetails || '',
+    paymentDetailsEnabled: organizationSettings.paymentDetailsEnabled === true,
+    defaultPaymentTerms: organizationSettings.defaultPaymentTerms || '',
+    defaultTermsAndConditions: organizationSettings.defaultTermsAndConditions || '',
+    supportEmail: organizationSettings.supportEmail || '',
+    address: organizationSettings.address || {},
+    tax: normalizeTaxConfig(organizationSettings.tax || {}),
+    taskAutomation: normalizeTaskAutomation(organizationSettings.taskAutomation || {}),
+    businessType: tenant?.businessType || 'shop',
+    shopType: tenant?.businessType === 'shop' ? (tenantMetadata.shopType || DEFAULT_SHOP_TYPE) : '',
+    appName: organizationSettings.appName || '',
+    primaryColor: organizationSettings.primaryColor || ''
+  };
+};
+
 const upsertSettingValue = async (tenantId, key, value, description = null) => {
   const [setting, created] = await Setting.findOrCreate({
     where: { tenantId, key },
@@ -176,6 +228,7 @@ const upsertSettingValue = async (tenantId, key, value, description = null) => {
     await setting.save();
   }
 
+  invalidateTenantSettingsCache(tenantId);
   return setting.value;
 };
 
@@ -416,48 +469,30 @@ exports.uploadProfilePicture = async (req, res, next) => {
 
 exports.getOrganizationSettings = async (req, res, next) => {
   try {
-    // Get organization settings from Settings model
-    const organizationSettings = await getSettingValue(req.tenantId, 'organization', {});
-    
-    // Get tenant data (name, metadata with email, phone, website)
-    const tenant = normalizeTenantClassification(await Tenant.findByPk(req.tenantId));
-    const tenantMetadata = tenant?.metadata || {};
-    
-    // Merge tenant data with organization settings
-    // Priority: Settings model > Tenant model
-    // Check if value exists in Settings (even if empty string) before falling back to Tenant
-    const organization = {
-      name: (organizationSettings.name !== undefined && organizationSettings.name !== null)
-        ? organizationSettings.name
-        : (tenant?.name || ''),
-      legalName: organizationSettings.legalName || '',
-      email: (organizationSettings.email !== undefined && organizationSettings.email !== null)
-        ? organizationSettings.email
-        : (tenantMetadata.email || ''),
-      phone: (organizationSettings.phone !== undefined && organizationSettings.phone !== null)
-        ? organizationSettings.phone
-        : (tenantMetadata.phone || ''),
-      website: (organizationSettings.website !== undefined && organizationSettings.website !== null)
-        ? organizationSettings.website
-        : (tenantMetadata.website || ''),
-      logoUrl: organizationSettings.logoUrl || tenantMetadata.logo || '',
-      invoiceFooter: organizationSettings.invoiceFooter || '',
-      paymentDetails: organizationSettings.paymentDetails || '',
-      paymentDetailsEnabled: organizationSettings.paymentDetailsEnabled === true,
-      defaultPaymentTerms: organizationSettings.defaultPaymentTerms || '',
-      defaultTermsAndConditions: organizationSettings.defaultTermsAndConditions || '',
-      supportEmail: organizationSettings.supportEmail || '',
-      address: organizationSettings.address || {},
-      tax: normalizeTaxConfig(organizationSettings.tax || {}),
-      taskAutomation: normalizeTaskAutomation(organizationSettings.taskAutomation || {}),
-      businessType: tenant?.businessType || 'shop',
-      shopType: tenant?.businessType === 'shop' ? (tenantMetadata.shopType || DEFAULT_SHOP_TYPE) : '',
-      appName: organizationSettings.appName || '',
-      primaryColor: organizationSettings.primaryColor || ''
-    };
+    const cacheKey = getOrganizationSettingsCacheKey(req.tenantId);
+    const cachedOrganization = getCacheValue(cacheKey);
+    if (cachedOrganization) {
+      res.set('Cache-Control', 'no-store');
+      return res.status(200).json({ success: true, data: cachedOrganization });
+    }
+
+    const [settingsRow, tenantRow] = await Promise.all([
+      Setting.findOne({
+        where: { tenantId: req.tenantId, key: 'organization' },
+        attributes: ['value']
+      }),
+      Tenant.findByPk(req.tenantId, {
+        attributes: ['id', 'name', 'businessType', 'metadata']
+      })
+    ]);
+
+    const tenant = normalizeTenantClassification(tenantRow);
+    const organization = buildOrganizationPayload(settingsRow?.value || {}, tenant);
 
     warmTaxConfigCache(req.tenantId, organization);
+    setCacheValue(cacheKey, organization, 30, req.tenantId);
 
+    res.set('Cache-Control', 'no-store');
     res.status(200).json({ success: true, data: organization });
   } catch (error) {
     next(error);
@@ -655,6 +690,7 @@ exports.updateOrganizationSettings = async (req, res, next) => {
         name: tenant.name,
         metadata: tenant.metadata
       });
+      invalidateTenantSettingsCache(req.tenantId);
     }
 
     // Return merged data (same structure as getOrganizationSettings)
@@ -1392,32 +1428,44 @@ exports.getEmailSettings = async (req, res, next) => {
 // @access  Private
 exports.getNotificationChannels = async (req, res, next) => {
   try {
-    const smsService = require('../services/smsService');
-    const whatsappService = require('../services/whatsappService');
-    const [smsSetting, whatsappSetting, emailSetting, prefsSetting] = await Promise.all([
-      Setting.findOne({ where: { tenantId: req.tenantId, key: 'sms' } }),
-      Setting.findOne({ where: { tenantId: req.tenantId, key: 'whatsapp' } }),
-      Setting.findOne({ where: { tenantId: req.tenantId, key: 'email' } }),
-      Setting.findOne({ where: { tenantId: req.tenantId, key: 'customer-notification-preferences' } })
-    ]);
-    const smsConfig = await smsService.getResolvedConfig(req.tenantId);
-    const whatsappConfig = await whatsappService.getConfig(req.tenantId);
-    const ev = emailSetting?.value || {};
+    const cacheKey = getNotificationChannelsCacheKey(req.tenantId);
+    const cachedChannels = getCacheValue(cacheKey);
+    if (cachedChannels) {
+      res.set('Cache-Control', 'no-store');
+      return res.status(200).json({ success: true, data: cachedChannels });
+    }
+
+    const rows = await Setting.findAll({
+      where: {
+        tenantId: req.tenantId,
+        key: { [Op.in]: ['sms', 'whatsapp', 'email', 'customer-notification-preferences'] }
+      },
+      attributes: ['key', 'value']
+    });
+    const settings = rows.reduce((acc, row) => {
+      acc[row.key] = row.value || {};
+      return acc;
+    }, {});
+
+    const smsConfig = settings.sms || {};
+    const whatsappConfig = settings.whatsapp || {};
+    const ev = settings.email || {};
     // Must match emailService.getConfig: email is only used when enabled (and has credentials at send time)
     const emailConfigured = !!(ev.enabled && (ev.smtpHost || ev.sendgridApiKey || ev.sesAccessKeyId));
-    const prefs = prefsSetting?.value || {};
-    res.status(200).json({
-      success: true,
-      data: {
-        email: emailConfigured,
-        whatsapp: !!(whatsappConfig?.phoneNumberId),
-        sms: !!smsConfig,
-        autoSendInvoiceToCustomer: prefs.autoSendInvoiceToCustomer !== false,
-        autoSendReceiptToCustomer: prefs.autoSendReceiptToCustomer === true,
-        sendPaymentReminderEmail: prefs.sendPaymentReminderEmail === true,
-        sendInvoicePaidConfirmationToCustomer: prefs.sendInvoicePaidConfirmationToCustomer !== false
-      }
-    });
+    const prefs = settings['customer-notification-preferences'] || {};
+    const data = {
+      email: emailConfigured,
+      whatsapp: !!(whatsappConfig.enabled && whatsappConfig.phoneNumberId),
+      sms: !!(smsConfig.enabled),
+      autoSendInvoiceToCustomer: prefs.autoSendInvoiceToCustomer !== false,
+      autoSendReceiptToCustomer: prefs.autoSendReceiptToCustomer === true,
+      sendPaymentReminderEmail: prefs.sendPaymentReminderEmail === true,
+      sendInvoicePaidConfirmationToCustomer: prefs.sendInvoicePaidConfirmationToCustomer !== false
+    };
+
+    setCacheValue(cacheKey, data, 30, req.tenantId);
+    res.set('Cache-Control', 'no-store');
+    res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);
   }
@@ -1509,6 +1557,7 @@ exports.updateCustomerNotificationPreferences = async (req, res, next) => {
     } else {
       await Setting.create({ tenantId: req.tenantId, key: 'customer-notification-preferences', value: updated });
     }
+    invalidateTenantSettingsCache(req.tenantId);
     res.status(200).json({
       success: true,
       data: {
@@ -2100,7 +2149,7 @@ exports.getPaymentCollectionBanks = async (req, res, next) => {
 // @access  Private
 exports.getPaymentCollectionSettings = async (req, res, next) => {
   try {
-    const tenant = await Tenant.findByPk(req.tenantId);
+    const tenant = req.tenant || await Tenant.findByPk(req.tenantId);
     if (!tenant) {
       return res.status(404).json({ success: false, message: 'Tenant not found' });
     }
@@ -2445,6 +2494,7 @@ exports.updatePaymentCollectionSettings = async (req, res, next) => {
       tenant.metadata = { ...(tenant.metadata || {}), paymentCollection };
       await tenant.save({ fields: ['metadata', 'paystackSubaccountCode'] });
       await clearStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
+      invalidateTenantSettingsCache(req.tenantId);
       console.log('[Payment Collection] PUT: success MoMo subaccount linked tenantId=', req.tenantId, 'provider=', momoProvider);
 
       const emailService = require('../services/emailService');
@@ -2551,6 +2601,7 @@ exports.updatePaymentCollectionSettings = async (req, res, next) => {
     tenant.metadata = { ...(tenant.metadata || {}), paymentCollection: paymentCollectionBank };
     await tenant.save({ fields: ['metadata', 'paystackSubaccountCode'] });
     await clearStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
+    invalidateTenantSettingsCache(req.tenantId);
     console.log('[Payment Collection] PUT: success bank linked tenantId=', req.tenantId, 'subaccountCode=', subaccountCode ? `${subaccountCode.slice(0, 8)}...` : '?');
 
     const emailService = require('../services/emailService');

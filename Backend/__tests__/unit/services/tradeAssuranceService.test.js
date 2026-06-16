@@ -2,8 +2,8 @@ jest.mock('../../../models', () => ({
   Customer: {},
   MarketplaceDispute: {},
   MarketplaceLedgerEntry: { findAll: jest.fn() },
-  MarketplaceOrderPayment: { findAll: jest.fn() },
-  MarketplacePayout: { findAll: jest.fn() },
+  MarketplaceOrderPayment: { findAll: jest.fn(), sum: jest.fn(), findOne: jest.fn() },
+  MarketplacePayout: { sum: jest.fn(), count: jest.fn(), findOne: jest.fn() },
   Sale: { findAll: jest.fn() },
   SaleActivity: {},
   Shop: {},
@@ -32,7 +32,11 @@ describe('tradeAssuranceService', () => {
     MarketplaceDispute.count = jest.fn().mockResolvedValue(0);
     MarketplaceLedgerEntry.findAll.mockResolvedValue([]);
     MarketplaceOrderPayment.findAll.mockResolvedValue([]);
-    MarketplacePayout.findAll.mockResolvedValue([]);
+    MarketplaceOrderPayment.sum.mockResolvedValue(0);
+    MarketplaceOrderPayment.findOne.mockResolvedValue(null);
+    MarketplacePayout.sum.mockResolvedValue(0);
+    MarketplacePayout.count.mockResolvedValue(0);
+    MarketplacePayout.findOne.mockResolvedValue(null);
     Sale.findAll.mockResolvedValue([]);
   });
 
@@ -69,23 +73,35 @@ describe('tradeAssuranceService', () => {
   it('summarizes held seller payout and Sabito fee from marketplace payments', async () => {
     MarketplaceOrderPayment.findAll
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{
-        id: 'payment-1',
-        saleId: 'sale-1',
-        status: 'paid_held',
-        grossAmount: 9610,
-        feeAmount: 480.5,
-        netAmount: 9129.5,
-        refundedAmount: 0,
-        currency: 'GHS',
-      }])
+      .mockResolvedValueOnce([{ status: 'paid_held', count: 1 }])
       .mockResolvedValueOnce([{ saleId: 'sale-1' }]);
+    MarketplaceOrderPayment.sum
+      .mockResolvedValueOnce(9129.5)
+      .mockResolvedValueOnce(480.5);
+    MarketplaceOrderPayment.findOne.mockResolvedValue({ currency: 'GHS' });
 
     const summary = await getTradeAssuranceSummary({ tenantId: 'tenant-1' });
 
     expect(summary.balances.pending).toBe(9129.5);
     expect(summary.balances.fee).toBe(480.5);
     expect(summary.counts.held).toBe(1);
+  });
+
+  it('uses available payout currency when no marketplace payments exist', async () => {
+    MarketplaceOrderPayment.findAll
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    MarketplaceOrderPayment.findOne.mockResolvedValue(null);
+    MarketplacePayout.sum.mockResolvedValue(100);
+    MarketplacePayout.count.mockResolvedValue(1);
+    MarketplacePayout.findOne.mockResolvedValue({ currency: 'USD' });
+
+    const summary = await getTradeAssuranceSummary({ tenantId: 'tenant-1' });
+
+    expect(summary.balances.available).toBe(100);
+    expect(summary.balances.currency).toBe('USD');
+    expect(summary.counts.payoutHistory).toBe(1);
   });
 
   it('includes metadata-only paid-held orders shown in the orders table', async () => {

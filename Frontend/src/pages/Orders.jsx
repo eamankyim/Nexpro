@@ -1,10 +1,13 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { LayoutGrid, List, RefreshCw, Loader2, Clock, ChefHat, CheckCircle, User, Package, GripVertical, Trash2 } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import saleService from '../services/saleService';
 import { useAuth } from '../context/AuthContext';
 import { useResponsive } from '../hooks/useResponsive';
 import { showSuccess, showError } from '../utils/toast';
+import { QUERY_STALE, refreshAfterOrderChange } from '../utils/queryInvalidation';
+import { queryKeys } from '../utils/queryKeys';
 import dayjs from 'dayjs';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -224,16 +227,15 @@ const OrderCard = ({ order, onStatusChange, onDeliveryChange, onDelete, canDelet
 };
 
 const Orders = () => {
-  const { activeTenant, isAdmin } = useAuth();
+  const { activeTenant, activeTenantId, isAdmin } = useAuth();
   const { isMobile } = useResponsive();
+  const queryClient = useQueryClient();
   const shopType =
     activeTenant?.metadata?.businessSubType ||
     activeTenant?.metadata?.shopType ||
     null;
   const isRestaurant = shopType === SHOP_TYPES.RESTAURANT;
 
-  const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState('kanban'); // 'kanban' | 'list'
   const [statusFilter, setStatusFilter] = useState('all');
   const [loadingId, setLoadingId] = useState(null);
@@ -242,46 +244,55 @@ const Orders = () => {
   const [hasInteracted, setHasInteracted] = useState(false);
   const isDraggingRef = useRef(false);
 
-  const fetchOrders = useCallback(async () => {
-    if (!isRestaurant) return;
-    if (isDraggingRef.current) return;
-    try {
-      const today = dayjs().format('YYYY-MM-DD');
-      const params = {
-        activeOrders: true,
-        startDate: today,
-        endDate: today,
-        limit: 100,
-      };
-      if (statusFilter !== 'all') params.orderStatus = statusFilter;
-      const res = await saleService.getOrders(params);
-      const data = res?.data?.data ?? res?.data ?? [];
-      const rows = Array.isArray(data) ? data : [];
-      setOrders(rows);
+  const orderQueryParams = useMemo(() => {
+    const today = dayjs().format('YYYY-MM-DD');
+    const params = {
+      activeOrders: true,
+      startDate: today,
+      endDate: today,
+      limit: 100,
+    };
+    if (statusFilter !== 'all') params.orderStatus = statusFilter;
+    return params;
+  }, [statusFilter]);
 
-      // Detect new orders for sound
-      const currentIds = new Set(rows.map((o) => o.id));
-      if (lastOrderIds.current.size > 0) {
-        const newIds = rows.filter((o) => !lastOrderIds.current.has(o.id)).map((o) => o.id);
-        if (newIds.length > 0 && hasInteracted) {
-          playNewOrderSound();
-        }
-      }
-      lastOrderIds.current = currentIds;
-    } catch (err) {
-      showError(err, 'Failed to load orders');
-      setOrders([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [isRestaurant, statusFilter, hasInteracted]);
+  const {
+    data: ordersResponse,
+    isLoading: loading,
+    refetch: refetchOrders,
+    error: ordersError,
+  } = useQuery({
+    queryKey: queryKeys.orders.list(activeTenantId, null, orderQueryParams),
+    queryFn: () => saleService.getOrders(orderQueryParams),
+    enabled: isRestaurant,
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchOnWindowFocus: true,
+    refetchInterval: isDraggingRef.current ? false : POLL_INTERVAL_MS,
+    refetchIntervalInBackground: false,
+  });
+
+  const orders = useMemo(() => {
+    const data = ordersResponse?.data?.data ?? ordersResponse?.data ?? [];
+    return Array.isArray(data) ? data : [];
+  }, [ordersResponse]);
 
   useEffect(() => {
-    if (!isRestaurant) return;
-    fetchOrders();
-    const interval = setInterval(fetchOrders, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [fetchOrders, isRestaurant]);
+    if (ordersError) showError(ordersError, 'Failed to load orders');
+  }, [ordersError]);
+
+  useEffect(() => {
+    const currentIds = new Set(orders.map((order) => order.id));
+    if (lastOrderIds.current.size > 0) {
+      const hasNewOrder = orders.some((order) => !lastOrderIds.current.has(order.id));
+      if (hasNewOrder && hasInteracted) playNewOrderSound();
+    }
+    lastOrderIds.current = currentIds;
+  }, [hasInteracted, orders]);
+
+  const fetchOrders = useCallback(async () => {
+    if (!isRestaurant || isDraggingRef.current) return undefined;
+    return refetchOrders();
+  }, [isRestaurant, refetchOrders]);
 
   const handleStatusChange = useCallback(
     async (order, newStatus) => {
@@ -289,14 +300,14 @@ const Orders = () => {
       try {
         await saleService.updateOrderStatus(order.id, newStatus);
         showSuccess(`Order ${order.saleNumber} moved to ${ORDER_STATUS_LABELS[newStatus]}`);
-        await fetchOrders();
+        await refreshAfterOrderChange(queryClient);
       } catch (err) {
         showError(err, 'Failed to update order status');
       } finally {
         setLoadingId(null);
       }
     },
-    [fetchOrders]
+    [queryClient]
   );
 
   const handleDeliveryChange = useCallback(
@@ -306,14 +317,14 @@ const Orders = () => {
       try {
         await saleService.updateDeliveryStatus(order.id, val);
         showSuccess('Delivery status updated');
-        await fetchOrders();
+        await refreshAfterOrderChange(queryClient);
       } catch (err) {
         showError(err, 'Failed to update delivery status');
       } finally {
         setLoadingId(null);
       }
     },
-    [fetchOrders]
+    [queryClient]
   );
 
   const handleDeleteOrder = useCallback(async (order) => {
@@ -322,13 +333,13 @@ const Orders = () => {
       await saleService.deleteSale(order.id);
       showSuccess('Order deleted successfully');
       setOrderToDelete(null);
-      await fetchOrders();
+      await refreshAfterOrderChange(queryClient);
     } catch (err) {
       showError(err, 'Failed to delete order');
     } finally {
       setLoadingId(null);
     }
-  }, [fetchOrders]);
+  }, [queryClient]);
 
   const handleDragStart = useCallback(() => {
     isDraggingRef.current = true;

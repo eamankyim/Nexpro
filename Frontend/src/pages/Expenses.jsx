@@ -36,6 +36,8 @@ import { EMPTY_STATES } from '../constants/microcopy';
 import { getEmptyStateProps } from '../components/ui/empty-state';
 import { resolveImageUrl } from '../utils/fileUtils';
 import { numberInputValue, handleNumberChange, numberOrEmptySchema } from '../utils/formUtils';
+import { QUERY_STALE, refreshAfterExpense } from '../utils/queryInvalidation';
+import { queryKeys } from '../utils/queryKeys';
 import DetailsDrawer from '../components/DetailsDrawer';
 import DrawerSectionCard from '../components/DrawerSectionCard';
 import TableSkeleton from '../components/TableSkeleton';
@@ -176,16 +178,7 @@ const Expenses = () => {
   const [editingExpense, setEditingExpense] = useState(null);
   const [multipleMode, setMultipleMode] = useState(false);
   const [isExpenseRequest, setIsExpenseRequest] = useState(false);
-  const [jobs, setJobs] = useState([]);
-  const [vendors, setVendors] = useState([]);
-  const [stats, setStats] = useState(null);
   const [uploadingReceipt, setUploadingReceipt] = useState(false);
-
-  // Clear vendor and job lists when tenant changes so we don't show another tenant's data
-  useEffect(() => {
-    setVendors([]);
-    setJobs([]);
-  }, [activeTenantId]);
   const [pagination, setPagination] = useState({
     current: 1,
     pageSize: 10,
@@ -257,16 +250,16 @@ const Expenses = () => {
 
   // Fetch expense categories (business-type, shop-type, and custom)
   const { data: expenseCategoriesResponse } = useQuery({
-    queryKey: ['expenses', 'categories', activeTenantId],
+    queryKey: queryKeys.expenses.categories(activeTenantId),
     queryFn: () => expenseService.getCategories(),
     enabled: !!activeTenantId,
-    staleTime: 5 * 60 * 1000,
+    staleTime: QUERY_STALE.METADATA,
   });
   const categoriesFromApi = Array.isArray(expenseCategoriesResponse) ? expenseCategoriesResponse : (expenseCategoriesResponse?.data ?? []);
   const customCategoriesFromApi = Array.isArray(expenseCategoriesResponse?.custom) ? expenseCategoriesResponse.custom : (expenseCategoriesResponse?.custom ?? []);
 
   const invalidateCategories = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ['expenses', 'categories', activeTenantId] });
+    queryClient.invalidateQueries({ queryKey: queryKeys.expenses.categories(activeTenantId) });
   }, [queryClient, activeTenantId]);
 
   const addCategoryMutation = useMutation({
@@ -312,6 +305,20 @@ const Expenses = () => {
     removeCategoryMutation.mutate(name);
   };
 
+  const expenseQueryParams = useMemo(() => {
+    const params = {
+      page: pagination.current,
+      limit: pagination.pageSize,
+    };
+    if (filters.category !== 'all') params.category = filters.category;
+    if (filters.status !== 'all') params.status = filters.status;
+    if (filters.jobId !== 'all') params.jobId = filters.jobId;
+    if (filters.viewType === 'approved') params.approvalStatus = 'approved';
+    if (filters.viewType === 'requests') params.approvalStatus = 'pending_approval';
+    if (filters.viewType === 'general' || filters.viewType === 'job-specific') params.viewType = filters.viewType;
+    return params;
+  }, [filters, pagination.current, pagination.pageSize]);
+
   // Use React Query for expenses
   const {
     data: expensesResponse,
@@ -320,24 +327,35 @@ const Expenses = () => {
     refetch: refetchExpenses,
     isFetching: expensesRefetching,
   } = useQuery({
-    queryKey: ['expenses', activeTenantId, activeShopId, activeStudioLocationId, pagination.current, pagination.pageSize, filters],
-    queryFn: async () => {
-      const params = {
-        page: pagination.current,
-        limit: pagination.pageSize,
-      };
-      if (filters.category !== 'all') params.category = filters.category;
-      if (filters.status !== 'all') params.status = filters.status;
-      if (filters.jobId !== 'all') params.jobId = filters.jobId;
-      if (filters.viewType === 'approved') params.approvalStatus = 'approved';
-      if (filters.viewType === 'requests') params.approvalStatus = 'pending_approval';
-      if (filters.viewType === 'general' || filters.viewType === 'job-specific') params.viewType = filters.viewType;
-      const response = await expenseService.getAll(params);
-      return response;
-    },
+    queryKey: queryKeys.expenses.list(activeTenantId, activeShopId, activeStudioLocationId, expenseQueryParams),
+    queryFn: () => expenseService.getAll(expenseQueryParams),
     enabled: scopeReady,
-    staleTime: 60 * 1000,
+    staleTime: QUERY_STALE.LIST,
     refetchOnWindowFocus: false,
+  });
+
+  const { data: jobsResponse } = useQuery({
+    queryKey: queryKeys.jobs.list(activeTenantId, activeShopId, activeStudioLocationId, { limit: 100 }),
+    queryFn: () => jobService.getAll({ limit: 100 }),
+    enabled: scopeReady && isStudioLike,
+    staleTime: QUERY_STALE.METADATA,
+    refetchOnWindowFocus: false,
+  });
+
+  const { data: vendorsResponse, refetch: refetchVendors } = useQuery({
+    queryKey: ['vendors', activeTenantId, activeShopId, activeStudioLocationId, { limit: 500 }],
+    queryFn: () => vendorService.getAll({ limit: 500 }),
+    enabled: scopeReady,
+    staleTime: QUERY_STALE.METADATA,
+    refetchOnWindowFocus: false,
+  });
+
+  const { data: statsResponse, refetch: refetchStats } = useQuery({
+    queryKey: queryKeys.expenses.stats(activeTenantId, activeShopId, activeStudioLocationId),
+    queryFn: () => expenseService.getStats(),
+    enabled: scopeReady,
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchOnWindowFocus: true,
   });
 
   const expenses = useMemo(() => {
@@ -345,22 +363,21 @@ const Expenses = () => {
     return Array.isArray(data) ? data : [];
   }, [expensesResponse]);
 
+  const jobs = useMemo(() => {
+    const data = jobsResponse?.data || jobsResponse;
+    return Array.isArray(data) ? data : [];
+  }, [jobsResponse]);
+
+  const vendors = useMemo(() => {
+    const data = vendorsResponse?.data || vendorsResponse;
+    return Array.isArray(data) ? data : [];
+  }, [vendorsResponse]);
+
+  const stats = statsResponse?.data || statsResponse || null;
+
   const invalidateExpenses = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ['expenses'] });
+    refreshAfterExpense(queryClient);
   }, [queryClient]);
-
-  useEffect(() => {
-    setStats(null);
-  }, [activeTenantId, activeShopId, activeStudioLocationId]);
-
-  useEffect(() => {
-    if (!scopeReady) return;
-    if (isStudioLike) {
-      fetchJobs();
-    }
-    fetchVendors();
-    fetchStats();
-  }, [scopeReady, activeTenantId, activeShopId, activeStudioLocationId, isStudioLike]);
 
   const jobOptions = useMemo(() => {
     const optionsById = new Map();
@@ -401,23 +418,7 @@ const Expenses = () => {
     },
   }), [stats]);
 
-  const fetchJobs = async () => {
-    try {
-      const response = await jobService.getAll();
-      setJobs(response.data || []);
-    } catch (error) {
-      console.error('Failed to fetch jobs:', error);
-    }
-  };
-
-  const fetchVendors = async () => {
-    try {
-      const response = await vendorService.getAll();
-      setVendors(response.data || []);
-    } catch (error) {
-      console.error('Failed to fetch vendors:', error);
-    }
-  };
+  const fetchVendors = useCallback(() => refetchVendors(), [refetchVendors]);
 
   const handleAddVendorSubmit = async (values) => {
     setAddingVendor(true);
@@ -437,14 +438,7 @@ const Expenses = () => {
     }
   };
 
-  const fetchStats = async () => {
-    try {
-      const response = await expenseService.getStats();
-      setStats(response.data);
-    } catch (error) {
-      console.error('Failed to fetch stats:', error);
-    }
-  };
+  const fetchStats = useCallback(() => refetchStats(), [refetchStats]);
 
   const handleCreate = (isRequest = false) => {
     if (isRequest && !canCreateExpenseRequest) return;

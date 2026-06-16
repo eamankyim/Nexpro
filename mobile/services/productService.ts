@@ -28,6 +28,23 @@ export type CreateProductPayload = {
   metadata?: Record<string, unknown>;
 };
 
+type ProductEntity = {
+  id: string;
+  quantityOnHand?: number | string | null;
+  metadata?: Record<string, unknown>;
+};
+
+const getProductEntity = (response: unknown): ProductEntity => {
+  const body = response && typeof response === 'object' ? response as Record<string, unknown> : {};
+  const data = body.data && typeof body.data === 'object' ? body.data as Record<string, unknown> : undefined;
+  const product = data?.product && typeof data.product === 'object'
+    ? data.product as ProductEntity
+    : data
+      ? data as ProductEntity
+      : body as ProductEntity;
+  return product;
+};
+
 const isNotFoundError = (error: unknown) =>
   typeof error === 'object' &&
   error !== null &&
@@ -119,10 +136,33 @@ export const productService = {
     quantityOnHand?: number;
     isActive?: boolean;
     imageUrl?: string;
+    metadata?: Record<string, unknown>;
   }) => {
     const res = await api.put(`/products/${id}`, data);
     // Backend returns: { success: true, data: {...} }
     return res.data;
+  },
+
+  adjustStock: async (id: string, quantity: number, mode: 'set' | 'delta' = 'set', reason = '') => {
+    const response = await productService.getProductById(id);
+    const product = getProductEntity(response);
+    const currentQuantity = Number(product.quantityOnHand ?? 0);
+    const baseQuantity = Number.isFinite(currentQuantity) ? currentQuantity : 0;
+    const newQuantity = mode === 'delta' ? baseQuantity + quantity : quantity;
+
+    return productService.updateProduct(id, {
+      quantityOnHand: Math.max(0, newQuantity),
+      metadata: {
+        ...(product.metadata ?? {}),
+        lastStockAdjustment: {
+          previousQuantity: baseQuantity,
+          newQuantity,
+          mode,
+          reason,
+          timestamp: new Date().toISOString(),
+        },
+      },
+    });
   },
 
   deleteProduct: async (id: string) => {

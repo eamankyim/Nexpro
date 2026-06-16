@@ -79,6 +79,7 @@ import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import { getErrorMessage, showSuccess, showError } from '../utils/toast';
 import { QUERY_STALE, refreshAfterInventoryChange } from '../utils/queryInvalidation';
+import { queryKeys } from '../utils/queryKeys';
 import { EMPTY_STATES, FEATURE_NOT_AVAILABLE } from '../constants/microcopy';
 import { getEmptyStateProps } from '../components/ui/empty-state';
 import ReceiveStockModal from '../components/ReceiveStockModal';
@@ -750,30 +751,20 @@ const Products = () => {
     return params;
   }, [pagination.current, pagination.pageSize, debouncedSearch, categoryFilter, stockFilter]);
 
-  const productListQueryKey = useMemo(() => [
-    'products',
-    'list',
-    activeTenantId,
-    activeShopId,
-    activeStudioLocationId,
-    productQueryParams,
-  ], [activeTenantId, activeShopId, activeStudioLocationId, productQueryParams]);
+  const productListQueryKey = useMemo(
+    () => queryKeys.products.list(activeTenantId, activeShopId, activeStudioLocationId, productQueryParams),
+    [activeTenantId, activeShopId, activeStudioLocationId, productQueryParams]
+  );
 
-  const productCategoriesQueryKey = useMemo(() => [
-    'products',
-    'categories',
-    activeTenantId,
-    activeShopId,
-    activeStudioLocationId,
-  ], [activeTenantId, activeShopId, activeStudioLocationId]);
+  const productCategoriesQueryKey = useMemo(
+    () => queryKeys.products.categories(activeTenantId, activeShopId, activeStudioLocationId),
+    [activeTenantId, activeShopId, activeStudioLocationId]
+  );
 
-  const productStatsQueryKey = useMemo(() => [
-    'products',
-    'stats',
-    activeTenantId,
-    activeShopId,
-    activeStudioLocationId,
-  ], [activeTenantId, activeShopId, activeStudioLocationId]);
+  const productStatsQueryKey = useMemo(
+    () => queryKeys.products.stats(activeTenantId, activeShopId, activeStudioLocationId),
+    [activeTenantId, activeShopId, activeStudioLocationId]
+  );
 
   const {
     data: productsResponse,
@@ -826,13 +817,10 @@ const Products = () => {
   const categories = useMemo(() => getCategoryRows(categoriesResponse), [categoriesResponse]);
   const stats = useMemo(() => getProductStats(statsResponse), [statsResponse]);
 
-  const selectedProductDetailQueryKey = useMemo(() => [
-    'product',
-    selectedProduct?.id,
-    activeTenantId,
-    activeShopId,
-    activeStudioLocationId,
-  ], [selectedProduct?.id, activeTenantId, activeShopId, activeStudioLocationId]);
+  const selectedProductDetailQueryKey = useMemo(
+    () => queryKeys.products.detail(selectedProduct?.id, activeTenantId, activeShopId, activeStudioLocationId),
+    [selectedProduct?.id, activeTenantId, activeShopId, activeStudioLocationId]
+  );
 
   const { data: selectedProductDetailResponse } = useApi({
     queryKey: selectedProductDetailQueryKey,
@@ -1025,14 +1013,14 @@ const Products = () => {
   // =============================================
 
   const fetchProducts = useCallback(async () => {
-    await queryClient.invalidateQueries({ queryKey: ['products', 'list'] });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
     return refetchProducts();
   }, [queryClient, refetchProducts]);
 
   const fetchCategories = useCallback(async () => {
-    await queryClient.invalidateQueries({ queryKey: ['products', 'categories'] });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.products.categories(activeTenantId, activeShopId, activeStudioLocationId) });
     return refetchCategories();
-  }, [queryClient, refetchCategories]);
+  }, [activeTenantId, activeShopId, activeStudioLocationId, queryClient, refetchCategories]);
 
   const fetchVendors = useCallback(async () => {
     try {
@@ -1137,9 +1125,9 @@ const Products = () => {
   }, [form, vendorForm, fetchVendors]);
 
   const fetchStats = useCallback(async () => {
-    await queryClient.invalidateQueries({ queryKey: ['products', 'stats'] });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.products.stats(activeTenantId, activeShopId, activeStudioLocationId) });
     return refetchStats();
-  }, [queryClient, refetchStats]);
+  }, [activeTenantId, activeShopId, activeStudioLocationId, queryClient, refetchStats]);
 
   // =============================================
   // EFFECTS
@@ -1214,7 +1202,7 @@ const Products = () => {
     if (product?.id && !Array.isArray(product.barcodes) && !Array.isArray(product.barcodeAliases)) {
       try {
         const response = await queryClient.fetchQuery({
-          queryKey: ['product', product.id, activeTenantId, activeShopId, activeStudioLocationId],
+          queryKey: queryKeys.products.detail(product.id, activeTenantId, activeShopId, activeStudioLocationId),
           queryFn: () => productService.getProductById(product.id),
           staleTime: QUERY_STALE.TRANSACTIONAL,
         });

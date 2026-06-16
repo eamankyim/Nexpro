@@ -1,7 +1,7 @@
 {
-  "name": "ABS Ghana - African Business Suite",
-  "short_name": "ABS Ghana",
-  "description": "ABS Ghana, also known as African Business Suite, is a business management system for shops, pharmacies, and studios.",
+  "name": "African Business Suite",
+  "short_name": "ABS",
+  "description": "African Business Suite (ABS) is all-in-one business software for growing African businesses.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",

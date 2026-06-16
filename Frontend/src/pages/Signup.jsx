@@ -519,8 +519,8 @@ const Signup = () => {
                   animation: signupWelcomeLineInOut 2.6s ease-in-out 2.6s forwards;
                 }
               `}</style>
-              <h2 className="signup-welcome-line-1 text-2xl sm:text-3xl md:text-4xl font-semibold">Welcome to ABS Ghana</h2>
-              <h2 className="signup-welcome-line-2 text-xl sm:text-2xl md:text-4xl font-semibold text-white text-pretty px-1">The one platform you will ever need to transform your business.</h2>
+              <h2 className="signup-welcome-line-1 text-2xl sm:text-3xl md:text-4xl font-semibold">Welcome to African Business Suite</h2>
+              <h2 className="signup-welcome-line-2 text-xl sm:text-2xl md:text-4xl font-semibold text-white text-pretty px-1">All-in-one business software for growing African businesses.</h2>
             </div>
           )}
           {overlayPhase === 'success' && (
@@ -590,7 +590,7 @@ const Signup = () => {
               
               {/* Heading */}
               <h2 className={`${isMobile ? 'text-2xl mb-1' : 'text-3xl mb-2'} font-bold text-foreground`}>
-                {token && inviteData ? 'Join African Business Suite' : 'Create your ABS Ghana account'}
+                {token && inviteData ? 'Join African Business Suite' : 'Create your ABS account'}
               </h2>
               {token && inviteData && isAuthenticated && !showWelcomeScreen && (
                 <Alert className="mb-6 border-border bg-muted/50">

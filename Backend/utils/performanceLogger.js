@@ -10,8 +10,11 @@ const MAX_RECENT_SLOW_OPERATIONS = Math.max(
 );
 
 const recentSlowOperations = [];
+const REQUEST_TIMING_LOGGED_KEY = '__perfTimingLogged';
+const REQUEST_HAS_HOT_PATH_TIMER_KEY = '__hasHotPathTiming';
 
 const getRequestPath = (req) => req?.originalUrl || req?.url || req?.path || '';
+const toDurationSeconds = (durationMs) => Number((durationMs / 1000).toFixed(3));
 
 const recordSlowOperation = (entry) => {
   recentSlowOperations.unshift({
@@ -65,33 +68,108 @@ const getRecentSlowOperations = (limit = 50) => {
   };
 };
 
+const buildOperationEntry = ({
+  label,
+  req = null,
+  durationMs,
+  thresholdMs = DEFAULT_SLOW_HOT_PATH_MS,
+  statusCode = null,
+  event = 'timed_operation',
+  details = {},
+}) => {
+  const safeDurationMs = Math.max(0, Number(durationMs) || 0);
+  const classification = safeDurationMs >= thresholdMs ? 'slow' : 'normal';
+
+  return {
+    event,
+    label,
+    classification,
+    durationMs: safeDurationMs,
+    durationSeconds: toDurationSeconds(safeDurationMs),
+    thresholdMs,
+    method: req?.method || null,
+    path: getRequestPath(req),
+    statusCode,
+    tenantId: req?.tenantId || req?.tenant?.id || null,
+    userId: req?.user?.id || null,
+    ...details,
+  };
+};
+
+const logTimedOperation = (label, {
+  req = null,
+  durationMs,
+  thresholdMs = DEFAULT_SLOW_HOT_PATH_MS,
+  statusCode = null,
+  event = 'timed_operation',
+  details = {},
+  skipIfRequestLogged = false,
+} = {}) => {
+  if (!hotPathLoggingEnabled) return null;
+  if (skipIfRequestLogged && req?.[REQUEST_TIMING_LOGGED_KEY]) return null;
+
+  const entry = buildOperationEntry({
+    label,
+    req,
+    durationMs,
+    thresholdMs,
+    statusCode,
+    event,
+    details,
+  });
+
+  if (req) {
+    req[REQUEST_TIMING_LOGGED_KEY] = true;
+  }
+
+  if (entry.classification === 'slow') {
+    recordSlowOperation(entry);
+    console.warn('[Perf] slow_timed_operation', entry);
+    return entry;
+  }
+
+  console.info('[Perf] timed_operation', entry);
+  return entry;
+};
+
 const startHotPathTimer = (label, req = null, thresholdMs = DEFAULT_SLOW_HOT_PATH_MS) => {
   if (!hotPathLoggingEnabled) {
     return () => {};
   }
 
+  if (req) {
+    req[REQUEST_HAS_HOT_PATH_TIMER_KEY] = true;
+  }
+
   const start = process.hrtime.bigint();
   return (details = {}) => {
     const durationMs = Number((process.hrtime.bigint() - start) / 1000000n);
-    if (durationMs < thresholdMs) return durationMs;
-
-    const entry = {
-      label,
-      durationMs,
-      method: req?.method || null,
-      path: getRequestPath(req),
-      tenantId: req?.tenantId || null,
-      userId: req?.user?.id || null,
-      ...details,
+    const safeDetails = details && typeof details === 'object' ? details : {};
+    const normalizedDetails = {
+      ...safeDetails,
+      ...(typeof safeDetails.cached === 'boolean' && safeDetails.cacheHit == null
+        ? { cacheHit: safeDetails.cached }
+        : {}),
     };
-    recordSlowOperation(entry);
-    console.warn('[Perf] slow_hot_path', entry);
+    logTimedOperation(label, {
+      req,
+      durationMs,
+      thresholdMs,
+      event: normalizedDetails.event || 'timed_operation',
+      details: normalizedDetails,
+      skipIfRequestLogged: true,
+    });
     return durationMs;
   };
 };
 
 module.exports = {
   DEFAULT_SLOW_HOT_PATH_MS,
+  buildOperationEntry,
   getRecentSlowOperations,
+  logTimedOperation,
+  REQUEST_HAS_HOT_PATH_TIMER_KEY,
+  REQUEST_TIMING_LOGGED_KEY,
   startHotPathTimer,
+  toDurationSeconds,
 };

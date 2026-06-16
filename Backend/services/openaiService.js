@@ -3,6 +3,7 @@ const { formatDecimal } = require('../utils/formatNumber');
 const { parseAiJsonResponse } = require('../utils/parseAiJsonResponse');
 const { buildReportAnalysisFallback } = require('../utils/reportAnalysisFallback');
 const { getTenantAnthropicApiKey } = require('./tenantAiSettingsService');
+const { normalizeAiProviderError } = require('../utils/aiProviderErrors');
 
 let _anthropic = null;
 
@@ -466,8 +467,13 @@ Formatting rules:
     const textBlock = claudeResponse.content?.find((b) => b.type === 'text');
     return textBlock?.text?.trim() || 'I couldn\'t generate a response. Please try again.';
   } catch (error) {
-    console.error('Error in chatWithContext:', error);
-    throw error;
+    console.error('Error in chatWithContext:', {
+      message: error?.message,
+      status: error?.status,
+      code: error?.code,
+      type: error?.error?.type,
+    });
+    normalizeAiProviderError(error);
   }
 };
 

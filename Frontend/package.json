@@ -2,7 +2,7 @@
   "name": "printing-press-frontend",
   "version": "1.0.0",
   "private": true,
-  "description": "ABS Ghana (African Business Suite) - Business Management System Frontend",
+  "description": "African Business Suite (ABS) - Business Management System Frontend",
   "engines": {
     "node": ">=18"
   },

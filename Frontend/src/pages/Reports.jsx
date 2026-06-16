@@ -100,6 +100,18 @@ const SMART_REPORT_AI_TIMEOUT_MS = 10000;
 /** Dispatched after saved reports are written to localStorage. */
 const SAVED_REPORTS_UPDATED_EVENT = 'shopwise-saved-reports-updated';
 
+const toNumber = (value) => {
+  const parsed = parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const isCloseAmount = (a, b) => {
+  const left = toNumber(a);
+  const right = toNumber(b);
+  if (left === 0 && right === 0) return true;
+  return Math.abs(left - right) <= Math.max(1, Math.max(Math.abs(left), Math.abs(right)) * 0.05);
+};
+
 /**
  * @param {string|null} storageKey
  * @returns {Array}
@@ -608,31 +620,59 @@ function ReportsInner() {
       const profitLossRaw = profitLossRes?.data || {};
       const cashFlow = cashFlowRes?.data || null;
 
-      const totalRevenue = isShopOrPharmacy
+      const operationalRevenue = isShopOrPharmacy
         ? Math.max(
             revenue?.totalRevenue || 0,
             sales?.totalSales || 0,
             productSales?.totalRevenue || 0
           )
         : (revenue?.totalRevenue || 0);
-      const totalExpenses = expenses?.totalExpenses || 0;
-      const grossProfitValue = parseFloat(profitLossRaw.grossProfit ?? (totalRevenue - totalExpenses));
-      const netProfitValue = parseFloat(
-        profitLossRaw.netProfit ?? profitLossRaw.grossProfit ?? (totalRevenue - totalExpenses)
-      );
-      const marginPct = totalRevenue > 0 ? parseFloat((((totalRevenue - totalExpenses) / totalRevenue) * 100).toFixed(2)) : 0;
+      const operationalOperatingExpenses = toNumber(expenses?.totalExpenses);
+      const operationalCogs = toNumber(extendedKpis?.current?.cogs);
+      const operationalTotalExpenses = operationalOperatingExpenses + operationalCogs;
+      const accountingRevenue = toNumber(profitLossRaw.revenue ?? profitLossRaw.totalRevenue);
+      const profitLossSource = profitLossRes?.source || null;
+      const profitLossAlignsWithCollections = !accountingRevenue || isCloseAmount(accountingRevenue, operationalRevenue);
+      const hasActiveOperationalScope = Boolean(activeShopId || activeStudioLocationId);
+      const useAccountingMetrics = profitLossSource === 'accounting' && !hasActiveOperationalScope;
 
-      const syncedExtendedKpis = extendedKpis && isShopOrPharmacy
+      const totalRevenue = useAccountingMetrics
+        ? toNumber(profitLossRaw.revenue ?? operationalRevenue)
+        : operationalRevenue;
+      const cogsValue = useAccountingMetrics
+        ? toNumber(profitLossRaw.cogs)
+        : operationalCogs;
+      const operatingExpensesValue = useAccountingMetrics
+        ? toNumber(profitLossRaw.operatingExpenses ?? (toNumber(profitLossRaw.expenses) - cogsValue))
+        : operationalOperatingExpenses;
+      const totalExpenses = useAccountingMetrics
+        ? toNumber(profitLossRaw.expenses ?? (operatingExpensesValue + cogsValue))
+        : operationalTotalExpenses;
+      const grossProfitValue = useAccountingMetrics
+        ? toNumber(profitLossRaw.grossProfit ?? (totalRevenue - cogsValue))
+        : totalRevenue - cogsValue;
+      const netProfitValue = useAccountingMetrics
+        ? toNumber(profitLossRaw.netProfit ?? (totalRevenue - totalExpenses))
+        : totalRevenue - totalExpenses;
+      const grossMarginPct = totalRevenue > 0 ? parseFloat(((grossProfitValue / totalRevenue) * 100).toFixed(2)) : 0;
+      const netMarginPct = totalRevenue > 0 ? parseFloat(((netProfitValue / totalRevenue) * 100).toFixed(2)) : 0;
+      const metricSource = useAccountingMetrics ? 'accounting' : 'operational';
+
+      const syncedExtendedKpis = extendedKpis
         ? {
             ...extendedKpis,
             current: {
               ...(extendedKpis.current || {}),
               totalRevenue,
               totalExpenses,
+              operatingExpenses: operatingExpensesValue,
+              cogs: cogsValue,
               netProfit: netProfitValue,
               grossProfit: grossProfitValue,
-              grossProfitMargin: extendedKpis.current?.grossProfitMargin ?? marginPct,
-              netProfitMargin: extendedKpis.current?.netProfitMargin ?? marginPct
+              grossProfitMargin: grossMarginPct,
+              netProfitMargin: netMarginPct,
+              metricSource,
+              profitLossAlignsWithCollections
             }
           }
         : extendedKpis;
@@ -659,18 +699,27 @@ function ReportsInner() {
         pipelineSummary: phase2.pipelineSummary ?? { activeJobs: 0, openLeads: 0, pendingInvoices: 0 },
         extendedKpis: syncedExtendedKpis,
         profitLossDetail: {
-          revenue: parseFloat(profitLossRaw.revenue ?? totalRevenue),
-          expenses: parseFloat(profitLossRaw.expenses ?? totalExpenses),
-          cogs: parseFloat(profitLossRaw.cogs ?? 0),
+          revenue: totalRevenue,
+          expenses: totalExpenses,
+          operatingExpenses: operatingExpensesValue,
+          cogs: cogsValue,
           grossProfit: grossProfitValue,
-          netProfit: netProfitValue
+          netProfit: netProfitValue,
+          source: metricSource,
+          accountingSource: profitLossSource,
+          profitLossAlignsWithCollections
         },
         cashFlow,
         profitLoss: {
           revenue: totalRevenue,
           expenses: totalExpenses,
-          grossProfit: totalRevenue - totalExpenses,
-          profitMargin: totalRevenue > 0 ? ((totalRevenue - totalExpenses) / totalRevenue * 100) : 0
+          operatingExpenses: operatingExpensesValue,
+          cogs: cogsValue,
+          grossProfit: grossProfitValue,
+          netProfit: netProfitValue,
+          grossProfitMargin: grossMarginPct,
+          profitMargin: netMarginPct,
+          source: metricSource
         },
         revenueGrowth: extendedKpis?.comparison?.totalRevenue ?? 0,
         periodTypeLabel: comparisonLabel,

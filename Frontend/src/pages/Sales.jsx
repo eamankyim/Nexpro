@@ -18,7 +18,7 @@ import { mergeBranchOrganization } from '../utils/branchOrganization';
 import productService from '../services/productService';
 import { useAuth } from '../context/AuthContext';
 import { useShopOptional } from '../context/ShopContext';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
 import DrawerSectionCard from '../components/DrawerSectionCard';
@@ -35,6 +35,8 @@ import { showSuccess, showError } from '../utils/toast';
 import { resolvePaymentNotePayload } from '../utils/paymentNotes';
 import { resolveImageUrl } from '../utils/fileUtils';
 import { formatAmount } from '../utils/formatNumber';
+import { QUERY_STALE, refreshAfterSale } from '../utils/queryInvalidation';
+import { queryKeys } from '../utils/queryKeys';
 import dayjs from 'dayjs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -152,20 +154,35 @@ const getKitchenQueueStatus = (sale) => {
   return null;
 };
 
+const EMPTY_SALES_SUMMARY = {
+  completedCount: 0,
+  pendingCount: 0,
+  kitchenPendingCount: 0,
+  completedRevenue: 0,
+};
+
+const normalizeSalesResponse = (response) => {
+  const payload = response?.data?.data != null ? response.data : response;
+  const data = Array.isArray(payload?.data) ? payload.data : (Array.isArray(payload) ? payload : []);
+  const summary = payload?.summary || {};
+
+  return {
+    sales: data,
+    total: Number(payload?.count ?? data.length),
+    summary: {
+      completedCount: Number(summary.completedCount || EMPTY_SALES_SUMMARY.completedCount),
+      pendingCount: Number(summary.pendingCount || EMPTY_SALES_SUMMARY.pendingCount),
+      kitchenPendingCount: Number(summary.kitchenPendingCount || EMPTY_SALES_SUMMARY.kitchenPendingCount),
+      completedRevenue: Number(summary.completedRevenue || EMPTY_SALES_SUMMARY.completedRevenue),
+    },
+  };
+};
+
 const Sales = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { isMobile } = useResponsive();
-  const [sales, setSales] = useState([]);
-  const [loading, setLoading] = useState(false);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
-  const [totalSalesCount, setTotalSalesCount] = useState(0);
-  const [salesSummary, setSalesSummary] = useState({
-    completedCount: 0,
-    pendingCount: 0,
-    kitchenPendingCount: 0,
-    completedRevenue: 0,
-  });
   const [saleForPayment, setSaleForPayment] = useState(null);
   const [filters, setFilters] = useState({ 
     status: 'all',
@@ -180,11 +197,9 @@ const Sales = () => {
   const [viewingSale, setViewingSale] = useState(null);
   const [printModalVisible, setPrintModalVisible] = useState(false);
   const [receiptData, setReceiptData] = useState(null);
-  const [customers, setCustomers] = useState([]);
   const [saleActivities, setSaleActivities] = useState([]);
   const [loadingActivities, setLoadingActivities] = useState(false);
   const [loadingSaleDetails, setLoadingSaleDetails] = useState(false);
-  const [refreshingSales, setRefreshingSales] = useState(false);
   const [posModalOpen, setPosModalOpen] = useState(false);
   const [loadingReceipt, setLoadingReceipt] = useState(false);
   const [saleToDelete, setSaleToDelete] = useState(null);
@@ -192,12 +207,79 @@ const Sales = () => {
   const { activeTenant, activeTenantId, isAdmin } = useAuth();
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
+  const queryClient = useQueryClient();
   const businessType = activeTenant?.businessType || 'printing_press';
   const isShop = businessType === 'shop';
   const isRestaurant =
     isShop &&
     (activeTenant?.metadata?.businessSubType ||
       activeTenant?.metadata?.shopType) === SHOP_TYPES.RESTAURANT;
+  const salesQueryEnabled = !!activeTenantId && isShop && (!shopContext?.isShopWorkspace || !!activeShopId);
+
+  const salesQueryParams = useMemo(() => {
+    const params = {
+      page: pagination.current,
+      limit: pagination.pageSize,
+    };
+    if (filters.status !== 'all') params.status = filters.status;
+    if (filters.customerId !== 'all') params.customerId = filters.customerId;
+    if (filters.startDate) params.startDate = dayjs(filters.startDate).format('YYYY-MM-DD');
+    if (filters.endDate) params.endDate = dayjs(filters.endDate).format('YYYY-MM-DD');
+    return params;
+  }, [
+    pagination.current,
+    pagination.pageSize,
+    filters.status,
+    filters.customerId,
+    filters.startDate,
+    filters.endDate,
+  ]);
+
+  const {
+    data: salesQueryResponse,
+    error: salesQueryError,
+    isError: salesQueryIsError,
+    isFetching: salesIsFetching,
+    isLoading: loading,
+    refetch: refetchSalesQuery,
+  } = useQuery({
+    queryKey: queryKeys.sales.list(activeTenantId, activeShopId, salesQueryParams),
+    queryFn: () => saleService.getSales(salesQueryParams),
+    enabled: salesQueryEnabled,
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchInterval: 60 * 1000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+    retry: 1,
+  });
+
+  const salesQueryData = useMemo(() => normalizeSalesResponse(salesQueryResponse), [salesQueryResponse]);
+  const sales = salesQueryData.sales;
+  const totalSalesCount = salesQueryData.total;
+  const salesSummary = salesQueryData.summary;
+  const refreshingSales = salesIsFetching && !loading;
+
+  const { data: customersResponse } = useQuery({
+    queryKey: queryKeys.customers.picker(activeTenantId, activeShopId, null, 'sales-filter'),
+    queryFn: () => customerService.getAll({ limit: 100 }),
+    enabled: salesQueryEnabled,
+    staleTime: QUERY_STALE.LIST,
+  });
+
+  const customers = useMemo(
+    () => customersResponse?.data || [],
+    [customersResponse]
+  );
+
+  const refetchSales = useCallback(async () => {
+    await refetchSalesQuery();
+  }, [refetchSalesQuery]);
+
+  useEffect(() => {
+    if (salesQueryIsError) {
+      showError(salesQueryError, 'Failed to load sales');
+    }
+  }, [salesQueryIsError, salesQueryError]);
 
   const recordPaymentForm = useForm({
     resolver: zodResolver(recordPaymentSchema),
@@ -212,10 +294,10 @@ const Sales = () => {
 
   // Check if tenant has products (to show appropriate empty state)
   const { data: productsData } = useQuery({
-    queryKey: ['products', 'active', activeTenantId, activeShopId],
+    queryKey: queryKeys.products.active(activeTenantId, activeShopId),
     queryFn: () => productService.getAllActiveProducts(),
     enabled: !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId),
-    staleTime: 60 * 1000,
+    staleTime: QUERY_STALE.LIST,
   });
   const hasProducts = useMemo(() => {
     const products = Array.isArray(productsData) ? productsData : (productsData?.products ?? []);
@@ -274,74 +356,6 @@ const Sales = () => {
     [salesSummary.completedRevenue]
   );
 
-  const fetchSales = useCallback(async (isRefresh = false) => {
-    if (isRefresh) {
-      setRefreshingSales(true);
-    } else {
-      setLoading(true);
-    }
-    try {
-      const params = {
-        page: pagination.current,
-        limit: pagination.pageSize,
-      };
-      
-      if (filters.status !== 'all') {
-        params.status = filters.status;
-      }
-      
-      if (filters.customerId !== 'all') {
-        params.customerId = filters.customerId;
-      }
-
-      if (filters.startDate) {
-        params.startDate = dayjs(filters.startDate).format('YYYY-MM-DD');
-      }
-
-      if (filters.endDate) {
-        params.endDate = dayjs(filters.endDate).format('YYYY-MM-DD');
-      }
-
-      const response = await saleService.getSales(params);
-      const payload = response?.data?.data != null ? response.data : response;
-      const data = Array.isArray(payload?.data) ? payload.data : (Array.isArray(payload) ? payload : []);
-      const count = payload?.count ?? data.length;
-      const summary = payload?.summary || {};
-      setSales(data);
-      setTotalSalesCount(count);
-      setSalesSummary({
-        completedCount: Number(summary.completedCount || 0),
-        pendingCount: Number(summary.pendingCount || 0),
-        kitchenPendingCount: Number(summary.kitchenPendingCount || 0),
-        completedRevenue: Number(summary.completedRevenue || 0),
-      });
-      if (response?.data?.pagination) {
-        setPagination(prev => ({ ...prev, total: count }));
-      } else {
-        setPagination(prev => ({ ...prev, total: count }));
-      }
-    } catch (error) {
-      showError(error, 'Failed to load sales');
-      setSales([]);
-      setSalesSummary({ completedCount: 0, pendingCount: 0, kitchenPendingCount: 0, completedRevenue: 0 });
-    } finally {
-      if (isRefresh) {
-        setRefreshingSales(false);
-      } else {
-        setLoading(false);
-      }
-    }
-  }, [pagination.current, pagination.pageSize, filters, activeShopId]);
-
-  const fetchCustomers = useCallback(async () => {
-    try {
-      const response = await customerService.getAll({ limit: 100 });
-      setCustomers(response.data || []);
-    } catch (error) {
-      console.error('Failed to load customers:', error);
-    }
-  }, [activeShopId]);
-
   const fetchSaleDetails = useCallback(async (saleId) => {
     setLoadingSaleDetails(true);
     try {
@@ -371,9 +385,9 @@ const Sales = () => {
 
   // Fetch organization settings for receipt branding
   const { data: organizationData } = useQuery({
-    queryKey: ['settings', 'organization'],
+    queryKey: queryKeys.settings.organization(activeTenantId),
     queryFn: () => settingsService.getOrganization(),
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: QUERY_STALE.METADATA,
   });
 
   const organization = organizationData?.data?.data || organizationData?.data || {};
@@ -385,17 +399,6 @@ const Sales = () => {
   }, [receiptData, organization]);
   const { posConfig } = usePOSConfig();
   const printConfig = posConfig.print || { format: 'a4' };
-
-  useEffect(() => {
-    if (!isShop) {
-      return; // Only show for shop business type
-    }
-    if (shopContext?.isShopWorkspace && !activeShopId) return;
-    setSales([]);
-    setTotalSalesCount(0);
-    fetchSales();
-    fetchCustomers();
-  }, [fetchSales, fetchCustomers, isShop, activeTenantId, activeShopId, shopContext?.isShopWorkspace]);
 
   useEffect(() => {
     if (viewingSale?.id) {
@@ -414,17 +417,17 @@ const Sales = () => {
     }
   }, [searchParams, setSearchParams]);
 
-  const handleView = (sale) => {
+  const handleView = useCallback((sale) => {
     setViewingSale(sale);
     setDrawerVisible(true);
     fetchSaleDetails(sale.id);
-  };
+  }, [fetchSaleDetails]);
 
-  const handleCloseDrawer = () => {
+  const handleCloseDrawer = useCallback(() => {
     setDrawerVisible(false);
     setViewingSale(null);
     setSaleActivities([]);
-  };
+  }, []);
 
   const handleSaleDeliveryChange = useCallback(
     async (value) => {
@@ -433,16 +436,17 @@ const Sales = () => {
       try {
         setUpdatingSaleDelivery(true);
         await saleService.updateDeliveryStatus(viewingSale.id, val);
+        await refreshAfterSale(queryClient);
         await fetchSaleDetails(viewingSale.id);
         showSuccess('Delivery status updated');
-        fetchSales();
+        refetchSales();
       } catch (error) {
         showError(error?.response?.data?.message || error?.message || 'Failed to update delivery status');
       } finally {
         setUpdatingSaleDelivery(false);
       }
     },
-    [viewingSale, fetchSaleDetails, fetchSales]
+    [viewingSale, fetchSaleDetails, refetchSales, queryClient]
   );
 
   const handlePrintReceipt = useCallback(async (sale) => {
@@ -480,17 +484,18 @@ const Sales = () => {
     }
   }, [viewingSale]);
 
-  const handleViewInvoice = (sale) => {
+  const handleViewInvoice = useCallback((sale) => {
     if (sale.invoiceId) {
       navigate(`/invoices?openInvoiceId=${sale.invoiceId}`);
     }
-  };
+  }, [navigate]);
 
   const handleDeleteSale = useCallback(async (id) => {
     try {
       await saleService.deleteSale(id);
       showSuccess('Sale deleted successfully');
-      fetchSales();
+      await refreshAfterSale(queryClient);
+      refetchSales();
       setSaleToDelete(null);
       if (viewingSale?.id === id) {
         setDrawerVisible(false);
@@ -500,20 +505,21 @@ const Sales = () => {
     } catch (error) {
       showError(error, 'Failed to delete sale');
     }
-  }, [viewingSale?.id, fetchSales]);
+  }, [viewingSale?.id, refetchSales, queryClient]);
 
-  const handleStatusUpdate = async (sale, newStatus) => {
+  const handleStatusUpdate = useCallback(async (sale, newStatus) => {
     try {
       await saleService.updateSale(sale.id, { status: newStatus });
       showSuccess('Sale status updated successfully');
-      fetchSales();
+      await refreshAfterSale(queryClient);
+      refetchSales();
       if (viewingSale?.id === sale.id) {
         await fetchSaleDetails(sale.id);
       }
     } catch (error) {
       showError(error, 'Failed to update sale status');
     }
-  };
+  }, [fetchSaleDetails, queryClient, refetchSales, viewingSale?.id]);
 
   const handleOpenRecordPayment = useCallback((sale) => {
     const total = parseFloat(sale.total || 0);
@@ -545,14 +551,15 @@ const Sales = () => {
       });
       showSuccess('Payment recorded successfully');
       setSaleForPayment(null);
-      fetchSales();
+      await refreshAfterSale(queryClient);
+      refetchSales();
       if (viewingSale?.id === saleForPayment.id) {
         await fetchSaleDetails(saleForPayment.id);
       }
     } catch (error) {
       showError(error, 'Failed to record payment');
     }
-  }, [saleForPayment, viewingSale?.id, fetchSales, fetchSaleDetails]);
+  }, [saleForPayment, viewingSale?.id, refetchSales, fetchSaleDetails, queryClient]);
 
   const paymentMethodLabels = {
     cash: 'Cash',
@@ -801,7 +808,7 @@ const Sales = () => {
             <TooltipTrigger asChild>
               <Button 
                 variant="outline" 
-                onClick={() => fetchSales(true)}
+                onClick={refetchSales}
                 disabled={refreshingSales}
                 size={isMobile ? "icon" : "default"}
               >
@@ -877,11 +884,15 @@ const Sales = () => {
         emptyState={salesEmptyState}
         pageSize={pagination.pageSize}
         onPageChange={(newPagination) => {
-          setPagination(newPagination);
+          setPagination((prev) => ({
+            ...prev,
+            current: newPagination.current,
+            pageSize: newPagination.pageSize,
+          }));
         }}
         externalPagination={{
           current: pagination.current,
-          total: pagination.total
+          total: totalSalesCount
         }}
         viewMode={tableViewMode}
         onViewModeChange={setTableViewMode}
@@ -898,7 +909,7 @@ const Sales = () => {
         open={posModalOpen}
         onOpenChange={(open) => {
           setPosModalOpen(open);
-          if (!open) fetchSales();
+          if (!open) refetchSales();
         }}
       >
         <DialogContent

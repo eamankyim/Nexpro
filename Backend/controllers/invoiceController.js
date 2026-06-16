@@ -73,6 +73,10 @@ const invoiceBranchIncludes = () => [
 
 const getEffectiveTenantRole = (req) => req.tenantRole || req.user?.role || null;
 
+/** Throttle workspace invoice Paystack reconcile calls per invoice */
+const paystackInvoiceCheckLastById = new Map();
+const PAYSTACK_INVOICE_CHECK_THROTTLE_MS = 4000;
+
 const invoiceResponseIncludes = () => [
   {
     model: Customer,
@@ -2160,6 +2164,56 @@ async function sendInvoiceToCustomer(tenantId, invoice, options = {}) {
   }
 }
 
+// @desc    Ensure an invoice has a public payment link without sending customer notifications
+// @route   POST /api/invoices/:id/payment-link
+// @access  Private
+exports.ensureInvoicePaymentLink = async (req, res, next) => {
+  try {
+    const invoice = await Invoice.findOne({
+      where: invoiceReadWhere(req, { id: req.params.id })
+    });
+
+    if (!invoice) {
+      return res.status(404).json({
+        success: false,
+        message: 'Invoice not found'
+      });
+    }
+
+    if (invoice.status === 'cancelled') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot create a payment link for a cancelled invoice'
+      });
+    }
+
+    if (!invoice.paymentToken) {
+      const crypto = require('crypto');
+      await invoice.update({
+        paymentToken: crypto.randomBytes(32).toString('hex')
+      });
+    }
+
+    const updatedInvoice = await Invoice.findOne({
+      where: applyTenantFilter(req.tenantId, { id: invoice.id }),
+      include: invoiceResponseIncludes()
+    });
+    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+    const paymentLink = `${frontendUrl}/pay-invoice/${updatedInvoice.paymentToken}`;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        invoice: updatedInvoice,
+        paymentToken: updatedInvoice.paymentToken,
+        paymentLink
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 exports.createInvoiceFromJobInternal = createInvoiceFromJobInternal;
 exports.createInvoiceFromQuoteInternal = createInvoiceFromQuoteInternal;
 exports.sendInvoiceToCustomer = sendInvoiceToCustomer;
@@ -2671,11 +2725,15 @@ exports.initializePaystackForInvoice = async (req, res, next) => {
       });
     }
 
+    const paystackReference = result.data.reference || ref;
+    const { rememberPendingInvoicePaystackReference } = require('../services/paystackPublicInvoicePayment');
+    rememberPendingInvoicePaystackReference(invoice.id, paystackReference);
+
     res.status(200).json({
       success: true,
       data: {
         authorization_url: result.data.authorization_url,
-        reference: result.data.reference,
+        reference: paystackReference,
         access_code: result.data.access_code
       }
     });
@@ -2815,6 +2873,224 @@ exports.verifyPaystackReturnForPublicInvoice = async (req, res, next) => {
       }
     });
   } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Verify Paystack charge for workspace invoice (mobile/app return path; webhook fallback)
+// @route   POST /api/invoices/:id/verify-paystack
+// @access  Private
+exports.verifyPaystackChargeForInvoice = async (req, res, next) => {
+  try {
+    const invoiceId = req.params.id;
+    const bodyRef = sanitizePayload(req.body || {});
+    const reference = String(bodyRef.reference || req.query?.reference || '').trim();
+
+    const invoice = await Invoice.findOne({
+      where: applyTenantFilter(req.tenantId, { id: invoiceId }),
+      include: [{ model: Customer, as: 'customer' }, ...invoiceBranchIncludes()]
+    });
+
+    if (!invoice) {
+      return res.status(404).json({ success: false, message: 'Invoice not found' });
+    }
+
+    try {
+      assertShopRecordAccess(req, invoice);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
+    }
+
+    const totalAmount = parseFloat(invoice.totalAmount || 0);
+    const paidAmount = parseFloat(invoice.amountPaid || 0);
+    const balance = Math.max(totalAmount - paidAmount, 0);
+    if (invoice.status === 'paid' || balance <= 0) {
+      return res.status(200).json({
+        success: true,
+        data: { invoice, applied: false, alreadyRecorded: true }
+      });
+    }
+
+    const now = Date.now();
+    const last = paystackInvoiceCheckLastById.get(invoiceId) || 0;
+    if (now - last < PAYSTACK_INVOICE_CHECK_THROTTLE_MS) {
+      return res.status(200).json({
+        success: true,
+        data: { invoice, applied: false, throttled: true }
+      });
+    }
+    paystackInvoiceCheckLastById.set(invoiceId, now);
+
+    const { reconcileInvoicePaystackPayment } = require('../services/paystackPublicInvoicePayment');
+    const outcome = await reconcileInvoicePaystackPayment(invoice, { reference: reference || undefined });
+
+    const freshInvoice = await Invoice.findOne({
+      where: applyTenantFilter(req.tenantId, { id: invoiceId }),
+      include: invoiceResponseIncludes()
+    });
+
+    if (outcome.applied) {
+      try {
+        invalidateInvoiceListCache(req.tenantId);
+        invalidateAfterMutation(req.tenantId, ['invoices', 'sales', 'dashboard']);
+      } catch (cacheErr) {
+        console.error('[Invoice] verify-paystack cache invalidation error:', cacheErr.message);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        invoice: freshInvoice || invoice,
+        applied: Boolean(outcome.applied),
+        alreadyRecorded: Boolean(outcome.duplicate),
+        reason: outcome.reason || null,
+        reference: outcome.reference || reference || null,
+        paystackStatus: outcome.paystackStatus || (outcome.applied ? 'success' : null)
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Initiate Paystack Mobile Money payment for a workspace invoice
+// @route   POST /api/invoices/:id/paystack-mobile-money
+// @access  Private
+exports.paystackMobileMoneyForInvoice = async (req, res, next) => {
+  try {
+    const invoiceId = req.params.id;
+    const { phoneNumber, provider } = sanitizePayload(req.body || {});
+
+    if (!phoneNumber || !provider) {
+      return res.status(400).json({
+        success: false,
+        message: 'phoneNumber and provider are required'
+      });
+    }
+
+    const invoice = await Invoice.findOne({
+      where: applyTenantFilter(req.tenantId, { id: invoiceId }),
+      include: [{ model: Customer, as: 'customer' }, ...invoiceBranchIncludes()]
+    });
+
+    if (!invoice) {
+      return res.status(404).json({ success: false, message: 'Invoice not found' });
+    }
+
+    try {
+      assertShopRecordAccess(req, invoice);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
+    }
+
+    if (invoice.status === 'cancelled') {
+      return res.status(400).json({ success: false, message: 'Cannot collect payment on a cancelled invoice' });
+    }
+    if (invoice.status === 'paid') {
+      return res.status(400).json({ success: false, message: 'Invoice is already fully paid' });
+    }
+
+    const totalAmount = parseFloat(invoice.totalAmount || 0);
+    const currentPaid = parseFloat(invoice.amountPaid || 0);
+    const balanceDue = Math.max(totalAmount - currentPaid, 0);
+    if (!Number.isFinite(balanceDue) || balanceDue <= 0) {
+      return res.status(400).json({ success: false, message: 'No balance due on this invoice' });
+    }
+
+    const tenant = await Tenant.findByPk(invoice.tenantId);
+    const customerEmail =
+      invoice.customer?.email ||
+      req.user?.email ||
+      tenant?.metadata?.companyEmail ||
+      tenant?.email ||
+      null;
+
+    if (!customerEmail) {
+      return res.status(400).json({
+        success: false,
+        message: 'Customer or user email is required for mobile money payment'
+      });
+    }
+
+    const paystackService = require('../services/paystackService');
+    if (!paystackService.secretKey) {
+      return res.status(503).json({
+        success: false,
+        message: 'Paystack is not configured'
+      });
+    }
+
+    const reference = `INV-${invoice.id}-${Date.now()}`.slice(0, 50);
+    const logicalProvider = String(provider || '').toUpperCase();
+
+    const orgRow = await Setting.findOne({ where: { tenantId: invoice.tenantId, key: 'organization' } });
+    const orgTax = orgRow?.value?.tax || {};
+    const oc = orgTax?.otherCharges || {};
+    const shouldApplyCustomerCharge =
+      oc?.enabled === true &&
+      oc?.customerBears === true &&
+      ['online_payments', 'all_payments'].includes(String(oc?.appliesTo || ''));
+    const chargeRate = shouldApplyCustomerCharge ? Math.max(0, Math.min(100, parseFloat(oc?.ratePercent) || 0)) : 0;
+    const chargeAmount = Math.round((balanceDue * chargeRate / 100) * 100) / 100;
+    const payableAmount = shouldApplyCustomerCharge ? balanceDue + chargeAmount : balanceDue;
+
+    const result = await paystackService.chargeMobileMoney({
+      email: customerEmail,
+      amount: payableAmount,
+      reference,
+      phoneNumber,
+      provider: logicalProvider,
+      metadata: {
+        type: 'invoice',
+        invoiceId: invoice.id,
+        tenantId: invoice.tenantId,
+        paymentToken: invoice.paymentToken || undefined,
+        payment_source: 'invoice_direct_mobile_money',
+        mobileNumber: String(phoneNumber).trim(),
+        mobileMoneyProvider: logicalProvider,
+        paymentSurcharge: shouldApplyCustomerCharge
+          ? {
+              label: typeof oc?.label === 'string' && oc.label.trim() ? oc.label.trim() : 'Transaction charge',
+              ratePercent: chargeRate,
+              amount: chargeAmount,
+              customerBears: true
+            }
+          : undefined
+      },
+      ...(tenant?.paystackSubaccountCode ? { subaccount: tenant.paystackSubaccountCode } : {})
+    });
+
+    if (!result || result.status === false) {
+      return res.status(502).json({
+        success: false,
+        message: result?.message || 'Failed to initiate mobile money payment'
+      });
+    }
+
+    const { rememberPendingInvoicePaystackReference } = require('../services/paystackPublicInvoicePayment');
+    rememberPendingInvoicePaystackReference(invoice.id, reference);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        reference,
+        provider: logicalProvider,
+        status: result?.data?.status || 'PENDING',
+        message: result?.data?.display_text || result?.message || 'Approve the mobile money prompt on the customer phone.'
+      }
+    });
+  } catch (error) {
+    console.error('[Invoice] paystackMobileMoneyForInvoice error:', {
+      invoiceId: req.params?.id,
+      error: error.message
+    });
     next(error);
   }
 };

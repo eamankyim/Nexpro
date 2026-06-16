@@ -100,6 +100,16 @@ async function syncStockAlertNotificationsThrottled(req) {
   return inFlight;
 }
 
+function triggerStockAlertNotificationsSync(req) {
+  syncStockAlertNotificationsThrottled(req).catch((error) => {
+    console.error('[Notifications] Background stock alert sync failed', {
+      userId: req.user?.id,
+      tenantId: req.tenantId,
+      error: error.message
+    });
+  });
+}
+
 async function syncStockAlertNotifications(req) {
   if (!req.tenantId || !req.user?.id) return;
 
@@ -133,11 +143,25 @@ async function syncStockAlertNotifications(req) {
     })
   ]);
 
+  const [outOfStockProductId, lowStockProductId] = await Promise.all([
+    getSingleStockAlertProductId({
+      alertType: STOCK_ALERT_TYPES.OUT_OF_STOCK,
+      count: outOfStockCount,
+      baseWhere
+    }),
+    getSingleStockAlertProductId({
+      alertType: STOCK_ALERT_TYPES.LOW_STOCK,
+      count: lowStockCount,
+      baseWhere
+    })
+  ]);
+
   await Promise.all([
     upsertStockAlertNotification({
       req,
       alertType: STOCK_ALERT_TYPES.OUT_OF_STOCK,
       count: outOfStockCount,
+      productId: outOfStockProductId,
       title: `${outOfStockCount} item${outOfStockCount === 1 ? '' : 's'} out of stock`,
       message: outOfStockCount === 1
         ? '1 product is out of stock and cannot be sold until restocked.'
@@ -148,6 +172,7 @@ async function syncStockAlertNotifications(req) {
       req,
       alertType: STOCK_ALERT_TYPES.LOW_STOCK,
       count: lowStockCount,
+      productId: lowStockProductId,
       title: `${lowStockCount} item${lowStockCount === 1 ? '' : 's'} low on stock`,
       message: lowStockCount === 1
         ? '1 product is below its reorder level. Restock soon to avoid missed sales.'
@@ -157,7 +182,32 @@ async function syncStockAlertNotifications(req) {
   ]);
 }
 
-async function upsertStockAlertNotification({ req, alertType, count, title, message, priority }) {
+async function getSingleStockAlertProductId({ alertType, count, baseWhere }) {
+  if (count !== 1) return null;
+
+  const stockWhere = alertType === STOCK_ALERT_TYPES.OUT_OF_STOCK
+    ? {
+        ...baseWhere,
+        quantityOnHand: { [Op.lte]: 0 }
+      }
+    : {
+        ...baseWhere,
+        quantityOnHand: { [Op.gt]: 0 },
+        [Op.and]: [
+          sequelize.where(sequelize.col('quantityOnHand'), Op.lte, sequelize.col('reorderLevel'))
+        ]
+      };
+
+  const product = await Product.findOne({
+    where: stockWhere,
+    attributes: ['id'],
+    order: [['updatedAt', 'DESC'], ['createdAt', 'DESC']]
+  });
+
+  return product?.id || null;
+}
+
+async function upsertStockAlertNotification({ req, alertType, count, productId, title, message, priority }) {
   const where = {
     tenantId: req.tenantId,
     userId: req.user.id,
@@ -185,7 +235,8 @@ async function upsertStockAlertNotification({ req, alertType, count, title, mess
     source: 'stock_alert',
     alertType,
     count,
-    shopId: req.shopFilterId || null
+    shopId: req.shopFilterId || null,
+    ...(productId ? { productId } : {})
   };
 
   if (!existing) {
@@ -248,7 +299,7 @@ exports.getNotifications = async (req, res, next) => {
       offset,
       limit,
       order: [['createdAt', 'DESC']],
-      attributes: ['id', 'title', 'message', 'type', 'priority', 'link', 'isRead', 'readAt', 'createdAt', 'triggeredBy'],
+      attributes: ['id', 'title', 'message', 'type', 'priority', 'metadata', 'link', 'isRead', 'readAt', 'createdAt', 'triggeredBy'],
       include: [
         {
           model: User,
@@ -386,7 +437,7 @@ exports.markAllNotificationsRead = async (req, res, next) => {
 exports.getNotificationSummary = async (req, res, next) => {
   const finishTiming = startHotPathTimer('notifications.summary', req);
   try {
-    await syncStockAlertNotificationsThrottled(req);
+    triggerStockAlertNotificationsSync(req);
 
     const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
 

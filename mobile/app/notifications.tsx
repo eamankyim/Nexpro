@@ -20,6 +20,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
 import { getApiErrorMessage } from '@/utils/parseApiListResponse';
+import { resolveNotificationDeepLink } from '@/utils/notificationDeepLinks';
 
 type Notification = {
   id: string;
@@ -28,11 +29,7 @@ type Notification = {
   type?: string;
   isRead: boolean;
   createdAt: string;
-  metadata?: {
-    source?: string;
-    saleId?: string;
-    saleNumber?: string;
-  };
+  metadata?: Record<string, unknown>;
   link?: string;
 };
 
@@ -76,8 +73,9 @@ function isToday(dateStr: string): boolean {
 function getNotificationStatus(item: Notification): NotificationStatus {
   const text = `${item.type || ''} ${item.title || ''} ${item.message || ''}`.toLowerCase();
   const link = String(item.link || '').toLowerCase();
+  const source = typeof item.metadata?.source === 'string' ? item.metadata.source : '';
 
-  if (item.metadata?.source === 'online_store' || link.includes('/store/orders') || text.includes('online store order')) {
+  if (source === 'online_store' || link.includes('/store/orders') || text.includes('online store order')) {
     return 'onlineOrder';
   }
   if (text.includes('out of stock')) return 'outOfStock';
@@ -156,14 +154,8 @@ export default function NotificationsScreen() {
     (item: Notification) => {
       if (!item.isRead) markReadMutation.mutate(item.id);
 
-      const saleId = item.metadata?.saleId;
-      const isOnlineStore =
-        item.metadata?.source === 'online_store'
-        || String(item.link || '').includes('/store/orders');
-
-      if (isOnlineStore && saleId) {
-        router.push(`/store-order/${saleId}` as never);
-      }
+      const route = resolveNotificationDeepLink(item);
+      if (route) router.push(route as never);
     },
     [markReadMutation, router]
   );

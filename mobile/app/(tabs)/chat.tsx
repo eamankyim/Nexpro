@@ -18,6 +18,7 @@ import { assistantService } from '@/services/assistantService';
 import { useAuth } from '@/context/AuthContext';
 import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
+import { logger } from '@/utils/logger';
 import { SHOP_TYPES } from '@/constants';
 import {
   ASSISTANT_BUSINESS_PROMPTS,
@@ -172,6 +173,9 @@ export default function ChatScreen() {
       const text = (content || input).trim();
       if (!text) return;
 
+      const tapAt = Date.now();
+      logger.info('Assistant', 'perf:send_tapped', { tapAt, textLength: text.length });
+
       setInput('');
       const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', content: text };
       setMessages((prev) => [...prev, userMsg]);
@@ -182,7 +186,10 @@ export default function ChatScreen() {
           ...messages.map((m) => ({ role: m.role, content: m.content })),
           { role: 'user', content: text },
         ];
-        const res = await assistantService.chat(history, { pageContext });
+        const uiPrepMs = Date.now() - tapAt;
+        logger.info('Assistant', 'perf:history_ready', { tapAt, uiPrepMs, historyCount: history.length });
+
+        const res = await assistantService.chat(history, { pageContext, clientSubmittedAt: tapAt });
         const reply = res?.message || '';
         const assistantMsg: Message = {
           id: `a-${Date.now()}`,
@@ -191,10 +198,14 @@ export default function ChatScreen() {
         };
         setMessages((prev) => [...prev, assistantMsg]);
       } catch (err: unknown) {
+        const responseData = (err as { response?: { data?: { error?: string; errorCode?: string; code?: string } } })
+          ?.response?.data;
         const msg =
-          (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??
+          responseData?.error ??
           (err as Error)?.message ??
           'Failed to get response';
+        const errorCode = responseData?.errorCode || responseData?.code;
+        logger.warn('Assistant', 'perf:send_failed', { tapAt, errorCode, msg });
         setMessages((prev) => [
           ...prev,
           {

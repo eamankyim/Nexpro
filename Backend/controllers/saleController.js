@@ -8,7 +8,7 @@ const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const { resolvePaymentNotesFromBody } = require('../utils/paymentNoteUtils');
 const { parseDeliveryStatusInput } = require('../utils/deliveryStatus');
 const { getPagination } = require('../utils/paginationUtils');
-const { invalidateSaleListCache, invalidateInvoiceListCache } = require('../middleware/cache');
+const { invalidateSaleListCache, invalidateInvoiceListCache, invalidateAfterMutation } = require('../middleware/cache');
 const { sequelize } = require('../config/database');
 const config = require('../config/config');
 const { emitNewSale, emitSaleStatusChange, emitInventoryAlert } = require('../services/websocketService');
@@ -51,6 +51,11 @@ const isRestaurantTenant = (tenant) => getTenantShopType(tenant) === 'restaurant
 const getEffectiveTenantRole = (req) => req.tenantRole || req.user?.role || null;
 const shouldRestrictStaffToOwnSales = (req) =>
   getEffectiveTenantRole(req) === 'staff' && !req.shopScoped;
+
+const invalidateSaleMutationCaches = (tenantId) => {
+  invalidateSaleListCache(tenantId);
+  invalidateAfterMutation(tenantId);
+};
 
 const getTodayDateRange = () => {
   const start = new Date();
@@ -1257,7 +1262,7 @@ exports.createSale = async (req, res, next) => {
     timer.mark('response-build:end', { payloadBytesApprox: JSON.stringify(saleResponse).length });
 
     timer.mark('cache-invalidate:start');
-    invalidateSaleListCache(req.tenantId);
+    invalidateSaleMutationCaches(req.tenantId);
     timer.mark('cache-invalidate:end');
 
     res.status(201).json({
@@ -1379,6 +1384,9 @@ exports.batchSyncSales = async (req, res, next) => {
         error: err?.message || 'Sync failed'
       });
     }
+  }
+  if (results.some((result) => result.id)) {
+    invalidateSaleMutationCaches(req.tenantId);
   }
   res.status(200).json({ success: true, results });
 };
@@ -1636,7 +1644,7 @@ exports.updateSale = async (req, res, next) => {
       ]
     });
 
-    invalidateSaleListCache(req.tenantId);
+    invalidateSaleMutationCaches(req.tenantId);
     res.status(200).json({
       success: true,
       data: updatedSale
@@ -1841,7 +1849,7 @@ exports.recordPayment = async (req, res, next) => {
       ]
     });
 
-    invalidateSaleListCache(req.tenantId);
+    invalidateSaleMutationCaches(req.tenantId);
     if (isNowCompleted && (previousStatus === 'pending' || previousStatus === 'partially_paid')) {
       try {
         emitSaleStatusChange(req.tenantId, updatedSale, previousStatus);
@@ -1923,7 +1931,7 @@ exports.cancelSale = async (req, res, next) => {
     await sale.update({ status: 'cancelled' }, { transaction });
 
     await transaction.commit();
-    invalidateSaleListCache(req.tenantId);
+    invalidateSaleMutationCaches(req.tenantId);
 
     res.status(200).json({
       success: true,
@@ -2120,7 +2128,7 @@ exports.updateOrderStatus = async (req, res, next) => {
       ]
     });
 
-    invalidateSaleListCache(req.tenantId);
+    invalidateSaleMutationCaches(req.tenantId);
     res.status(200).json({
       success: true,
       data: updatedSale
@@ -2666,7 +2674,7 @@ exports.deleteSale = async (req, res, next) => {
     await sale.destroy({ transaction });
 
     await transaction.commit();
-    invalidateSaleListCache(req.tenantId);
+    invalidateSaleMutationCaches(req.tenantId);
 
     res.status(200).json({
       success: true,
@@ -2692,7 +2700,8 @@ exports.initializePaystackForSale = async (req, res, next) => {
     const { email, callbackUrl } = sanitizePayload(req.body || {});
 
     const sale = await Sale.findOne({
-      where: applyTenantFilter(req.tenantId, { id: saleId })
+      where: applyTenantFilter(req.tenantId, { id: saleId }),
+      include: [{ model: Customer, as: 'customer' }]
     });
     if (!sale) {
       return res.status(404).json({ success: false, message: 'Sale not found' });
@@ -2705,16 +2714,25 @@ exports.initializePaystackForSale = async (req, res, next) => {
       }
       throw accessErr;
     }
-    if (sale.status !== 'pending') {
-      return res.status(400).json({ success: false, message: 'Sale is not pending payment' });
+    if (sale.status === 'cancelled' || sale.status === 'refunded') {
+      return res.status(400).json({ success: false, message: 'Cannot collect payment on a cancelled or refunded sale' });
     }
 
     const totalAmount = parseFloat(sale.total || 0);
-    if (totalAmount <= 0) {
-      return res.status(400).json({ success: false, message: 'Sale total must be greater than zero' });
+    const currentPaid = parseFloat(sale.amountPaid || 0);
+    const balanceDue = Math.max(totalAmount - currentPaid, 0);
+    if (balanceDue <= 0) {
+      return res.status(400).json({ success: false, message: 'Sale is already fully paid' });
     }
 
-    const customerEmail = email && String(email).trim() ? String(email).trim() : null;
+    const tenant = await Tenant.findByPk(sale.tenantId);
+    const customerEmail =
+      (email && String(email).trim() ? String(email).trim() : null) ||
+      sale.customer?.email ||
+      req.user?.email ||
+      tenant?.metadata?.companyEmail ||
+      tenant?.email ||
+      null;
     if (!customerEmail) {
       return res.status(400).json({ success: false, message: 'Email is required for card/MoMo payment' });
     }
@@ -2733,35 +2751,48 @@ exports.initializePaystackForSale = async (req, res, next) => {
       oc?.customerBears === true &&
       ['online_payments', 'all_payments'].includes(String(oc?.appliesTo || ''));
     const chargeRate = shouldApplyCustomerCharge ? Math.max(0, Math.min(100, parseFloat(oc?.ratePercent) || 0)) : 0;
-    const chargeAmount = Math.round((totalAmount * chargeRate / 100) * 100) / 100;
-    const payableAmount = shouldApplyCustomerCharge ? totalAmount + chargeAmount : totalAmount;
+    const chargeAmount = Math.round((balanceDue * chargeRate / 100) * 100) / 100;
+    const payableAmount = shouldApplyCustomerCharge ? balanceDue + chargeAmount : balanceDue;
     const amountPesewas = Math.round(payableAmount * 100);
     const callback = callbackUrl && String(callbackUrl).trim() ? String(callbackUrl).trim() : null;
 
-    const tenant = await Tenant.findByPk(sale.tenantId);
     const subaccount = tenant?.paystackSubaccountCode || null;
 
-    const result = await paystackService.initializeTransaction({
+    const metadata = {
+      sale_id: sale.id,
+      tenant_id: sale.tenantId,
+      payment_source: 'sale_direct_checkout',
+      paymentSurcharge: shouldApplyCustomerCharge
+        ? {
+            label: typeof oc?.label === 'string' && oc.label.trim() ? oc.label.trim() : 'Transaction charge',
+            ratePercent: chargeRate,
+            amount: chargeAmount,
+            customerBears: true
+          }
+        : undefined
+    };
+    const buildInit = (channels) => paystackService.initializeTransaction({
       email: customerEmail,
       amount: amountPesewas,
       currency: 'GHS',
       callback_url: callback || undefined,
       reference,
-      metadata: {
-        sale_id: sale.id,
-        tenant_id: sale.tenantId,
-        paymentSurcharge: shouldApplyCustomerCharge
-          ? {
-              label: typeof oc?.label === 'string' && oc.label.trim() ? oc.label.trim() : 'Transaction charge',
-              ratePercent: chargeRate,
-              amount: chargeAmount,
-              customerBears: true
-            }
-          : undefined
-      },
-      channels: ['card'],
+      metadata,
+      channels,
       ...(subaccount ? { subaccount } : {})
     });
+
+    let result;
+    try {
+      result = await buildInit(['card', 'mobile_money']);
+    } catch (paystackErr) {
+      if (paystackErr?.response?.status === 403) {
+        console.warn('[Sale] initialize-paystack: Paystack 403 — retrying with card-only channels', { saleId: sale.id });
+        result = await buildInit(['card']);
+      } else {
+        throw paystackErr;
+      }
+    }
 
     if (!result.status || !result.data?.authorization_url) {
       return res.status(502).json({
@@ -2769,6 +2800,18 @@ exports.initializePaystackForSale = async (req, res, next) => {
         message: result.message || 'Failed to initialize payment'
       });
     }
+
+    await sale.update({
+      metadata: {
+        ...(sale.metadata || {}),
+        paystackCheckout: {
+          reference: result.data.reference || reference,
+          initiatedAt: new Date().toISOString(),
+          amount: balanceDue,
+          channels: ['card', 'mobile_money']
+        }
+      }
+    });
 
     res.status(200).json({
       success: true,
@@ -2818,18 +2861,20 @@ exports.paystackMobileMoneyForSale = async (req, res, next) => {
       throw accessErr;
     }
 
-    if (sale.status !== 'pending') {
+    if (sale.status === 'cancelled' || sale.status === 'refunded') {
       return res.status(400).json({
         success: false,
-        message: 'Sale is not pending payment'
+        message: 'Cannot collect payment on a cancelled or refunded sale'
       });
     }
 
     const totalAmount = parseFloat(sale.total || 0);
-    if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+    const currentPaid = parseFloat(sale.amountPaid || 0);
+    const balanceDue = Math.max(totalAmount - currentPaid, 0);
+    if (!Number.isFinite(balanceDue) || balanceDue <= 0) {
       return res.status(400).json({
         success: false,
-        message: 'Sale total must be greater than zero'
+        message: 'Sale is already fully paid'
       });
     }
 
@@ -2869,8 +2914,8 @@ exports.paystackMobileMoneyForSale = async (req, res, next) => {
       oc?.customerBears === true &&
       ['online_payments', 'all_payments'].includes(String(oc?.appliesTo || ''));
     const chargeRate = shouldApplyCustomerCharge ? Math.max(0, Math.min(100, parseFloat(oc?.ratePercent) || 0)) : 0;
-    const chargeAmount = Math.round((totalAmount * chargeRate / 100) * 100) / 100;
-    const payableAmount = shouldApplyCustomerCharge ? totalAmount + chargeAmount : totalAmount;
+    const chargeAmount = Math.round((balanceDue * chargeRate / 100) * 100) / 100;
+    const payableAmount = shouldApplyCustomerCharge ? balanceDue + chargeAmount : balanceDue;
 
     const result = await paystackService.chargeMobileMoney({
       email: customerEmail,
@@ -2918,6 +2963,7 @@ exports.paystackMobileMoneyForSale = async (req, res, next) => {
         reference,
         provider: logicalProvider,
         phoneNumber,
+        amount: balanceDue,
         initiatedAt: new Date().toISOString()
       }
     };
@@ -2966,116 +3012,99 @@ exports.checkPaystackChargeForSale = async (req, res, next) => {
       throw accessErr;
     }
 
-    // If already completed, return as-is
-    if (sale.status === 'completed') {
-      return res.status(200).json({ success: true, data: sale });
+    const saleTotal = parseFloat(sale.total || 0);
+    const currentPaid = parseFloat(sale.amountPaid || 0);
+    const balanceDue = Math.max(saleTotal - currentPaid, 0);
+
+    // Fully settled sales do not need another Paystack check.
+    if (balanceDue <= 0 && sale.status === 'completed') {
+      return res.status(200).json({ success: true, data: sale, applied: false, alreadyRecorded: true });
     }
 
-    const ref = sale.metadata?.paystackMobileMoney?.reference;
+    const ref = sale.metadata?.paystackMobileMoney?.reference || sale.metadata?.paystackCheckout?.reference;
     if (!ref) {
-      return res.status(200).json({ success: true, data: sale });
+      return res.status(200).json({ success: true, data: sale, applied: false });
     }
 
-    // Throttle: don't call Paystack more than once per 8s per sale
     const now = Date.now();
     const last = paystackCheckLastBySaleId.get(saleId) || 0;
     if (now - last < PAYSTACK_CHECK_THROTTLE_MS) {
-      return res.status(200).json({ success: true, data: sale });
+      return res.status(200).json({ success: true, data: sale, applied: false, throttled: true });
     }
     paystackCheckLastBySaleId.set(saleId, now);
 
     const paystackService = require('../services/paystackService');
     if (!paystackService.secretKey) {
-      return res.status(200).json({ success: true, data: sale });
+      return res.status(200).json({ success: true, data: sale, applied: false });
     }
 
-    const result = await paystackService.verifyTransaction(ref);
+    let result;
+    try {
+      result = await paystackService.verifyTransaction(ref);
+    } catch (verifyErr) {
+      console.error('[Sale] check-paystack verify error:', verifyErr?.message);
+      return res.status(200).json({ success: true, data: sale, applied: false });
+    }
+
     if (!result.status || !result.data) {
-      return res.status(200).json({ success: true, data: sale });
+      return res.status(200).json({ success: true, data: sale, applied: false });
     }
 
-    const tx = result.data;
-    const txStatus = (tx.status || '').toLowerCase();
-    if (txStatus !== 'success') {
-      return res.status(200).json({ success: true, data: sale });
+    const { applyPaystackChargeToSaleFromTx } = require('../services/paystackSalePayment');
+    const outcome = await applyPaystackChargeToSaleFromTx(sale, ref, result.data);
+
+    if (!outcome.applied) {
+      return res.status(200).json({
+        success: true,
+        data: sale,
+        applied: false,
+        alreadyRecorded: Boolean(outcome.duplicate),
+        reason: outcome.reason || null,
+        paystackStatus: outcome.paystackStatus || null
+      });
     }
 
-    const amount = parseFloat(tx.amount || 0) / 100;
-    const saleTotal = parseFloat(sale.total || 0);
-    const appliedAmount = Number.isFinite(saleTotal) && saleTotal > 0 ? Math.min(amount, saleTotal) : amount;
-    const tenant = await Tenant.findByPk(sale.tenantId);
-    const pc = tenant?.metadata?.paymentCollection || {};
-    const isMoMo = pc.settlementType === 'momo' && pc.momoPhone;
-    const useLegacyMomoTransfer = isMoMo && !tenant?.paystackSubaccountCode;
-
-    await sale.update({
-      status: 'completed',
-      paymentMethod: sale.paymentMethod || 'mobile_money',
-      amountPaid: appliedAmount,
-      metadata: {
-        ...(sale.metadata || {}),
-        paystackRef: ref,
-        paystackCompletedAt: new Date().toISOString()
-      }
-    });
-
-    if (useLegacyMomoTransfer) {
+    const nextStatus = outcome.nextStatus;
+    if (nextStatus === 'completed') {
       try {
-        const platformFeePercent = parseFloat(process.env.PAYSTACK_PLATFORM_FEE_PERCENT || '2');
-        const tenantShare = appliedAmount * (1 - platformFeePercent / 100);
-        const tenantSharePesewas = Math.round(tenantShare * 100);
-        if (tenantSharePesewas >= 100) {
-          let recipientCode = pc.paystackTransferRecipientCode;
-          if (!recipientCode) {
-            const momoAccount = (pc.momoPhone || '').replace(/^\+?233/, '0');
-            const recipientRes = await paystackService.createTransferRecipient({
-              type: 'mobile_money',
-              name: tenant?.name || 'Business',
-              account_number: momoAccount || pc.momoPhone,
-              bank_code: paystackService.getMoMoBankCode(pc.momoProvider),
-              currency: 'GHS'
-            });
-            recipientCode = recipientRes?.data?.recipient_code;
-            if (recipientCode && tenant) {
-              tenant.metadata = tenant.metadata || {};
-              tenant.metadata.paymentCollection = tenant.metadata.paymentCollection || {};
-              tenant.metadata.paymentCollection.paystackTransferRecipientCode = recipientCode;
-              await tenant.save();
-            }
-          }
-          if (recipientCode) {
-            const transferRef = `sale_${sale.id}_${Date.now()}`.slice(0, 50);
-            await paystackService.initiateTransfer({
-              amount: tenantSharePesewas,
-              recipient: recipientCode,
-              reference: transferRef,
-              reason: `POS sale ${sale.saleNumber}`
-            });
-            console.log('[MoMo] Transfer initiated for sale (check-paystack):', sale.id);
-          }
-        }
-      } catch (transferErr) {
-        console.error('[MoMo] Transfer failed for sale (check-paystack):', sale.id, transferErr?.response?.data || transferErr.message);
+        await autoCreateInvoiceFromSale(sale.id, sale.tenantId);
+      } catch (invErr) {
+        console.error('[Sale] Auto-invoice failed (check-paystack):', invErr.message);
       }
+      await autoSendReceiptIfEnabled(sale.tenantId, sale.id).catch((receiptErr) =>
+        console.error('[Sale] Auto-send receipt failed (check-paystack):', receiptErr?.message || receiptErr)
+      );
     }
 
     try {
-      await autoCreateInvoiceFromSale(sale.id, sale.tenantId);
-    } catch (invErr) {
-      console.error('[MoMo] Auto-invoice failed for POS sale (check-paystack):', invErr.message);
-    }
-    await autoSendReceiptIfEnabled(sale.tenantId, sale.id).catch((receiptErr) =>
-      console.error('[MoMo] Auto-send receipt failed for POS sale (check-paystack):', receiptErr?.message || receiptErr)
-    );
-    try {
-      invalidateSaleListCache(sale.tenantId);
+      invalidateSaleMutationCaches(sale.tenantId);
       emitNewSale(sale.tenantId, sale);
     } catch (e) {
-      console.error('[MoMo] WebSocket/cache error (check-paystack):', e.message);
+      console.error('[Sale] WebSocket/cache error (check-paystack):', e.message);
     }
-    console.log('[MoMo] Sale completed via check-paystack-charge:', sale.id);
+    console.log('[Sale] Payment applied via check-paystack-charge:', sale.id);
 
-    return res.status(200).json({ success: true, data: sale });
+    const freshSale = await Sale.findOne({
+      where: applyTenantFilter(req.tenantId, { id: saleId }),
+      include: [
+        { model: Shop, as: 'shop' },
+        { model: Customer, as: 'customer' },
+        { model: User, as: 'seller' },
+        {
+          model: Invoice,
+          as: 'invoice',
+          include: [{ model: Customer, as: 'customer' }]
+        },
+        saleItemDetailInclude
+      ]
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: freshSale || sale,
+      applied: true,
+      reference: ref
+    });
   } catch (error) {
     console.error('[MoMo] checkPaystackChargeForSale error:', { saleId: req.params?.id, error: error.message });
     next(error);

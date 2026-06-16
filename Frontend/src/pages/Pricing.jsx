@@ -60,6 +60,8 @@ import {
 } from '@/components/ui/sheet';
 import { numberInputValue, handleNumberChange, handleIntegerChange, numberOrEmptySchema, integerOrEmptySchema } from '../utils/formUtils';
 import { EMPTY_STATES } from '../constants/microcopy';
+import { QUERY_STALE } from '../utils/queryInvalidation';
+import { queryKeys } from '../utils/queryKeys';
 
 // Zod schemas
 const discountTierSchema = z.object({
@@ -250,10 +252,10 @@ const Pricing = () => {
   }, []);
 
   const { data: jobItemCategoriesApi = [] } = useQuery({
-    queryKey: ['jobs', 'categories', activeTenantId, activeStudioLocationId, effectiveStudioType],
+    queryKey: queryKeys.jobs.categories(activeTenantId, activeStudioLocationId, effectiveStudioType),
     queryFn: () => jobService.getCategories(),
     enabled: scopeReady,
-    staleTime: 5 * 60 * 1000,
+    staleTime: QUERY_STALE.METADATA,
   });
 
   const defaultCategories = useMemo(() => {

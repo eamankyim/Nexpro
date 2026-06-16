@@ -115,6 +115,30 @@ export const saleService = {
     return res.data;
   },
 
+  initializePaystackPayment: async (
+    saleId: string,
+    payload: { email?: string; callbackUrl?: string } = {}
+  ) => {
+    const body: Record<string, string> = {};
+    if (payload.email) body.email = payload.email;
+    if (payload.callbackUrl) body.callbackUrl = payload.callbackUrl;
+    const res = await api.post(`/sales/${saleId}/initialize-paystack`, body);
+    return res.data;
+  },
+
+  initiateDirectMobileMoney: async (
+    saleId: string,
+    payload: { phoneNumber: string; provider: string }
+  ) => {
+    const res = await api.post(`/sales/${saleId}/paystack-mobile-money`, payload);
+    return res.data;
+  },
+
+  checkPaystackCharge: async (saleId: string) => {
+    const res = await api.get(`/sales/${saleId}/check-paystack-charge`);
+    return res.data;
+  },
+
   cancelSale: async (saleId: string) => {
     const res = await api.post(`/sales/${saleId}/cancel`);
     return res.data;

@@ -1,5 +1,5 @@
 const { sequelize } = require('../config/database');
-const { Job, Expense, Customer, Vendor, Invoice, JobItem, Lead, Sale, SaleItem, Product, Prescription, PrescriptionItem, Drug, MaterialMovement, MaterialItem, Payment } = require('../models');
+const { Job, Expense, Customer, Vendor, Invoice, JobItem, Lead, Sale, SaleItem, Product, ProductVariant, Prescription, PrescriptionItem, Drug, MaterialMovement, MaterialItem, Payment } = require('../models');
 const { Op } = require('sequelize');
 const { applyTenantFilter } = require('../utils/tenantUtils');
 const { applyShopFilter, getShopSqlFragment } = require('../utils/shopUtils');
@@ -30,6 +30,41 @@ const scopedSaleWhere = (req, dateFilter = {}) =>
  */
 const getRetailRevenueTotal = async (req, dateFilter = {}) =>
   parseFloat(await Sale.sum('total', { where: scopedSaleWhere(req, dateFilter) }) || 0);
+
+const getRetailCogsTotal = async (req, dateFilter = {}) => {
+  if (!isRetailBusiness(req)) return 0;
+
+  const saleItems = await SaleItem.findAll({
+    attributes: ['quantity'],
+    include: [
+      {
+        model: Sale,
+        as: 'sale',
+        attributes: [],
+        required: true,
+        where: scopedSaleWhere(req, dateFilter)
+      },
+      {
+        model: Product,
+        as: 'product',
+        attributes: ['costPrice'],
+        required: false
+      },
+      {
+        model: ProductVariant,
+        as: 'variant',
+        attributes: ['costPrice'],
+        required: false
+      }
+    ]
+  });
+
+  return saleItems.reduce((sum, item) => {
+    const quantity = parseFloat(item.quantity || 0) || 0;
+    const unitCost = parseFloat(item.variant?.costPrice ?? item.product?.costPrice ?? 0) || 0;
+    return sum + (quantity * unitCost);
+  }, 0);
+};
 
 /**
  * POS revenue grouped by period for trend charts.
@@ -875,31 +910,36 @@ exports.getProfitLossReport = async (req, res, next) => {
 
     const dateFilter = resolveDateFilterFromQuery(req.query);
 
-    // Revenue
-    const revenue = await resolveOverviewRevenueTotal(req, dateFilter);
+    const [revenue, operatingExpenses, cogs] = await Promise.all([
+      resolveOverviewRevenueTotal(req, dateFilter),
+      Expense.sum('amount', {
+        where: scopedRetailWhere(req, {
+          approvalStatus: 'approved',
+          isArchived: false,
+          ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
+        })
+      }) || 0,
+      getRetailCogsTotal(req, dateFilter)
+    ]);
 
-    // Expenses
-    const expenses = await Expense.sum('amount', {
-      where: scopedRetailWhere(req, {
-        approvalStatus: 'approved',
-        isArchived: false,
-        ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
-      })
-    }) || 0;
-
-    // Gross profit
-    const grossProfit = revenue - expenses;
-
-    // Profit margin
-    const profitMargin = revenue > 0 ? ((grossProfit / revenue) * 100) : 0;
+    const totalExpenses = parseFloat(operatingExpenses || 0) + parseFloat(cogs || 0);
+    const grossProfit = parseFloat(revenue || 0) - parseFloat(cogs || 0);
+    const netProfit = parseFloat(revenue || 0) - totalExpenses;
+    const grossProfitMargin = revenue > 0 ? ((grossProfit / revenue) * 100) : 0;
+    const netProfitMargin = revenue > 0 ? ((netProfit / revenue) * 100) : 0;
 
     res.status(200).json({
       success: true,
       data: {
         revenue: parseFloat(revenue),
-        expenses: parseFloat(expenses),
+        expenses: parseFloat(totalExpenses),
+        operatingExpenses: parseFloat(operatingExpenses || 0),
+        cogs: parseFloat(cogs || 0),
         grossProfit: parseFloat(grossProfit),
-        profitMargin: parseFloat(profitMargin.toFixed(2))
+        netProfit: parseFloat(netProfit),
+        grossProfitMargin: parseFloat(grossProfitMargin.toFixed(2)),
+        netProfitMargin: parseFloat(netProfitMargin.toFixed(2)),
+        profitMargin: parseFloat(netProfitMargin.toFixed(2))
       }
     });
   } catch (error) {
@@ -1008,7 +1048,7 @@ exports.getProfitLossComplianceReport = async (req, res, next) => {
       ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
     });
 
-    const [revenue, expensesByCategory, totalExpenses] = await Promise.all([
+    const [revenue, expensesByCategory, operatingExpenses, cogs] = await Promise.all([
       Invoice.sum('amountPaid', { where: revWhere }) || 0,
       Expense.findAll({
         attributes: [
@@ -1021,21 +1061,31 @@ exports.getProfitLossComplianceReport = async (req, res, next) => {
         order: [[sequelize.fn('SUM', sequelize.col('amount')), 'DESC']],
         raw: true
       }),
-      Expense.sum('amount', { where: expenseWhere }) || 0
+      Expense.sum('amount', { where: expenseWhere }) || 0,
+      getRetailCogsTotal(req, dateFilter)
     ]);
 
     const revenueNum = parseFloat(revenue);
-    const expensesNum = parseFloat(totalExpenses);
-    const grossProfit = revenueNum - expensesNum;
-    const profitMargin = revenueNum > 0 ? ((grossProfit / revenueNum) * 100) : 0;
+    const operatingExpensesNum = parseFloat(operatingExpenses);
+    const cogsNum = parseFloat(cogs || 0);
+    const expensesNum = operatingExpensesNum + cogsNum;
+    const grossProfit = revenueNum - cogsNum;
+    const netProfit = revenueNum - expensesNum;
+    const grossProfitMargin = revenueNum > 0 ? ((grossProfit / revenueNum) * 100) : 0;
+    const netProfitMargin = revenueNum > 0 ? ((netProfit / revenueNum) * 100) : 0;
 
     res.status(200).json({
       success: true,
       data: {
         revenue: revenueNum,
         expenses: expensesNum,
+        operatingExpenses: operatingExpensesNum,
+        cogs: cogsNum,
         grossProfit,
-        profitMargin: parseFloat(profitMargin.toFixed(2)),
+        netProfit,
+        grossProfitMargin: parseFloat(grossProfitMargin.toFixed(2)),
+        netProfitMargin: parseFloat(netProfitMargin.toFixed(2)),
+        profitMargin: parseFloat(netProfitMargin.toFixed(2)),
         expensesByCategory: (expensesByCategory || []).map((row) => ({
           category: row.category || 'Uncategorized',
           amount: parseFloat(row.totalAmount || 0),
@@ -2630,6 +2680,7 @@ async function computeOverviewPeriodMetrics(req, rangeStart, rangeEnd) {
   const [
     totalRevenueRaw,
     totalExpenses,
+    totalCogs,
     newCustomers,
     activeCustomers,
     invoiceAggregates,
@@ -2640,6 +2691,7 @@ async function computeOverviewPeriodMetrics(req, rangeStart, rangeEnd) {
   ] = await Promise.all([
     resolveOverviewRevenueTotal(req, dateFilter),
     Expense.sum('amount', { where: expenseWhere }) || 0,
+    getRetailCogsTotal(req, dateFilter),
     Customer.count({
       where: scopedRetailWhere(req, {
         isActive: true,
@@ -2680,11 +2732,13 @@ async function computeOverviewPeriodMetrics(req, rangeStart, rangeEnd) {
   ]);
 
   const revenue = parseFloat(totalRevenueRaw || 0);
-  const expenses = parseFloat(totalExpenses || 0);
-  const netProfit = revenue - expenses;
+  const operatingExpenses = parseFloat(totalExpenses || 0);
+  const cogs = parseFloat(totalCogs || 0);
+  const expenses = operatingExpenses + cogs;
+  const grossProfit = revenue - cogs;
+  const netProfit = grossProfit - operatingExpenses;
+  const grossProfitMargin = revenue > 0 ? parseFloat(((grossProfit / revenue) * 100).toFixed(2)) : 0;
   const netProfitMargin = revenue > 0 ? parseFloat(((netProfit / revenue) * 100).toFixed(2)) : 0;
-  const grossProfit = netProfit;
-  const grossProfitMargin = netProfitMargin;
 
   let averageInvoiceValue = 0;
   let collectionRate = 0;
@@ -2707,6 +2761,8 @@ async function computeOverviewPeriodMetrics(req, rangeStart, rangeEnd) {
   return {
     totalRevenue: revenue,
     totalExpenses: expenses,
+    operatingExpenses: parseFloat(operatingExpenses.toFixed(2)),
+    cogs: parseFloat(cogs.toFixed(2)),
     netProfit: parseFloat(netProfit.toFixed(2)),
     grossProfit: parseFloat(grossProfit.toFixed(2)),
     grossProfitMargin,

@@ -445,19 +445,25 @@ exports.handlePaystackWebhook = async (req, res) => {
         const sale = await Sale.findOne({
           where: { id: metadata.sale_id, tenantId: metadata.tenant_id }
         });
-        if (sale && sale.status === 'pending') {
+        const saleTotal = parseFloat(sale?.total || 0);
+        const currentPaid = parseFloat(sale?.amountPaid || 0);
+        const balanceDue = Math.max(saleTotal - currentPaid, 0);
+        if (sale && sale.status !== 'cancelled' && sale.status !== 'refunded' && balanceDue > 0) {
           const amount = parseFloat(tx.amount || 0) / 100;
-          const saleTotal = parseFloat(sale.total || 0);
-          const appliedAmount = Number.isFinite(saleTotal) && saleTotal > 0 ? Math.min(amount, saleTotal) : amount;
+          const appliedAmount = Number.isFinite(balanceDue) && balanceDue > 0 ? Math.min(amount, balanceDue) : amount;
+          const newAmountPaid = Math.min(currentPaid + appliedAmount, saleTotal);
+          const nextStatus = newAmountPaid >= saleTotal ? 'completed' : 'partially_paid';
+          const channel = String(tx.channel || tx.authorization?.channel || '').toLowerCase();
+          const nextPaymentMethod = channel.includes('mobile') || sale.paymentMethod === 'mobile_money' ? 'mobile_money' : 'card';
           const tenant = await Tenant.findByPk(metadata.tenant_id);
           const pc = tenant?.metadata?.paymentCollection || {};
           const isMoMo = pc.settlementType === 'momo' && pc.momoPhone;
           const useLegacyMomoTransfer = isMoMo && !tenant?.paystackSubaccountCode;
 
           await sale.update({
-            status: 'completed',
-            paymentMethod: sale.paymentMethod || 'mobile_money',
-            amountPaid: appliedAmount,
+            status: nextStatus,
+            paymentMethod: nextPaymentMethod,
+            amountPaid: newAmountPaid,
             metadata: {
               ...(sale.metadata || {}),
               paystackRef: reference,
@@ -507,22 +513,24 @@ exports.handlePaystackWebhook = async (req, res) => {
             }
           }
 
-          const { autoCreateInvoiceFromSale, autoSendReceiptIfEnabled } = require('./saleController');
-          try {
-            await autoCreateInvoiceFromSale(sale.id, metadata.tenant_id);
-          } catch (invErr) {
-            console.error('[Paystack Webhook] Auto-invoice failed for POS sale:', invErr.message);
+          if (nextStatus === 'completed') {
+            const { autoCreateInvoiceFromSale, autoSendReceiptIfEnabled } = require('./saleController');
+            try {
+              await autoCreateInvoiceFromSale(sale.id, metadata.tenant_id);
+            } catch (invErr) {
+              console.error('[Paystack Webhook] Auto-invoice failed for POS sale:', invErr.message);
+            }
+            await autoSendReceiptIfEnabled(metadata.tenant_id, sale.id).catch((receiptErr) =>
+              console.error('[Paystack Webhook] Auto-send receipt failed for POS sale:', receiptErr?.message || receiptErr)
+            );
           }
-          await autoSendReceiptIfEnabled(metadata.tenant_id, sale.id).catch((receiptErr) =>
-            console.error('[Paystack Webhook] Auto-send receipt failed for POS sale:', receiptErr?.message || receiptErr)
-          );
           const { emitNewSale } = require('../services/websocketService');
           try {
             emitNewSale(metadata.tenant_id, sale);
           } catch (e) {
             console.error('[Paystack Webhook] WebSocket emit error:', e);
           }
-          console.log('[Paystack Webhook] POS sale completed:', metadata.sale_id);
+          console.log('[Paystack Webhook] POS sale payment applied:', metadata.sale_id);
         }
       } else if (String(metadata.type || '').toLowerCase() === 'storefront_order' && metadata.saleId) {
         const { sequelize } = require('../config/database');

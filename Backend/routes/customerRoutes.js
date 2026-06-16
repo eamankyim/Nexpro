@@ -21,6 +21,7 @@ const { studioLocationContext } = require('../middleware/studioLocationContext')
 const { shopContext } = require('../middleware/shopContext');
 const { bulkOperationLimiter, exportLimiter } = require('../middleware/rateLimiter');
 const { cacheMiddleware, generateCustomerListKey } = require('../middleware/cache');
+const { timeCrudAction } = require('../middleware/crudTiming');
 
 const router = express.Router();
 
@@ -30,8 +31,8 @@ router.use(studioLocationContext);
 router.use(shopContext);
 
 router.route('/')
-  .get(cacheMiddleware(60, generateCustomerListKey), getCustomers)
-  .post(authorize('admin', 'manager', 'staff'), createCustomer);
+  .get(timeCrudAction('customers.list'), cacheMiddleware(60, generateCustomerListKey), getCustomers)
+  .post(authorize('admin', 'manager', 'staff'), timeCrudAction('customers.create'), createCustomer);
 
 // Stats endpoint - must be before /:id to avoid route conflict
 router.route('/stats')
@@ -43,22 +44,22 @@ router.route('/export')
 
 // Bulk operations - must be before /:id to avoid route conflict
 router.route('/bulk')
-  .post(bulkOperationLimiter, authorize('admin', 'manager'), bulkCreateCustomers)
-  .put(bulkOperationLimiter, authorize('admin', 'manager'), bulkUpdateCustomers)
-  .delete(bulkOperationLimiter, authorize('admin'), bulkDeleteCustomers);
+  .post(bulkOperationLimiter, authorize('admin', 'manager'), timeCrudAction('customers.bulk_create'), bulkCreateCustomers)
+  .put(bulkOperationLimiter, authorize('admin', 'manager'), timeCrudAction('customers.bulk_update'), bulkUpdateCustomers)
+  .delete(bulkOperationLimiter, authorize('admin'), timeCrudAction('customers.bulk_delete'), bulkDeleteCustomers);
 
 router.route('/bulk/status')
-  .put(bulkOperationLimiter, authorize('admin', 'manager'), bulkUpdateCustomerStatus);
+  .put(bulkOperationLimiter, authorize('admin', 'manager'), timeCrudAction('customers.bulk_update_status'), bulkUpdateCustomerStatus);
 
 // Find or create customer by phone (for POS quick checkout)
 // Must be before /:id to avoid route conflict
 router.route('/find-or-create')
-  .post(authorize('admin', 'manager', 'staff'), findOrCreateCustomer);
+  .post(authorize('admin', 'manager', 'staff'), timeCrudAction('customers.find_or_create'), findOrCreateCustomer);
 
 router.route('/:id')
-  .get(getCustomer)
-  .put(authorize('admin', 'manager', 'staff'), updateCustomer)
-  .delete(authorize('admin'), deleteCustomer);
+  .get(timeCrudAction('customers.read'), getCustomer)
+  .put(authorize('admin', 'manager', 'staff'), timeCrudAction('customers.update'), updateCustomer)
+  .delete(authorize('admin'), timeCrudAction('customers.delete'), deleteCustomer);
 
 router
   .route('/:id/activities')

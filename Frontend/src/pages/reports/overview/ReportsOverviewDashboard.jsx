@@ -80,6 +80,16 @@ export default function ReportsOverviewDashboard({
 
   const current = extendedKpis?.current || {};
   const comparison = extendedKpis?.comparison || {};
+  const metricSource = current.metricSource || profitLossDetail?.source || 'operational';
+  const isAccountingMetricSource = metricSource === 'accounting';
+  const hasAccountingMismatch = profitLossDetail?.accountingSource === 'accounting'
+    && profitLossDetail?.profitLossAlignsWithCollections === false
+    && !isAccountingMetricSource;
+  const metricSourceLabel = isAccountingMetricSource
+    ? 'Accounting basis'
+    : hasAccountingMismatch
+      ? 'Operational basis; accounting P&L differs'
+      : 'Operational basis';
 
   const retailRevenueFloor = isRetail
     ? Math.max(
@@ -89,13 +99,18 @@ export default function ReportsOverviewDashboard({
       )
     : 0;
 
-  const totalRevenue = isRetail
+  const totalRevenue = isRetail && !isAccountingMetricSource
     ? Math.max(current.totalRevenue ?? 0, retailRevenueFloor)
-    : (current.totalRevenue ?? revenue?.totalRevenue ?? 0);
-  const totalExpenses = current.totalExpenses ?? expenses?.totalExpenses ?? 0;
+    : (current.totalRevenue ?? profitLossDetail?.revenue ?? revenue?.totalRevenue ?? 0);
+  const cogs = current.cogs ?? profitLossDetail?.cogs ?? 0;
+  const totalExpenses = current.totalExpenses ?? profitLossDetail?.expenses ?? expenses?.totalExpenses ?? 0;
+  const operatingExpenses = current.operatingExpenses
+    ?? profitLossDetail?.operatingExpenses
+    ?? Math.max(0, totalExpenses - cogs);
+  const grossProfit = current.grossProfit ?? (totalRevenue - cogs);
   const netProfit = current.netProfit ?? (totalRevenue - totalExpenses);
-  const grossProfitMargin = current.grossProfitMargin ?? (totalRevenue > 0 ? ((netProfit / totalRevenue) * 100) : 0);
-  const netProfitMargin = current.netProfitMargin ?? grossProfitMargin;
+  const grossProfitMargin = totalRevenue > 0 ? ((grossProfit / totalRevenue) * 100) : 0;
+  const netProfitMargin = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100) : 0;
 
   const trendData = useMemo(
     () => buildRevenueExpenseTrend(revenue, expenses),
@@ -167,12 +182,14 @@ export default function ReportsOverviewDashboard({
   );
 
   const plData = useMemo(() => ({
-    revenue: profitLossDetail?.revenue ?? totalRevenue,
-    cogs: profitLossDetail?.cogs ?? 0,
-    expenses: profitLossDetail?.expenses ?? totalExpenses,
-    grossProfit: profitLossDetail?.grossProfit ?? netProfit,
-    netProfit: profitLossDetail?.netProfit ?? netProfit
-  }), [profitLossDetail, totalRevenue, totalExpenses, netProfit]);
+    revenue: totalRevenue,
+    cogs,
+    expenses: totalExpenses,
+    operatingExpenses,
+    grossProfit,
+    netProfit,
+    source: metricSource
+  }), [totalRevenue, cogs, totalExpenses, operatingExpenses, grossProfit, netProfit, metricSource]);
 
   const averageValueLabel = isRetail ? 'Average Sale Value' : 'Average Invoice Value';
   const topCustomersTitle = isRetail ? 'Top Customers by Sales' : 'Top Customers by Revenue';
@@ -201,6 +218,7 @@ export default function ReportsOverviewDashboard({
           comparisonLabel={comparisonLabel}
           sparklineData={revenueSparkline}
           SparklineChart={Sparkline}
+          sourceLabel={metricSourceLabel}
           icon={Wallet}
           iconBgColor="#dcfce7"
           iconColor="#166534"
@@ -213,6 +231,7 @@ export default function ReportsOverviewDashboard({
           sparklineData={expenseSparkline}
           SparklineChart={Sparkline}
           invertTrend
+          sourceLabel={metricSourceLabel}
           icon={Receipt}
           iconBgColor="#fee2e2"
           iconColor="#b91c1c"
@@ -224,6 +243,7 @@ export default function ReportsOverviewDashboard({
           comparisonLabel={comparisonLabel}
           sparklineData={profitSparkline}
           SparklineChart={Sparkline}
+          sourceLabel={metricSourceLabel}
           icon={CircleDollarSign}
           iconBgColor="#dcfce7"
           iconColor="#166534"
@@ -236,6 +256,7 @@ export default function ReportsOverviewDashboard({
           comparisonLabel={comparisonLabel}
           sparklineData={marginSparkline}
           SparklineChart={Sparkline}
+          sourceLabel={metricSourceLabel}
           icon={Percent}
           iconBgColor="#f3e8ff"
           iconColor="#7e22ce"
@@ -248,6 +269,7 @@ export default function ReportsOverviewDashboard({
           comparisonLabel={comparisonLabel}
           sparklineData={marginSparkline}
           SparklineChart={Sparkline}
+          sourceLabel={metricSourceLabel}
           icon={Percent}
           iconBgColor="#dbeafe"
           iconColor="#1d4ed8"

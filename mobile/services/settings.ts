@@ -21,6 +21,11 @@ export const settingsService = {
     return res?.data?.data ?? res?.data ?? res;
   },
 
+  getPaymentCollectionSettings: async () => {
+    const res = await api.get('/settings/payment-collection');
+    return res?.data?.data ?? res?.data ?? res;
+  },
+
   getCustomerSources: async () => {
     const res = await api.get('/settings/customer-sources');
     const data = res?.data?.data ?? res?.data ?? [];

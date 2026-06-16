@@ -23,6 +23,7 @@ import { showError, showSuccess } from '../utils/toast';
 import { buildStorefrontStoreUrl } from '../utils/storefrontUrl';
 import { resolveImageUrl } from '../utils/fileUtils';
 import { QUERY_STALE, refreshAfterOnlineOrderChange } from '../utils/queryInvalidation';
+import { queryKeys } from '../utils/queryKeys';
 import DetailsDrawer from '../components/DetailsDrawer';
 import DrawerSectionCard from '../components/DrawerSectionCard';
 import { Button } from '@/components/ui/button';
@@ -696,11 +697,16 @@ const OnlineOrders = () => {
   const [cancellationReasonError, setCancellationReasonError] = useState('');
   const cancellationReasonRef = useRef(null);
 
-  const queryParams = useMemo(() => ({
+  const listQueryParams = useMemo(() => ({
     page,
     limit: PAGINATION.DEFAULT_PAGE_SIZE,
     status: statusFilter === 'all' ? undefined : statusFilter,
+    includeStats: false,
   }), [page, statusFilter]);
+
+  const statsQueryParams = useMemo(() => ({
+    status: statusFilter === 'all' ? undefined : statusFilter,
+  }), [statusFilter]);
 
   const {
     data: response,
@@ -709,12 +715,22 @@ const OnlineOrders = () => {
     isLoading,
     refetch,
   } = useQuery({
-    queryKey: ['store', 'online-orders', queryParams],
-    queryFn: () => storeService.getOrders(queryParams),
+    queryKey: queryKeys.store.onlineOrders.list(listQueryParams),
+    queryFn: () => storeService.getOrders(listQueryParams),
     staleTime: QUERY_STALE.TRANSACTIONAL,
     refetchInterval: 60 * 1000,
     refetchIntervalInBackground: false,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+
+  const { data: statsResponse, refetch: refetchStats } = useQuery({
+    queryKey: queryKeys.store.onlineOrders.stats(statsQueryParams),
+    queryFn: () => storeService.getOrderStats(statsQueryParams),
+    staleTime: QUERY_STALE.LIST,
+    refetchInterval: 60 * 1000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
     retry: 1,
   });
 
@@ -723,18 +739,20 @@ const OnlineOrders = () => {
     error: tradeAssuranceError,
     isFetching: isTradeAssuranceFetching,
     isError: isTradeAssuranceError,
+    refetch: refetchTradeAssurance,
   } = useQuery({
-    queryKey: ['store', 'trade-assurance-dashboard', queryParams],
-    queryFn: () => storeService.getTradeAssuranceDashboard(queryParams),
-    staleTime: QUERY_STALE.TRANSACTIONAL,
-    refetchInterval: 60 * 1000,
+    queryKey: queryKeys.store.tradeAssuranceDashboard(listQueryParams),
+    queryFn: () => storeService.getTradeAssuranceDashboard(listQueryParams),
+    enabled: !isLoading,
+    staleTime: QUERY_STALE.SLOW,
+    refetchInterval: 2 * 60 * 1000,
     refetchIntervalInBackground: false,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
     retry: 1,
   });
 
   const { data: settingsResponse } = useQuery({
-    queryKey: ['store', 'settings'],
+    queryKey: queryKeys.store.settings,
     queryFn: () => storeService.getSettings(),
     staleTime: QUERY_STALE.METADATA,
     refetchOnWindowFocus: false,
@@ -743,7 +761,11 @@ const OnlineOrders = () => {
 
   const body = useMemo(() => getListPayload(response), [response]);
   const orders = useMemo(() => getOrderRows(body), [body]);
-  const stats = useMemo(() => getStats(body, orders), [body, orders]);
+  const statsBody = useMemo(() => getBody(statsResponse), [statsResponse]);
+  const stats = useMemo(
+    () => getStats({ ...body, stats: statsBody.data || statsBody }, orders),
+    [body, statsBody, orders],
+  );
   const pagination = useMemo(() => getPagination(body, page), [body, page]);
   const ordersErrorMessage = useMemo(() => getApiErrorMessage(error), [error]);
   const tradeAssuranceErrorMessage = useMemo(() => getApiErrorMessage(tradeAssuranceError), [tradeAssuranceError]);
@@ -766,7 +788,7 @@ const OnlineOrders = () => {
   const detailItems = useMemo(() => getOrderItems(detailOrder), [detailOrder]);
 
   const detailQuery = useQuery({
-    queryKey: ['store', 'online-orders', selectedOrder?.id],
+    queryKey: queryKeys.store.onlineOrders.detail(selectedOrder?.id),
     queryFn: () => storeService.getOrderById(selectedOrder.id),
     enabled: Boolean(isDetailOpen && selectedOrder?.id),
     staleTime: QUERY_STALE.TRANSACTIONAL,
@@ -783,9 +805,9 @@ const OnlineOrders = () => {
   const updateStatusMutation = useMutation({
     mutationFn: ({ orderId, status, reason }) => storeService.updateOrderStatus(orderId, status, reason ? { reason } : {}),
     onMutate: async ({ orderId, status, reason }) => {
-      await queryClient.cancelQueries({ queryKey: ['store', 'online-orders'] });
+      await queryClient.cancelQueries({ queryKey: queryKeys.store.onlineOrders.all });
 
-      const previousOnlineOrders = queryClient.getQueriesData({ queryKey: ['store', 'online-orders'] });
+      const previousOnlineOrders = queryClient.getQueriesData({ queryKey: queryKeys.store.onlineOrders.all });
       const previousSelectedOrder = selectedOrder;
       const optimisticUpdater = (order) => buildOptimisticStatusOrder(order, status, reason);
 
@@ -812,7 +834,7 @@ const OnlineOrders = () => {
       setCancelOrderRequest(null);
       setCancellationReason('');
       if (updatedOrder?.id) {
-        queryClient.getQueriesData({ queryKey: ['store', 'online-orders'] }).forEach(([queryKey]) => {
+        queryClient.getQueriesData({ queryKey: queryKeys.store.onlineOrders.all }).forEach(([queryKey]) => {
           const statusFilter = getStatusFilterFromOrderQueryKey(queryKey);
           queryClient.setQueryData(queryKey, (currentData) => patchCachedOnlineOrderResponse(
             currentData,
@@ -821,7 +843,7 @@ const OnlineOrders = () => {
             (order) => shouldKeepOrderForStatusFilter(order, statusFilter)
           ));
         });
-        queryClient.setQueryData(['store', 'online-orders', updatedOrder.id], updateResponse);
+        queryClient.setQueryData(queryKeys.store.onlineOrders.detail(updatedOrder.id), updateResponse);
         setSelectedOrder((currentOrder) => (
           currentOrder?.id === updatedOrder.id ? updatedOrder : currentOrder
         ));
@@ -940,8 +962,9 @@ const OnlineOrders = () => {
 
   const handleRefresh = useCallback(() => {
     refetch();
-    queryClient.invalidateQueries({ queryKey: ['store', 'trade-assurance-dashboard'] });
-  }, [queryClient, refetch]);
+    refetchStats();
+    refetchTradeAssurance();
+  }, [refetch, refetchStats, refetchTradeAssurance]);
 
   const handleCloseDetailDrawer = useCallback(() => {
     setIsDetailOpen(false);

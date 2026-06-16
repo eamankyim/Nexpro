@@ -8,9 +8,9 @@ import { TERMS_VERSION } from '@/constants/legal';
 
 const sections = [
   {
-    title: 'Using ABS Ghana',
+    title: 'Using African Business Suite',
     body:
-      'ABS Ghana helps businesses manage daily operations, storefronts, customer records, jobs, sales, payments, and related workflows. You are responsible for the accuracy of information you enter and for activity under your account.',
+      'African Business Suite helps businesses manage daily operations, storefronts, customer records, jobs, sales, payments, and related workflows. You are responsible for the accuracy of information you enter and for activity under your account.',
   },
   {
     title: 'Account responsibility',
@@ -30,7 +30,7 @@ const sections = [
   {
     title: 'Acceptable use',
     body:
-      'Do not use ABS Ghana for fraud, illegal activity, abuse, spam, or attempts to disrupt the platform or other users.',
+      'Do not use ABS for fraud, illegal activity, abuse, spam, or attempts to disrupt the platform or other users.',
   },
   {
     title: 'Updates',
@@ -47,7 +47,7 @@ export default function TermsScreen() {
       <StackPageHeader title="Terms and Conditions" subtitle={`Version ${TERMS_VERSION}`} />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={[styles.intro, { color: mutedColor }]}>
-          These terms explain the basic rules for using ABS Ghana (African Business Suite).
+          These terms explain the basic rules for using African Business Suite (ABS).
           By creating an account, you agree to these terms and our Privacy Policy.
         </Text>
         {sections.map((section) => (

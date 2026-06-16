@@ -75,6 +75,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import ResponsiveSheet from '../components/ResponsiveSheet';
 import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../constants';
 import { generatePDF, openPrintDialog } from '../utils/pdfUtils';
+import { QUERY_STALE, refreshAfterCustomerChange } from '../utils/queryInvalidation';
+import { queryKeys } from '../utils/queryKeys';
 import {
   normalizeEntityResponse,
   enrichSaleCustomer,
@@ -193,15 +195,18 @@ const Customers = () => {
     isLoading: loading,
     refetch: refetchCustomers,
   } = useQuery({
-    queryKey: ['customers', activeTenantId, activeShopId, activeStudioLocationId, customersQueryParams],
+    queryKey: queryKeys.customers.list(activeTenantId, activeShopId, activeStudioLocationId, customersQueryParams),
     queryFn: () => customerService.getAll(customersQueryParams),
     enabled: scopeReady,
+    staleTime: QUERY_STALE.LIST,
   });
 
   const { data: statsResponse } = useQuery({
-    queryKey: ['customers', 'stats', activeTenantId, activeShopId, activeStudioLocationId],
+    queryKey: queryKeys.customers.stats(activeTenantId, activeShopId, activeStudioLocationId),
     queryFn: () => customerService.getStats(),
     enabled: scopeReady,
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchOnWindowFocus: true,
   });
 
   const createMutation = useMutation({
@@ -225,7 +230,7 @@ const Customers = () => {
       showSuccess('Customer created successfully');
       setModalVisible(false);
       form.reset();
-      queryClient.invalidateQueries({ queryKey: ['customers'] });
+      refreshAfterCustomerChange(queryClient);
     },
     onError: (error) => handleApiError(error, { context: 'create customer' }),
   });
@@ -239,7 +244,7 @@ const Customers = () => {
       showSuccess('Customer updated successfully');
       setModalVisible(false);
       form.reset();
-      queryClient.invalidateQueries({ queryKey: ['customers'] });
+      refreshAfterCustomerChange(queryClient);
     },
     onError: (error) => handleApiError(error, { context: 'update customer' }),
   });
@@ -251,7 +256,7 @@ const Customers = () => {
     },
     onSuccess: () => {
       showSuccess('Customer deleted successfully');
-      queryClient.invalidateQueries({ queryKey: ['customers'] });
+      refreshAfterCustomerChange(queryClient);
       if (drawerVisible) handleCloseDrawer();
     },
     onError: (error) => handleApiError(error, { context: 'delete customer' }),

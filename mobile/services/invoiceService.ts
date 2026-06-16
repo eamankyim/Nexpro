@@ -77,6 +77,11 @@ export const invoiceService = {
     return res.data;
   },
 
+  ensurePaymentLink: async (id: string) => {
+    const res = await api.post(`/invoices/${id}/payment-link`);
+    return res.data;
+  },
+
   send: async (id: string) => {
     const res = await api.post(`/invoices/${id}/send`);
     return res.data;
@@ -99,6 +104,21 @@ export const invoiceService = {
 
   markAsPaid: async (id: string) => {
     const res = await api.post(`/invoices/${id}/mark-paid`);
+    return res.data;
+  },
+
+  verifyPaystackCharge: async (id: string, payload: { reference?: string } = {}) => {
+    const body: Record<string, string> = {};
+    if (payload.reference) body.reference = payload.reference;
+    const res = await api.post(`/invoices/${id}/verify-paystack`, body);
+    return res.data;
+  },
+
+  initiateDirectMobileMoney: async (
+    id: string,
+    payload: { phoneNumber: string; provider: string }
+  ) => {
+    const res = await api.post(`/invoices/${id}/paystack-mobile-money`, payload);
     return res.data;
   },
 };

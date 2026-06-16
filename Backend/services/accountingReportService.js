@@ -3,6 +3,9 @@ const { AccountBalance, Account } = require('../models');
 const { applyTenantFilter } = require('../utils/tenantUtils');
 const { getAccountCodes } = require('../config/accountingAccountCodes');
 
+const roundMoney = (value) => Math.round((Number(value) || 0) * 100) / 100;
+const roundPercent = (value) => Math.round((Number(value) || 0) * 100) / 100;
+
 /**
  * Get (fiscalYear, period) pairs that fall within [startDate, endDate].
  * period is month 1-12.
@@ -110,7 +113,12 @@ async function getProfitLossComplianceFromAccounting(tenantId, startDate, endDat
     return {
       revenue: 0,
       expenses: 0,
+      cogs: 0,
+      operatingExpenses: 0,
       grossProfit: 0,
+      netProfit: 0,
+      grossProfitMargin: 0,
+      netProfitMargin: 0,
       profitMargin: 0,
       expensesByCategory: []
     };
@@ -135,7 +143,8 @@ async function getProfitLossComplianceFromAccounting(tenantId, startDate, endDat
   });
 
   let revenue = 0;
-  let expenses = 0;
+  let cogs = 0;
+  let operatingExpenses = 0;
   const expensesByCategory = {};
 
   const typeNorm = (t) => (t ? String(t).toLowerCase() : '');
@@ -147,26 +156,38 @@ async function getProfitLossComplianceFromAccounting(tenantId, startDate, endDat
 
     if (type === 'income' || type === 'revenue') {
       revenue += credit - debit;
-    } else if (type === 'expense' || type === 'cogs') {
+    } else if (type === 'cogs') {
       const amount = debit - credit;
-      expenses += amount;
+      cogs += amount;
+      expensesByCategory[category] = (expensesByCategory[category] || 0) + amount;
+    } else if (type === 'expense') {
+      const amount = debit - credit;
+      operatingExpenses += amount;
       expensesByCategory[category] = (expensesByCategory[category] || 0) + amount;
     }
   }
 
-  const grossProfit = revenue - expenses;
-  const profitMargin = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
+  const expenses = cogs + operatingExpenses;
+  const grossProfit = revenue - cogs;
+  const netProfit = grossProfit - operatingExpenses;
+  const grossProfitMargin = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
+  const netProfitMargin = revenue > 0 ? (netProfit / revenue) * 100 : 0;
   const byCategory = Object.entries(expensesByCategory).map(([category, amount]) => ({
     category,
-    amount: Math.round(amount * 100) / 100,
+    amount: roundMoney(amount),
     count: 0
   })).sort((a, b) => b.amount - a.amount);
 
   return {
-    revenue: Math.round(revenue * 100) / 100,
-    expenses: Math.round(expenses * 100) / 100,
-    grossProfit: Math.round(grossProfit * 100) / 100,
-    profitMargin: Math.round(profitMargin * 100) / 100,
+    revenue: roundMoney(revenue),
+    expenses: roundMoney(expenses),
+    cogs: roundMoney(cogs),
+    operatingExpenses: roundMoney(operatingExpenses),
+    grossProfit: roundMoney(grossProfit),
+    netProfit: roundMoney(netProfit),
+    grossProfitMargin: roundPercent(grossProfitMargin),
+    netProfitMargin: roundPercent(netProfitMargin),
+    profitMargin: roundPercent(netProfitMargin),
     expensesByCategory: byCategory
   };
 }
@@ -277,7 +298,12 @@ async function getProfitLossFromAccounting(tenantId, startDate, endDate) {
   return {
     revenue: data.revenue,
     expenses: data.expenses,
+    cogs: data.cogs,
+    operatingExpenses: data.operatingExpenses,
     grossProfit: data.grossProfit,
+    netProfit: data.netProfit,
+    grossProfitMargin: data.grossProfitMargin,
+    netProfitMargin: data.netProfitMargin,
     profitMargin: data.profitMargin
   };
 }

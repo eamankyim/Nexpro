@@ -95,6 +95,8 @@ import {
 import { Timeline, TimelineItem, TimelineIndicator, TimelineContent, TimelineTitle, TimelineDescription, TimelineTime } from '@/components/ui/timeline';
 import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
 import { numberInputValue, handleNumberChange, handleIntegerChange, numberOrEmptySchema, integerOrEmptySchema } from '../utils/formUtils';
+import { QUERY_STALE, refreshAfterCustomerChange, refreshAfterJobChange } from '../utils/queryInvalidation';
+import { queryKeys } from '../utils/queryKeys';
 
 /** Flatten react-hook-form FieldErrors into a list of readable messages (with field context e.g. "Item 1 – Category is required"). */
 function getJobFormErrorMessages(errors) {
@@ -245,8 +247,6 @@ const Jobs = () => {
   });
   const [tableViewMode, setTableViewMode] = useState('table');
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
-  const [summary, setSummary] = useState(null);
-  const [summaryLoading, setSummaryLoading] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingJob, setViewingJob] = useState(null);
   const [jobDetailsLoading, setJobDetailsLoading] = useState(false);
@@ -347,7 +347,7 @@ const Jobs = () => {
 
   // Invalidate jobs query - defined early to avoid temporal dead zone
   const invalidateJobs = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ['jobs'] });
+    refreshAfterJobChange(queryClient);
   }, [queryClient]);
 
   // Job type configurations
@@ -406,7 +406,7 @@ const Jobs = () => {
   // Pull-to-refresh hook
   const { isRefreshing, pullDistance, containerProps } = usePullToRefresh(
     () => {
-      queryClient.invalidateQueries({ queryKey: ['jobs'] });
+      refreshAfterJobChange(queryClient);
       setRefreshingJobs(true);
       setTimeout(() => setRefreshingJobs(false), 500);
     },
@@ -422,27 +422,29 @@ const Jobs = () => {
     setPagination((prev) => ({ ...prev, current: 1 }));
   }, [searchValue]);
 
-  useEffect(() => {
-    setSummary(null);
-  }, [activeTenantId, activeStudioLocationId]);
-
-  // Fetch summary stats (tenant- and studio-scoped via API headers)
-  useEffect(() => {
-    if (!scopeReady) return;
-
-    const fetchSummary = async () => {
-      setSummaryLoading(true);
-      try {
-        const response = await jobService.getStats();
-        setSummary(response?.data || response || []);
-      } catch (error) {
-        console.error('Failed to load job summary', error);
-      } finally {
-        setSummaryLoading(false);
-      }
+  const jobQueryParams = useMemo(() => {
+    const params = {
+      page: pagination.current,
+      limit: pagination.pageSize,
     };
-    fetchSummary();
-  }, [scopeReady, activeTenantId, activeStudioLocationId, isStudioWorkspace]);
+    if (filters.status !== 'all') params.status = filters.status;
+    if (filters.customerId !== 'all') params.customerId = filters.customerId;
+    if (filters.priority !== 'all') params.priority = filters.priority;
+    if (filters.dueDate !== 'all') params.dueDate = filters.dueDate;
+    if (debouncedSearch) params.search = debouncedSearch;
+    return params;
+  }, [debouncedSearch, filters.customerId, filters.dueDate, filters.priority, filters.status, pagination.current, pagination.pageSize]);
+
+  const { data: summaryResponse, isLoading: summaryLoading } = useQuery({
+    queryKey: queryKeys.jobs.stats(activeTenantId, activeShopId, activeStudioLocationId),
+    queryFn: () => jobService.getStats(),
+    enabled: scopeReady,
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchOnWindowFocus: true,
+    refetchInterval: 60 * 1000,
+    refetchIntervalInBackground: false,
+  });
+  const summary = summaryResponse?.data || summaryResponse || null;
 
   const {
     data: jobsQueryResult,
@@ -450,33 +452,10 @@ const Jobs = () => {
     isFetching: isJobsFetching,
     error: jobsError,
   } = useQuery({
-    queryKey: ['jobs', pagination.current, pagination.pageSize, filters.status, filters.customerId, debouncedSearch, activeStudioLocationId],
+    queryKey: queryKeys.jobs.list(activeTenantId, activeShopId, activeStudioLocationId, jobQueryParams),
     queryFn: async () => {
       try {
-        const params = {
-          page: pagination.current,
-          limit: pagination.pageSize, // Backend pagination
-        };
-
-        if (filters.status !== 'all') {
-          params.status = filters.status;
-        }
-
-        if (filters.customerId !== 'all') {
-          params.customerId = filters.customerId;
-        }
-
-        if (filters.priority !== 'all') {
-          params.priority = filters.priority;
-        }
-
-        if (filters.dueDate !== 'all') {
-          params.dueDate = filters.dueDate;
-        }
-
-        if (debouncedSearch) params.search = debouncedSearch;
-
-        const response = await jobService.getAll(params);
+        const response = await jobService.getAll(jobQueryParams);
         return response;
       } catch (error) {
         console.error('Error in queryFn:', error);
@@ -484,9 +463,11 @@ const Jobs = () => {
       }
     },
     keepPreviousData: true,
-    staleTime: 60 * 1000,
-    refetchOnWindowFocus: false,
-    enabled: !isStudioWorkspace || !!activeStudioLocationId,
+    staleTime: QUERY_STALE.TRANSACTIONAL,
+    refetchOnWindowFocus: true,
+    refetchInterval: 60 * 1000,
+    refetchIntervalInBackground: false,
+    enabled: scopeReady && (!isStudioWorkspace || !!activeStudioLocationId),
   });
 
   // Use backend pagination directly
@@ -513,13 +494,13 @@ const Jobs = () => {
 
   // Use React Query for customers, templates, and team members with caching
   const { data: customersData = [], isLoading: customersLoading } = useQuery({
-    queryKey: ['customers', 'all', activeTenantId, activeShopId, activeStudioLocationId],
+    queryKey: queryKeys.customers.picker(activeTenantId, activeShopId, activeStudioLocationId, 'jobs-picker'),
     queryFn: async () => {
       const response = await customerService.getAll({ limit: 100 });
       return response.data || [];
     },
     enabled: scopeReady,
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: QUERY_STALE.METADATA,
     cacheTime: 10 * 60 * 1000, // 10 minutes
   });
 
@@ -530,7 +511,7 @@ const Jobs = () => {
       return response.data || [];
     },
     enabled: scopeReady,
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: QUERY_STALE.METADATA,
     cacheTime: 10 * 60 * 1000, // 10 minutes
   });
 
@@ -540,7 +521,7 @@ const Jobs = () => {
       const response = await userService.getAll({ limit: 100, isActive: 'true' });
       return response.data || [];
     },
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: QUERY_STALE.METADATA,
     cacheTime: 10 * 60 * 1000, // 10 minutes
   });
 
@@ -549,7 +530,7 @@ const Jobs = () => {
     queryFn: async () => {
       return await customDropdownService.getCustomOptions('job_category') || [];
     },
-    staleTime: 10 * 60 * 1000, // 10 minutes
+    staleTime: QUERY_STALE.SLOW,
     cacheTime: 30 * 60 * 1000, // 30 minutes
   });
 
@@ -559,15 +540,15 @@ const Jobs = () => {
       return await customDropdownService.getCustomOptions('line_item_description') || [];
     },
     enabled: !!activeTenantId,
-    staleTime: 10 * 60 * 1000,
+    staleTime: QUERY_STALE.SLOW,
     cacheTime: 30 * 60 * 1000,
   });
 
   const { data: jobItemCategoriesApi = [] } = useQuery({
-    queryKey: ['jobs', 'categories', activeTenantId, activeStudioLocationId, effectiveStudioType],
+    queryKey: queryKeys.jobs.categories(activeTenantId, activeStudioLocationId, effectiveStudioType),
     queryFn: () => jobService.getCategories(),
     enabled: scopeReady,
-    staleTime: 5 * 60 * 1000,
+    staleTime: QUERY_STALE.METADATA,
   });
 
   const jobItemCategoriesGrouped = useMemo(() => {
@@ -706,7 +687,7 @@ useEffect(() => {
     try {
       await jobService.delete(id);
       showSuccess('Job deleted successfully');
-      queryClient.invalidateQueries({ queryKey: ['jobs'] });
+      refreshAfterJobChange(queryClient);
       setJobToDelete(null);
       if (viewingJob?.id === id) {
         handleCloseDrawer();
@@ -903,7 +884,7 @@ useEffect(() => {
     
     // Prefetch data if not already cached (React Query handles caching automatically)
     queryClient.prefetchQuery({
-      queryKey: ['customers', 'all', activeTenantId, activeShopId, activeStudioLocationId],
+      queryKey: queryKeys.customers.picker(activeTenantId, activeShopId, activeStudioLocationId, 'jobs-picker'),
       queryFn: async () => {
         const response = await customerService.getAll({ limit: 100 });
         return response.data || [];
@@ -953,7 +934,7 @@ useEffect(() => {
         jobService.getById(job.id),
         // Prefetch customers and templates if not cached
         queryClient.prefetchQuery({
-          queryKey: ['customers', 'all', activeTenantId, activeShopId, activeStudioLocationId],
+          queryKey: queryKeys.customers.picker(activeTenantId, activeShopId, activeStudioLocationId, 'jobs-picker'),
           queryFn: async () => {
             const response = await customerService.getAll({ limit: 100 });
             return response.data || [];
@@ -1081,7 +1062,7 @@ useEffect(() => {
     queryFn: async () => {
       return await customDropdownService.getCustomOptions('customer_source') || [];
     },
-    staleTime: 10 * 60 * 1000, // 10 minutes
+    staleTime: QUERY_STALE.SLOW,
     cacheTime: 30 * 60 * 1000, // 30 minutes
   });
 
@@ -1089,7 +1070,7 @@ useEffect(() => {
     queryKey: ['settings', 'customer-sources', activeTenantId],
     queryFn: () => settingsService.getCustomerSources(),
     enabled: !!activeTenantId,
-    staleTime: 5 * 60 * 1000,
+    staleTime: QUERY_STALE.METADATA,
   });
 
   const { data: customRegions = [] } = useQuery({
@@ -1097,7 +1078,7 @@ useEffect(() => {
     queryFn: async () => {
       return await customDropdownService.getCustomOptions('region') || [];
     },
-    staleTime: 10 * 60 * 1000, // 10 minutes
+    staleTime: QUERY_STALE.SLOW,
     cacheTime: 30 * 60 * 1000, // 30 minutes
   });
 
@@ -1296,7 +1277,7 @@ useEffect(() => {
       customerForm.reset();
 
       // Refresh customers list so the new customer appears in the dropdown
-      await queryClient.invalidateQueries({ queryKey: ['customers', 'all', activeTenantId, activeShopId, activeStudioLocationId] });
+      await refreshAfterCustomerChange(queryClient);
       await queryClient.invalidateQueries({ queryKey: ['pricingTemplates', 'active'] });
 
       // Auto-select the newly created customer
@@ -1919,7 +1900,7 @@ useEffect(() => {
                 variant="outline"
                 onClick={async () => {
                   setRefreshingJobs(true);
-                  await queryClient.invalidateQueries({ queryKey: ['jobs'] });
+                  await refreshAfterJobChange(queryClient);
                   setRefreshingJobs(false);
                 }}
                 disabled={refreshingJobs}

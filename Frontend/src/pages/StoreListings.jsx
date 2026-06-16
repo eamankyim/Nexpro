@@ -1,12 +1,14 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { EyeOff, Loader2, Package, Pencil, Plus, RefreshCw, Search } from 'lucide-react';
+import { CornerDownLeft, EyeOff, Loader2, Package, Pencil, Plus, RefreshCw, Search, X } from 'lucide-react';
 import productService from '../services/productService';
 import storeService from '../services/storeService';
+import { useDebounce } from '../hooks/useDebounce';
 import { showError, showSuccess, getErrorMessage } from '../utils/toast';
 import { formatAmount } from '../utils/formatNumber';
 import { resolveImageUrl } from '../utils/fileUtils';
+import { DEBOUNCE_DELAYS } from '../constants';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -28,6 +30,9 @@ const StoreListings = () => {
   const [busyId, setBusyId] = useState(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [productSearch, setProductSearch] = useState('');
+  const [highlightedProductIndex, setHighlightedProductIndex] = useState(0);
+  const productSearchInputRef = useRef(null);
+  const debouncedProductSearch = useDebounce(productSearch, DEBOUNCE_DELAYS.INPUT);
   const queryParams = useMemo(() => ({
     limit: 100,
     ...(status !== 'all' ? { status } : {}),
@@ -39,11 +44,11 @@ const StoreListings = () => {
   });
 
   const { data: productsResponse, isLoading: productsLoading } = useQuery({
-    queryKey: ['products', 'store-listing-picker', productSearch],
+    queryKey: ['products', 'store-listing-picker', debouncedProductSearch],
     queryFn: () => productService.getProducts({
       isActive: true,
       includeVariants: true,
-      search: productSearch,
+      search: debouncedProductSearch.trim(),
       limit: 50,
     }),
     enabled: createDialogOpen,
@@ -59,6 +64,23 @@ const StoreListings = () => {
     const rawProducts = body.products || body.data?.products || body.data || [];
     return Array.isArray(rawProducts) ? rawProducts : [];
   }, [productsResponse]);
+
+  const productSearchTerm = productSearch.trim();
+
+  useEffect(() => {
+    if (!createDialogOpen) {
+      setProductSearch('');
+      setHighlightedProductIndex(0);
+      return;
+    }
+
+    const focusTimer = window.setTimeout(() => productSearchInputRef.current?.focus(), 100);
+    return () => window.clearTimeout(focusTimer);
+  }, [createDialogOpen]);
+
+  useEffect(() => {
+    setHighlightedProductIndex(0);
+  }, [debouncedProductSearch, products.length]);
 
   const handlePublishToggle = useCallback(async (listing) => {
     setBusyId(listing.id);
@@ -87,6 +109,25 @@ const StoreListings = () => {
     setCreateDialogOpen(false);
     navigate(`/store/listings/${productId}/edit`);
   }, [navigate]);
+
+  const handleProductPickerKeyDown = useCallback((event) => {
+    if (!products.length) return;
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setHighlightedProductIndex((current) => (current + 1) % products.length);
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setHighlightedProductIndex((current) => (current <= 0 ? products.length - 1 : current - 1));
+    }
+
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      handleSelectProduct(products[highlightedProductIndex]?.id);
+    }
+  }, [handleSelectProduct, highlightedProductIndex, products]);
 
   return (
     <div className="space-y-6">
@@ -194,11 +235,38 @@ const StoreListings = () => {
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
+                  ref={productSearchInputRef}
                   className="h-11 rounded-xl pl-9"
                   placeholder="Search products by name or SKU..."
                   value={productSearch}
                   onChange={(event) => setProductSearch(event.target.value)}
+                  onKeyDown={handleProductPickerKeyDown}
                 />
+                {productSearch ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-1 top-1/2 h-9 w-9 -translate-y-1/2 rounded-full"
+                    aria-label="Clear product search"
+                    onClick={() => {
+                      setProductSearch('');
+                      productSearchInputRef.current?.focus();
+                    }}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                ) : null}
+              </div>
+              <div className="flex flex-col gap-1 rounded-xl border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                <span>
+                  {productSearchTerm
+                    ? `Showing matches for "${productSearchTerm}"`
+                    : 'Start typing to narrow the product list.'}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  Use arrows and Enter <CornerDownLeft className="h-3.5 w-3.5" />
+                </span>
               </div>
               {productsLoading ? (
                 <div className="flex min-h-40 items-center justify-center">
@@ -207,23 +275,38 @@ const StoreListings = () => {
               ) : products.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-border p-8 text-center">
                   <Package className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
-                  <p className="font-medium">No products found</p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Add products first, then come back to create online listings.
+                  <p className="font-medium">
+                    {productSearchTerm ? `No products match "${productSearchTerm}"` : 'No products found'}
                   </p>
-                  <Button asChild className="mt-4">
-                    <Link to="/products">Go to Products</Link>
-                  </Button>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {productSearchTerm
+                      ? 'Try a different name, SKU, or barcode before creating a new product.'
+                      : 'Add products first, then come back to create online listings.'}
+                  </p>
+                  <div className="mt-4 flex flex-col justify-center gap-2 sm:flex-row">
+                    {productSearchTerm ? (
+                      <Button type="button" variant="outline" onClick={() => setProductSearch('')}>
+                        Clear search
+                      </Button>
+                    ) : null}
+                    <Button asChild>
+                      <Link to="/products">Go to Products</Link>
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <div className="grid max-h-[420px] gap-3 overflow-y-auto pr-1">
-                  {products.map((product) => {
+                  {products.map((product, index) => {
                     const image = resolveImageUrl(product.imageUrl);
                     return (
                       <button
                         key={product.id}
                         type="button"
-                        className="flex items-center gap-3 rounded-xl border border-border p-3 text-left transition-colors hover:border-green-300 hover:bg-green-50/50"
+                        className={`flex items-center gap-3 rounded-xl border p-3 text-left transition-colors hover:border-green-300 hover:bg-green-50/50 ${
+                          highlightedProductIndex === index ? 'border-green-500 bg-green-50/70' : 'border-border'
+                        }`}
+                        aria-selected={highlightedProductIndex === index}
+                        onMouseEnter={() => setHighlightedProductIndex(index)}
                         onClick={() => handleSelectProduct(product.id)}
                       >
                         <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted">

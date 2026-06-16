@@ -14,6 +14,7 @@ const {
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
 const { exportLimiter } = require('../middleware/rateLimiter');
+const { timeCrudAction } = require('../middleware/crudTiming');
 
 const { studioLocationContext } = require('../middleware/studioLocationContext');
 const { shopContext } = require('../middleware/shopContext');
@@ -30,16 +31,16 @@ router.get('/export', exportLimiter, authorize('admin', 'manager'), exportLeads)
 
 router
   .route('/')
-  .get(getLeads)
-  .post(authorize('admin', 'manager', 'staff'), createLead);
+  .get(timeCrudAction('leads.list'), getLeads)
+  .post(authorize('admin', 'manager', 'staff'), timeCrudAction('leads.create'), createLead);
 
 router
   .route('/:id')
-  .get(getLead)
-  .put(authorize('admin', 'manager', 'staff'), updateLead)
-  .delete(authorize('admin', 'manager'), deleteLead);
+  .get(timeCrudAction('leads.read'), getLead)
+  .put(authorize('admin', 'manager', 'staff'), timeCrudAction('leads.update'), updateLead)
+  .delete(authorize('admin', 'manager'), timeCrudAction('leads.delete'), deleteLead);
 
-router.post('/:id/convert', authorize('admin', 'manager', 'staff'), convertLead);
+router.post('/:id/convert', authorize('admin', 'manager', 'staff'), timeCrudAction('leads.convert'), convertLead);
 
 router
   .route('/:id/activities')

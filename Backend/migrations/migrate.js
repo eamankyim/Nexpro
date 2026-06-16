@@ -53,6 +53,7 @@ const addDeliveryStatusToJobsAndSales = require('./add-delivery-status-to-jobs-a
 const addDeliveryRequiredToJobs = require('./add-delivery-required-to-jobs');
 const addSalesTenantSoldByCreatedIndex = require('./add-sales-tenant-soldby-created-index');
 const addQueryPathIndexesV2 = require('./add-query-path-indexes-v2');
+const addRecommendedQueryIndexes = require('./add-recommended-query-indexes');
 const createRecurringJournals = require('./create-recurring-journals');
 const { createCustomerFeedbackTable } = require('./create-customer-feedback-table');
 const createStudioLocations = require('./create-studio-locations');
@@ -328,6 +329,7 @@ const migrate = async () => {
     await addStudioTypeToStudioLocations();
     await addShopIdToExpenses();
     await addShopIdToRetailEntities();
+    await addRecommendedQueryIndexes({ closeConnection: false });
 
     // Inter-shop stock transfers (products table + transfer audit log)
     await createStockTransfers();

@@ -63,6 +63,7 @@ jest.mock('../../../utils/shopUtils', () => ({
 }));
 jest.mock('../../../middleware/cache', () => ({
   invalidateSaleListCache: jest.fn(),
+  invalidateAfterMutation: jest.fn(),
 }));
 jest.mock('../../../config/config', () => ({
   nodeEnv: 'test',

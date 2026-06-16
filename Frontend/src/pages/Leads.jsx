@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -112,7 +112,9 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS, PRIORITY_CHIP_CLASSES, STATUS_CHIP_DEFAULT_CLASS } from '../constants';
 import settingsService from '../services/settingsService';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { QUERY_STALE, refreshAfterLeadChange } from '../utils/queryInvalidation';
+import { queryKeys } from '../utils/queryKeys';
 
 /** Radix Select cannot use ""; use this value and map to null on change/submit. */
 const LEAD_UNASSIGNED_SELECT_VALUE = 'unassigned';
@@ -154,13 +156,9 @@ const Leads = () => {
   const { isMobile } = useResponsive();
   const businessType = activeTenant?.businessType || 'printing_press';
   const isPrintingPress = businessType === 'printing_press';
+  const queryClient = useQueryClient();
 
-  const [leads, setLeads] = useState([]);
-  const [summary, setSummary] = useState(null);
-  const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState(false);
   const [refreshingLeads, setRefreshingLeads] = useState(false);
-  const [summaryLoading, setSummaryLoading] = useState(false);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [filters, setFilters] = useState({
     status: 'all',
@@ -227,10 +225,6 @@ const Leads = () => {
   });
 
   useEffect(() => {
-    fetchUsers();
-  }, []);
-
-  useEffect(() => {
     setPageSearchConfig({ scope: 'leads', placeholder: SEARCH_PLACEHOLDERS.LEADS });
     return () => setPageSearchConfig(null);
   }, [setPageSearchConfig]);
@@ -252,10 +246,10 @@ const Leads = () => {
   }, []);
 
   const { data: leadSourceOptionsApi = [] } = useQuery({
-    queryKey: ['settings', 'lead-sources', activeTenantId],
+    queryKey: queryKeys.settings.leadSources(activeTenantId),
     queryFn: () => settingsService.getLeadSources(),
     enabled: !!activeTenantId,
-    staleTime: 5 * 60 * 1000,
+    staleTime: QUERY_STALE.METADATA,
   });
 
   const leadSourceOptions = useMemo(() => {
@@ -272,6 +266,91 @@ const Leads = () => {
     ];
   }, [leadSourceOptionsApi]);
 
+  const leadQueryParams = useMemo(() => {
+    const params = {
+      page: pagination.current,
+      limit: pagination.pageSize,
+      status: filters.status,
+      priority: filters.priority,
+      source: filters.source === 'all' ? undefined : filters.source,
+      assignedTo: filters.assignedTo && filters.assignedTo !== 'all' ? filters.assignedTo : undefined,
+      isActive: filters.isActive,
+    };
+    if (debouncedSearch) params.search = debouncedSearch;
+    return params;
+  }, [debouncedSearch, filters.assignedTo, filters.isActive, filters.priority, filters.source, filters.status, pagination.current, pagination.pageSize]);
+
+  const {
+    data: leadsResponse,
+    isLoading: loading,
+    error: leadsError,
+    refetch: refetchLeads,
+  } = useQuery({
+    queryKey: queryKeys.leads.list(activeTenantId, activeStudioLocationId, leadQueryParams),
+    queryFn: () => leadService.getAll(leadQueryParams),
+    enabled: scopeReady && (!studioLocationCtx?.isStudioWorkspace || !!activeStudioLocationId),
+    staleTime: QUERY_STALE.LIST,
+    refetchOnWindowFocus: true,
+  });
+
+  const {
+    data: summaryResponse,
+    isLoading: summaryLoading,
+    refetch: refetchSummary,
+  } = useQuery({
+    queryKey: queryKeys.leads.summary(activeTenantId, activeStudioLocationId),
+    queryFn: () => leadService.getSummary(),
+    enabled: scopeReady && (!studioLocationCtx?.isStudioWorkspace || !!activeStudioLocationId),
+    staleTime: QUERY_STALE.LIST,
+    refetchOnWindowFocus: true,
+  });
+
+  const { data: usersResponse } = useQuery({
+    queryKey: ['users', 'leads-assignees', activeTenantId],
+    queryFn: () => userService.getAll({ limit: 100, isActive: true }),
+    enabled: !!activeTenantId,
+    staleTime: QUERY_STALE.METADATA,
+    refetchOnWindowFocus: false,
+  });
+
+  const leads = useMemo(() => {
+    const payload = leadsResponse || {};
+    return Array.isArray(payload.data) ? payload.data : [];
+  }, [leadsResponse]);
+
+  const summary = summaryResponse?.data || summaryResponse || {};
+  const users = useMemo(() => {
+    const data = usersResponse?.data || usersResponse;
+    return data?.data || data || [];
+  }, [usersResponse]);
+
+  useEffect(() => {
+    if (leadsError) {
+      console.error('Failed to load leads', leadsError);
+      showError(leadsError, 'Failed to load leads');
+    }
+  }, [leadsError]);
+
+  useEffect(() => {
+    const total = leadsResponse?.count || leads.length || 0;
+    setPagination((prev) => (prev.total === total ? prev : { ...prev, total }));
+  }, [leads.length, leadsResponse?.count]);
+
+  const fetchSummary = useCallback(() => refetchSummary(), [refetchSummary]);
+
+  const fetchLeads = useCallback(async (isRefresh = false) => {
+    if (isRefresh) {
+      setRefreshingLeads(true);
+    }
+    try {
+      await refetchLeads();
+    } finally {
+      if (isRefresh) {
+        setRefreshingLeads(false);
+      }
+    }
+  }, [refetchLeads]);
+
   const { isRefreshing, pullDistance, containerProps } = usePullToRefresh(
     () => {
       fetchLeads(true);
@@ -279,76 +358,6 @@ const Leads = () => {
     },
     { enabled: isMobile }
   );
-
-  useEffect(() => {
-    if (studioLocationCtx?.isStudioWorkspace && !activeStudioLocationId) return;
-    fetchLeads();
-  }, [pagination.current, pagination.pageSize, filters, debouncedSearch, activeStudioLocationId, studioLocationCtx?.isStudioWorkspace]);
-
-  useEffect(() => {
-    if (!scopeReady) return;
-    fetchSummary();
-  }, [scopeReady, activeTenantId, activeStudioLocationId, studioLocationCtx?.isStudioWorkspace]);
-
-  const fetchUsers = async () => {
-    try {
-      const response = await userService.getAll({ limit: 100, isActive: true });
-      const data = response?.data || response;
-      setUsers(data?.data || data || []);
-    } catch (error) {
-      console.error('Failed to load users', error);
-    }
-  };
-
-  const fetchSummary = async () => {
-    setSummaryLoading(true);
-    try {
-      const response = await leadService.getSummary();
-      setSummary(response?.data || {});
-    } catch (error) {
-      console.error('Failed to load lead summary', error);
-      showError(error, 'Failed to load lead summary');
-    } finally {
-      setSummaryLoading(false);
-    }
-  };
-
-  const fetchLeads = async (isRefresh = false) => {
-    if (isRefresh) {
-      setRefreshingLeads(true);
-    } else {
-      setLoading(true);
-    }
-    try {
-      const params = {
-        page: pagination.current,
-        limit: pagination.pageSize,
-        status: filters.status,
-        priority: filters.priority,
-        source: filters.source === 'all' ? undefined : filters.source,
-        assignedTo: filters.assignedTo && filters.assignedTo !== 'all' ? filters.assignedTo : undefined,
-        isActive: filters.isActive,
-      };
-      if (debouncedSearch) params.search = debouncedSearch;
-
-      const response = await leadService.getAll(params);
-      const payload = response || {};
-      const rows = Array.isArray(payload.data) ? payload.data : [];
-      setLeads(rows);
-      setPagination((prev) => ({
-        ...prev,
-        total: payload.count || rows.length || 0
-      }));
-    } catch (error) {
-      console.error('Failed to load leads', error);
-      showError(error, 'Failed to load leads');
-    } finally {
-      setLoading(false);
-      if (isRefresh) {
-        setRefreshingLeads(false);
-      }
-    }
-  };
 
 
   const openLeadModal = (lead = null) => {
@@ -451,8 +460,7 @@ const Leads = () => {
       }
       setLeadModalVisible(false);
       leadForm.reset();
-      fetchLeads();
-      fetchSummary();
+      refreshAfterLeadChange(queryClient);
     } catch (error) {
       console.error('Failed to save lead', error);
       showError(error, error?.response?.data?.message || 'Failed to save lead');
@@ -493,8 +501,7 @@ const Leads = () => {
           }
           setDrawerVisible(true);
       showSuccess('Lead converted to customer');
-          fetchLeads();
-          fetchSummary();
+      refreshAfterLeadChange(queryClient);
       setConvertDialogOpen(false);
       setConvertLeadId(null);
         } catch (error) {
@@ -532,8 +539,7 @@ const Leads = () => {
       showSuccess('Activity added successfully');
       setActivityModalVisible(false);
       handleViewLead({ id: viewingLead.id });
-      fetchLeads();
-      fetchSummary();
+      refreshAfterLeadChange(queryClient);
     } catch (error) {
       console.error('Failed to add activity', error);
       showError(error, error?.response?.data?.message || 'Failed to add activity');
@@ -551,8 +557,7 @@ const Leads = () => {
       setArchivingLead(true);
       await leadService.archive(archiveLeadId);
       showSuccess('Lead archived');
-          await fetchLeads();
-          fetchSummary();
+      await refreshAfterLeadChange(queryClient);
       setArchiveDialogOpen(false);
       setArchiveLeadId(null);
         } catch (error) {
@@ -599,8 +604,7 @@ const Leads = () => {
         handleViewLead({ id: leadId });
       }
       
-      fetchLeads();
-      fetchSummary();
+      refreshAfterLeadChange(queryClient);
     } catch (error) {
       console.error('Failed to update lead status', error);
       showError(error, error?.response?.data?.message || 'Failed to update lead status');

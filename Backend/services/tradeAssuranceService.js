@@ -1,4 +1,5 @@
 const { Op } = require('sequelize');
+const { sequelize } = require('../config/database');
 const {
   Customer,
   MarketplaceDispute,
@@ -791,19 +792,86 @@ const toSignedAmount = (entry) => {
 
 const getLedgerBalances = async ({ tenantId, shopId = null, includeLegacyShopNull = false }) => {
   const where = buildScopedWhere({ tenantId, shopId, includeLegacyShopNull });
-  const entries = await MarketplaceLedgerEntry.findAll({
+  const rows = await MarketplaceLedgerEntry.findAll({
     where,
-    attributes: ['balanceType', 'direction', 'amount', 'currency'],
-    order: [['createdAt', 'ASC']],
+    attributes: [
+      'balanceType',
+      [sequelize.literal('SUM(CASE WHEN direction = \'debit\' THEN -"amount" ELSE "amount" END)'), 'balance'],
+      [sequelize.fn('MAX', sequelize.col('currency')), 'currency'],
+    ],
+    group: ['balanceType'],
+    raw: true,
   });
 
-  return entries.reduce((balances, entry) => {
-    const plain = typeof entry.get === 'function' ? entry.get({ plain: true }) : entry;
-    const key = plain.balanceType;
-    balances[key] = money((balances[key] || 0) + toSignedAmount(plain));
-    balances.currency = balances.currency || plain.currency || DEFAULT_CURRENCY;
-    return balances;
-  }, { pending: 0, available: 0, paid_out: 0, fee: 0, refunded: 0, currency: DEFAULT_CURRENCY });
+  const balances = {
+    pending: 0,
+    available: 0,
+    paid_out: 0,
+    fee: 0,
+    refunded: 0,
+    currency: DEFAULT_CURRENCY,
+  };
+
+  rows.forEach((row) => {
+    if (row.balanceType) {
+      balances[row.balanceType] = money(row.balance);
+    }
+    if (row.currency) {
+      balances.currency = row.currency;
+    }
+  });
+
+  return balances;
+};
+
+const getPaymentSummaryMetrics = async (paymentWhere) => {
+  const heldPendingExpression = sequelize.literal(
+    'CASE WHEN "grossAmount" <= 0 THEN 0 ELSE "netAmount" * GREATEST("grossAmount" - COALESCE("refundedAmount", 0), 0) / "grossAmount" END'
+  );
+
+  const [
+    statusRows,
+    heldPending,
+    feeTotal,
+    currencyPayment,
+  ] = await Promise.all([
+    MarketplaceOrderPayment.findAll({
+      where: paymentWhere,
+      attributes: [
+        'status',
+        [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+      ],
+      group: ['status'],
+      raw: true,
+    }),
+    MarketplaceOrderPayment.sum(heldPendingExpression, {
+      where: { ...paymentWhere, status: 'paid_held' },
+    }),
+    MarketplaceOrderPayment.sum('feeAmount', {
+      where: {
+        ...paymentWhere,
+        status: { [Op.in]: ['paid_held', 'disputed', 'released'] },
+      },
+    }),
+    MarketplaceOrderPayment.findOne({
+      where: paymentWhere,
+      attributes: ['currency'],
+      order: [['createdAt', 'DESC']],
+      raw: true,
+    }),
+  ]);
+
+  const countsByStatus = statusRows.reduce((acc, row) => {
+    acc[row.status] = Number(row.count || 0);
+    return acc;
+  }, {});
+
+  return {
+    countsByStatus,
+    heldPending: money(heldPending || 0),
+    feeTotal: money(feeTotal || 0),
+    currency: currencyPayment?.currency || null,
+  };
 };
 
 const getTradeAssuranceSummary = async ({ tenantId, shopId = null, includeLegacyShopNull = false }) => {
@@ -811,55 +879,51 @@ const getTradeAssuranceSummary = async ({ tenantId, shopId = null, includeLegacy
   const paymentWhere = buildScopedWhere({ tenantId, shopId, includeLegacyShopNull });
   const disputeWhere = buildScopedWhere({ tenantId, shopId, includeLegacyShopNull });
   const payoutWhere = buildScopedWhere({ tenantId, shopId, includeLegacyShopNull });
+  const availablePayoutWhere = { ...payoutWhere, status: 'available' };
 
   const [
     ledgerBalances,
-    payments,
-    metadataPayments,
+    paymentMetrics,
+    excludedSaleRows,
     openDisputes,
-    payouts,
+    availablePayoutTotal,
+    availablePayoutCount,
+    payoutCurrencyRow,
   ] = await Promise.all([
     getLedgerBalances({ tenantId, shopId, includeLegacyShopNull }),
-    MarketplaceOrderPayment.findAll({
-      where: paymentWhere,
-      attributes: ['id', 'saleId', 'status', 'grossAmount', 'feeAmount', 'netAmount', 'refundedAmount', 'currency'],
-    }),
+    getPaymentSummaryMetrics(paymentWhere),
     MarketplaceOrderPayment.findAll({
       where: paymentWhere,
       attributes: ['saleId'],
-    }).then((paymentRows) => getMetadataTradeAssuranceSales({
-      tenantId,
-      shopId,
-      includeLegacyShopNull,
-      statuses: ['paid_held', 'released', 'disputed'],
-      excludedSaleIds: paymentRows.map((payment) => getPlain(payment)?.saleId).filter(Boolean),
-    })),
+      raw: true,
+    }),
     MarketplaceDispute.count({ where: { ...disputeWhere, status: { [Op.in]: ['open', 'under_review'] } } }),
-    MarketplacePayout.findAll({
-      where: { ...payoutWhere, status: 'available' },
-      attributes: ['id', 'amount', 'currency'],
+    MarketplacePayout.sum('amount', { where: availablePayoutWhere }),
+    MarketplacePayout.count({ where: availablePayoutWhere }),
+    MarketplacePayout.findOne({
+      where: availablePayoutWhere,
+      attributes: ['currency'],
+      raw: true,
     }),
   ]);
 
-  const paymentRows = payments.map(getPlain);
-  const heldPayments = paymentRows.filter((payment) => payment.status === 'paid_held');
-  const disputedPayments = paymentRows.filter((payment) => payment.status === 'disputed');
-  const refundedPayments = paymentRows.filter((payment) => payment.status === 'refunded');
-  const releasedPayments = paymentRows.filter((payment) => payment.status === 'released');
+  const metadataPayments = await getMetadataTradeAssuranceSales({
+    tenantId,
+    shopId,
+    includeLegacyShopNull,
+    statuses: ['paid_held', 'released', 'disputed'],
+    excludedSaleIds: excludedSaleRows.map((payment) => payment.saleId).filter(Boolean),
+  });
+
   const metadataRows = metadataPayments.map(getPlain);
   const metadataHeld = metadataRows.filter((sale) => getMetadataPaymentStatus(sale) === 'paid_held');
   const metadataDisputed = metadataRows.filter((sale) => getMetadataPaymentStatus(sale) === 'disputed');
   const metadataReleased = metadataRows.filter((sale) => getMetadataPaymentStatus(sale) === 'released');
-  const pending = money(
-    sumAmounts(heldPayments, getRemainingSellerAmount)
-    + sumAmounts(metadataHeld, getMetadataNet)
-  );
-  const available = sumAmounts(payouts, (payout) => payout.amount);
-  const fee = money(
-    sumAmounts([...heldPayments, ...disputedPayments, ...releasedPayments], (payment) => payment.feeAmount)
-    + sumAmounts(metadataRows, getMetadataFee)
-  );
-  const currency = getPaymentCurrency([...paymentRows, ...payouts], ledgerBalances.currency || DEFAULT_CURRENCY);
+  const { countsByStatus, heldPending, feeTotal, currency: paymentCurrency } = paymentMetrics;
+  const pending = money(heldPending + sumAmounts(metadataHeld, getMetadataNet));
+  const available = money(availablePayoutTotal || 0);
+  const fee = money(feeTotal + sumAmounts(metadataRows, getMetadataFee));
+  const currency = paymentCurrency || payoutCurrencyRow?.currency || ledgerBalances.currency || DEFAULT_CURRENCY;
 
   return {
     balances: {
@@ -870,12 +934,12 @@ const getTradeAssuranceSummary = async ({ tenantId, shopId = null, includeLegacy
       currency,
     },
     counts: {
-      held: heldPayments.length + metadataHeld.length,
-      disputed: disputedPayments.length + metadataDisputed.length,
-      refunded: refundedPayments.length,
-      released: releasedPayments.length + metadataReleased.length,
+      held: (countsByStatus.paid_held || 0) + metadataHeld.length,
+      disputed: (countsByStatus.disputed || 0) + metadataDisputed.length,
+      refunded: countsByStatus.refunded || 0,
+      released: (countsByStatus.released || 0) + metadataReleased.length,
       openDisputes,
-      payoutHistory: payouts.length,
+      payoutHistory: availablePayoutCount,
     },
     autoReleaseHours: getAutoReleaseHours(),
     commissionPercent: getCommissionPercent(),

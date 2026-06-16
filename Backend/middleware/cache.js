@@ -1,4 +1,9 @@
 const NodeCache = require('node-cache');
+const {
+  REQUEST_HAS_HOT_PATH_TIMER_KEY,
+  REQUEST_TIMING_LOGGED_KEY,
+  logTimedOperation,
+} = require('../utils/performanceLogger');
 
 /** Index: tenantId -> Set of cache keys (for O(1) invalidation by tenant) */
 const tenantKeysByTenant = new Map();
@@ -17,6 +22,16 @@ const registerTenantKey = (tenantId, key) => {
   }
   set.add(key);
 };
+
+const getCacheValue = (key) => cache.get(key);
+
+const setCacheValue = (key, value, ttl, tenantId = null) => {
+  cache.set(key, value, ttl);
+  if (tenantId) registerTenantKey(tenantId, key);
+  return value;
+};
+
+const deleteCacheValue = (key) => cache.del(key);
 
 // Create cache instance with default TTL of 2 minutes
 const cache = new NodeCache({
@@ -65,6 +80,10 @@ const generateNotificationSummaryKey = (req) => {
   const userId = req.user?.id || '';
   return `notifications:summary:${tenantId}:${userId}`;
 };
+
+const getOrganizationSettingsCacheKey = (tenantId) => `settings:${tenantId}:organization`;
+const getNotificationChannelsCacheKey = (tenantId) => `settings:${tenantId}:notification-channels`;
+const getAuthBootstrapCacheKey = (userId, tenantId) => `auth:bootstrap:${tenantId || 'none'}:${userId || 'anonymous'}`;
 
 /**
  * Cache key for notification list (per user per tenant + pagination)
@@ -133,6 +152,14 @@ const generateListKey = (prefix) => (req) => {
 
 const generateCustomerListKey = generateListKey('customers');
 const generateSaleListKey = generateListKey('sales');
+const generateExpenseStatsKey = (req) => {
+  const tenantId = req.tenantId || '';
+  const params = Object.keys(req.query || {})
+    .sort()
+    .map(k => `${k}=${req.query[k]}`)
+    .join('&');
+  return `expenses:stats:${tenantId}${getWorkspaceScopeCacheSegment(req)}:${params}`;
+};
 const generatePublicCacheKey = (prefix = 'public') => (req) => {
   const params = Object.keys(req.query || {})
     .sort()
@@ -162,6 +189,34 @@ const generateInvoiceListKey = (req) => {
   return key;
 };
 
+const toCacheTimingLabel = (cacheKey, req) => {
+  const parts = String(cacheKey || '').split(':').filter(Boolean);
+  const cleanPath = (value) => String(value || '')
+    .replace(/^\/api\/?/, '')
+    .replace(/^\//, '')
+    .replace(/[/?#&=:]+/g, '.')
+    .replace(/\.+/g, '.')
+    .replace(/^\.|\.$/g, '');
+
+  if (parts[0] === 'settings' && parts[2]) {
+    return `settings.${cleanPath(parts[2]) || 'request'}`;
+  }
+  if (parts[0] && parts[1] && !parts[1].startsWith('/')) {
+    return `${parts[0]}.${cleanPath(parts[1]) || 'request'}`;
+  }
+
+  const requestPath = cleanPath(`${req?.baseUrl || ''}${req?.path || ''}`);
+  return requestPath ? `cache.${requestPath}` : 'cache.request';
+};
+
+const getElapsedMs = (start) => Number((process.hrtime.bigint() - start) / 1000000n);
+
+const attachCacheTimingContext = (req, { cacheKey, cacheLabel, cacheHit }) => {
+  req.__cacheKey = cacheKey;
+  req.__cacheLabel = cacheLabel;
+  req.__cacheHit = cacheHit;
+};
+
 /**
  * Middleware to cache GET requests
  * @param {number} ttl - Time to live in seconds (default: 120)
@@ -169,6 +224,7 @@ const generateInvoiceListKey = (req) => {
  */
 const cacheMiddleware = (ttl = 120, keyGenerator = null) => {
   return async (req, res, next) => {
+    const start = process.hrtime.bigint();
     // Only cache GET requests
     if (req.method !== 'GET') {
       return next();
@@ -178,19 +234,60 @@ const cacheMiddleware = (ttl = 120, keyGenerator = null) => {
     const cacheKey = keyGenerator
       ? keyGenerator(req)
       : generateCacheKey(req.tenantId, req.path, req.query);
+    const cacheLabel = toCacheTimingLabel(cacheKey, req);
+    attachCacheTimingContext(req, { cacheKey, cacheLabel, cacheHit: false });
+
+    // Avoid doing full controller work only for Express to return 304 afterward.
+    // API data is cached server-side; clients should receive the JSON payload.
+    res.set('Cache-Control', 'no-store');
+    delete req.headers['if-none-match'];
+    delete req.headers['if-modified-since'];
 
     // Try to get from cache
     const cachedData = cache.get(cacheKey);
     if (cachedData) {
+      attachCacheTimingContext(req, { cacheKey, cacheLabel, cacheHit: true });
       logCacheDebug('Cache HIT', { key: cacheKey, path: req.path });
-      // Prevent Express conditional GET (304) from short-circuiting API list payloads.
-      res.set('Cache-Control', 'no-store');
-      delete req.headers['if-none-match'];
-      delete req.headers['if-modified-since'];
+      if (!req.__hasCrudTiming) {
+        logTimedOperation(cacheLabel, {
+          req,
+          durationMs: getElapsedMs(start),
+          statusCode: 200,
+          event: 'cache_hit',
+          details: {
+            cacheHit: true,
+            cacheKey,
+          },
+          skipIfRequestLogged: true,
+        });
+      }
       return res.status(200).json(cachedData);
     }
 
     logCacheDebug('Cache MISS', { key: cacheKey, path: req.path });
+    res.once('finish', () => {
+      if (
+        req.__hasCrudTiming ||
+        req[REQUEST_HAS_HOT_PATH_TIMER_KEY] ||
+        req[REQUEST_TIMING_LOGGED_KEY]
+      ) {
+        return;
+      }
+
+      logTimedOperation(cacheLabel, {
+        req,
+        durationMs: getElapsedMs(start),
+        statusCode: res.statusCode,
+        event: 'timed_operation',
+        details: {
+          cacheHit: false,
+          cacheKey,
+          cacheStored: req.__cacheStored === true,
+          cacheTtlSeconds: ttl,
+        },
+        skipIfRequestLogged: true,
+      });
+    });
 
     // Store original json method
     const originalJson = res.json.bind(res);
@@ -201,6 +298,7 @@ const cacheMiddleware = (ttl = 120, keyGenerator = null) => {
       if (res.statusCode === 200 && data.success !== false) {
         cache.set(cacheKey, data, ttl);
         if (req.tenantId) registerTenantKey(req.tenantId, cacheKey);
+        req.__cacheStored = true;
         logCacheDebug('Cache SET', { key: cacheKey, path: req.path, ttl });
       }
       return originalJson(data);
@@ -303,6 +401,10 @@ const invalidateInvoiceListCache = (tenantId) => {
   return count;
 };
 
+const invalidateExpenseStatsCache = (tenantId) => {
+  return invalidateCache(tenantId, 'expenses:stats:.*');
+};
+
 /**
  * Invalidate all cache for a tenant
  * @param {string} tenantId - Tenant ID
@@ -368,7 +470,31 @@ const invalidateTenantDefaultCache = (userId) => {
 const invalidateUserCache = (userId) => {
   if (!userId) return;
   cache.del(getAuthUserCacheKey(userId));
+  invalidateAuthBootstrapCache({ userId });
   logCacheDebug('Cache INVALIDATED (user)', { userId });
+};
+
+const invalidateAuthBootstrapCache = ({ tenantId = null, userId = null } = {}) => {
+  const tenantKeySet = tenantId ? tenantKeysByTenant.get(tenantId) : null;
+  const keysToCheck = tenantKeySet
+    ? Array.from(tenantKeySet)
+    : cache.keys();
+  let count = 0;
+
+  keysToCheck.forEach((key) => {
+    const matchesTenant = !tenantId || Boolean(tenantKeySet) || key.startsWith(`auth:bootstrap:${tenantId}:`);
+    const matchesUser = !userId || key.endsWith(`:${userId}`);
+    if (key.startsWith('auth:bootstrap:') && matchesTenant && matchesUser) {
+      cache.del(key);
+      if (tenantKeySet) {
+        tenantKeySet.delete(key);
+      }
+      count++;
+    }
+  });
+
+  logCacheDebug('Cache INVALIDATED (auth bootstrap)', { tenantId, userId, count });
+  return count;
 };
 
 /**
@@ -421,10 +547,17 @@ module.exports = {
   cache,
   AUTH_USER_TTL,
   TENANT_MEMBERSHIP_TTL,
+  getCacheValue,
+  setCacheValue,
+  deleteCacheValue,
   getAuthUserCacheKey,
   getTenantMembershipCacheKey,
   getTenantDefaultCacheKey,
+  getAuthBootstrapCacheKey,
+  getOrganizationSettingsCacheKey,
+  getNotificationChannelsCacheKey,
   invalidateUserCache,
+  invalidateAuthBootstrapCache,
   invalidateTenantMembershipCache,
   invalidateTenantDefaultCache,
   cacheMiddleware,
@@ -435,6 +568,7 @@ module.exports = {
   generateProductListKey,
   generateCustomerListKey,
   generateSaleListKey,
+  generateExpenseStatsKey,
   generatePublicCacheKey,
   generateInvoiceListKey,
   getShopCacheSegment,
@@ -446,6 +580,7 @@ module.exports = {
   invalidateCustomerListCache,
   invalidateSaleListCache,
   invalidateInvoiceListCache,
+  invalidateExpenseStatsCache,
   invalidateAllCache,
   invalidateAfterMutation,
   getCacheStats,

@@ -3,11 +3,41 @@ const { resolveBusinessType } = require('../config/businessTypes');
 const { Shop, Tenant, Setting, UserShop } = require('../models');
 
 const WORKSPACE_WIDE_ROLES = ['owner', 'admin', 'support'];
+const SHOP_ACCESS_CACHE_TTL_MS = 30 * 1000;
+const shopAccessCache = new Map();
 
 const isShopTenant = (tenant) => resolveBusinessType(tenant?.businessType) === 'shop';
 
 const hasWorkspaceWideShopAccess = (tenantRole) =>
   WORKSPACE_WIDE_ROLES.includes(tenantRole);
+
+const getCachedValue = (key) => {
+  const entry = shopAccessCache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    shopAccessCache.delete(key);
+    return null;
+  }
+  return entry.value;
+};
+
+const setCachedValue = (key, value) => {
+  shopAccessCache.set(key, {
+    value,
+    expiresAt: Date.now() + SHOP_ACCESS_CACHE_TTL_MS,
+  });
+};
+
+const invalidateShopAccessCache = (tenantId, userId = null) => {
+  if (!tenantId) return;
+  const tenantPrefix = `shop-access:${tenantId}:`;
+  const userPrefix = userId ? `shop-access:${tenantId}:user:${userId}:` : null;
+  for (const key of shopAccessCache.keys()) {
+    if ((userPrefix && key.startsWith(userPrefix)) || (!userPrefix && key.startsWith(tenantPrefix))) {
+      shopAccessCache.delete(key);
+    }
+  }
+};
 
 /**
  * Normalize organization / metadata address into shop columns.
@@ -97,12 +127,18 @@ const resolveShopSeedData = async (tenantId, overrides = {}, transaction = null)
  */
 const ensureDefaultShop = async (tenantId, options = {}, transaction = null) => {
   const opts = transaction ? { transaction } : {};
+  const cacheKey = !transaction ? `shop-access:${tenantId}:default` : null;
+  const cached = cacheKey ? getCachedValue(cacheKey) : null;
+  if (cached) return cached;
 
   const existingDefault = await Shop.findOne({
     where: { tenantId, isDefault: true },
     ...opts,
   });
-  if (existingDefault) return existingDefault;
+  if (existingDefault) {
+    if (cacheKey) setCachedValue(cacheKey, existingDefault);
+    return existingDefault;
+  }
 
   const any = await Shop.findOne({
     where: { tenantId },
@@ -113,13 +149,16 @@ const ensureDefaultShop = async (tenantId, options = {}, transaction = null) => 
     if (!any.isDefault) {
       await any.update({ isDefault: true }, opts);
     }
+    if (cacheKey) setCachedValue(cacheKey, any);
     return any;
   }
 
   const payload = await resolveShopSeedData(tenantId, options, transaction);
   if (!payload) return null;
 
-  return Shop.create({ ...payload, tenantId }, opts);
+  const created = await Shop.create({ ...payload, tenantId }, opts);
+  if (cacheKey) setCachedValue(cacheKey, created);
+  return created;
 };
 
 /**
@@ -170,6 +209,7 @@ const setAsOnlyDefaultShop = async (tenantId, shopId) => {
     }
   );
   await Shop.update({ isDefault: true }, { where: { tenantId, id: shopId } });
+  invalidateShopAccessCache(tenantId);
 };
 
 /**
@@ -179,12 +219,18 @@ const setAsOnlyDefaultShop = async (tenantId, shopId) => {
  * @returns {Promise<string[]>}
  */
 const getUserShopIds = async (userId, tenantId, tenantRole) => {
+  const cacheKey = `shop-access:${tenantId}:user:${userId}:role:${tenantRole || ''}:ids`;
+  const cached = getCachedValue(cacheKey);
+  if (cached) return [...cached];
+
   if (hasWorkspaceWideShopAccess(tenantRole)) {
     const rows = await Shop.findAll({
       where: { tenantId, isActive: true },
       attributes: ['id'],
     });
-    return rows.map((r) => r.id);
+    const ids = rows.map((r) => r.id);
+    setCachedValue(cacheKey, ids);
+    return [...ids];
   }
 
   const assignmentRows = await UserShop.findAll({
@@ -195,13 +241,18 @@ const getUserShopIds = async (userId, tenantId, tenantRole) => {
   const assignedIds = assignmentRows
     .map((row) => row.shopId || row.shopid)
     .filter(Boolean);
-  if (!assignedIds.length) return [];
+  if (!assignedIds.length) {
+    setCachedValue(cacheKey, []);
+    return [];
+  }
 
   const activeShops = await Shop.findAll({
     where: { tenantId, id: { [Op.in]: assignedIds }, isActive: true },
     attributes: ['id'],
   });
-  return activeShops.map((row) => row.id);
+  const ids = activeShops.map((row) => row.id);
+  setCachedValue(cacheKey, ids);
+  return [...ids];
 };
 
 /**
@@ -223,11 +274,15 @@ const setUserShops = async (userId, tenantId, shopIds) => {
   }
 
   await UserShop.destroy({ where: { userId, tenantId } });
-  if (!uniqueIds.length) return;
+  if (!uniqueIds.length) {
+    invalidateShopAccessCache(tenantId, userId);
+    return;
+  }
 
   await UserShop.bulkCreate(
     uniqueIds.map((shopId) => ({ userId, tenantId, shopId }))
   );
+  invalidateShopAccessCache(tenantId, userId);
 };
 
 /**
@@ -434,6 +489,7 @@ module.exports = {
   parseAddressFields,
   resolveShopSeedData,
   ensureDefaultShop,
+  invalidateShopAccessCache,
   syncDefaultShopFromOrganization,
   setAsOnlyDefaultShop,
   getUserShopIds,

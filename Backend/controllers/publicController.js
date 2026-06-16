@@ -358,10 +358,10 @@ exports.submitSalesAgentApplication = async (req, res, next) => {
       createdBy: null
     });
 
-    const subject = `New ABS Ghana sales agent application from ${trimmedName}`;
+    const subject = `New ABS sales agent application from ${trimmedName}`;
     const html = `
-      <h2>New ABS Ghana sales agent application</h2>
-      <p>A visitor applied to help shops, studios, and pharmacies go digital with ABS Ghana.</p>
+      <h2>New ABS sales agent application</h2>
+      <p>A visitor applied to help shops, studios, and pharmacies go digital with ABS.</p>
       <ul>
         <li><strong>Name:</strong> ${escapeHtml(toDisplay(trimmedName))}</li>
         <li><strong>Phone / WhatsApp:</strong> ${escapeHtml(toDisplay(trimmedPhone))}</li>
@@ -375,7 +375,7 @@ exports.submitSalesAgentApplication = async (req, res, next) => {
       <p>${escapeHtml(toDisplay(trimmedWhyJoin, 'Not provided')).replace(/\n/g, '<br>')}</p>
     `.trim();
     const text = [
-      'New ABS Ghana sales agent application',
+      'New ABS sales agent application',
       '',
       `Name: ${toDisplay(trimmedName)}`,
       `Phone / WhatsApp: ${toDisplay(trimmedPhone)}`,

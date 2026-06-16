@@ -18,7 +18,12 @@ const {
 } = require('../models');
 const config = require('../config/config');
 const { sequelize } = require('../config/database');
-const { invalidateUserCache } = require('../middleware/cache');
+const {
+  getAuthBootstrapCacheKey,
+  getCacheValue,
+  invalidateUserCache,
+  setCacheValue,
+} = require('../middleware/cache');
 const { Op } = require('sequelize');
 const dayjs = require('dayjs');
 const emailService = require('../services/emailService');
@@ -1253,6 +1258,24 @@ exports.getMe = async (req, res, next) => {
 exports.getBootstrap = async (req, res, next) => {
   const finishTiming = startHotPathTimer('auth.bootstrap', req);
   try {
+    res.set('Cache-Control', 'no-store');
+    delete req.headers['if-none-match'];
+    delete req.headers['if-modified-since'];
+
+    const requestedTenantId = req.query?.tenantId ? String(req.query.tenantId) : 'default';
+    const cacheKey = getAuthBootstrapCacheKey(req.user.id, requestedTenantId);
+    const cachedData = getCacheValue(cacheKey);
+    if (cachedData) {
+      finishTiming({
+        cached: true,
+        memberships: cachedData.memberships?.length || 0,
+        activeTenantId: cachedData.activeTenantId || null,
+        shops: cachedData.access?.shops?.length || 0,
+        studioLocations: cachedData.access?.studioLocations?.length || 0,
+      });
+      return res.status(200).json({ success: true, data: cachedData });
+    }
+
     const userPayload = await buildAuthUserPayload(req);
     const memberships = Array.isArray(userPayload.tenantMemberships)
       ? userPayload.tenantMemberships
@@ -1268,6 +1291,7 @@ exports.getBootstrap = async (req, res, next) => {
       defaultTenantId: resolveBootstrapTenant(memberships)?.tenantId || null,
       ...tenantBootstrap,
     });
+    setCacheValue(cacheKey, data, 30, data.activeTenantId || null);
 
     finishTiming({
       memberships: memberships.length,

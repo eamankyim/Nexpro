@@ -13,7 +13,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { computeDocumentTax } from '../utils/taxCalculationClient';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw, Users, Loader2, Camera, CreditCard, UserPlus, Phone } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
@@ -65,6 +65,8 @@ import { mergeBranchOrganization } from '../utils/branchOrganization';
 import { CURRENCY, DEBOUNCE_DELAYS, QUERY_CACHE } from '../constants';
 import { formatAmount } from '../utils/formatNumber';
 import { FEATURE_NOT_AVAILABLE } from '../constants/microcopy';
+import { QUERY_STALE, refreshAfterSale } from '../utils/queryInvalidation';
+import { queryKeys } from '../utils/queryKeys';
 
 /**
  * Generate cart item ID
@@ -204,18 +206,19 @@ const CustomerSelectDialog = ({ isOpen, onClose, onSelect, onFindOrCreate }) => 
   const [quickAddLoading, setQuickAddLoading] = useState(false);
   const [quickAddError, setQuickAddError] = useState(null);
   const debouncedSearch = useDebounce(searchQuery, DEBOUNCE_DELAYS.SEARCH);
+  const { activeTenantId } = useAuth();
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
 
   const { data: customersData, isLoading } = useQuery({
-    queryKey: ['customers', 'pos', activeShopId, debouncedSearch],
+    queryKey: queryKeys.customers.picker(activeTenantId, activeShopId, null, `pos-${debouncedSearch || 'all'}`),
     queryFn: () => customerService.getCustomers({
       search: debouncedSearch,
       limit: 20,
       isActive: true
     }),
     staleTime: QUERY_CACHE.STALE_TIME_DEFAULT,
-    enabled: isOpen && (!shopContext?.isShopWorkspace || !!activeShopId)
+    enabled: isOpen && !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId)
   });
 
   const customers = Array.isArray(customersData?.data) ? customersData.data : (customersData?.data?.customers || customersData?.customers || []);
@@ -394,6 +397,7 @@ const POS = () => {
   const tenantIdForProducts = activeTenantId || (typeof localStorage !== 'undefined' ? localStorage.getItem('activeTenantId') : null);
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
+  const queryClient = useQueryClient();
 
   const { posConfig } = usePOSConfig();
 
@@ -477,10 +481,10 @@ const POS = () => {
   const [isMobile, setIsMobile] = useState(isMobileWidth);
 
   const { data: activeProductsFromQuery, refetch: refetchActiveProducts, isLoading: productsLoading } = useQuery({
-    queryKey: ['products', 'active', tenantIdForProducts, activeShopId],
+    queryKey: queryKeys.products.active(tenantIdForProducts, activeShopId),
     queryFn: () => productService.getAllActiveProducts(),
     enabled: !!tenantIdForProducts && (!isShop || !!activeShopId),
-    staleTime: QUERY_CACHE.STALE_TIME_DEFAULT,
+    staleTime: QUERY_STALE.TRANSACTIONAL,
     refetchOnWindowFocus: false,
   });
   const allProducts = useMemo(
@@ -508,7 +512,7 @@ const POS = () => {
 
   // Fetch organization settings
   const { data: orgSettingsData } = useQuery({
-    queryKey: ['settings', 'organization'],
+    queryKey: queryKeys.settings.organization(activeTenantId),
     queryFn: () => settingsService.getOrganizationSettings(),
     staleTime: QUERY_CACHE.STALE_TIME_STABLE
   });
@@ -537,12 +541,18 @@ const POS = () => {
 
   // Fetch customers list for cart dropdown (Select existing)
   const { data: customersData } = useQuery({
-    queryKey: ['customers', 'pos-list', activeTenantId, activeShopId],
+    queryKey: queryKeys.customers.picker(activeTenantId, activeShopId, null, 'pos-list'),
     queryFn: () => customerService.getCustomers({ limit: 200, isActive: true }),
-    staleTime: QUERY_CACHE.STALE_TIME_DEFAULT,
+    staleTime: QUERY_STALE.LIST,
     enabled: !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId)
   });
   const customersList = Array.isArray(customersData?.data) ? customersData.data : (customersData?.data?.customers || customersData?.customers || []);
+
+  const refreshSaleQueries = useCallback(() => {
+    refreshAfterSale(queryClient).catch((error) => {
+      console.error('[POS] Failed to refresh sale queries:', error);
+    });
+  }, [queryClient]);
 
   const cartTotals = useMemo(() => {
     const lines = cart.map((item) => ({
@@ -896,6 +906,7 @@ const POS = () => {
       const result = await processSale(saleData);
 
       if (result.success) {
+        refreshSaleQueries();
         const saleObj = result.sale || {
           total: paymentDetails.total ?? cartTotals.total,
           change: paymentDetails.change || 0,
@@ -937,7 +948,7 @@ const POS = () => {
     } finally {
       setIsProcessingPayment(false);
     }
-  }, [cart, selectedCustomer, cartTotals, processSale, clearCart, isRestaurant, posConfig, cartDiscount, posTaxConfig, buildSaleItemPayload]);
+  }, [cart, selectedCustomer, cartTotals, processSale, clearCart, isRestaurant, posConfig, cartDiscount, posTaxConfig, buildSaleItemPayload, refreshSaleQueries]);
 
   // Handle Paystack Mobile Money payment request (POS)
   const handleRequestMobileMoneyPayment = useCallback(
@@ -994,6 +1005,7 @@ const POS = () => {
           setMobileMoneyState('failed');
           return;
         }
+        refreshSaleQueries();
 
         const saleId = createdSale.id;
         const totalAmount = parseFloat(createdSale.total || 0);
@@ -1128,6 +1140,7 @@ const POS = () => {
         setReceiptModalOpen(!skipReceiptModal);
 
         showSuccess('Sale completed successfully!');
+        refreshSaleQueries();
         clearCart();
         setMobileMoneyState('success');
       } catch (error) {
@@ -1156,7 +1169,8 @@ const POS = () => {
       quickCustomerName,
       quickCustomerPhone,
       clearCart,
-      buildSaleItemPayload
+      buildSaleItemPayload,
+      refreshSaleQueries
     ]
   );
 
@@ -1183,8 +1197,12 @@ const POS = () => {
 
   // Handle process sale for scan mode
   const handleProcessSaleForScanMode = useCallback(async (saleData) => {
-    return await processSale(saleData);
-  }, [processSale]);
+    const result = await processSale(saleData);
+    if (result?.success) {
+      refreshSaleQueries();
+    }
+    return result;
+  }, [processSale, refreshSaleQueries]);
 
   // Handle send receipt for scan mode
   const handleSendReceiptForScanMode = useCallback(async (saleId, options) => {

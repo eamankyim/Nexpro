@@ -96,9 +96,10 @@ export default function ExpenseDetailScreen() {
       Alert.alert('Amount required', 'Enter a valid expense amount.');
       return;
     }
+    const description = formData.description.trim();
     runExclusiveAction('edit', () =>
       updateMutation.mutateAsync({
-        description: formData.description.trim() || undefined,
+        description,
         amount,
         category: formData.category.trim() || undefined,
         expenseDate: formData.expenseDate.trim() || undefined,

@@ -39,6 +39,7 @@ const { shopContext } = require('../middleware/shopContext');
 const { studioLocationContext } = require('../middleware/studioLocationContext');
 const { productImageUploader, checkStorageLimit } = require('../middleware/upload');
 const { bulkOperationLimiter } = require('../middleware/rateLimiter');
+const { timeCrudAction } = require('../middleware/crudTiming');
 
 const router = express.Router();
 
@@ -49,7 +50,7 @@ router.use(studioLocationContext);
 
 router.route('/settings')
   .get(getSettings)
-  .put(authorize('admin', 'manager'), upsertSettings);
+  .put(authorize('admin', 'manager'), timeCrudAction('store.settings.upsert'), upsertSettings);
 
 router.get('/setup-status', getSetupStatus);
 router.get('/slug-availability', checkSlugAvailability);
@@ -62,10 +63,10 @@ router.get('/trade-assurance/disputes', authorize('admin', 'manager'), getTradeA
 router.get('/trade-assurance/payouts', authorize('admin', 'manager'), getTradeAssurancePayouts);
 router.post('/trade-assurance/orders/:id/refund', authorize('admin', 'manager'), refundTradeAssuranceOrder);
 router.route('/orders')
-  .get(getStoreOrders);
+  .get(timeCrudAction('store.orders.list'), getStoreOrders);
 router.route('/orders/:id')
-  .get(getStoreOrder);
-router.patch('/orders/:id/status', authorize('admin', 'manager', 'staff'), updateStoreOrderStatus);
+  .get(timeCrudAction('store.orders.read'), getStoreOrder);
+router.patch('/orders/:id/status', authorize('admin', 'manager', 'staff'), timeCrudAction('store.orders.update_status'), updateStoreOrderStatus);
 
 router.post(
   '/listings/upload-images',
@@ -83,15 +84,15 @@ router.post(
 );
 
 router.route('/listings')
-  .get(getListings)
-  .post(authorize('admin', 'manager', 'staff'), createListing);
+  .get(timeCrudAction('store.listings.list'), getListings)
+  .post(authorize('admin', 'manager', 'staff'), timeCrudAction('store.listings.create'), createListing);
 
 router.route('/listings/:id')
-  .patch(authorize('admin', 'manager', 'staff'), updateListing)
-  .delete(authorize('admin', 'manager'), deleteListing);
+  .patch(authorize('admin', 'manager', 'staff'), timeCrudAction('store.listings.update'), updateListing)
+  .delete(authorize('admin', 'manager'), timeCrudAction('store.listings.delete'), deleteListing);
 
-router.patch('/listings/:id/publish', authorize('admin', 'manager', 'staff'), publishListing);
-router.patch('/listings/:id/unpublish', authorize('admin', 'manager', 'staff'), unpublishListing);
+router.patch('/listings/:id/publish', authorize('admin', 'manager', 'staff'), timeCrudAction('store.listings.publish'), publishListing);
+router.patch('/listings/:id/unpublish', authorize('admin', 'manager', 'staff'), timeCrudAction('store.listings.unpublish'), unpublishListing);
 
 router.post(
   '/service-listings/upload-images',
@@ -102,18 +103,19 @@ router.post(
 );
 
 router.route('/service-listings')
-  .get(getServiceListings)
-  .post(authorize('admin', 'manager', 'staff'), createServiceListing);
+  .get(timeCrudAction('store.service_listings.list'), getServiceListings)
+  .post(authorize('admin', 'manager', 'staff'), timeCrudAction('store.service_listings.create'), createServiceListing);
 
 router.route('/service-listings/:id')
-  .patch(authorize('admin', 'manager', 'staff'), updateServiceListing)
-  .delete(authorize('admin', 'manager'), deleteServiceListing);
+  .patch(authorize('admin', 'manager', 'staff'), timeCrudAction('store.service_listings.update'), updateServiceListing)
+  .delete(authorize('admin', 'manager'), timeCrudAction('store.service_listings.delete'), deleteServiceListing);
 
-router.patch('/service-listings/:id/publish', authorize('admin', 'manager', 'staff'), publishServiceListing);
-router.patch('/service-listings/:id/unpublish', authorize('admin', 'manager', 'staff'), unpublishServiceListing);
+router.patch('/service-listings/:id/publish', authorize('admin', 'manager', 'staff'), timeCrudAction('store.service_listings.publish'), publishServiceListing);
+router.patch('/service-listings/:id/unpublish', authorize('admin', 'manager', 'staff'), timeCrudAction('store.service_listings.unpublish'), unpublishServiceListing);
 router.post(
   '/service-listings/import/pricing-template/:templateId',
   authorize('admin', 'manager', 'staff'),
+  timeCrudAction('store.service_listings.import_pricing_template'),
   importServiceListingFromPricingTemplate
 );
 

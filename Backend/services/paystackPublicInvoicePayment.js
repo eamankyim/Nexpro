@@ -7,6 +7,11 @@ const { Invoice, Customer, Payment } = require('../models');
 const activityLogger = require('./activityLogger');
 const { updateCustomerBalance } = require('./customerBalanceService');
 const { ensureSaleFromPaidInvoice } = require('./invoiceSaleService');
+const paystackService = require('./paystackService');
+
+/** In-process pending refs (initialize → verify before webhook); TTL covers multi-day invoice links. */
+const pendingInvoicePaystackByInvoiceId = new Map();
+const PENDING_REF_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * @param {Record<string, unknown>} metadata
@@ -113,6 +118,13 @@ async function applyPaystackChargeToInvoiceFromTx(reference, tx) {
   }
 
   const paymentAmount = parseFloat(tx.amount || 0) / 100;
+  const channel = String(tx.channel || tx.authorization?.channel || '').toLowerCase();
+  const paymentMethod =
+    channel.includes('mobile') ||
+    String(metadata.payment_source || '').toLowerCase().includes('mobile_money') ||
+    Boolean(metadata.mobileNumber || metadata.mobile_number)
+      ? 'mobile_money'
+      : 'credit_card';
   const totalAmount = parseFloat(invoice.totalAmount || 0);
   const currentPaid = parseFloat(invoice.amountPaid || 0);
   const remaining = Math.max(totalAmount - currentPaid, 0);
@@ -141,7 +153,7 @@ async function applyPaystackChargeToInvoiceFromTx(reference, tx) {
     customerId: invoice.customerId,
     tenantId: invoice.tenantId,
     amount: appliedPaymentAmount,
-    paymentMethod: 'credit_card',
+    paymentMethod,
     paymentDate: new Date(),
     referenceNumber: reference,
     status: 'completed',
@@ -153,7 +165,7 @@ async function applyPaystackChargeToInvoiceFromTx(reference, tx) {
   const payment = await Payment.create(paymentData);
   await ensureSaleFromPaidInvoice(invoice.id, payment.id, {
     tenantId: invoice.tenantId,
-    paymentMethod: 'credit_card'
+    paymentMethod
   });
 
   try {
@@ -188,8 +200,156 @@ async function applyPaystackChargeToInvoiceFromTx(reference, tx) {
   return { applied: true, invoiceId: invoice.id };
 }
 
+/**
+ * Remember Paystack reference when checkout is initialized (public or workspace flow).
+ * @param {string} invoiceId
+ * @param {string} reference
+ */
+function rememberPendingInvoicePaystackReference(invoiceId, reference) {
+  if (!invoiceId || !reference) return;
+  pendingInvoicePaystackByInvoiceId.set(String(invoiceId), {
+    reference: String(reference),
+    at: Date.now()
+  });
+}
+
+/**
+ * @param {string} invoiceId
+ * @returns {string|null}
+ */
+function getRememberedPendingInvoicePaystackReference(invoiceId) {
+  const entry = pendingInvoicePaystackByInvoiceId.get(String(invoiceId));
+  if (!entry) return null;
+  if (Date.now() - entry.at > PENDING_REF_TTL_MS) {
+    pendingInvoicePaystackByInvoiceId.delete(String(invoiceId));
+    return null;
+  }
+  return entry.reference;
+}
+
+/**
+ * @param {import('../models').Invoice} invoice
+ * @param {string} reference
+ * @param {object} tx
+ * @returns {Promise<{ applied: boolean, duplicate?: boolean, reason?: string, reference?: string, paystackStatus?: string }>}
+ */
+async function tryVerifyAndApplyInvoiceReference(invoice, reference, tx) {
+  const metadata =
+    typeof tx.metadata === 'string' ? JSON.parse(tx.metadata || '{}') : (tx.metadata || {});
+  const invLink = getPaystackInvoiceLinkMetadata(metadata);
+  const refInvoiceId = parseInvoiceIdFromPublicPaystackReference(reference);
+
+  const tokenMatch =
+    invLink.paymentToken &&
+    invoice.paymentToken &&
+    String(invLink.paymentToken) === String(invoice.paymentToken);
+  const idMatch =
+    invLink.invoiceId &&
+    String(invLink.invoiceId) === String(invoice.id) &&
+    invLink.tenantId &&
+    String(invLink.tenantId) === String(invoice.tenantId);
+  const refMatch = refInvoiceId && String(refInvoiceId) === String(invoice.id);
+
+  if (!tokenMatch && !idMatch && !refMatch) {
+    return { applied: false, reason: 'reference_mismatch', reference };
+  }
+
+  const outcome = await applyPaystackChargeToInvoiceFromTx(reference, tx);
+  return { ...outcome, reference };
+}
+
+/**
+ * Verify Paystack and apply payment to an invoice without relying on webhooks.
+ * @param {import('../models').Invoice} invoice
+ * @param {{ reference?: string }} [options]
+ */
+async function reconcileInvoicePaystackPayment(invoice, options = {}) {
+  if (!paystackService.secretKey) {
+    return { applied: false, reason: 'paystack_not_configured' };
+  }
+
+  if (!invoice) {
+    return { applied: false, reason: 'invoice_not_found' };
+  }
+
+  if (invoice.status === 'cancelled' || invoice.status === 'paid') {
+    return { applied: false, reason: 'invoice_terminal_state', duplicate: invoice.status === 'paid' };
+  }
+
+  const refsToTry = [];
+  const explicitRef = String(options.reference || '').trim();
+  if (explicitRef) refsToTry.push(explicitRef);
+  const remembered = getRememberedPendingInvoicePaystackReference(invoice.id);
+  if (remembered && !refsToTry.includes(remembered)) refsToTry.push(remembered);
+
+  for (const ref of refsToTry) {
+    let result;
+    try {
+      result = await paystackService.verifyTransaction(ref);
+    } catch (err) {
+      console.error('[PaystackInvoice] verify error during reconcile:', err?.message);
+      continue;
+    }
+    if (!result?.status || !result?.data) continue;
+
+    const tx = result.data;
+    const txStatus = String(tx.status || '').toLowerCase();
+    if (txStatus !== 'success') {
+      return { applied: false, reason: 'not_success', paystackStatus: tx.status, reference: ref };
+    }
+
+    const outcome = await tryVerifyAndApplyInvoiceReference(invoice, ref, tx);
+    if (outcome.applied || outcome.duplicate) {
+      return outcome;
+    }
+  }
+
+  const refPrefix = `INV-${invoice.id}-`;
+  const from = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  try {
+    for (let page = 1; page <= 3; page += 1) {
+      const listResult = await paystackService.listTransactions({
+        page,
+        perPage: 50,
+        from,
+        status: 'success'
+      });
+      const txs = Array.isArray(listResult?.data) ? listResult.data : [];
+      for (const listed of txs) {
+        const ref = String(listed.reference || '').trim();
+        if (!ref.startsWith(refPrefix)) continue;
+
+        let verifyResult;
+        try {
+          verifyResult = await paystackService.verifyTransaction(ref);
+        } catch {
+          continue;
+        }
+        if (!verifyResult?.status || !verifyResult?.data) continue;
+        const tx = verifyResult.data;
+        if (String(tx.status || '').toLowerCase() !== 'success') continue;
+
+        const outcome = await tryVerifyAndApplyInvoiceReference(invoice, ref, tx);
+        if (outcome.applied || outcome.duplicate) {
+          return outcome;
+        }
+      }
+
+      if (!listResult?.meta?.next_page) break;
+    }
+  } catch (err) {
+    console.error('[PaystackInvoice] listTransactions reconcile error:', err?.message);
+  }
+
+  return { applied: false, reason: 'no_matching_transaction' };
+}
+
 module.exports = {
   applyPaystackChargeToInvoiceFromTx,
   getPaystackInvoiceLinkMetadata,
-  parseInvoiceIdFromPublicPaystackReference
+  parseInvoiceIdFromPublicPaystackReference,
+  rememberPendingInvoicePaystackReference,
+  getRememberedPendingInvoicePaystackReference,
+  reconcileInvoicePaystackPayment,
+  tryVerifyAndApplyInvoiceReference
 };

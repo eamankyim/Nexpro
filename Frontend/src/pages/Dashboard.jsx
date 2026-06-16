@@ -65,6 +65,7 @@ import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import { CURRENCY, QUERY_CACHE, STUDIO_LIKE_TYPES } from '../constants';
 import { isPlaceholderBusinessName } from '../constants/tenantPlaceholders';
 import { formatAmount } from '../utils/formatNumber';
+import { queryKeys } from '../utils/queryKeys';
 import { useScopedWorkspaceName } from '../hooks/useScopedWorkspaceName';
 import { useDismissibleDashboardBanner } from '../hooks/useDismissibleDashboardBanner';
 import dayjs from 'dayjs';
@@ -367,7 +368,7 @@ const Dashboard = () => {
   });
 
   const { data: overviewResponse, isLoading: overviewLoading, isError: overviewError, error: overviewQueryError, refetch: refetchOverview, isFetched: overviewFetched } = useQuery({
-    queryKey: ['dashboard', 'overview', activeTenantId, activeShopId, activeStudioLocationId, overviewParams.startDate, overviewParams.endDate, overviewParams.filterType],
+    queryKey: queryKeys.dashboard.overview(activeTenantId, activeShopId, activeStudioLocationId, overviewParams),
     queryFn: () => dashboardService.getOverview(overviewParams.startDate, overviewParams.endDate, overviewParams.filterType),
     enabled: scopeReady,
     staleTime: QUERY_CACHE.STALE_TIME_VOLATILE,
@@ -389,7 +390,7 @@ const Dashboard = () => {
 
   // Fetch organization settings (for display name, logo, etc.)
   const { data: organizationData, isPending: organizationSettingsPending } = useQuery({
-    queryKey: ['settings', 'organization', activeTenantId],
+    queryKey: queryKeys.settings.organization(activeTenantId),
     queryFn: () => settingsService.getOrganizationSettings(),
     enabled: !!activeTenantId,
   });
@@ -685,7 +686,7 @@ const Dashboard = () => {
   } = useOnlineStoreOrderAttention({ enabled: scopeReady && isShop });
 
   const { data: staffProductsRaw, isLoading: staffProductsLoading } = useQuery({
-    queryKey: ['products', 'active', activeTenantId, activeShopId],
+    queryKey: queryKeys.products.active(activeTenantId, activeShopId),
     queryFn: () => productService.getAllActiveProducts(),
     enabled: isPharmacy || (isShop && !!activeShopId),
     staleTime: QUERY_CACHE.STALE_TIME_VOLATILE,
@@ -901,26 +902,21 @@ const Dashboard = () => {
   );
 
   const { data: aiDashboardInsight, isFetching: aiDashboardInsightLoading } = useQuery({
-    queryKey: [
-      'dashboard',
-      'ai-insight',
-      activeTenantId,
-      activeShopId,
-      activeStudioLocationId,
-      overviewParams.startDate,
-      overviewParams.endDate,
-      overviewParams.filterType,
+    queryKey: queryKeys.dashboard.aiInsight(activeTenantId, activeShopId, activeStudioLocationId, {
+      startDate: overviewParams.startDate,
+      endDate: overviewParams.endDate,
+      filterType: overviewParams.filterType,
       revenueValue,
       expenseValue,
       profitValue,
-      displayData?.summary?.newCustomers,
-      (stockAlerts?.lowStock || []).length,
-      businessHealthContext.metrics.revenue.dailyAverageChangePercentage,
-      businessHealthContext.metrics.expenses.dailyAverageChangePercentage,
-      businessHealthContext.metrics.profit.dailyAverageChangePercentage,
-      businessHealthContext.metrics.newCustomers.dailyAverageChangePercentage,
-      businessHealthContext.profitMargin,
-    ],
+      newCustomers: displayData?.summary?.newCustomers,
+      lowStockCount: (stockAlerts?.lowStock || []).length,
+      revenueChange: businessHealthContext.metrics.revenue.dailyAverageChangePercentage,
+      expensesChange: businessHealthContext.metrics.expenses.dailyAverageChangePercentage,
+      profitChange: businessHealthContext.metrics.profit.dailyAverageChangePercentage,
+      newCustomersChange: businessHealthContext.metrics.newCustomers.dailyAverageChangePercentage,
+      profitMargin: businessHealthContext.profitMargin,
+    }),
     queryFn: async () => {
       const result = await assistantService.chat([{ role: 'user', content: aiInsightPrompt }], {
         pageContext: 'dashboard',

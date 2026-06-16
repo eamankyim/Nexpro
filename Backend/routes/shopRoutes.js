@@ -14,6 +14,7 @@ const {
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
 const { shopContext } = require('../middleware/shopContext');
+const { cacheMiddleware } = require('../middleware/cache');
 const { checkStorageLimit } = require('../middleware/upload');
 
 const branchLogoUploader = multer({
@@ -31,7 +32,17 @@ router.use(protect);
 router.use(tenantContext);
 router.use(shopContext);
 
-router.get('/access', getShopAccess);
+const generateShopAccessKey = (req) => [
+  'shops:access',
+  req.tenantId || '',
+  req.user?.id || '',
+  req.tenantRole || '',
+  req.shopFilterId || '',
+  req.defaultShopId || '',
+  (req.allowedShopIds || []).join(',')
+].join(':');
+
+router.get('/access', cacheMiddleware(20, generateShopAccessKey), getShopAccess);
 
 router
   .route('/users/:userId/assignments')

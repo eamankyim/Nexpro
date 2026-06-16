@@ -154,6 +154,26 @@ describe('storeController online orders', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
+  it('skips expensive order stats when includeStats=false', async () => {
+    const req = {
+      tenantId: 'tenant-1',
+      query: { includeStats: 'false' },
+    };
+    const res = mockRes();
+    const next = jest.fn();
+
+    await storeController.getStoreOrders(req, res, next);
+
+    expect(Sale.findAndCountAll).toHaveBeenCalled();
+    expect(Sale.count).not.toHaveBeenCalled();
+    expect(Sale.sum).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      success: true,
+    }));
+    expect(res.json.mock.calls[0][0]).not.toHaveProperty('stats');
+    expect(next).not.toHaveBeenCalled();
+  });
+
   it('paginates mixed studio orders through a unified feed before hydrating details', async () => {
     sequelize.query.mockResolvedValue([
       { orderType: 'service', id: 'job-1', sortAt: '2026-06-14T10:00:00.000Z' },
