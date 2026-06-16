@@ -1,36 +1,70 @@
 const { sequelize } = require('../config/database');
 
+const SERVICE_REVIEW_TYPE = 'service';
+const KNOWN_REVIEW_TYPE_ENUMS = ['enum_storefront_reviews_review_type'];
+
+/**
+ * Resolves Postgres enum type names used by storefront_reviews."reviewType".
+ * @param {import('sequelize').Sequelize} db
+ * @param {string[]} [fallbackTypeNames]
+ * @returns {Promise<string[]>}
+ */
+const discoverReviewTypeEnumTypes = async (db, fallbackTypeNames = KNOWN_REVIEW_TYPE_ENUMS) => {
+  const [rows] = await db.query(`
+    SELECT DISTINCT udt_name AS typname
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'storefront_reviews'
+      AND column_name = 'reviewType'
+      AND udt_name IS NOT NULL;
+  `);
+
+  const discovered = (rows || []).map((row) => row.typname).filter(Boolean);
+  return [...new Set([...fallbackTypeNames, ...discovered])];
+};
+
+/**
+ * Adds 'service' to a Postgres enum when the type exists and the value is missing.
+ * Uses pg_type.oid (not ::regtype) so missing enum types are skipped safely.
+ * @param {import('sequelize').Sequelize} db
+ * @param {string} typeName
+ * @returns {Promise<'added' | 'exists' | 'missing'>}
+ */
+const ensureEnumHasServiceValue = async (db, typeName) => {
+  const [[typeRow]] = await db.query(
+    `SELECT oid FROM pg_type WHERE typname = :typeName LIMIT 1`,
+    { replacements: { typeName } }
+  );
+  if (!typeRow?.oid) {
+    console.log(`   ⏭️  ${typeName}: type not found`);
+    return 'missing';
+  }
+
+  const [[hasService]] = await db.query(
+    `SELECT 1 AS ok FROM pg_enum WHERE enumtypid = :oid AND enumlabel = :value LIMIT 1`,
+    { replacements: { oid: typeRow.oid, value: SERVICE_REVIEW_TYPE } }
+  );
+  if (hasService?.ok) {
+    console.log(`   ✓ ${typeName}: service already present`);
+    return 'exists';
+  }
+
+  await db.query(`ALTER TYPE "${typeName}" ADD VALUE '${SERVICE_REVIEW_TYPE}'`);
+  console.log(`   ➕ ${typeName}: added service`);
+  return 'added';
+};
+
 async function up(options = {}) {
   const { closeConnection = true } = options;
   try {
     console.log('🔄 Extending storefront reviews for studio services...');
 
-    await sequelize.query(`
-      DO $$
-      BEGIN
-        IF EXISTS (
-          SELECT 1 FROM pg_type WHERE typname = 'enum_storefront_reviews_review_type'
-        ) AND NOT EXISTS (
-          SELECT 1
-          FROM pg_enum
-          WHERE enumtypid = 'enum_storefront_reviews_review_type'::regtype
-            AND enumlabel = 'service'
-        ) THEN
-          ALTER TYPE enum_storefront_reviews_review_type ADD VALUE 'service';
-        END IF;
+    const reviewTypeEnums = await discoverReviewTypeEnumTypes(sequelize);
+    console.log(`   reviewType enum types: ${reviewTypeEnums.length ? reviewTypeEnums.join(', ') : '(none)'}`);
 
-        IF EXISTS (
-          SELECT 1 FROM pg_type WHERE typname = 'enum_storefront_reviews_reviewType'
-        ) AND NOT EXISTS (
-          SELECT 1
-          FROM pg_enum
-          WHERE enumtypid = '"enum_storefront_reviews_reviewType"'::regtype
-            AND enumlabel = 'service'
-        ) THEN
-          ALTER TYPE "enum_storefront_reviews_reviewType" ADD VALUE 'service';
-        END IF;
-      END $$;
-    `);
+    for (const typeName of reviewTypeEnums) {
+      await ensureEnumHasServiceValue(sequelize, typeName);
+    }
 
     await sequelize.query(`
       ALTER TABLE storefront_reviews
@@ -96,4 +130,11 @@ if (require.main === module) {
   up().then(() => process.exit(0)).catch(() => process.exit(1));
 }
 
-module.exports = { up, down };
+module.exports = {
+  up,
+  down,
+  discoverReviewTypeEnumTypes,
+  ensureEnumHasServiceValue,
+  KNOWN_REVIEW_TYPE_ENUMS,
+  SERVICE_REVIEW_TYPE,
+};
