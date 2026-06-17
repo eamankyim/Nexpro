@@ -4,6 +4,7 @@ const { Op } = require('sequelize');
 const { applyTenantFilter } = require('../utils/tenantUtils');
 const { applyShopFilter, getShopSqlFragment } = require('../utils/shopUtils');
 const { resolveBusinessType } = require('../config/businessTypes');
+const { classifyAiProviderError, AI_PROVIDER_USER_MESSAGES } = require('../utils/aiProviderErrors');
 
 /** Tenant + active shop filter for retail reports. */
 const scopedRetailWhere = (req, extra = {}) =>
@@ -1771,34 +1772,63 @@ exports.generateAIAnalysis = async (req, res, next) => {
       data: analysis.analysis
     });
   } catch (error) {
-    if (error.code === 'OPENAI_NOT_CONFIGURED') {
-      return res.status(200).json({
-        success: true,
-        data: {
-          keyFindings: [
-            'Revenue and expense data has been analyzed.',
-            'Smart Report generated without AI because Anthropic is not configured.',
-            'Set ANTHROPIC_API_KEY in Backend/.env to enable AI-generated insights.'
-          ],
-          performanceAnalysis: 'The report was generated from business data. AI-powered narrative analysis is disabled until ANTHROPIC_API_KEY is configured.',
-          recommendations: [],
-          riskAssessment: [],
-          growthOpportunities: [],
-          strategicSuggestions: [
-            'Review the financial, sales, expenses, cash flow, and inventory tabs for detailed performance signals.'
-          ],
-          aiConfigured: false,
-          aiUnavailableReason: 'ANTHROPIC_API_KEY is not configured'
-        }
-      });
-    }
-    if (error.code === 'invalid_api_key' || error.status === 401) {
-      return res.status(503).json({
+    const classified = classifyAiProviderError(error);
+    if (classified || error.aiProviderError) {
+      const errorCode = classified?.errorCode || error.errorCode || error.code;
+      const message = classified?.message || error.message;
+      const statusCode = classified?.statusCode || error.statusCode || 503;
+
+      if (errorCode === 'OPENAI_NOT_CONFIGURED') {
+        return res.status(200).json({
+          success: true,
+          data: {
+            keyFindings: [
+              'Revenue and expense data has been analyzed.',
+              'Smart Report generated without AI because no AI key is configured.',
+              AI_PROVIDER_USER_MESSAGES.OPENAI_NOT_CONFIGURED,
+            ],
+            performanceAnalysis: 'The report was generated from business data. AI-powered narrative analysis is disabled until an AI key is configured.',
+            recommendations: [],
+            riskAssessment: [],
+            growthOpportunities: [],
+            strategicSuggestions: [
+              'Review the financial, sales, expenses, cash flow, and inventory tabs for detailed performance signals.',
+            ],
+            aiConfigured: false,
+            aiUnavailableReason: message,
+          },
+        });
+      }
+
+      if (errorCode === 'AI_PROVIDER_BILLING_REQUIRED') {
+        return res.status(200).json({
+          success: true,
+          data: {
+            keyFindings: [
+              'Revenue and expense data has been analyzed.',
+              message,
+            ],
+            performanceAnalysis: 'The report was generated from business data. AI insights are unavailable until platform AI credit is restored or a workspace AI key is added.',
+            recommendations: [],
+            riskAssessment: [],
+            growthOpportunities: [],
+            strategicSuggestions: [
+              'Review the financial, sales, expenses, cash flow, and inventory tabs for detailed performance signals.',
+            ],
+            aiConfigured: false,
+            aiUnavailableReason: message,
+          },
+        });
+      }
+
+      return res.status(statusCode).json({
         success: false,
-        error: 'Invalid Anthropic API key. Check the workspace AI key or ANTHROPIC_API_KEY in Backend/.env.',
-        code: 'OPENAI_INVALID_KEY'
+        error: message,
+        errorCode,
+        code: errorCode,
       });
     }
+
     logReportError('Error generating AI analysis:', error);
     // Return a fallback response if OpenAI fails for other reasons
     res.status(200).json({
@@ -1817,7 +1847,6 @@ exports.generateAIAnalysis = async (req, res, next) => {
           'Continue tracking revenue and expense trends.',
           'Monitor profit margins for optimization opportunities.'
         ],
-        aiError: error.message
       }
     });
   }

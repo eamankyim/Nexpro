@@ -1,4 +1,6 @@
+import { useMemo } from 'react';
 import {
+  Calendar,
   ChevronRight,
   CreditCard,
   Lock,
@@ -15,14 +17,10 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { STUDIO_LIKE_TYPES } from '../../constants';
+import { useAuth } from '../../context/AuthContext';
 
-const BENEFITS = [
-  {
-    title: 'Sell your products 24/7',
-    description: 'Showcase your products and reach customers anytime, anywhere.',
-    icon: ShoppingCart,
-    iconClass: 'bg-emerald-100 text-emerald-700',
-  },
+const SHARED_BENEFITS = [
   {
     title: 'Accept secure payments',
     description: 'Get paid securely via Mobile Money, cards and more.',
@@ -36,6 +34,16 @@ const BENEFITS = [
     iconClass: 'bg-violet-100 text-violet-700',
     badge: 'New',
   },
+];
+
+const PRODUCT_BENEFITS = [
+  {
+    title: 'Sell your products 24/7',
+    description: 'Showcase your products and reach customers anytime, anywhere.',
+    icon: ShoppingCart,
+    iconClass: 'bg-emerald-100 text-emerald-700',
+  },
+  ...SHARED_BENEFITS,
   {
     title: 'Deliver to your customers',
     description: 'Manage orders and deliver with flexible options across Ghana.',
@@ -44,13 +52,31 @@ const BENEFITS = [
   },
 ];
 
-const FEATURES = [
+const STUDIO_BENEFITS = [
   {
-    title: 'Beautiful Storefront',
-    description: 'Choose themes, add your logo and build a store that stands out.',
-    icon: Store,
+    title: 'Sell your services 24/7',
+    description: 'Showcase your services and let customers book anytime, anywhere.',
+    icon: Calendar,
     iconClass: 'bg-emerald-100 text-emerald-700',
   },
+  ...SHARED_BENEFITS.map((benefit) =>
+    benefit.title === 'WhatsApp Integration'
+      ? {
+          ...benefit,
+          description:
+            'Customers can message you directly on WhatsApp before or after booking a service.',
+        }
+      : benefit,
+  ),
+  {
+    title: 'Manage bookings easily',
+    description: 'Track service requests, appointments and customer orders in one place.',
+    icon: Truck,
+    iconClass: 'bg-amber-100 text-amber-700',
+  },
+];
+
+const SHARED_FEATURES = [
   {
     title: 'Secure & Trusted',
     description: 'Your payments and customer data are always protected.',
@@ -63,6 +89,16 @@ const FEATURES = [
     icon: MessageCircle,
     iconClass: 'bg-violet-100 text-violet-700',
   },
+];
+
+const PRODUCT_FEATURES = [
+  {
+    title: 'Beautiful Storefront',
+    description: 'Choose themes, add your logo and build a store that stands out.',
+    icon: Store,
+    iconClass: 'bg-emerald-100 text-emerald-700',
+  },
+  ...SHARED_FEATURES,
   {
     title: 'Grow Your Business',
     description: 'Track orders, sales and customers in one powerful dashboard.',
@@ -71,25 +107,93 @@ const FEATURES = [
   },
 ];
 
-const MOCK_PRODUCTS = [
+const STUDIO_FEATURES = [
+  {
+    title: 'Beautiful Storefront',
+    description: 'Choose themes, add your logo and build a storefront that showcases your services.',
+    icon: Store,
+    iconClass: 'bg-emerald-100 text-emerald-700',
+  },
+  ...SHARED_FEATURES,
+  {
+    title: 'Grow Your Business',
+    description: 'Track bookings, sales and customers in one powerful dashboard.',
+    icon: TrendingUp,
+    iconClass: 'bg-amber-100 text-amber-700',
+  },
+];
+
+const PRODUCT_MOCK_ITEMS = [
   {
     name: 'Shea Butter',
     price: 'GHS 85',
     colorClass: 'bg-emerald-100',
+    actionLabel: 'Add',
   },
   {
     name: 'Kente Tote',
     price: 'GHS 120',
     colorClass: 'bg-amber-100',
+    actionLabel: 'Add',
   },
   {
     name: 'Gift Pack',
     price: 'GHS 210',
     colorClass: 'bg-sky-100',
+    actionLabel: 'Add',
   },
 ];
 
-const WelcomeStoreMockup = () => (
+const STUDIO_MOCK_ITEMS = [
+  {
+    name: 'Haircut & Styling',
+    price: 'GHS 85',
+    colorClass: 'bg-emerald-100',
+    actionLabel: 'Book',
+  },
+  {
+    name: 'Business Cards',
+    price: 'GHS 120',
+    colorClass: 'bg-amber-100',
+    actionLabel: 'Book',
+  },
+  {
+    name: 'Full Service',
+    price: 'GHS 210',
+    colorClass: 'bg-sky-100',
+    actionLabel: 'Book',
+  },
+];
+
+const WELCOME_COPY = {
+  product: {
+    subtitle: 'Set up your store in a few simple steps and start selling to customers online.',
+    benefits: PRODUCT_BENEFITS,
+    features: PRODUCT_FEATURES,
+    mockItems: PRODUCT_MOCK_ITEMS,
+    mockStoreName: "Akosua's Essentials",
+    mockStoreTagline: 'Natural goods delivered fast',
+    mockCtaLabel: 'Order now',
+    mockNotificationLabel: '3 new orders',
+    mockBadges: ['WhatsApp', 'Payments', 'Delivery'],
+  },
+  studio: {
+    subtitle: 'Set up your storefront in a few simple steps and start selling your services online.',
+    benefits: STUDIO_BENEFITS,
+    features: STUDIO_FEATURES,
+    mockItems: STUDIO_MOCK_ITEMS,
+    mockStoreName: "Kofi's Creative Studio",
+    mockStoreTagline: 'Professional services, book online',
+    mockCtaLabel: 'Book now',
+    mockNotificationLabel: '3 new bookings',
+    mockBadges: ['WhatsApp', 'Payments', 'Booking'],
+  },
+};
+
+/**
+ * @param {{ copy: typeof WELCOME_COPY.product }} props
+ */
+const WelcomeStoreMockup = ({ copy }) => (
   <div className="relative mx-auto flex h-full min-h-[340px] w-full max-w-[560px] items-center justify-center lg:max-w-none">
     <div className="absolute inset-4 rounded-[32px] border border-emerald-100 bg-emerald-50/70" aria-hidden />
 
@@ -101,7 +205,7 @@ const WelcomeStoreMockup = () => (
             <span className="h-2.5 w-2.5 rounded-full bg-amber-300" />
             <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
           </div>
-          <div className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-500">
+          <div className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-500">
             yourstore.abs.app
           </div>
         </div>
@@ -114,8 +218,8 @@ const WelcomeStoreMockup = () => (
                   <Store className="h-5 w-5" aria-hidden />
                 </span>
                 <div>
-                  <p className="text-sm font-bold">Akosua's Essentials</p>
-                  <p className="text-xs text-emerald-50">Natural goods delivered fast</p>
+                  <p className="text-sm font-bold">{copy.mockStoreName}</p>
+                  <p className="text-xs text-emerald-50">{copy.mockStoreTagline}</p>
                 </div>
               </div>
               <span className="rounded-full border border-emerald-300 bg-emerald-500 px-3 py-1 text-xs font-semibold">
@@ -125,14 +229,14 @@ const WelcomeStoreMockup = () => (
           </div>
 
           <div className="grid gap-3 sm:grid-cols-3">
-            {MOCK_PRODUCTS.map((product) => (
-              <div key={product.name} className="rounded-2xl border border-slate-200 bg-white p-3">
-                <div className={cn('mb-3 h-16 rounded-xl border border-white/70', product.colorClass)} />
-                <p className="truncate text-xs font-semibold text-slate-900">{product.name}</p>
+            {copy.mockItems.map((item) => (
+              <div key={item.name} className="rounded-2xl border border-slate-200 bg-white p-3">
+                <div className={cn('mb-3 h-16 rounded-xl border border-white/70', item.colorClass)} />
+                <p className="truncate text-xs font-semibold text-slate-900">{item.name}</p>
                 <div className="mt-2 flex items-center justify-between gap-2">
-                  <span className="text-xs font-bold text-emerald-700">{product.price}</span>
+                  <span className="text-xs font-bold text-emerald-700">{item.price}</span>
                   <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600">
-                    Add
+                    {item.actionLabel}
                   </span>
                 </div>
               </div>
@@ -141,18 +245,23 @@ const WelcomeStoreMockup = () => (
 
           <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
             <div className="grid grid-cols-3 gap-2">
-              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-center text-[11px] font-semibold text-emerald-800">
-                WhatsApp
-              </span>
-              <span className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-2 text-center text-[11px] font-semibold text-sky-800">
-                Payments
-              </span>
-              <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-2 text-center text-[11px] font-semibold text-amber-800">
-                Delivery
-              </span>
+              {copy.mockBadges.map((badge) => (
+                <span
+                  key={badge}
+                  className={cn(
+                    'rounded-full border px-2.5 py-2 text-center text-[11px] font-semibold',
+                    badge === 'WhatsApp' && 'border-emerald-200 bg-emerald-50 text-emerald-800',
+                    badge === 'Payments' && 'border-sky-200 bg-sky-50 text-sky-800',
+                    (badge === 'Delivery' || badge === 'Booking') &&
+                      'border-amber-200 bg-amber-50 text-amber-800',
+                  )}
+                >
+                  {badge}
+                </span>
+              ))}
             </div>
             <div className="rounded-full bg-slate-900 px-4 py-2 text-center text-xs font-bold text-white">
-              Order now
+              {copy.mockCtaLabel}
             </div>
           </div>
         </div>
@@ -164,7 +273,7 @@ const WelcomeStoreMockup = () => (
         <div className="mx-auto mb-2 h-1 w-8 rounded-full bg-slate-300" />
         <div className="rounded-2xl bg-emerald-600 p-2 text-white">
           <ShoppingBag className="mb-6 h-4 w-4" aria-hidden />
-          <p className="text-[10px] font-bold leading-tight">3 new orders</p>
+          <p className="text-[10px] font-bold leading-tight">{copy.mockNotificationLabel}</p>
         </div>
         <div className="mt-2 space-y-1.5">
           <div className="h-2 rounded-full bg-slate-200" />
@@ -180,6 +289,18 @@ const WelcomeStoreMockup = () => (
  * @param {{ onStartSetup: () => void, onSeeHowItWorks?: () => void, className?: string }} props
  */
 const OnlineStoreWelcome = ({ onStartSetup, onSeeHowItWorks, className }) => {
+  const { activeTenant } = useAuth();
+
+  const isStudioLike = useMemo(
+    () => STUDIO_LIKE_TYPES.includes(activeTenant?.businessType || ''),
+    [activeTenant?.businessType],
+  );
+
+  const copy = useMemo(
+    () => (isStudioLike ? WELCOME_COPY.studio : WELCOME_COPY.product),
+    [isStudioLike],
+  );
+
   const handleSeeHowItWorks = () => {
     if (onSeeHowItWorks) {
       onSeeHowItWorks();
@@ -203,11 +324,11 @@ const OnlineStoreWelcome = ({ onStartSetup, onSeeHowItWorks, className }) => {
               Welcome to Online Store! 🎉
             </h1>
             <p className="mt-3 max-w-xl text-base leading-relaxed text-slate-600 sm:text-lg">
-              Set up your store in a few simple steps and start selling to customers online.
+              {copy.subtitle}
             </p>
 
             <ul className="mt-8 space-y-5">
-              {BENEFITS.map((benefit) => {
+              {copy.benefits.map((benefit) => {
                 const Icon = benefit.icon;
                 return (
                   <li key={benefit.title} className="flex gap-3.5">
@@ -258,7 +379,7 @@ const OnlineStoreWelcome = ({ onStartSetup, onSeeHowItWorks, className }) => {
           </div>
 
           <div id="store-welcome-preview" className="relative min-h-[320px] lg:min-h-[420px]">
-            <WelcomeStoreMockup />
+            <WelcomeStoreMockup copy={copy} />
           </div>
         </div>
 
@@ -267,7 +388,7 @@ const OnlineStoreWelcome = ({ onStartSetup, onSeeHowItWorks, className }) => {
           className="border-t border-slate-100 bg-slate-50/80 px-6 py-8 sm:px-8 lg:px-10"
         >
           <div className="grid gap-8 sm:grid-cols-2 xl:grid-cols-4">
-            {FEATURES.map((feature) => {
+            {copy.features.map((feature) => {
               const Icon = feature.icon;
               return (
                 <div key={feature.title} className="flex gap-3">

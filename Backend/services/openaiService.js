@@ -3,7 +3,7 @@ const { formatDecimal } = require('../utils/formatNumber');
 const { parseAiJsonResponse } = require('../utils/parseAiJsonResponse');
 const { buildReportAnalysisFallback } = require('../utils/reportAnalysisFallback');
 const { getTenantAnthropicApiKey } = require('./tenantAiSettingsService');
-const { normalizeAiProviderError } = require('../utils/aiProviderErrors');
+const { normalizeAiProviderError, classifyAiProviderError } = require('../utils/aiProviderErrors');
 
 let _anthropic = null;
 
@@ -103,8 +103,9 @@ const generateStoreBannerSvg = async ({
   }
 
   const model = 'claude-sonnet-4-5-20250929';
-  const anthropic = await requireAnthropic({ tenantId });
-  const system = `You create safe SVG storefront banner artwork for African Business Suite.
+  try {
+    const anthropic = await requireAnthropic({ tenantId });
+    const system = `You create safe SVG storefront banner artwork for African Business Suite.
 Return only a single complete SVG. No markdown, no commentary, no scripts, no external images, no foreignObject, no embedded fonts, no clickable links.
 Canvas: ${STORE_BANNER_WIDTH}x${STORE_BANNER_HEIGHT}. Use flat vector design with simple shapes, gradients, patterns, and optional short readable text. Do not imitate protected brands or include real people.`;
   const userPrompt = `Create a polished online storefront hero/banner SVG.
@@ -135,6 +136,9 @@ Make it appropriate for a public ecommerce storefront, with good contrast and no
     width: STORE_BANNER_WIDTH,
     height: STORE_BANNER_HEIGHT
   };
+  } catch (error) {
+    normalizeAiProviderError(error);
+  }
 };
 
 /**
@@ -351,8 +355,12 @@ Be specific, actionable, and data-driven. Use the actual numbers from the report
       analysis: normalizeReportAnalysis(parsed.value)
     };
   } catch (error) {
-    if (error.code === 'OPENAI_NOT_CONFIGURED' || error.status === 401 || error.code === 'invalid_api_key') {
+    if (error.aiProviderError) {
       throw error;
+    }
+    const classified = classifyAiProviderError(error);
+    if (classified) {
+      normalizeAiProviderError(error);
     }
     console.error('Error in AI report analysis:', {
       message: error.message,
@@ -367,8 +375,7 @@ Be specific, actionable, and data-driven. Use the actual numbers from the report
         endDate: options.endDate,
         period: options.period
       }),
-      usedFallback: true,
-      aiError: error.message
+      usedFallback: true
     };
   }
 };
@@ -478,6 +485,7 @@ Formatting rules:
 };
 
 const draftAutomationRule = async ({ instruction, businessType = 'printing_press', suggestionsContext = {}, tenantId = null }) => {
+  try {
   const allowedTriggers = ['invoice_due_in_days', 'invoice_overdue', 'low_stock_detected', 'quote_no_response', 'customer_inactive_days'];
   const allowedActions = ['create_task', 'send_email_platform', 'send_sms', 'send_whatsapp'];
   const system = `You draft automation rules for African Business Suite. Return only JSON. Never enable a rule or execute actions. Use only allowed trigger/action values.`;
@@ -529,6 +537,9 @@ For WhatsApp actions, use template messages only and set "category" to "transact
     enabled: false,
     explanation: String(parsed.explanation || 'Review and save this draft before enabling it.')
   };
+  } catch (error) {
+    normalizeAiProviderError(error);
+  }
 };
 
 module.exports = {

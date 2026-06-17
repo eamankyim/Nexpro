@@ -13,7 +13,7 @@ const {
 
 const ONLINE_STORE_SOURCE = 'online_store';
 const DEFAULT_CURRENCY = 'GHS';
-const DEFAULT_COMMISSION_PERCENT = 5;
+const DEFAULT_COMMISSION_PERCENT = 1;
 const DEFAULT_AUTO_RELEASE_HOURS = 72;
 
 const money = (value) => Number((Number.parseFloat(value || 0) || 0).toFixed(2));
@@ -1009,6 +1009,8 @@ const listPayoutHistory = async ({ tenantId, shopId = null, includeLegacyShopNul
 
 module.exports = {
   calculateMarketplaceFee,
+  getCommissionFixedAmount,
+  getCommissionPercent,
   getAutoReleaseHours,
   getReleaseEligibleAt,
   recordHeldPaymentForSale,

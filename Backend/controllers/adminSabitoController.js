@@ -18,6 +18,8 @@ const {
 } = require('../models');
 const {
   getAutoReleaseHours,
+  getCommissionFixedAmount,
+  getCommissionPercent,
   releaseMarketplaceOrderPayment,
 } = require('../services/tradeAssuranceService');
 const {
@@ -711,8 +713,8 @@ exports.getSabitoSettings = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: {
-        commissionPercent: Number.parseFloat(process.env.SABITO_MARKETPLACE_COMMISSION_PERCENT || '5'),
-        fixedFeeAmount: Number.parseFloat(process.env.SABITO_MARKETPLACE_COMMISSION_FIXED_FEE || '0'),
+        commissionPercent: getCommissionPercent(),
+        fixedFeeAmount: getCommissionFixedAmount(),
         autoReleaseHours: getAutoReleaseHours(),
         currency: process.env.SABITO_MARKETPLACE_CURRENCY || 'GHS',
         editable: false,

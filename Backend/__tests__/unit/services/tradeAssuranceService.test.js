@@ -45,14 +45,28 @@ describe('tradeAssuranceService', () => {
   });
 
   it('calculates Sabito commission and seller net amount', () => {
-    const result = calculateMarketplaceFee(200, { percent: 5, fixedAmount: 1 });
+    const result = calculateMarketplaceFee(200, { percent: 1, fixedAmount: 1 });
 
     expect(result).toEqual({
       grossAmount: 200,
-      feeAmount: 11,
-      netAmount: 189,
-      commissionPercent: 5,
+      feeAmount: 3,
+      netAmount: 197,
+      commissionPercent: 1,
       fixedFeeAmount: 1,
+    });
+  });
+
+  it('uses the configured default commission percent when options are omitted', () => {
+    delete process.env.SABITO_MARKETPLACE_COMMISSION_PERCENT;
+    jest.resetModules();
+    const { calculateMarketplaceFee: calculateFee } = require('../../../services/tradeAssuranceService');
+
+    expect(calculateFee(100)).toEqual({
+      grossAmount: 100,
+      feeAmount: 1,
+      netAmount: 99,
+      commissionPercent: 1,
+      fixedFeeAmount: 0,
     });
   });
 

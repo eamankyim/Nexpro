@@ -8,6 +8,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import assistantService from '@/services/assistantService';
 import { generatePDF } from '@/utils/pdfUtils';
 import { showError, showSuccess } from '@/utils/toast';
+import { getAiProviderErrorMessage } from '@/utils/aiProviderErrors';
 import { cn } from '@/lib/utils';
 import { formatAssistantMessage } from '@/utils/assistantMessageFormatter';
 import {
@@ -124,8 +125,14 @@ export default function AskAI() {
       setMessages((prev) => [...prev, { role: 'assistant', content }]);
       requestAnimationFrame(scrollToBottom);
     } catch (err) {
-      showError(err, 'Failed to get AI response');
-      setMessages((prev) => prev.slice(0, -1));
+      const aiMessage = getAiProviderErrorMessage(err);
+      if (aiMessage) {
+        setMessages((prev) => [...prev, { role: 'assistant', content: aiMessage }]);
+        requestAnimationFrame(scrollToBottom);
+      } else {
+        showError(err, 'Failed to get AI response');
+        setMessages((prev) => prev.slice(0, -1));
+      }
     } finally {
       setLoading(false);
     }

@@ -5,6 +5,7 @@ jest.mock('../../../services/tenantAiSettingsService', () => ({
 const { getTenantAnthropicApiKey } = require('../../../services/tenantAiSettingsService');
 const {
   assertAiProviderConfigured,
+  AI_PROVIDER_USER_MESSAGES,
   buildBillingCircuitError,
   classifyAiProviderError,
   clearBillingCircuit,
@@ -40,8 +41,10 @@ describe('aiProviderErrors', () => {
     expect(classified).toMatchObject({
       statusCode: 402,
       errorCode: 'AI_PROVIDER_BILLING_REQUIRED',
+      message: AI_PROVIDER_USER_MESSAGES.AI_PROVIDER_BILLING_REQUIRED,
     });
     expect(classified.message).not.toMatch(/anthropic api key/i);
+    expect(classified.message).not.toMatch(/plans & billing/i);
   });
 
   it('detects billing credit errors from nested provider payloads', () => {

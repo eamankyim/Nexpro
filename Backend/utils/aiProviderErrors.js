@@ -1,5 +1,17 @@
 const { getTenantAnthropicApiKey } = require('../services/tenantAiSettingsService');
 
+/** Short, user-facing copy for AI provider failures (no raw provider text). */
+const AI_PROVIDER_USER_MESSAGES = {
+  AI_PROVIDER_BILLING_REQUIRED:
+    'Platform AI credit is finished. Set up AI credit or add your AI API key in Settings.',
+  OPENAI_NOT_CONFIGURED:
+    'AI is not set up yet. Add your AI API key in Settings → Operations.',
+  OPENAI_INVALID_KEY:
+    'Your AI API key is invalid. Update it in Settings → Operations.',
+  AI_PROVIDER_UNAVAILABLE:
+    'AI is temporarily unavailable. Try again in a moment.',
+};
+
 const DEFAULT_BILLING_CIRCUIT_TTL_MS = Math.max(
   5000,
   Number.parseInt(process.env.AI_BILLING_CIRCUIT_TTL_MS || '60000', 10) || 60000
@@ -67,7 +79,7 @@ const classifyAiProviderError = (error) => {
     return {
       statusCode: 503,
       errorCode: 'OPENAI_NOT_CONFIGURED',
-      message: 'AI assistant is not configured. Set ANTHROPIC_API_KEY in the backend .env to enable.',
+      message: AI_PROVIDER_USER_MESSAGES.OPENAI_NOT_CONFIGURED,
     };
   }
 
@@ -75,7 +87,7 @@ const classifyAiProviderError = (error) => {
     return {
       statusCode: 503,
       errorCode: 'OPENAI_INVALID_KEY',
-      message: 'Invalid Anthropic API key. Check the workspace AI key or ANTHROPIC_API_KEY in Backend/.env.',
+      message: AI_PROVIDER_USER_MESSAGES.OPENAI_INVALID_KEY,
     };
   }
 
@@ -83,7 +95,7 @@ const classifyAiProviderError = (error) => {
     return {
       statusCode: 402,
       errorCode: 'AI_PROVIDER_BILLING_REQUIRED',
-      message: 'AI assistant is temporarily unavailable because provider billing limits were reached. Please try again later or contact support.',
+      message: AI_PROVIDER_USER_MESSAGES.AI_PROVIDER_BILLING_REQUIRED,
     };
   }
 
@@ -91,7 +103,7 @@ const classifyAiProviderError = (error) => {
     return {
       statusCode: 503,
       errorCode: 'AI_PROVIDER_UNAVAILABLE',
-      message: 'AI assistant is temporarily unavailable. Please try again in a moment.',
+      message: AI_PROVIDER_USER_MESSAGES.AI_PROVIDER_UNAVAILABLE,
     };
   }
 
@@ -169,7 +181,7 @@ const assertAiProviderConfigured = async (tenantId) => {
     return;
   }
 
-  const error = new Error('AI assistant is not configured. Set ANTHROPIC_API_KEY in the backend .env to enable.');
+  const error = new Error(AI_PROVIDER_USER_MESSAGES.OPENAI_NOT_CONFIGURED);
   error.statusCode = 503;
   error.errorCode = 'OPENAI_NOT_CONFIGURED';
   error.code = 'OPENAI_NOT_CONFIGURED';
@@ -180,6 +192,7 @@ const assertAiProviderConfigured = async (tenantId) => {
 const toDurationMs = (start) => Number((process.hrtime.bigint() - start) / 1000000n);
 
 module.exports = {
+  AI_PROVIDER_USER_MESSAGES,
   DEFAULT_BILLING_CIRCUIT_TTL_MS,
   assertAiProviderConfigured,
   buildBillingCircuitError,

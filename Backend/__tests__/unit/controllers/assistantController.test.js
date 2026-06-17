@@ -142,7 +142,9 @@ describe('assistantController.chat', () => {
       errorCode: 'AI_PROVIDER_BILLING_REQUIRED',
       code: 'AI_PROVIDER_BILLING_REQUIRED',
     });
-    expect(res.body.error).toMatch(/temporarily unavailable/i);
+    expect(res.body.error).toBe(
+      'Platform AI credit is finished. Set up AI credit or add your AI API key in Settings.'
+    );
     expect(next).not.toHaveBeenCalled();
   });
 

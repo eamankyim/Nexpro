@@ -2216,18 +2216,18 @@ exports.generateBanner = async (req, res, next) => {
       },
     });
   } catch (error) {
-    if (error.code === 'OPENAI_NOT_CONFIGURED') {
-      return res.status(503).json({
+    const { classifyAiProviderError } = require('../utils/aiProviderErrors');
+    const classified = classifyAiProviderError(error);
+    if (classified || error.aiProviderError) {
+      const errorCode = classified?.errorCode || error.errorCode || error.code;
+      const message = classified?.message || error.message;
+      const statusCode = classified?.statusCode || error.statusCode || 503;
+      return res.status(statusCode).json({
         success: false,
-        message: 'AI banner generation is not configured. Set ANTHROPIC_API_KEY or a tenant AI key to enable it.',
-        code: 'OPENAI_NOT_CONFIGURED',
-      });
-    }
-    if (error.status === 401 || error.code === 'invalid_api_key') {
-      return res.status(503).json({
-        success: false,
-        message: 'Invalid Anthropic API key. Check the workspace AI key or ANTHROPIC_API_KEY in Backend/.env.',
-        code: 'OPENAI_INVALID_KEY',
+        message,
+        error: message,
+        code: errorCode,
+        errorCode,
       });
     }
     if (error.code === 'AI_IMAGE_INVALID_OUTPUT') {

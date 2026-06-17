@@ -20,6 +20,7 @@ import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
 import { logger } from '@/utils/logger';
 import { SHOP_TYPES } from '@/constants';
+import { getAiProviderErrorMessage } from '@/utils/aiProviderErrors';
 import {
   ASSISTANT_BUSINESS_PROMPTS,
   ASSISTANT_DRAFT_PROMPTS,
@@ -205,13 +206,15 @@ export default function ChatScreen() {
           (err as Error)?.message ??
           'Failed to get response';
         const errorCode = responseData?.errorCode || responseData?.code;
-        logger.warn('Assistant', 'perf:send_failed', { tapAt, errorCode, msg });
+        const aiMessage = getAiProviderErrorMessage(err);
+        const content = aiMessage || `Sorry, I couldn't process that. ${msg}`;
+        logger.warn('Assistant', 'perf:send_failed', { tapAt, errorCode, msg: content });
         setMessages((prev) => [
           ...prev,
           {
             id: `e-${Date.now()}`,
             role: 'assistant',
-            content: `Sorry, I couldn't process that. ${msg}`,
+            content,
           },
         ]);
       } finally {

@@ -280,3 +280,29 @@ Use the same domains in `CORS_ORIGIN`, `FRONTEND_URL`, and `VITE_API_URL` as nee
 ---
 
 You now have **Backend**, **Frontend**, and **Marketing Site** deployed as three separate Vercel projects.
+
+---
+
+## 10. Contabo VPS — sabitostore.com
+
+When the API runs on the Contabo VPS (`~/nexpro`) and the storefront is served at **sabitostore.com**, use the server-side config script after pulling code or when domains change:
+
+```bash
+cd ~/nexpro
+./scripts/configure-sabitostore-production.sh
+```
+
+The script backs up `Backend/.env`, sets `STOREFRONT_URL`, `FRONTEND_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, merges required origins into `CORS_ORIGIN`, writes `Frontend/.env.production` and `storefront/.env.production` (including `VITE_GOOGLE_CLIENT_ID`), restarts `nexpro-backend` (systemd, or pm2 fallback), and curls `/health`.
+
+| Flag | Effect |
+|------|--------|
+| `--env-only` | Update env files only (no restart, no build) |
+| `--build` | Also `npm install`, `npm run migrate`, build Frontend + storefront |
+| `--restart` | Restart backend (default unless `--env-only`) |
+| `--storefront-url=…` | Override storefront origin (default `https://sabitostore.com`) |
+| `--frontend-url=…` | Override dashboard origin (default `https://myapp.africanbusinesssuite.com`) |
+| `--api-url=…` | Override API origin (default `https://api.africanbusinesssuite.com`) |
+| `--google-client-id=…` | Google OAuth Web client ID (default: production ABS + Sabito client) |
+| `--google-client-secret=…` | Google OAuth client secret (Backend `.env` only) |
+
+Run `./scripts/configure-sabitostore-production.sh --help` for full usage.

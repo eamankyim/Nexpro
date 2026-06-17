@@ -1298,7 +1298,8 @@ const StoreSetup = () => {
     moveToStep(0, { introDismissed: true, replace: true });
   }, [moveToStep]);
 
-  const loadStore = useCallback(async () => {
+  const loadStore = useCallback(async ({ force = false } = {}) => {
+    const preserveInProgressValues = !force && draftInitializedRef.current;
     setLoading(true);
     try {
       const [settingsResponse, statusResponse, organizationResponse, profileResponse] = await Promise.allSettled([
@@ -1321,7 +1322,7 @@ const StoreSetup = () => {
         organization,
         profile,
       });
-      const savedPaymentMethods = resolvePaymentMethods(metadata.paymentMethods, paymentCollection);
+      const savedPaymentMethods = resolvePaymentMethods(metadata.paymentMethods);
       const savedDeliveryOptions = mergeOptions(defaultDeliveryOptions, {
         ...metadata.deliveryOptions,
         localDelivery: metadata.deliveryOptions?.localDelivery || {
@@ -1373,7 +1374,7 @@ const StoreSetup = () => {
         currency: resolveStoreCurrency(nextSettings?.currency, inferredDefaults.currency),
         paymentMethods: nextSettings?.id
           ? savedPaymentMethods
-          : resolvePaymentMethods(inferredDefaults.paymentMethods, paymentCollection),
+          : resolvePaymentMethods(inferredDefaults.paymentMethods),
         deliveryOptions: nextSettings?.id ? savedDeliveryOptions : inferredDefaults.deliveryOptions,
         deliveryFee: Number(nextSettings?.deliveryFee || inferredDefaults.deliveryFee || 0),
         localDeliveryAreas: savedOrDefault(metadata.localDeliveryAreas, inferredDefaults.localDeliveryAreas),
@@ -1389,7 +1390,7 @@ const StoreSetup = () => {
       if (nextSettings?.id && localDraft && !shouldRestoreLocalDraft) {
         clearStoreSetupDraft(storeSetupDraftKey);
       }
-      const restoredValues = localDraftValues
+      let restoredValues = localDraftValues
         ? mergeStoreSetupDraftValues(baseValues, localDraftValues)
         : baseValues;
 
@@ -1397,7 +1398,19 @@ const StoreSetup = () => {
         slugEditedRef.current = localDraft.slugManuallyEdited === true;
       }
 
+      if (preserveInProgressValues) {
+        restoredValues = mergeStoreSetupDraftValues(
+          restoredValues,
+          sanitizeStoreSetupDraftValues(form.getValues()),
+        );
+      }
+
       form.reset(restoredValues);
+
+      if (preserveInProgressValues) {
+        draftInitializedRef.current = true;
+        return;
+      }
 
       if (nextSettings?.id) {
         const savedStep = clampStepIndex(metadata.setupProgress?.currentStep || 0);
@@ -1432,7 +1445,7 @@ const StoreSetup = () => {
     } finally {
       setLoading(false);
     }
-  }, [activeTenant, form, paymentCollection, storeSetupDraftKey, user]);
+  }, [activeTenant, form, storeSetupDraftKey, user]);
 
   useEffect(() => {
     loadStore();
@@ -1704,7 +1717,7 @@ const StoreSetup = () => {
       setSettings(savedSettings);
       setBannerGeneratorOpen(false);
       showSuccess('AI banner saved');
-      await loadStore();
+      await loadStore({ force: true });
     } catch (error) {
       showError(getErrorMessage(error, 'Failed to save AI banner'));
     } finally {
@@ -1747,7 +1760,7 @@ const StoreSetup = () => {
       if (launch) {
         navigate('/store/dashboard');
       } else {
-        await loadStore();
+        await loadStore({ force: true });
       }
     } catch (error) {
       showError(getErrorMessage(error, 'Failed to save store setup'));

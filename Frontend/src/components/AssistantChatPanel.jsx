@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import assistantService from '@/services/assistantService';
 import { showError } from '@/utils/toast';
+import { getAiProviderErrorMessage } from '@/utils/aiProviderErrors';
 import { cn } from '@/lib/utils';
 import { formatAssistantMessage } from '@/utils/assistantMessageFormatter';
 import {
@@ -90,8 +91,17 @@ export default function AssistantChatPanel({ open, onOpenChange, pageContext }) 
       ]);
       scrollToBottom();
     } catch (err) {
-      showError(err, 'Failed to get a response. Please try again.');
-      setMessages((prev) => prev.slice(0, -1));
+      const aiMessage = getAiProviderErrorMessage(err);
+      if (aiMessage) {
+        setMessages((prev) => [
+          ...prev,
+          { role: 'assistant', content: aiMessage },
+        ]);
+        scrollToBottom();
+      } else {
+        showError(err, 'Failed to get a response. Please try again.');
+        setMessages((prev) => prev.slice(0, -1));
+      }
     } finally {
       setLoading(false);
     }
