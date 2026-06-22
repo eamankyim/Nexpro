@@ -150,6 +150,7 @@ const quoteItemSchema = z.object({
   quantity: integerOrEmptySchema(z, 1).refine((v) => v >= 1, 'Quantity must be at least 1'),
   unitPrice: numberOrEmptySchema(z),
   discountAmount: numberOrEmptySchema(z),
+  metadata: z.record(z.any()).optional(),
 });
 
 const quickCustomerSchema = z.object({
@@ -817,7 +818,8 @@ const Quotes = () => {
         description: item.description,
         quantity: Number(item.quantity || 0),
         unitPrice: Number(item.unitPrice || 0),
-        discountAmount: Number(item.discountAmount || 0)
+        discountAmount: Number(item.discountAmount || 0),
+        ...(item.metadata && Object.keys(item.metadata).length > 0 ? { metadata: item.metadata } : {}),
       }))
     };
     if (organization.tax?.enabled && values.taxRate !== undefined && values.taxRate !== '') {
@@ -1779,6 +1781,12 @@ const Quotes = () => {
                                 onProductSelect={(product) => {
                                   form.setValue(`items.${index}.description`, product.name || '');
                                   form.setValue(`items.${index}.unitPrice`, parseFloat(product.sellingPrice || 0));
+                                  if (product.unit) {
+                                    form.setValue(`items.${index}.metadata`, {
+                                      ...(form.getValues(`items.${index}.metadata`) || {}),
+                                      unit: product.unit,
+                                    });
+                                  }
                                 }}
                               />
                             </FormControl>

@@ -15,6 +15,7 @@ import customerService from '../services/customerService';
 import invoiceService from '../services/invoiceService';
 import settingsService from '../services/settingsService';
 import { mergeBranchOrganization } from '../utils/branchOrganization';
+import { getSalePartyLabel, getSalePartyDetails, isDealerSale } from '../utils/saleParty';
 import productService from '../services/productService';
 import { useAuth } from '../context/AuthContext';
 import { useShopOptional } from '../context/ShopContext';
@@ -586,10 +587,10 @@ const Sales = () => {
     },
     {
       key: 'customer',
-      label: 'Customer',
+      label: 'Customer / Dealer',
       render: (_, record) => (
         <span className="text-foreground">
-          {record.customer?.name || 'Walk-in Customer'}
+          {getSalePartyLabel(record)}
         </span>
       )
     },
@@ -679,18 +680,25 @@ const Sales = () => {
   const drawerFields = useMemo(() => viewingSale ? [
     { label: 'Sale Number', value: viewingSale.saleNumber },
     {
-      label: 'Customer',
-      value: viewingSale.customer ? (
-        <div>
-          <div className="font-medium">{viewingSale.customer.name}</div>
-          {viewingSale.customer.company && (
-            <div className="text-muted-foreground text-sm">{viewingSale.customer.company}</div>
-          )}
-          {viewingSale.customer.phone && (
-            <div className="text-muted-foreground text-sm">{viewingSale.customer.phone}</div>
-          )}
-        </div>
-      ) : 'Walk-in Customer'
+      label: isDealerSale(viewingSale) ? 'Dealer' : 'Customer',
+      value: (() => {
+        const party = getSalePartyDetails(viewingSale);
+        if (party.type === 'walk_in') return 'Walk-in Customer';
+        return (
+          <div>
+            <div className="font-medium">{party.name}</div>
+            {party.company && (
+              <div className="text-muted-foreground text-sm">{party.company}</div>
+            )}
+            {party.phone && (
+              <div className="text-muted-foreground text-sm">{party.phone}</div>
+            )}
+            {party.email && (
+              <div className="text-muted-foreground text-sm">{party.email}</div>
+            )}
+          </div>
+        );
+      })()
     },
     {
       label: 'Status',

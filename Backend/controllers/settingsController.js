@@ -1,6 +1,6 @@
 const path = require('path');
 const fs = require('fs');
-const { Setting, User, Tenant } = require('../models');
+const { Setting, User, Tenant, UserTenant } = require('../models');
 
 /** Align with admin / billing plan ids (trial, starter, professional, enterprise). */
 const SUBSCRIPTION_PLAN_ALIASES = {
@@ -37,7 +37,8 @@ const {
   getOrganizationSettingsCacheKey,
   getNotificationChannelsCacheKey,
   invalidateAuthBootstrapCache,
-  invalidateCache
+  invalidateCache,
+  invalidateTenantMembershipCache,
 } = require('../middleware/cache');
 
 /** In-memory cache for payment integration OTP (best-effort); source of truth is DB for serverless safety. */
@@ -1566,6 +1567,70 @@ exports.updateCustomerNotificationPreferences = async (req, res, next) => {
         sendPaymentReminderEmail: updated.sendPaymentReminderEmail === true,
         sendInvoicePaidConfirmationToCustomer: updated.sendInvoicePaidConfirmationToCustomer !== false
       }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get per-user sidebar visibility preferences for the active workspace
+// @route   GET /api/settings/sidebar-preferences
+// @access  Private
+exports.getSidebarPreferences = async (req, res, next) => {
+  try {
+    const {
+      getSidebarPreferences: buildSidebarPreferences,
+    } = require('../services/sidebarPreferenceHelper');
+    const membership = req.tenantMembership;
+    if (!membership) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tenant membership required',
+      });
+    }
+    res.status(200).json({
+      success: true,
+      data: buildSidebarPreferences(membership),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update per-user sidebar visibility preferences for the active workspace
+// @route   PATCH /api/settings/sidebar-preferences
+// @access  Private
+exports.updateSidebarPreferences = async (req, res, next) => {
+  try {
+    const {
+      sanitizeHiddenSidebarKeys,
+      getSidebarPreferences: buildSidebarPreferences,
+    } = require('../services/sidebarPreferenceHelper');
+    const membership = req.tenantMembership;
+    if (!membership) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tenant membership required',
+      });
+    }
+
+    const { hiddenSidebarKeys } = sanitizePayload(req.body || {});
+    const sanitized = sanitizeHiddenSidebarKeys(hiddenSidebarKeys);
+    const metadata =
+      membership.metadata && typeof membership.metadata === 'object'
+        ? { ...membership.metadata }
+        : {};
+    metadata.hiddenSidebarKeys = sanitized;
+
+    await UserTenant.update(
+      { metadata },
+      { where: { id: membership.id, userId: req.user.id, tenantId: req.tenantId } }
+    );
+    invalidateTenantMembershipCache(req.user.id, req.tenantId);
+
+    res.status(200).json({
+      success: true,
+      data: buildSidebarPreferences({ metadata }),
     });
   } catch (error) {
     next(error);

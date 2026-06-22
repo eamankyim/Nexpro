@@ -1,7 +1,9 @@
-const { Sale, SaleItem, Product, ProductVariant, Customer, Shop, Invoice, User, SaleActivity, Tenant, Payment, Setting } = require('../models');
+const { Sale, SaleItem, Product, ProductVariant, Customer, Dealer, Shop, Invoice, User, SaleActivity, Tenant, Payment, Setting } = require('../models');
 const { createInvoiceRevenueJournal } = require('../services/invoiceAccountingService');
 const { updateCustomerBalance } = require('../services/customerBalanceService');
 const { syncSaleInvoiceAndRefreshCustomerBalance } = require('../services/invoiceSaleService');
+const { checkCreditLimit } = require('../services/dealerBalanceService');
+const { recordSaleCharge } = require('../services/dealerLedgerService');
 const { createSaleCogsJournal, createSaleRevenueJournal } = require('../services/saleAccountingService');
 const { Op } = require('sequelize');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
@@ -240,6 +242,17 @@ const generateInvoiceNumber = async (tenantId) => {
 // Helper function to automatically create invoice for ALL completed sales
 // Credit sales: invoice status 'sent' (pay later)
 // Cash/card/etc: invoice status 'paid' (immediate payment - acts as receipt)
+const isDealerSale = (saleOrData) => {
+  const channel = String(saleOrData?.saleChannel || '').toLowerCase();
+  return channel === 'dealer' || !!saleOrData?.dealerId;
+};
+
+const dealerReceiptInclude = {
+  model: Dealer,
+  as: 'dealer',
+  attributes: ['id', 'businessName', 'contactName', 'phone', 'email', 'creditLimit', 'balance'],
+};
+
 const autoCreateInvoiceFromSale = async (saleId, tenantId) => {
   try {
     console.log(`[AutoInvoice] Starting invoice creation for saleId: ${saleId}, tenantId: ${tenantId}`);
@@ -251,12 +264,18 @@ const autoCreateInvoiceFromSale = async (saleId, tenantId) => {
     const sale = await Sale.findByPk(saleId, {
       include: [
         { model: Customer, as: 'customer' },
+        dealerReceiptInclude,
         { model: SaleItem, as: 'items' }
       ]
     });
 
     if (!sale) {
       console.log(`[AutoInvoice] Sale ${saleId} not found, cannot create invoice`);
+      return null;
+    }
+
+    if (isDealerSale(sale)) {
+      console.log(`[AutoInvoice] Skipping invoice for dealer sale ${saleId}`);
       return null;
     }
 
@@ -423,6 +442,7 @@ const fetchSaleWithReceiptRelations = (saleId) => Sale.findByPk(saleId, {
   include: [
     { model: Shop, as: 'shop' },
     { model: Customer, as: 'customer' },
+    dealerReceiptInclude,
     { model: User, as: 'seller' },
     {
       model: Invoice,
@@ -439,6 +459,8 @@ const SALE_RESPONSE_ATTRIBUTES = [
   'tenantId',
   'shopId',
   'customerId',
+  'dealerId',
+  'saleChannel',
   'saleNumber',
   'status',
   'orderStatus',
@@ -609,6 +631,8 @@ const buildLightweightSaleResponse = (sale, items = []) => {
     tenantId: plainSale.tenantId,
     shopId: plainSale.shopId || null,
     customerId: plainSale.customerId || null,
+    dealerId: plainSale.dealerId || null,
+    saleChannel: plainSale.saleChannel || 'retail',
     saleNumber: plainSale.saleNumber,
     status: plainSale.status,
     orderStatus: plainSale.orderStatus || null,
@@ -732,7 +756,7 @@ const runPostSaleAutomation = async ({ sale, items, tenantId, userId, isRestaura
       }
     }
 
-    if (sale.status === 'completed' && sale.customerId) {
+    if (sale.status === 'completed' && sale.customerId && !isDealerSale(sale)) {
       mark('invoice:start');
       try {
         console.log(`[CreateSale] Attempting to auto-create invoice for sale ${sale.id}`);
@@ -857,6 +881,7 @@ exports.getSales = async (req, res, next) => {
     const baseInclude = [
       { model: Shop, as: 'shop', attributes: ['id', 'name'] },
       { model: Customer, as: 'customer', attributes: ['id', 'name', 'phone'] },
+      dealerReceiptInclude,
       { model: User, as: 'seller', attributes: ['id', 'name'] },
       { model: Invoice, as: 'invoice', attributes: ['id', 'status'], required: false },
       {
@@ -972,6 +997,7 @@ exports.getSale = async (req, res, next) => {
       include: [
         { model: Shop, as: 'shop' },
         { model: Customer, as: 'customer' },
+        dealerReceiptInclude,
         { model: User, as: 'seller' },
         {
           model: Invoice,
@@ -1066,13 +1092,72 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
   const isRestaurant = isRestaurantTenant(tenant);
   const saleStatus = saleData.status || 'completed';
   const paymentMethod = saleData.paymentMethod || 'cash';
-  if (isCreditInvoiceRequiredForSale({ paymentMethod, status: saleStatus, total, amountPaid }) && !saleData.customerId) {
+  const saleChannel = saleData.saleChannel || (saleData.dealerId ? 'dealer' : 'retail');
+  const isDealerChannel = saleChannel === 'dealer' || !!saleData.dealerId;
+  const priorMeta = saleData.metadata && typeof saleData.metadata === 'object' ? saleData.metadata : {};
+  let dealerChargeToAccount = 0;
+  let dealer = null;
+
+  if (isDealerChannel) {
+    if (!saleData.dealerId) {
+      throw new Error('Dealer is required for dealer sales');
+    }
+    const saleShopId = saleData.shopId || null;
+    const dealerWhereClause = applyTenantFilter(tenantId, {
+      id: saleData.dealerId,
+      isActive: true,
+      ...(saleShopId ? { shopId: saleShopId } : {}),
+    });
+    dealer = await Dealer.findOne({
+      where: dealerWhereClause,
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!dealer) {
+      throw new Error('Dealer not found or inactive for this branch');
+    }
+
+    const chargeToAccount = saleData.chargeToAccount != null
+      ? Math.max(0, parseFloat(saleData.chargeToAccount) || 0)
+      : Math.max(0, Math.round((total - amountPaid) * 100) / 100);
+
+    if (chargeToAccount > total + 0.001) {
+      throw new Error('Charge to account cannot exceed sale total');
+    }
+    if (Math.abs((amountPaid + chargeToAccount) - total) > 0.02) {
+      throw new Error('Amount paid plus charge to account must equal sale total');
+    }
+
+    const creditOverride = saleData.creditOverride === true
+      || priorMeta.creditOverride === true;
+    const creditCheck = checkCreditLimit(dealer, chargeToAccount, creditOverride);
+    if (!creditCheck.allowed) {
+      throw new Error('Sale exceeds dealer credit limit');
+    }
+    saleData.dealerId = dealer.id;
+    saleData.saleChannel = 'dealer';
+    saleData.customerId = null;
+    dealerChargeToAccount = chargeToAccount;
+  }
+
+  if (
+    isCreditInvoiceRequiredForSale({
+      paymentMethod,
+      status: saleStatus,
+      total,
+      amountPaid,
+      saleChannel: saleData.saleChannel,
+      dealerId: saleData.dealerId,
+    })
+    && !saleData.customerId
+  ) {
     throw new Error('Customer is required for credit or partially unpaid sales');
   }
   const sendToKitchen = saleData.sendToKitchen !== false;
   const orderStatus = isRestaurant && sendToKitchen ? 'received' : null;
 
-  const priorMeta = saleData.metadata && typeof saleData.metadata === 'object' ? saleData.metadata : {};
+  delete saleData.chargeToAccount;
+  delete saleData.creditOverride;
   timer?.mark('sale-insert:start');
   const sale = await Sale.create({
     ...saleData,
@@ -1093,6 +1178,10 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
     orderStatus,
     metadata: {
       ...priorMeta,
+      ...(isDealerChannel ? {
+        dealerChargeToAccount: dealerChargeToAccount,
+        dealerSettlement: priorMeta.dealerSettlement || (dealerChargeToAccount >= total ? 'account' : amountPaid <= 0 ? 'account' : 'split'),
+      } : {}),
       taxDetail: {
         ratePercent: taxConfig.enabled ? taxConfig.defaultRatePercent : 0,
         pricesAreTaxInclusive: taxConfig.pricesAreTaxInclusive,
@@ -1167,6 +1256,25 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
   timer?.mark('stock-variants-update:end', { variantCount: updatedVariantCount });
   timer?.mark('items-and-stock:end', { itemCount: resolvedItems.length });
 
+  if (isDealerChannel && dealerChargeToAccount > 0) {
+    await recordSaleCharge({
+      tenantId,
+      dealerId: sale.dealerId,
+      shopId: sale.shopId || dealer.shopId || saleData.shopId || null,
+      amount: dealerChargeToAccount,
+      saleId: sale.id,
+      description: `Sale ${saleNumber} charged to account`,
+      entryDate: sale.createdAt || new Date(),
+      createdBy: userId || null,
+      metadata: {
+        saleNumber,
+        amountPaid,
+        chargeToAccount: dealerChargeToAccount,
+      },
+      transaction,
+    });
+  }
+
   return { sale, items: createdItems };
 };
 
@@ -1194,6 +1302,7 @@ const getSaleOutstandingBalance = (sale) => {
 
 const isCreditInvoiceRequiredForSale = (sale) => {
   if (!sale) return false;
+  if (isDealerSale(sale)) return false;
   const paymentMethod = String(sale.paymentMethod || 'cash').toLowerCase();
   const status = String(sale.status || '').toLowerCase();
   const outstandingBalance = getSaleOutstandingBalance(sale);
@@ -1353,10 +1462,10 @@ exports.batchSyncSales = async (req, res, next) => {
       await ensureRequiredCreditSaleInvoice(sale, req.tenantId, 'BatchSyncSales');
       try {
         if (sale.status === 'completed') {
-          if (sale.customerId) {
+          if (sale.customerId && !isDealerSale(sale)) {
             await autoCreateInvoiceFromSale(sale.id, req.tenantId);
           } else {
-            console.log(`[batchSyncSales] Skipping auto-invoice for walk-in sale ${sale.id}`);
+            console.log(`[batchSyncSales] Skipping auto-invoice for walk-in or dealer sale ${sale.id}`);
           }
           await createSaleRevenueJournal(req.tenantId, sale.id, req.user?.id);
           await createSaleCogsJournal(req.tenantId, sale.id, req.user?.id);
@@ -1498,7 +1607,9 @@ exports.updateSale = async (req, res, next) => {
         paymentMethod: sale.paymentMethod,
         status: updateData.status,
         total: sale.total,
-        amountPaid: sale.amountPaid
+        amountPaid: sale.amountPaid,
+        saleChannel: sale.saleChannel,
+        dealerId: sale.dealerId,
       };
       if (isCreditInvoiceRequiredForSale(candidateSale) && !sale.customerId) {
         await transaction.rollback();
@@ -1607,7 +1718,7 @@ exports.updateSale = async (req, res, next) => {
     }
 
     if (updateData.status === 'completed') {
-      if (!sale.invoiceId) {
+      if (!sale.invoiceId && !isDealerSale(sale)) {
         try {
           console.log(`[UpdateSale] Attempting to auto-create invoice for sale ${sale.id}`);
           const autoGeneratedInvoice = await autoCreateInvoiceFromSale(sale.id, req.tenantId);
@@ -1638,6 +1749,7 @@ exports.updateSale = async (req, res, next) => {
       include: [
         { model: Shop, as: 'shop' },
         { model: Customer, as: 'customer' },
+        dealerReceiptInclude,
         { model: User, as: 'seller' },
         { model: Invoice, as: 'invoice' },
         saleItemDetailInclude
@@ -1752,7 +1864,9 @@ exports.recordPayment = async (req, res, next) => {
       paymentMethod: paymentMethod || sale.paymentMethod,
       status: updatePayload.status,
       total: totalAmount,
-      amountPaid: newAmountPaid
+      amountPaid: newAmountPaid,
+      saleChannel: sale.saleChannel,
+      dealerId: sale.dealerId,
     }) && !sale.customerId) {
       return res.status(400).json({
         success: false,
@@ -1991,6 +2105,13 @@ exports.generateInvoice = async (req, res, next) => {
       });
     }
 
+    if (isDealerSale(sale)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Dealer sales do not generate retail invoices in v1'
+      });
+    }
+
     const invoice = await autoCreateInvoiceFromSale(sale.id, req.tenantId);
     if (!invoice) {
       return res.status(500).json({
@@ -2029,6 +2150,7 @@ exports.printReceipt = async (req, res, next) => {
       include: [
         saleItemDetailInclude,
         { model: Customer, as: 'customer', attributes: ['id', 'name', 'phone', 'email'] },
+        dealerReceiptInclude,
         {
           model: Shop,
           as: 'shop',
@@ -3065,7 +3187,7 @@ exports.checkPaystackChargeForSale = async (req, res, next) => {
     }
 
     const nextStatus = outcome.nextStatus;
-    if (nextStatus === 'completed') {
+    if (nextStatus === 'completed' && !isDealerSale(sale)) {
       try {
         await autoCreateInvoiceFromSale(sale.id, sale.tenantId);
       } catch (invErr) {

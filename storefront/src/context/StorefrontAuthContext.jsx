@@ -251,11 +251,19 @@ export const StorefrontAuthProvider = ({ children }) => {
     verifyLoginOtp,
   ]);
 
+  const authTree = (
+    <StorefrontAuthContext.Provider value={value}>
+      {children}
+    </StorefrontAuthContext.Provider>
+  );
+
+  if (!googleConfigLoaded || !googleClientId) {
+    return authTree;
+  }
+
   return (
-    <GoogleOAuthProvider clientId={googleClientId || ''}>
-      <StorefrontAuthContext.Provider value={value}>
-        {children}
-      </StorefrontAuthContext.Provider>
+    <GoogleOAuthProvider clientId={googleClientId}>
+      {authTree}
     </GoogleOAuthProvider>
   );
 };

@@ -29,6 +29,8 @@ const {
   getDeliverySettings,
   updateDeliverySettings,
   updateCustomerNotificationPreferences,
+  getSidebarPreferences,
+  updateSidebarPreferences,
   getQuoteWorkflow,
   updateQuoteWorkflow,
   getJobInvoiceSettings,
@@ -97,6 +99,11 @@ const organizationUploader = multer({
 
 router.get('/customer-sources', getCustomerSources);
 router.get('/lead-sources', getLeadSources);
+
+router
+  .route('/sidebar-preferences')
+  .get(timeCrudAction('settings.sidebar_preferences.read'), getSidebarPreferences)
+  .patch(timeCrudAction('settings.sidebar_preferences.update'), updateSidebarPreferences);
 
 router
   .route('/profile')

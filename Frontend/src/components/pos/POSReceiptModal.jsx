@@ -37,6 +37,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import PrintableReceipt from '../PrintableReceipt';
+import { isDealerSale } from '../../utils/saleParty';
 import PrintableInvoice from '../PrintableInvoice';
 import { usePOSConfig } from '../../hooks/usePOSConfig';
 import { CURRENCY } from '../../constants';
@@ -382,7 +383,7 @@ const POSReceiptModal = ({
     if (!sale) return null;
     return {
       ...sale,
-      customer,
+      ...(isDealerSale(sale) ? { customer: null, customerId: null } : { customer }),
       organization: receiptOrganization
     };
   }, [sale, customer, receiptOrganization]);

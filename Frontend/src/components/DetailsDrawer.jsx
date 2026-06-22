@@ -67,6 +67,7 @@ import { cn } from '@/lib/utils';
  * @param {String} deleteButtonLabel - Custom delete button label (default: 'Archive')
  * @param {String} cancelButtonLabel - Custom cancel button label (default: 'Cancel')
  * @param {Object} primaryAction - When set with moreMenuItems, footer shows only primary button + More dropdown. { label, onClick, disabled, icon }
+ * @param {Object} secondaryAction - Optional outline button rendered before primaryAction. { label, onClick, disabled, icon }
  * @param {Array} moreMenuItems - When set with primaryAction, items for the More dropdown. [{ label, onClick, icon?, destructive? }]
  * @param {Boolean} moreMenuLoading - Shows a loading state on the More dropdown trigger
  * @param {String} moreMenuLoadingLabel - Custom loading label for the More dropdown trigger
@@ -95,6 +96,7 @@ const DetailsDrawer = ({
   deleteButtonLabel = 'Archive',
   cancelButtonLabel = 'Cancel',
   primaryAction = null,
+  secondaryAction = null,
   moreMenuItems = [],
   moreMenuLoading = false,
   moreMenuLoadingLabel = 'Updating...'
@@ -231,7 +233,7 @@ const DetailsDrawer = ({
             )}
           </div>
 
-          {showActions && (primaryAction || moreMenuItems.length > 0) ? (
+          {showActions && (primaryAction || secondaryAction || moreMenuItems.length > 0) ? (
             <div className="flex-shrink-0 border-t border-border bg-background">
               <div
                 className={cn(
@@ -285,6 +287,16 @@ const DetailsDrawer = ({
                       })}
                     </DropdownMenuContent>
                   </DropdownMenu>
+                )}
+                {secondaryAction && (
+                  <SecondaryButton
+                    onClick={secondaryAction.onClick}
+                    disabled={secondaryAction.disabled}
+                    className={cn(isMobile && 'min-h-[44px] flex-1 touch-manipulation')}
+                  >
+                    {secondaryAction.icon && <span className="mr-2 shrink-0">{secondaryAction.icon}</span>}
+                    {secondaryAction.label}
+                  </SecondaryButton>
                 )}
                 {primaryAction && (
                   <Button

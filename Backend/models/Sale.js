@@ -35,6 +35,19 @@ const Sale = sequelize.define('Sale', {
       key: 'id'
     }
   },
+  dealerId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'dealers',
+      key: 'id'
+    }
+  },
+  saleChannel: {
+    type: DataTypes.ENUM('retail', 'dealer'),
+    allowNull: false,
+    defaultValue: 'retail'
+  },
   // Sale totals
   subtotal: {
     type: DataTypes.DECIMAL(12, 2),
@@ -169,6 +182,12 @@ const Sale = sequelize.define('Sale', {
     },
     {
       fields: ['customerId']
+    },
+    {
+      fields: ['dealerId']
+    },
+    {
+      fields: ['saleChannel']
     },
     {
       fields: ['saleNumber']

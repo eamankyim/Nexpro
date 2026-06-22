@@ -28,6 +28,7 @@ import {
   Workflow,
   Star,
   Truck,
+  Building2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
@@ -42,7 +43,9 @@ import AppLogo from '@/components/AppLogo';
 import { useHintMode } from '@/context/HintModeContext';
 import { usePWAInstall } from '@/context/PWAInstallContext';
 import { APP_NAME, isQuotesEnabledForTenant, STUDIO_LIKE_TYPES } from '@/constants';
+import { filterHiddenNavItems } from '@/constants/sidebarMenus';
 import settingsService from '@/services/settingsService';
+import { useSidebarPreferences } from '@/hooks/useSidebarPreferences';
 import { API_BASE_URL } from '@/services/api';
 
 const DEFAULT_APP_NAME = 'ABS';
@@ -83,6 +86,7 @@ const MENU_HINTS = {
   '/jobs': 'Orders from customers',
   '/deliveries': 'Send finished jobs and sales out to customers',
   '/customers': 'People who buy from you',
+  '/dealers': 'Wholesale dealer accounts and balances',
   '/reviews': 'Ratings and comments from your customers',
   '/marketing': 'Email or text many customers at once',
   '/invoices': 'Bills you send to customers',
@@ -170,6 +174,9 @@ const getMenuItems = (
   }
   if (!isPlatformAdmin && hasFeature('crm')) {
     baseItems.push({ key: '/customers', icon: Users, label: 'Customers', tooltip: MENU_HINTS['/customers'] });
+  }
+  if (!isPlatformAdmin && hasFeature('dealersAccount')) {
+    baseItems.push({ key: '/dealers', icon: Building2, label: 'Dealers', tooltip: MENU_HINTS['/dealers'] });
   }
   if (hasFeature('invoices') || hasFeature('expenses')) {
     baseItems.push(
@@ -360,10 +367,29 @@ export function Sidebar({ collapsed, onCollapse }) {
     activeTenant?.metadata?.shopType ||
     null;
 
-  const menuItems = useMemo(
-    () => getMenuItems(businessType, isAdmin, isManager, isDriver, shopType, hasFeature, hidePlatformAdminNav),
-    [businessType, isAdmin, isManager, isDriver, shopType, hasFeature, hidePlatformAdminNav]
-  );
+  const { hiddenSidebarKeys } = useSidebarPreferences();
+
+  const menuItems = useMemo(() => {
+    const items = getMenuItems(
+      businessType,
+      isAdmin,
+      isManager,
+      isDriver,
+      shopType,
+      hasFeature,
+      hidePlatformAdminNav
+    );
+    return filterHiddenNavItems(items, hiddenSidebarKeys);
+  }, [
+    businessType,
+    isAdmin,
+    isManager,
+    isDriver,
+    shopType,
+    hasFeature,
+    hidePlatformAdminNav,
+    hiddenSidebarKeys,
+  ]);
   useEffect(() => {
     if (!import.meta.env.DEV) return;
     const flags = activeTenant?.effectiveFeatureFlags || {};
@@ -768,10 +794,28 @@ export function MobileSidebar() {
     activeTenant?.metadata?.businessSubType ||
     activeTenant?.metadata?.shopType ||
     null;
-  const menuItems = useMemo(
-    () => getMenuItems(businessType, isAdmin, isManager, isDriver, shopType, hasFeature, hidePlatformAdminNav),
-    [businessType, isAdmin, isManager, isDriver, shopType, hasFeature, hidePlatformAdminNav]
-  );
+  const { hiddenSidebarKeys } = useSidebarPreferences();
+  const menuItems = useMemo(() => {
+    const items = getMenuItems(
+      businessType,
+      isAdmin,
+      isManager,
+      isDriver,
+      shopType,
+      hasFeature,
+      hidePlatformAdminNav
+    );
+    return filterHiddenNavItems(items, hiddenSidebarKeys);
+  }, [
+    businessType,
+    isAdmin,
+    isManager,
+    isDriver,
+    shopType,
+    hasFeature,
+    hidePlatformAdminNav,
+    hiddenSidebarKeys,
+  ]);
   const quickActions = useMemo(() => getQuickActions(businessType, shopType), [businessType, shopType]);
 
   // Open the group that contains the current route when sheet opens or location changes

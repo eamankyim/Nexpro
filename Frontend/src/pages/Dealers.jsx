@@ -1,0 +1,792 @@
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useDebounce } from '../hooks/useDebounce';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import {
+  Plus, Loader2, RefreshCw, Building2, Wallet, CreditCard, Pencil, Printer, Download, ShoppingCart,
+} from 'lucide-react';
+import dealerService from '../services/dealerService';
+import settingsService from '../services/settingsService';
+import { mergeBranchOrganization } from '../utils/branchOrganization';
+import { useAuth } from '../context/AuthContext';
+import { useShopOptional } from '../context/ShopContext';
+import { useSmartSearch } from '../context/SmartSearchContext';
+import DetailsDrawer from '../components/DetailsDrawer';
+import DrawerSectionCard from '../components/DrawerSectionCard';
+import StatusChip from '../components/StatusChip';
+import TableSkeleton from '../components/TableSkeleton';
+import DashboardTable from '../components/DashboardTable';
+import DashboardStatsCard from '../components/DashboardStatsCard';
+import WelcomeSection from '../components/WelcomeSection';
+import { showSuccess, showError, handleApiError } from '../utils/toast';
+import { getEmptyStateProps } from '../components/ui/empty-state';
+import dayjs from 'dayjs';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
+import MobileFormDialog from '../components/MobileFormDialog';
+import FormFieldGrid from '../components/FormFieldGrid';
+import {
+  Form, FormControl, FormField, FormItem, FormLabel, FormMessage,
+} from '@/components/ui/form';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS, CURRENCY } from '../constants';
+import { numberInputValue, handleNumberChange } from '../utils/formUtils';
+import { generatePDF, openPrintDialog } from '../utils/pdfUtils';
+import { QUERY_STALE } from '../utils/queryInvalidation';
+import { queryKeys } from '../utils/queryKeys';
+import { formatAmount } from '../utils/formatNumber';
+import PrintableDealerStatement from '../components/PrintableDealerStatement';
+
+const optionalString = z.preprocess(
+  (val) => (val === null || val === undefined ? '' : val),
+  z.string()
+);
+
+const dealerSchema = z.object({
+  businessName: z.string().min(1, 'Enter business name'),
+  contactName: optionalString,
+  email: z.union([z.literal(''), z.string().email('Enter a valid email')]),
+  phone: optionalString,
+  creditTerms: optionalString,
+  creditLimit: z.preprocess(
+    (val) => (val === '' || val == null ? 0 : Number(val)),
+    z.number().min(0, 'Credit limit cannot be negative')
+  ),
+  openingBalance: z.preprocess(
+    (val) => (val === '' || val == null ? 0 : Number(val)),
+    z.number().min(0, 'Opening balance cannot be negative')
+  ),
+  notes: optionalString,
+});
+
+const paymentSchema = z.object({
+  amount: z.preprocess(
+    (val) => Number(val),
+    z.number().positive('Enter a valid payment amount')
+  ),
+  paymentMethod: z.string().min(1),
+  referenceNumber: optionalString,
+  notes: optionalString,
+});
+
+const Dealers = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const debouncedSearchText = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
+  const navigate = useNavigate();
+  const { activeTenantId, isManager, isAdmin, hasFeature } = useAuth();
+  const dealersAccountEnabled = hasFeature('dealersAccount');
+  const shopContext = useShopOptional();
+  const activeShopId = shopContext?.activeShopId ?? null;
+  const isShopWorkspace = shopContext?.isShopWorkspace ?? false;
+  const activeShopName = shopContext?.activeShop?.name ?? null;
+  const needsShopSelection = isShopWorkspace && !activeShopId;
+  const queryClient = useQueryClient();
+
+  const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
+  const [modalVisible, setModalVisible] = useState(false);
+  const [editingDealer, setEditingDealer] = useState(null);
+  const [drawerVisible, setDrawerVisible] = useState(false);
+  const [viewingDealer, setViewingDealer] = useState(null);
+  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
+  const [statementData, setStatementData] = useState(null);
+  const [printModalOpen, setPrintModalOpen] = useState(false);
+  const [organization, setOrganization] = useState(null);
+  const [statementStart, setStatementStart] = useState(dayjs().startOf('month').format('YYYY-MM-DD'));
+  const [statementEnd, setStatementEnd] = useState(dayjs().endOf('month').format('YYYY-MM-DD'));
+  const [isDownloadingStatementPdf, setIsDownloadingStatementPdf] = useState(false);
+  const [filters, setFilters] = useState({ isActive: 'all' });
+  const statementPrintRef = useRef(null);
+
+  const form = useForm({
+    resolver: zodResolver(dealerSchema),
+    defaultValues: {
+      businessName: '',
+      contactName: '',
+      email: '',
+      phone: '',
+      creditTerms: '',
+      creditLimit: 0,
+      openingBalance: 0,
+      notes: '',
+    },
+  });
+
+  const paymentForm = useForm({
+    resolver: zodResolver(paymentSchema),
+    defaultValues: {
+      amount: '',
+      paymentMethod: 'cash',
+      referenceNumber: '',
+      notes: '',
+    },
+  });
+
+  useEffect(() => {
+    setPageSearchConfig({ scope: 'dealers', placeholder: SEARCH_PLACEHOLDERS.CUSTOMERS });
+    return () => setPageSearchConfig(null);
+  }, [setPageSearchConfig]);
+
+  useEffect(() => {
+    if (searchParams.get('add') === '1') {
+      setEditingDealer(null);
+      form.reset();
+      setModalVisible(true);
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams, form]);
+
+  const listParams = useMemo(() => ({
+    page: pagination.current,
+    limit: pagination.pageSize,
+    search: debouncedSearchText,
+    ...(filters.isActive !== 'all' ? { isActive: filters.isActive === 'true' } : {}),
+  }), [pagination.current, pagination.pageSize, debouncedSearchText, filters.isActive]);
+
+  const { data: statsResponse, isLoading: statsLoading } = useQuery({
+    queryKey: queryKeys.dealers.stats(activeTenantId, activeShopId),
+    queryFn: () => dealerService.getStats(),
+    staleTime: QUERY_STALE.DEFAULT,
+    enabled: !!activeTenantId && !needsShopSelection,
+  });
+
+  const { data: dealersResponse, isLoading, refetch } = useQuery({
+    queryKey: queryKeys.dealers.list(activeTenantId, activeShopId, listParams),
+    queryFn: () => dealerService.getAll(listParams),
+    staleTime: QUERY_STALE.DEFAULT,
+    enabled: !!activeTenantId && !needsShopSelection,
+  });
+
+  const dealers = useMemo(() => {
+    const rows = dealersResponse?.data || [];
+    return Array.isArray(rows) ? rows : [];
+  }, [dealersResponse]);
+
+  useEffect(() => {
+    const total = dealersResponse?.count ?? dealersResponse?.pagination?.total ?? dealers.length;
+    setPagination((prev) => ({ ...prev, total }));
+  }, [dealersResponse, dealers.length]);
+
+  const { data: ledgerResponse, isLoading: ledgerLoading } = useQuery({
+    queryKey: queryKeys.dealers.ledger(viewingDealer?.id, { page: 1, limit: 50 }),
+    queryFn: () => dealerService.getLedger(viewingDealer.id, { page: 1, limit: 50 }),
+    enabled: drawerVisible && !!viewingDealer?.id,
+    staleTime: QUERY_STALE.SHORT,
+  });
+
+  const ledgerEntries = ledgerResponse?.data || [];
+
+  const saveMutation = useMutation({
+    mutationFn: async (values) => {
+      if (editingDealer?.id) {
+        const { openingBalance, ...payload } = values;
+        return dealerService.update(editingDealer.id, payload);
+      }
+      return dealerService.create(values);
+    },
+    onSuccess: () => {
+      showSuccess(editingDealer ? 'Dealer updated' : 'Dealer created');
+      setModalVisible(false);
+      setEditingDealer(null);
+      form.reset();
+      queryClient.invalidateQueries({ queryKey: queryKeys.dealers.all });
+    },
+    onError: (err) => handleApiError(err, 'Failed to save dealer'),
+  });
+
+  const openPaymentDialog = useCallback(() => {
+    paymentForm.reset({
+      amount: '',
+      paymentMethod: 'cash',
+      referenceNumber: '',
+      notes: '',
+    });
+    setPaymentDialogOpen(true);
+  }, [paymentForm]);
+
+  const handleSellToDealer = useCallback(() => {
+    if (!viewingDealer?.id) return;
+    setDrawerVisible(false);
+    navigate(`/sales?openPOS=1&mode=dealer&dealerId=${viewingDealer.id}`);
+  }, [viewingDealer?.id, navigate]);
+
+  const paymentMutation = useMutation({
+    mutationFn: (values) => dealerService.recordPayment(viewingDealer.id, values),
+    onSuccess: (res) => {
+      showSuccess('Payment recorded');
+      setPaymentDialogOpen(false);
+      paymentForm.reset();
+      const updated = res?.data?.dealer || res?.dealer;
+      if (updated) setViewingDealer(updated);
+      queryClient.invalidateQueries({ queryKey: queryKeys.dealers.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dealers.ledger(viewingDealer.id) });
+    },
+    onError: (err) => handleApiError(err, 'Failed to record payment'),
+  });
+
+  const loadStatement = useCallback(async () => {
+    if (!viewingDealer?.id) return;
+    try {
+      const res = await dealerService.getStatement(viewingDealer.id, {
+        startDate: statementStart,
+        endDate: statementEnd,
+      });
+      setStatementData(res?.data || res);
+    } catch (err) {
+      handleApiError(err, 'Failed to load statement');
+    }
+  }, [viewingDealer?.id, statementStart, statementEnd]);
+
+  useEffect(() => {
+    if (drawerVisible && viewingDealer?.id) {
+      loadStatement();
+    }
+  }, [drawerVisible, viewingDealer?.id, statementStart, statementEnd, loadStatement]);
+
+  useEffect(() => {
+    settingsService.getOrganization().then((org) => {
+      setOrganization(mergeBranchOrganization(org, shopContext?.activeShop));
+    }).catch(() => {});
+  }, [shopContext?.activeShop]);
+
+  const statementPdfFilename = useMemo(() => {
+    const dealerSlug = (viewingDealer?.businessName || 'dealer').replace(/[^\w-]+/g, '-');
+    return `dealer-statement-${dealerSlug}-${statementStart}-to-${statementEnd}.pdf`;
+  }, [viewingDealer?.businessName, statementStart, statementEnd]);
+
+  const getStatementPrintElement = useCallback(
+    () => statementPrintRef.current?.querySelector('#printable-dealer-statement'),
+    [],
+  );
+
+  const handleDownloadStatementPdf = useCallback(async () => {
+    const element = getStatementPrintElement();
+    if (!element || !statementData) {
+      showError(null, 'Generate a statement before downloading');
+      return;
+    }
+    setIsDownloadingStatementPdf(true);
+    try {
+      await generatePDF(element, {
+        filename: statementPdfFilename,
+        format: 'a4',
+        orientation: 'portrait',
+      });
+      showSuccess('Statement downloaded successfully');
+    } catch (error) {
+      console.error('PDF generation error:', error);
+      handleApiError(error, 'Failed to download statement PDF');
+    } finally {
+      setIsDownloadingStatementPdf(false);
+    }
+  }, [getStatementPrintElement, statementData, statementPdfFilename]);
+
+  const handlePrintStatement = useCallback(() => {
+    const wrapper = statementPrintRef.current;
+    if (!wrapper || !statementData) return;
+    openPrintDialog(wrapper, `Dealer-Statement-${viewingDealer?.businessName || 'dealer'}`);
+  }, [statementData, viewingDealer?.businessName]);
+
+  const openCreate = () => {
+    setEditingDealer(null);
+    form.reset();
+    setModalVisible(true);
+  };
+
+  const openEdit = (dealer) => {
+    setEditingDealer(dealer);
+    form.reset({
+      businessName: dealer.businessName || '',
+      contactName: dealer.contactName || '',
+      email: dealer.email || '',
+      phone: dealer.phone || '',
+      creditTerms: dealer.creditTerms || '',
+      creditLimit: parseFloat(dealer.creditLimit || 0),
+      openingBalance: 0,
+      notes: dealer.notes || '',
+    });
+    setModalVisible(true);
+  };
+
+  const openDrawer = (dealer) => {
+    setViewingDealer(dealer);
+    setDrawerVisible(true);
+  };
+
+  const dealersEmptyState = useMemo(
+    () => getEmptyStateProps(
+      { title: 'No dealers yet', description: 'Add your first dealer account to track wholesale balances.', primaryAction: 'Add dealer' },
+      { primary: openCreate }
+    ),
+    []
+  );
+
+  const stats = statsResponse?.data || statsResponse || {};
+
+  const columns = useMemo(() => [
+    {
+      key: 'businessName',
+      label: 'Dealer',
+      render: (_, row) => (
+        <div>
+          <div className="font-medium">{row.businessName}</div>
+          {row.contactName && <div className="text-xs text-muted-foreground">{row.contactName}</div>}
+        </div>
+      ),
+    },
+    {
+      key: 'phone',
+      label: 'Phone',
+      render: (value) => value || '—',
+    },
+    {
+      key: 'balance',
+      label: 'Outstanding',
+      render: (value) => (
+        <span className={parseFloat(value || 0) > 0 ? 'font-semibold text-amber-700' : ''}>
+          {formatAmount(value)}
+        </span>
+      ),
+    },
+    {
+      key: 'availableCredit',
+      label: 'Available credit',
+      render: (_, row) => formatAmount(row.availableCredit ?? Math.max(parseFloat(row.creditLimit || 0) - parseFloat(row.balance || 0), 0)),
+    },
+    {
+      key: 'isActive',
+      label: 'Status',
+      render: (value) => (
+        <StatusChip status={value ? 'active' : 'inactive'} />
+      ),
+    },
+    {
+      key: 'actions',
+      label: '',
+      render: (_, row) => (
+        <Button variant="outline" size="sm" onClick={() => openDrawer(row)}>View</Button>
+      ),
+    },
+  ], []);
+
+  const drawerTabs = useMemo(() => [
+    {
+      key: 'overview',
+      label: 'Overview',
+      content: viewingDealer ? (
+        <div className="space-y-4">
+          <DrawerSectionCard title="Account">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div><span className="text-muted-foreground">Outstanding</span><div className="font-semibold">{formatAmount(viewingDealer.balance)}</div></div>
+              <div><span className="text-muted-foreground">Credit limit</span><div>{formatAmount(viewingDealer.creditLimit)}</div></div>
+              <div><span className="text-muted-foreground">Available credit</span><div>{formatAmount(viewingDealer.availableCredit)}</div></div>
+              <div><span className="text-muted-foreground">Terms</span><div>{viewingDealer.creditTerms || '—'}</div></div>
+            </div>
+          </DrawerSectionCard>
+          <DrawerSectionCard title="Contact">
+            <div className="text-sm space-y-1">
+              <div>{viewingDealer.contactName || '—'}</div>
+              <div>{viewingDealer.phone || '—'}</div>
+              <div>{viewingDealer.email || '—'}</div>
+            </div>
+          </DrawerSectionCard>
+          {viewingDealer.notes && (
+            <DrawerSectionCard title="Notes"><p className="text-sm whitespace-pre-wrap">{viewingDealer.notes}</p></DrawerSectionCard>
+          )}
+        </div>
+      ) : null,
+    },
+    {
+      key: 'activity',
+      label: 'Activity',
+      content: ledgerLoading ? <TableSkeleton rows={5} cols={4} /> : (
+        <div className="space-y-2">
+          {ledgerEntries.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No ledger activity yet.</p>
+          ) : ledgerEntries.map((entry) => (
+            <Card key={entry.id} className="border border-[#e5e7eb]">
+              <CardContent className="p-3 text-sm">
+                <div className="flex justify-between gap-2">
+                  <div>
+                    <div className="font-medium">{entry.description || entry.entryType}</div>
+                    <div className="text-xs text-muted-foreground">{dayjs(entry.entryDate).format('DD MMM YYYY HH:mm')}</div>
+                  </div>
+                  <div className="text-right">
+                    <Badge variant="outline">{entry.direction === 'debit' ? '+' : '−'}{formatAmount(entry.amount)}</Badge>
+                    <div className="text-xs mt-1">Bal {formatAmount(entry.balanceAfter)}</div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ),
+    },
+    {
+      key: 'statements',
+      label: 'Statements',
+      content: (
+        <div className="space-y-4">
+          <FormFieldGrid columns={2}>
+            <div>
+              <label className="text-sm font-medium">From</label>
+              <Input type="date" value={statementStart} onChange={(e) => setStatementStart(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-sm font-medium">To</label>
+              <Input type="date" value={statementEnd} onChange={(e) => setStatementEnd(e.target.value)} />
+            </div>
+          </FormFieldGrid>
+          <p className="text-xs text-muted-foreground">
+            Defaults to the current month. Adjust dates for a custom period.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={loadStatement}>Refresh</Button>
+            <Button variant="outline" onClick={() => setPrintModalOpen(true)} disabled={!statementData}>
+              <Printer className="h-4 w-4 mr-2" />Preview
+            </Button>
+            <Button variant="outline" onClick={handlePrintStatement} disabled={!statementData}>
+              <Printer className="h-4 w-4 mr-2" />Print
+            </Button>
+            <Button
+              variant="outline"
+              onClick={handleDownloadStatementPdf}
+              disabled={!statementData || isDownloadingStatementPdf}
+            >
+              {isDownloadingStatementPdf ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4 mr-2" />
+              )}
+              Download PDF
+            </Button>
+          </div>
+          {statementData && (
+            <div className="border border-[#e5e7eb] rounded-lg overflow-hidden max-h-[420px] overflow-y-auto">
+              <PrintableDealerStatement
+                statement={statementData}
+                organization={organization}
+                hideDealerAccount
+                printableId=""
+              />
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'settings',
+      label: 'Settings',
+      content: viewingDealer ? (
+        <div className="space-y-4">
+          <Alert className="border border-[#e5e7eb]">
+            <AlertDescription className="text-sm">
+              Update dealer profile, credit limit, and terms. Ledger adjustments require a manager.
+            </AlertDescription>
+          </Alert>
+          <Button variant="outline" onClick={() => openEdit(viewingDealer)}>
+            <Pencil className="h-4 w-4 mr-2" />Edit dealer
+          </Button>
+          {(isManager || isAdmin) && (
+            <Button variant="outline" onClick={openPaymentDialog}>
+              Record payment
+            </Button>
+          )}
+        </div>
+      ) : null,
+    },
+  ], [
+    viewingDealer,
+    ledgerEntries,
+    ledgerLoading,
+    statementStart,
+    statementEnd,
+    statementData,
+    organization,
+    isManager,
+    isAdmin,
+    openPaymentDialog,
+    loadStatement,
+    handlePrintStatement,
+    handleDownloadStatementPdf,
+    isDownloadingStatementPdf,
+  ]);
+
+  return (
+    <div className="space-y-6">
+      <WelcomeSection
+        welcomeMessage="Dealers"
+        subText={
+          activeShopName
+            ? `Manage wholesale dealer accounts for ${activeShopName}.`
+            : 'Manage wholesale dealer accounts, balances, and statements.'
+        }
+      />
+
+      {needsShopSelection ? (
+        <Alert className="border border-[#e5e7eb]">
+          <AlertDescription>
+            Select an active shop branch from the header to view and manage dealers for that branch.
+          </AlertDescription>
+        </Alert>
+      ) : (
+        <>
+      <div className="flex justify-end -mt-2 mb-4">
+        <Button onClick={openCreate} className="bg-[#166534] hover:bg-[#14532d]">
+          <Plus className="h-4 w-4 mr-2" />Add dealer
+        </Button>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <DashboardStatsCard title="Total dealers" value={stats.totalDealers ?? 0} icon={Building2} iconBgColor="#dcfce7" iconColor="#166534" loading={statsLoading} />
+        <DashboardStatsCard title="Total outstanding" value={formatAmount(stats.totalOutstanding ?? 0)} icon={Wallet} iconBgColor="#fef3c7" iconColor="#b45309" loading={statsLoading} />
+        <DashboardStatsCard title="Available credit" value={formatAmount(stats.totalAvailableCredit ?? 0)} icon={CreditCard} iconBgColor="#dbeafe" iconColor="#1d4ed8" loading={statsLoading} />
+      </div>
+
+      <div className="flex flex-wrap gap-2 items-center justify-between">
+        <Select value={filters.isActive} onValueChange={(value) => setFilters({ isActive: value })}>
+          <SelectTrigger className="w-[160px]"><SelectValue placeholder="Status" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All statuses</SelectItem>
+            <SelectItem value="true">Active</SelectItem>
+            <SelectItem value="false">Inactive</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button variant="outline" size="sm" onClick={() => refetch()}>
+          <RefreshCw className="h-4 w-4 mr-2" />Refresh
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <TableSkeleton rows={8} cols={5} />
+      ) : (
+        <DashboardTable
+          columns={columns}
+          data={dealers}
+          loading={isLoading}
+          emptyState={dealersEmptyState}
+          pageSize={pagination.pageSize}
+          externalPagination={{ current: pagination.current, total: pagination.total }}
+          onPageChange={(newPagination) => setPagination((prev) => ({ ...prev, ...newPagination }))}
+        />
+      )}
+
+        </>
+      )}
+
+      <MobileFormDialog
+        open={modalVisible}
+        onOpenChange={setModalVisible}
+        title={editingDealer ? 'Edit dealer' : 'Add dealer'}
+        description={
+          activeShopName
+            ? `This dealer account will belong to ${activeShopName}. Wholesale prices are set per branch catalogue.`
+            : 'Dealer accounts belong to the active shop branch. Wholesale prices are set per branch catalogue.'
+        }
+      >
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit((values) => saveMutation.mutate(values))} className="space-y-4">
+            {activeShopName && !editingDealer && (
+              <Alert className="border border-[#e5e7eb]">
+                <AlertDescription className="text-sm">
+                  Branch: <span className="font-medium">{activeShopName}</span>
+                </AlertDescription>
+              </Alert>
+            )}
+            <FormField control={form.control} name="businessName" render={({ field }) => (
+              <FormItem><FormLabel>Business name</FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>
+            )} />
+            <FormField control={form.control} name="contactName" render={({ field }) => (
+              <FormItem><FormLabel>Contact name (optional)</FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>
+            )} />
+            <FormFieldGrid columns={2}>
+              <FormField control={form.control} name="phone" render={({ field }) => (
+                <FormItem><FormLabel>Phone (optional)</FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>
+              )} />
+              <FormField control={form.control} name="email" render={({ field }) => (
+                <FormItem><FormLabel>Email (optional)</FormLabel><FormControl><Input {...field} type="email" /></FormControl><FormMessage /></FormItem>
+              )} />
+            </FormFieldGrid>
+            <FormFieldGrid columns={2}>
+              <FormField control={form.control} name="creditLimit" render={({ field }) => (
+                <FormItem><FormLabel>Credit limit (optional)</FormLabel><FormControl><Input {...field} type="number" min="0" step="0.01" /></FormControl><FormMessage /></FormItem>
+              )} />
+              {!editingDealer && (
+                <FormField control={form.control} name="openingBalance" render={({ field }) => (
+                  <FormItem><FormLabel>Opening balance (optional)</FormLabel><FormControl><Input {...field} type="number" min="0" step="0.01" /></FormControl><FormMessage /></FormItem>
+                )} />
+              )}
+            </FormFieldGrid>
+            <FormField control={form.control} name="creditTerms" render={({ field }) => (
+              <FormItem><FormLabel>Credit terms (optional)</FormLabel><FormControl><Input {...field} placeholder="e.g. Net 30" /></FormControl><FormMessage /></FormItem>
+            )} />
+            <FormField control={form.control} name="notes" render={({ field }) => (
+              <FormItem><FormLabel>Notes (optional)</FormLabel><FormControl><Textarea {...field} rows={3} /></FormControl><FormMessage /></FormItem>
+            )} />
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setModalVisible(false)}>Cancel</Button>
+              <Button type="submit" disabled={saveMutation.isPending} className="bg-[#166534] hover:bg-[#14532d]">
+                {saveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : (editingDealer ? 'Save changes' : 'Create dealer')}
+              </Button>
+            </div>
+          </form>
+        </Form>
+      </MobileFormDialog>
+
+      <DetailsDrawer
+        open={drawerVisible}
+        onOpenChange={setDrawerVisible}
+        onClose={() => setDrawerVisible(false)}
+        title={viewingDealer?.businessName || 'Dealer'}
+        description={viewingDealer?.contactName || 'Dealer account details'}
+        tabs={drawerTabs}
+        onEdit={() => openEdit(viewingDealer)}
+        secondaryAction={dealersAccountEnabled && viewingDealer?.isActive !== false ? {
+          label: 'Sell to dealer',
+          onClick: handleSellToDealer,
+          icon: <ShoppingCart className="h-4 w-4" />,
+        } : null}
+        primaryAction={{
+          label: 'Record payment',
+          onClick: openPaymentDialog,
+        }}
+      />
+
+      <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Record payment</DialogTitle>
+            <DialogDescription>Payment reduces {viewingDealer?.businessName}&apos;s outstanding balance immediately.</DialogDescription>
+          </DialogHeader>
+          <Form {...paymentForm}>
+            <form id="dealer-payment-form" onSubmit={paymentForm.handleSubmit((values) => paymentMutation.mutate(values))}>
+              <DialogBody>
+                <div className="space-y-4">
+                  <FormField
+                    control={paymentForm.control}
+                    name="amount"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Amount</FormLabel>
+                        <div className="relative">
+                          <span
+                            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                            aria-hidden="true"
+                          >
+                            {CURRENCY.SYMBOL}
+                          </span>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              min={0.01}
+                              step={0.01}
+                              inputMode="decimal"
+                              autoComplete="off"
+                              placeholder="0.00"
+                              className="pl-8"
+                              value={numberInputValue(field.value)}
+                              onFocus={(e) => e.target.select()}
+                              onChange={(e) => handleNumberChange(e, field.onChange)}
+                              onBlur={field.onBlur}
+                              name={field.name}
+                              ref={field.ref}
+                            />
+                          </FormControl>
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField control={paymentForm.control} name="paymentMethod" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Payment method</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                        <SelectContent>
+                          <SelectItem value="cash">Cash</SelectItem>
+                          <SelectItem value="mobile_money">Mobile money</SelectItem>
+                          <SelectItem value="bank_transfer">Bank transfer</SelectItem>
+                          <SelectItem value="other">Other</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+                  <FormField control={paymentForm.control} name="referenceNumber" render={({ field }) => (
+                    <FormItem><FormLabel>Reference (optional)</FormLabel><FormControl><Input {...field} value={field.value || ''} /></FormControl><FormMessage /></FormItem>
+                  )} />
+                  <FormField control={paymentForm.control} name="notes" render={({ field }) => (
+                    <FormItem><FormLabel>Notes (optional)</FormLabel><FormControl><Textarea {...field} rows={2} /></FormControl><FormMessage /></FormItem>
+                  )} />
+                </div>
+              </DialogBody>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setPaymentDialogOpen(false)}>Cancel</Button>
+                <Button type="submit" disabled={paymentMutation.isPending} className="bg-[#166534] hover:bg-[#14532d]">
+                  {paymentMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Record payment'}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
+      {drawerVisible && statementData && (
+        <div
+          ref={statementPrintRef}
+          className="fixed left-[-9999px] top-0 w-[210mm] pointer-events-none"
+          aria-hidden="true"
+        >
+          <PrintableDealerStatement statement={statementData} organization={organization} />
+        </div>
+      )}
+
+      <Dialog open={printModalOpen} onOpenChange={setPrintModalOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          {statementData && (
+            <>
+              <PrintableDealerStatement
+                statement={statementData}
+                organization={organization}
+                printableId=""
+              />
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setPrintModalOpen(false)}>Close</Button>
+                <Button variant="outline" onClick={handlePrintStatement}>
+                  <Printer className="h-4 w-4 mr-2" />Print
+                </Button>
+                <Button
+                  className="bg-[#166534] hover:bg-[#14532d]"
+                  onClick={handleDownloadStatementPdf}
+                  disabled={isDownloadingStatementPdf}
+                >
+                  {isDownloadingStatementPdf ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4 mr-2" />
+                  )}
+                  Download PDF
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+export default Dealers;

@@ -18,6 +18,7 @@ import TableSkeleton from './components/TableSkeleton';
 import AppLoader from './components/AppLoader';
 import PWAInstallBanner from './components/PWAInstallBanner';
 import PWAUpdatePrompt from './components/PWAUpdatePrompt';
+import GoogleSignInHost from './components/GoogleSignInHost';
 import { useSwipeBack } from './hooks/useSwipeBack';
 import { useIOSKeyboardFix } from './hooks/useKeyboardHandling';
 import { isBootstrapPlatformSuperAdmin } from './utils/platformAdminBootstrap';
@@ -39,6 +40,8 @@ const PublicFeedback = lazy(() => import('./pages/PublicFeedback'));
 const Onboarding = lazy(() => import('./pages/Onboarding'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Customers = lazy(() => import('./pages/Customers'));
+const Dealers = lazy(() => import('./pages/Dealers'));
+const DealerPricing = lazy(() => import('./pages/DealerPricing'));
 const CustomerFeedback = lazy(() => import('./pages/CustomerFeedback'));
 const Marketing = lazy(() => import('./pages/Marketing'));
 const AskAI = lazy(() => import('./pages/AskAI'));
@@ -278,6 +281,8 @@ function AppContent() {
             <Route path="workspace" element={<Navigate to="/dashboard" replace />} />
             <Route path="tasks" element={<Tasks />} />
             <Route path="customers" element={<FeatureRoute featureKey="crm"><Customers /></FeatureRoute>} />
+            <Route path="dealers" element={<FeatureRoute featureKey="dealersAccount"><Dealers /></FeatureRoute>} />
+            <Route path="dealers/:id/prices" element={<FeatureRoute featureKey="dealersAccount"><DealerPricing /></FeatureRoute>} />
             <Route path="reviews" element={<FeatureRoute featureKey="crm"><CustomerFeedback /></FeatureRoute>} />
             <Route path="customer-feedback" element={<Navigate to="/reviews" replace />} />
             <Route path="marketing" element={<FeatureRoute featureKey="marketing"><RequireWorkspaceManager><Marketing /></RequireWorkspaceManager></FeatureRoute>} />
@@ -382,15 +387,21 @@ function AppContent() {
 }
 
 function GoogleAuthWrapper({ children }) {
-  const { googleClientId } = usePublicConfig();
+  const { googleClientId, configLoaded } = usePublicConfig();
   useEffect(() => {
     const masked = googleClientId ? `${googleClientId.substring(0, 15)}...` : '(empty)';
     console.log('[App] GoogleOAuthProvider clientId:', masked);
   }, [googleClientId]);
   // Do not use key={googleClientId} here — it remounts the entire subtree (Router, auth), causing full-screen flashes.
+  if (!configLoaded || !googleClientId) {
+    return children;
+  }
+
   return (
-    <GoogleOAuthProvider clientId={googleClientId || ''}>
-      {children}
+    <GoogleOAuthProvider clientId={googleClientId}>
+      <GoogleSignInHost>
+        {children}
+      </GoogleSignInHost>
     </GoogleOAuthProvider>
   );
 }

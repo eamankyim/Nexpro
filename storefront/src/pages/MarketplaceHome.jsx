@@ -1046,7 +1046,7 @@ const MarketplaceHome = () => {
             <div>
               <p className="text-sm font-bold uppercase tracking-[0.2em] text-amber-300">For Businesses</p>
               <h2 className="mt-3 text-3xl font-black md:text-5xl">Are you a business?</h2>
-              <p className="mt-4 max-w-2xl leading-7 text-green-50/80">Launch a {APP_NAME} storefront, reach new customers, and manage your public catalog from the Sabito business dashboard.</p>
+              <p className="mt-4 max-w-2xl leading-7 text-green-50/80">Launch a {APP_NAME} storefront, reach new customers, and manage your public catalog from the ABS Dashboard.</p>
               <div className="mt-6 grid gap-3 sm:grid-cols-3">
                 {[
                   { label: 'Launch quickly', icon: Zap },

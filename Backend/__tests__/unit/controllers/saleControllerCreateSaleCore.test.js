@@ -21,6 +21,9 @@ jest.mock('../../../models', () => ({
   },
   Barcode: {},
   Customer: {},
+  Dealer: {
+    findOne: jest.fn()
+  },
   Shop: {},
   Invoice: {},
   User: {},
@@ -32,6 +35,12 @@ jest.mock('../../../models', () => ({
   }
 }));
 
+jest.mock('../../../services/dealerBalanceService', () => ({
+  checkCreditLimit: jest.fn(() => ({ allowed: true }))
+}));
+jest.mock('../../../services/dealerLedgerService', () => ({
+  recordSaleCharge: jest.fn().mockResolvedValue({ id: 'ledger-1' })
+}));
 jest.mock('../../../services/invoiceAccountingService', () => ({
   createInvoiceRevenueJournal: jest.fn()
 }));
@@ -95,11 +104,13 @@ jest.mock('../../../middleware/cache', () => ({
 jest.mock('../../../config/config', () => ({ nodeEnv: 'test' }));
 
 const { sequelize } = require('../../../config/database');
-const { Sale, SaleItem, Product, ProductVariant, Setting } = require('../../../models');
+const { Sale, SaleItem, Product, ProductVariant, Setting, Dealer } = require('../../../models');
+const { checkCreditLimit } = require('../../../services/dealerBalanceService');
+const { recordSaleCharge } = require('../../../services/dealerLedgerService');
 const saleController = require('../../../controllers/saleController');
 
 describe('saleController createSaleCore', () => {
-  const transaction = { id: 'tx-1' };
+  const transaction = { id: 'tx-1', LOCK: { UPDATE: 'UPDATE' } };
   const tenantId = 'tenant-1';
   const userId = 'user-1';
 
@@ -194,6 +205,88 @@ describe('saleController createSaleCore', () => {
         })
       })
     }));
+  });
+
+  it('allows dealer charge-to-account sales without a customer', async () => {
+    Dealer.findOne.mockResolvedValue({
+      id: 'dealer-1',
+      shopId: 'shop-1',
+      balance: 0,
+      creditLimit: 1000,
+      isActive: true,
+    });
+
+    const { sale } = await saleController.createSaleCore(transaction, tenantId, userId, {
+      dealerId: 'dealer-1',
+      saleChannel: 'dealer',
+      paymentMethod: 'cash',
+      amountPaid: 0,
+      chargeToAccount: 50,
+      items: [{ name: 'Dealer stock item', quantity: 1, unitPrice: 50 }],
+    });
+
+    expect(Sale.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dealerId: 'dealer-1',
+        saleChannel: 'dealer',
+        amountPaid: 0,
+        total: 50,
+        metadata: expect.objectContaining({
+          dealerChargeToAccount: 50,
+        }),
+      }),
+      { transaction }
+    );
+    const createPayload = Sale.create.mock.calls[0][0];
+    expect(createPayload.customerId).toBeNull();
+    expect(recordSaleCharge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId,
+        dealerId: 'dealer-1',
+        amount: 50,
+        saleId: sale.id,
+      })
+    );
+    expect(checkCreditLimit).toHaveBeenCalled();
+  });
+
+  it('allows dealer split-payment sales without a customer', async () => {
+    Dealer.findOne.mockResolvedValue({
+      id: 'dealer-1',
+      shopId: 'shop-1',
+      balance: 0,
+      creditLimit: 1000,
+      isActive: true,
+    });
+
+    const { sale } = await saleController.createSaleCore(transaction, tenantId, userId, {
+      dealerId: 'dealer-1',
+      saleChannel: 'dealer',
+      paymentMethod: 'cash',
+      amountPaid: 20,
+      chargeToAccount: 30,
+      items: [{ name: 'Dealer split item', quantity: 1, unitPrice: 50 }],
+    });
+
+    expect(Sale.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dealerId: 'dealer-1',
+        saleChannel: 'dealer',
+        amountPaid: 20,
+        total: 50,
+        metadata: expect.objectContaining({
+          dealerChargeToAccount: 30,
+        }),
+      }),
+      { transaction }
+    );
+    expect(recordSaleCharge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dealerId: 'dealer-1',
+        amount: 30,
+        saleId: sale.id,
+      })
+    );
   });
 
   it('requires a customer for credit sales before creating the sale', async () => {

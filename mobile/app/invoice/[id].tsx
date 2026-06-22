@@ -27,7 +27,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useExclusiveAction } from '@/hooks/useExclusiveAction';
 import { invoiceService } from '@/services/invoiceService';
 import { settingsService } from '@/services/settings';
-import { shareInvoicePdf } from '@/services/pdfDocumentService';
+import { shareInvoicePdf, formatLineItemQuantityDisplay } from '@/services/pdfDocumentService';
 import { formatCurrency, formatDate } from '@/utils/formatCurrency';
 import { formatStatusLabel } from '@/utils/formatLabels';
 import {
@@ -452,7 +452,7 @@ export default function InvoiceDetailScreen() {
                 <View key={i} style={[styles.itemRow, i > 0 && { borderTopColor: borderColor, borderTopWidth: 1 }]}>
                   <View style={styles.itemInfo}>
                     <Text style={[styles.itemName, { color: textColor }]} numberOfLines={1}>
-                      {item.description} x{item.quantity}
+                      {item.description} x{formatLineItemQuantityDisplay(item as Record<string, unknown>)}
                     </Text>
                     {getItemProductCode(item) ? (
                       <Text style={[styles.itemCode, { color: mutedColor }]} numberOfLines={1}>

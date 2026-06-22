@@ -14,7 +14,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { computeDocumentTax } from '../utils/taxCalculationClient';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { RefreshCw, Users, Loader2, Camera, CreditCard, UserPlus, Phone } from 'lucide-react';
+import { RefreshCw, Users, Loader2, Camera, CreditCard, UserPlus, Phone, Building2, AlertCircle, ChevronDown, X } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { SecondaryButton } from '@/components/ui/secondary-button';
@@ -32,6 +32,10 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 // POS Components
 import POSCart from '../components/pos/POSCart';
@@ -44,6 +48,7 @@ import FeatureNotAvailable from '../components/FeatureNotAvailable';
 
 // Hooks and Services
 import { usePOS } from '../hooks/usePOS';
+import { usePOSDealerMode } from '../hooks/usePOSDealerMode';
 import { usePOSConfig } from '../hooks/usePOSConfig';
 import { usePaymentSettings } from '../hooks/usePaymentSettings';
 import { useAuth } from '../context/AuthContext';
@@ -56,6 +61,7 @@ import settingsService from '../services/settingsService';
 import saleService from '../services/saleService';
 import mobileMoneyService from '../services/mobileMoneyService';
 import productService from '../services/productService';
+import dealerService from '../services/dealerService';
 
 // Utils
 import { showSuccess, showError } from '../utils/toast';
@@ -386,7 +392,7 @@ const CustomerSelectDialog = ({ isOpen, onClose, onSelect, onFindOrCreate }) => 
  * Main POS Page Component
  */
 const POS = () => {
-  const { activeTenant, activeTenantId, user, isManager } = useAuth();
+  const { activeTenant, activeTenantId, user, isManager, isAdmin, hasFeature } = useAuth();
   const businessType = activeTenant?.businessType || null;
   const shopType =
     activeTenant?.metadata?.businessSubType ||
@@ -412,6 +418,23 @@ const POS = () => {
     removeQuickAddItem,
   } = usePOS();
 
+  const {
+    dealersEnabled,
+    posSaleMode,
+    isDealerMode,
+    switchPosSaleMode,
+    selectedDealer,
+    selectDealer,
+    clearDealerSelection,
+    dealerSearch,
+    setDealerSearch,
+    dealerOptions,
+    dealerSearchLoading,
+    dealerSummary,
+    canOverrideCredit,
+    applyDealerPriceToItem,
+  } = usePOSDealerMode({ activeShopId, enabled: hasFeature('dealersAccount') });
+
   // Cart state
   const [cart, setCart] = useState([]);
   const [cartDiscount, setCartDiscount] = useState(0);
@@ -420,6 +443,7 @@ const POS = () => {
   const [quickCustomerPhone, setQuickCustomerPhone] = useState('');
 
   // UI state
+  const [dealerPickerOpen, setDealerPickerOpen] = useState(false);
   const [customerDialogOpen, setCustomerDialogOpen] = useState(false);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [paymentModalStayOpen, setPaymentModalStayOpen] = useState(() => {
@@ -580,11 +604,27 @@ const POS = () => {
     };
   }, [cart, cartDiscount, posTaxConfig, organizationSettings?.tax?.displayLabel]);
 
+  useEffect(() => {
+    if (!isDealerMode) return;
+    setSelectedCustomer(null);
+    setQuickCustomerName('');
+    setQuickCustomerPhone('');
+  }, [isDealerMode]);
+
   // Add product to cart
-  const addResolvedItemToCart = useCallback((product, variant = null) => {
+  const addResolvedItemToCart = useCallback(async (product, variant = null) => {
+    if (isDealerMode && !selectedDealer) {
+      showError('Select a dealer account before adding products');
+      return;
+    }
     if (variant ? isVariantOutOfStock(product, variant) : isProductOutOfStock(product)) {
       showError(null, `${product.name || 'Product'} is out of stock and cannot be sold.`);
       return;
+    }
+
+    let newItem = buildCartItemFromProduct(product, variant);
+    if (isDealerMode) {
+      newItem = await applyDealerPriceToItem(newItem);
     }
 
     setCart(prevCart => {
@@ -597,14 +637,19 @@ const POS = () => {
         const newCart = [...prevCart];
         newCart[existingIndex] = {
           ...newCart[existingIndex],
-          quantity: newCart[existingIndex].quantity + 1
+          quantity: newCart[existingIndex].quantity + 1,
+          ...(isDealerMode ? {
+            unitPrice: newItem.unitPrice,
+            baseUnitPrice: newItem.baseUnitPrice,
+            catalogUnitPrice: newItem.catalogUnitPrice,
+          } : {}),
         };
         return newCart;
       }
 
-      return [...prevCart, buildCartItemFromProduct(product, variant)];
+      return [...prevCart, newItem];
     });
-  }, []);
+  }, [isDealerMode, selectedDealer, applyDealerPriceToItem]);
 
   const addToCart = useCallback((product) => {
     const selectedVariant = product?.selectedVariant;
@@ -722,6 +767,46 @@ const POS = () => {
   const navigateRef = useNavigate();
   const location = useLocation();
 
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('mode') === 'dealer' && dealersEnabled) {
+      switchPosSaleMode('dealer');
+    }
+  }, [location.search, dealersEnabled, switchPosSaleMode]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const dealerId = params.get('dealerId');
+    if (!dealerId || !dealersEnabled) return undefined;
+
+    let cancelled = false;
+
+    const applyDealerFromUrl = async () => {
+      try {
+        switchPosSaleMode('dealer');
+        const res = await dealerService.getById(dealerId);
+        const dealer = res?.data?.data || res?.data || res;
+        if (!cancelled && dealer?.id) {
+          selectDealer(dealer);
+        }
+      } catch {
+        showError('Could not load dealer account. Search and select the dealer manually.');
+      } finally {
+        if (!cancelled) {
+          params.delete('dealerId');
+          params.delete('mode');
+          const qs = params.toString();
+          navigateRef(`${location.pathname}${qs ? `?${qs}` : ''}`, { replace: true });
+        }
+      }
+    };
+
+    applyDealerFromUrl();
+    return () => {
+      cancelled = true;
+    };
+  }, [location.search, location.pathname, dealersEnabled, switchPosSaleMode, selectDealer, navigateRef]);
+
   // When navigating from dashboard "Add sale" with openModal, open scan mode and clear state
   useEffect(() => {
     if (location.state?.openModal) {
@@ -821,6 +906,14 @@ const POS = () => {
       showError('Cart is empty');
       return;
     }
+    if (isDealerMode) {
+      if (!selectedDealer?.id) {
+        showError('Select a dealer account before checkout');
+        return;
+      }
+      setPaymentModalOpen(true);
+      return;
+    }
     if (!selectedCustomer && (quickCustomerPhone?.trim() || quickCustomerName?.trim())) {
       const phone = (quickCustomerPhone || '').trim();
       if (phone) {
@@ -842,7 +935,7 @@ const POS = () => {
       }
     }
     setPaymentModalOpen(true);
-  }, [cart, selectedCustomer, quickCustomerPhone, quickCustomerName, handleFindOrCreateCustomer]);
+  }, [cart, selectedCustomer, quickCustomerPhone, quickCustomerName, handleFindOrCreateCustomer, isDealerMode, selectedDealer?.id]);
 
   const buildSaleItemPayload = useCallback((item) => {
     if (item.type === 'custom' || !item.productId) {
@@ -875,13 +968,27 @@ const POS = () => {
 
   // Handle payment confirmation
   const handleConfirmPayment = useCallback(async (paymentDetails) => {
+    if (isDealerMode && !selectedDealer?.id) {
+      showError('Select a dealer account before completing the sale');
+      return;
+    }
+
     setIsProcessingPayment(true);
 
     try {
-      // Prepare sale data
+      const chargeToAccount = isDealerMode
+        ? Math.max(0, (paymentDetails.chargeToAccount ?? (paymentDetails.total ?? cartTotals.total) - (paymentDetails.amountPaid ?? 0)))
+        : undefined;
+
       const saleData = {
         items: cart.map(buildSaleItemPayload),
-        customerId: selectedCustomer?.id || null,
+        customerId: isDealerMode ? null : (selectedCustomer?.id || null),
+        dealerId: isDealerMode ? selectedDealer.id : null,
+        saleChannel: isDealerMode ? 'dealer' : 'retail',
+        ...(isDealerMode ? {
+          chargeToAccount,
+          creditOverride: paymentDetails.creditOverride === true,
+        } : {}),
         paymentMethod: paymentDetails.paymentMethod,
         amountPaid: paymentDetails.amountPaid,
         notes: paymentDetails.mobileMoneyReference 
@@ -895,7 +1002,11 @@ const POS = () => {
           paymentMethodUi: paymentDetails.paymentMethodUi,
           paymentCollectionMode: paymentDetails.paymentCollectionMode,
           paymentGroup: paymentDetails.paymentGroup,
-          posTaxConfigSnapshot: posTaxConfig
+          posTaxConfigSnapshot: posTaxConfig,
+          ...(isDealerMode ? {
+            dealerSettlement: paymentDetails.dealerSettlement,
+            dealerBusinessName: selectedDealer?.businessName,
+          } : {}),
         },
         delivery: paymentDetails.delivery || { required: false, bandId: null, fee: 0 }
       };
@@ -907,23 +1018,45 @@ const POS = () => {
 
       if (result.success) {
         refreshSaleQueries();
-        const saleObj = result.sale || {
+        const saleObj = {
           total: paymentDetails.total ?? cartTotals.total,
           change: paymentDetails.change || 0,
           items: cart,
           paymentMethod: paymentDetails.paymentMethod,
           ...saleData,
+          ...(result.sale || {}),
+          ...(isDealerMode && selectedDealer ? {
+            dealerId: selectedDealer.id,
+            saleChannel: 'dealer',
+            customerId: null,
+            customer: null,
+            dealer: {
+              businessName: selectedDealer.businessName,
+              contactName: selectedDealer.contactName,
+              phone: selectedDealer.phone,
+              email: selectedDealer.email,
+            },
+          } : {}),
         };
 
         setCompletedSale(saleObj);
         // Always return user to main POS view after a successful sale
         setPaymentModalOpen(false);
-        // Capture customer/phone for receipt before clearCart wipes them
+        const dealerForReceipt = isDealerMode ? selectedDealer : null;
+        // Capture counterparty for receipt before clearCart / clearDealerSelection wipes them
         setCustomerForReceipt(
-          selectedCustomer ||
-          (quickCustomerPhone
-            ? { phone: quickCustomerPhone, name: quickCustomerName || '', email: '' }
-            : null)
+          dealerForReceipt
+            ? {
+                name: dealerForReceipt.businessName,
+                company: dealerForReceipt.contactName || '',
+                phone: dealerForReceipt.phone || '',
+                email: dealerForReceipt.email || '',
+                isDealer: true,
+              }
+            : selectedCustomer ||
+              (quickCustomerPhone
+                ? { phone: quickCustomerPhone, name: quickCustomerName || '', email: '' }
+                : null)
         );
         // If auto_send and no SMS/WhatsApp/Email integrated, skip receipt modal - close immediately
         const receiptChannelsAvailable = posConfig?.receiptChannelsAvailable || {};
@@ -941,6 +1074,9 @@ const POS = () => {
 
         // Clear cart after successful sale
         clearCart();
+        if (isDealerMode) {
+          clearDealerSelection();
+        }
       }
     } catch (error) {
       console.error('Payment processing error:', error);
@@ -948,7 +1084,7 @@ const POS = () => {
     } finally {
       setIsProcessingPayment(false);
     }
-  }, [cart, selectedCustomer, cartTotals, processSale, clearCart, isRestaurant, posConfig, cartDiscount, posTaxConfig, buildSaleItemPayload, refreshSaleQueries]);
+  }, [cart, selectedCustomer, selectedDealer, cartTotals, processSale, clearCart, clearDealerSelection, isRestaurant, posConfig, cartDiscount, posTaxConfig, buildSaleItemPayload, refreshSaleQueries, isDealerMode]);
 
   // Handle Paystack Mobile Money payment request (POS)
   const handleRequestMobileMoneyPayment = useCallback(
@@ -1363,6 +1499,129 @@ const POS = () => {
         )}
       </div>
 
+      {dealersEnabled && (
+        <div className="shrink-0 mb-4 space-y-3">
+          <Tabs value={posSaleMode} onValueChange={switchPosSaleMode}>
+            <TabsList className="grid w-full max-w-md grid-cols-2">
+              <TabsTrigger value="retail">Retail</TabsTrigger>
+              <TabsTrigger value="dealer">Sell to dealer</TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          {isDealerMode && (
+            <Card className="border border-[#e5e7eb]">
+              <CardContent className="p-4 space-y-3">
+                {!activeShopId ? (
+                  <Alert className="border border-[#e5e7eb]">
+                    <AlertDescription>
+                      Select an active shop branch to search dealers for wholesale sales.
+                    </AlertDescription>
+                  </Alert>
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium flex items-center gap-2">
+                        <Building2 className="h-4 w-4 text-[#166534]" />
+                        Dealer account
+                      </Label>
+                      <div className="flex items-center gap-2">
+                        <Popover open={dealerPickerOpen} onOpenChange={setDealerPickerOpen}>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              role="combobox"
+                              aria-expanded={dealerPickerOpen}
+                              className="h-10 flex-1 justify-between font-normal border-border"
+                            >
+                              <span className="truncate text-left">
+                                {selectedDealer?.businessName || (
+                                  <span className="text-muted-foreground">Search dealers by name or phone</span>
+                                )}
+                              </span>
+                              {dealerSearchLoading ? (
+                                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+                              ) : (
+                                <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${dealerPickerOpen ? 'rotate-180' : ''}`} />
+                              )}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                            <div className="p-2 border-b border-border">
+                              <Input
+                                placeholder="Search dealers by name or phone"
+                                value={dealerSearch}
+                                onChange={(e) => setDealerSearch(e.target.value)}
+                                className="h-9 border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                                autoFocus
+                              />
+                            </div>
+                            <ScrollArea className="max-h-48">
+                              {dealerSearchLoading ? (
+                                <div className="py-6 flex justify-center">
+                                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                                </div>
+                              ) : dealerOptions.length === 0 ? (
+                                <div className="py-6 text-center text-sm text-muted-foreground">
+                                  {dealerSearch ? 'No dealers found' : 'Type to search dealers'}
+                                </div>
+                              ) : (
+                                <ul className="p-1">
+                                  {dealerOptions.map((dealer) => (
+                                    <li key={dealer.id}>
+                                      <button
+                                        type="button"
+                                        className="w-full text-left px-3 py-2 hover:bg-muted rounded-md text-sm flex flex-col"
+                                        onClick={() => {
+                                          selectDealer(dealer);
+                                          setDealerPickerOpen(false);
+                                        }}
+                                      >
+                                        <span className="font-medium text-foreground">{dealer.businessName}</span>
+                                        <span className="text-xs text-muted-foreground">
+                                          {dealer.phone ? `${dealer.phone} · ` : ''}
+                                          Outstanding {formatAmount(dealer.balance)} · Credit {formatAmount(dealer.availableCredit)}
+                                        </span>
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </ScrollArea>
+                          </PopoverContent>
+                        </Popover>
+                        {selectedDealer ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-10 w-10 shrink-0"
+                            onClick={clearDealerSelection}
+                            aria-label="Clear dealer selection"
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        ) : null}
+                      </div>
+                      {selectedDealer && dealerSummary ? (
+                        <p className="text-xs text-muted-foreground">
+                          Outstanding {dealerSummary.balanceLabel} · Available credit {dealerSummary.availableCreditLabel}
+                        </p>
+                      ) : null}
+                    </div>
+                    {isDealerMode && !selectedDealer && (
+                      <Alert className="border border-amber-200 bg-amber-50">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription>Add products after selecting a dealer. Wholesale prices apply automatically.</AlertDescription>
+                      </Alert>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+
       {/* Main content - Split layout */}
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-5 gap-4 min-h-0">
         {/* Left side - Product list (search + browse); click or scan adds to cart */}
@@ -1408,6 +1667,9 @@ const POS = () => {
             quickCustomerPhone={quickCustomerPhone}
             onQuickCustomerNameChange={setQuickCustomerName}
             onQuickCustomerPhoneChange={setQuickCustomerPhone}
+            isDealerMode={isDealerMode}
+            dealer={selectedDealer}
+            dealerSummary={dealerSummary}
             cartDiscount={cartDiscount}
             onUpdateCartDiscount={setCartDiscount}
             onCheckout={handleCheckout}
@@ -1539,6 +1801,10 @@ const POS = () => {
         isRestaurant={isRestaurant}
         stayOpenAfterSale={paymentModalStayOpen}
         onStayOpenAfterSaleChange={handlePaymentModalStayOpenChange}
+        isDealerMode={isDealerMode}
+        dealer={selectedDealer}
+        dealerSummary={dealerSummary}
+        canOverrideCredit={canOverrideCredit}
       />
 
       {/* Mobile checkout bar — sticky in flex column (not fixed; avoids dialog/viewport clipping) */}

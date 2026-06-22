@@ -36,4 +36,18 @@ npm run build
 npm run preview
 ```
 
-Deploy this folder as its own Vite app, for example to `www.absghana.com`, and set `VITE_API_URL` to the production API origin plus `VITE_DASHBOARD_URL` to the merchant dashboard domain.
+### Vercel (sabitostore.com)
+
+1. Create a Vercel project with **Root Directory** = `storefront` (not the monorepo root).
+2. Framework preset: **Vite**.
+3. `storefront/vercel.json` rewrites all non-asset routes to `index.html` so reloads and deep links work.
+4. Set production env vars before build:
+   - `VITE_API_URL=https://api.africanbusinesssuite.com`
+   - `VITE_STOREFRONT_URL=https://sabitostore.com`
+   - `VITE_DASHBOARD_URL=https://myapp.africanbusinesssuite.com`
+   - `VITE_GOOGLE_CLIENT_ID=<your Google Web client ID>`
+5. Point `sabitostore.com` DNS to this Vercel project.
+
+If you see `404: NOT_FOUND` on refresh or direct URLs, confirm Root Directory is `storefront` and redeploy after `vercel.json` is present.
+
+Deploy this folder as its own Vite app, for example to `sabitostore.com` or `www.absghana.com`, and set `VITE_API_URL` to the production API origin plus `VITE_DASHBOARD_URL` to the merchant dashboard domain.

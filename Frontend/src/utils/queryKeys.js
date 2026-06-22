@@ -31,6 +31,14 @@ export const queryKeys = {
     stats: (tenantId, shopId, studioLocationId) => ['customers', 'stats', tenantId, shopId, studioLocationId],
     detail: (id) => ['customer', id],
   },
+  dealers: {
+    all: ['dealers'],
+    list: (tenantId, shopId, params = {}) => ['dealers', tenantId, shopId, params],
+    stats: (tenantId, shopId) => ['dealers', 'stats', tenantId, shopId],
+    detail: (id) => ['dealer', id],
+    ledger: (id, params = {}) => ['dealer', id, 'ledger', params],
+    statement: (id, params = {}) => ['dealer', id, 'statement', params],
+  },
   products: {
     all: ['products'],
     detailRoot: ['product'],

@@ -10,6 +10,18 @@
 
 const FEATURE_CATALOG = [
   {
+    key: 'dealersAccount',
+    name: 'Dealers Account',
+    description: 'Wholesale dealer ledger, pricing, and POS dealer mode',
+    category: 'finance',
+    routes: ['/dealers'],
+    requiredForModules: [],
+    marketingCopy: {
+      highlight: 'Running dealer accounts with wholesale pricing',
+      perk: 'Dealers account & ledger',
+    },
+  },
+  {
     key: 'crm',
     name: 'Customers',
     description: 'Manage customer records and profiles',

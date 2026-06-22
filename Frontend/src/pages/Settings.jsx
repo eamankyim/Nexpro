@@ -23,6 +23,7 @@ import StatusChip from '../components/StatusChip';
 import FileUpload from '../components/FileUpload';
 import FilePreview from '../components/FilePreview';
 import { OrganizationReviewShareSection } from '../components/OrganizationReviewShareSection';
+import SidebarMenusSettings from '../components/settings/SidebarMenusSettings';
 import PrintableInvoice from '../components/PrintableInvoice';
 import { API_BASE_URL } from '../services/api';
 import { Button } from '@/components/ui/button';
@@ -273,7 +274,7 @@ const Settings = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { user, updateUser, activeTenant, refreshAuthState, needsEmailVerification, isManager, wasInvited, hasFeature, suppressAppGuidance } = useAuth();
+  const { user, updateUser, activeTenant, refreshAuthState, needsEmailVerification, isManager, isDriver, wasInvited, hasFeature, suppressAppGuidance } = useAuth();
   const { isMobile } = useResponsive();
   /** Must match API authorize() which uses workspace membership role (req.tenantRole), not only users.role */
   const canManageOrganization = Boolean(isManager);
@@ -2437,6 +2438,7 @@ const Settings = () => {
           </Form>
           </CardContent>
         </ShadcnCard>
+        {!isDriver ? <SidebarMenusSettings /> : null}
       </div>
     </div>
   );
@@ -3376,7 +3378,7 @@ const Settings = () => {
       <div className="border-t border-border pt-4 mt-4 md:pt-6 md:mt-6">
         <h3 className="text-sm font-medium mb-2 md:mb-4">Invoice & Quote Footer</h3>
         {organization.invoiceFooter ? (
-        <p>{organization.invoiceFooter}</p>
+        <p className="whitespace-pre-line">{organization.invoiceFooter}</p>
       ) : (
         <div className="flex items-center gap-2">
           <p className="text-sm text-muted-foreground">Not set</p>

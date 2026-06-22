@@ -7,7 +7,7 @@
  */
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import { Minus, Plus, Trash2, User, UserPlus, Percent, ShoppingCart, Phone, X, ChevronDown, ChevronUp, AlertCircle, Pencil } from 'lucide-react';
+import { Minus, Plus, Trash2, User, UserPlus, Percent, ShoppingCart, Phone, X, ChevronDown, ChevronUp, AlertCircle, Pencil, Building2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SecondaryButton } from '@/components/ui/secondary-button';
 import { Input } from '@/components/ui/input';
@@ -185,6 +185,9 @@ const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount, onEditPric
  * @param {function} [props.onQuickCustomerNameChange] - Called when quick customer name changes
  * @param {string} [props.quickCustomerPhone] - Phone for quick customer form
  * @param {function} [props.onQuickCustomerPhoneChange] - Called when quick customer phone changes
+ * @param {boolean} [props.isDealerMode] - Dealer wholesale mode (hides retail customer UI)
+ * @param {Object} [props.dealer] - Selected dealer account
+ * @param {Object} [props.dealerSummary] - Dealer balance/credit summary
  */
 const POSCart = ({
   items = [],
@@ -205,7 +208,10 @@ const POSCart = ({
   quickCustomerName = '',
   onQuickCustomerNameChange,
   quickCustomerPhone = '',
-  onQuickCustomerPhoneChange
+  onQuickCustomerPhoneChange,
+  isDealerMode = false,
+  dealer = null,
+  dealerSummary = null,
 }) => {
   const [discountDialogOpen, setDiscountDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
@@ -219,6 +225,13 @@ const POSCart = ({
   const { posConfig } = usePOSConfig();
 
   const customerValidation = useMemo(() => {
+    if (isDealerMode) {
+      const canCheckout = !!dealer?.id;
+      return {
+        canCheckout,
+        message: canCheckout ? null : 'Select a dealer account before checkout',
+      };
+    }
     const { phoneRequired, nameRequired } = posConfig.customer || {};
     const hasPhone = !!(customer?.phone || quickCustomerPhone);
     const hasName = !!(customer?.name || customer?.company || quickCustomerName);
@@ -229,7 +242,7 @@ const POSCart = ({
     if (!phoneOk) message = 'Phone number is required before checkout';
     else if (!nameOk) message = 'Customer name is required before checkout';
     return { canCheckout, message };
-  }, [posConfig.customer, customer, quickCustomerPhone, quickCustomerName]);
+  }, [posConfig.customer, customer, quickCustomerPhone, quickCustomerName, isDealerMode, dealer?.id]);
 
   // Sync dropdown value with selected customer (e.g. after selecting from dialog)
   useEffect(() => {
@@ -329,9 +342,33 @@ const POSCart = ({
           )}
         </div>
 
-        {/* Customer selection */}
+        {/* Customer / dealer selection */}
         <div className="mt-3">
-          {customer ? (
+          {isDealerMode ? (
+            dealer ? (
+              <div className="flex items-start gap-2 p-2 bg-green-50 rounded-lg border border-green-200">
+                <Building2 className="h-4 w-4 text-green-700 shrink-0 mt-0.5" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-green-800 truncate">
+                    {dealer.businessName}
+                  </div>
+                  {dealerSummary ? (
+                    <p className="text-xs text-green-700 mt-0.5">
+                      Outstanding {dealerSummary.balanceLabel} · Available credit {dealerSummary.availableCreditLabel}
+                    </p>
+                  ) : null}
+                  {dealer.phone ? (
+                    <p className="text-xs text-green-600 mt-0.5">{dealer.phone}</p>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 p-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-sm">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>Select a dealer account above before checkout.</span>
+              </div>
+            )
+          ) : customer ? (
             <div className="flex items-center justify-between p-2 bg-green-50 rounded-lg border border-green-200">
               <div className="flex items-center gap-2 min-w-0">
                 <User className="h-4 w-4 text-green-700 shrink-0" />

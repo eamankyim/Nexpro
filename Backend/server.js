@@ -51,6 +51,7 @@ require('./models');
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const customerRoutes = require('./routes/customerRoutes');
+const dealerRoutes = require('./routes/dealerRoutes');
 const marketingRoutes = require('./routes/marketingRoutes');
 const vendorRoutes = require('./routes/vendorRoutes');
 const jobRoutes = require('./routes/jobRoutes');
@@ -224,6 +225,7 @@ if (IS_VERCEL_SERVERLESS) {
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/customers', customerRoutes);
+app.use('/api/dealers', dealerRoutes);
 app.use('/api/marketing', marketingRoutes);
 app.use('/api/vendors', vendorRoutes);
 app.use('/api/jobs', jobRoutes);

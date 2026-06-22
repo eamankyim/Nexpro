@@ -3,6 +3,7 @@ import dayjs from 'dayjs';
 import { MapPin, Phone, Globe, Mail } from 'lucide-react';
 import { APP_LOGO_SRC } from '../config/appBrand';
 import { API_BASE_URL } from '../services/api';
+import { getSalePartyDetails } from '../utils/saleParty';
 
 const formatAddress = (address) => {
   if (!address) return '';
@@ -75,6 +76,7 @@ const PrintableReceipt = ({
 
   const titleText = documentTitle || 'RECEIPT';
   const printStyles = getPrintStyles(printConfig);
+  const party = getSalePartyDetails(sale);
 
   // Format logo URL - handle relative paths by prepending API base URL
   const logoSource = organization?.logoUrl
@@ -617,26 +619,20 @@ const PrintableReceipt = ({
           </div>
         </div>
 
-        {/* Customer Details */}
+        {/* Customer / dealer details */}
         <div className="receipt-details">
           <div className="billing-section">
-            <div className="section-title">Customer:</div>
+            <div className="section-title">{party.title}:</div>
             <div className="billing-info">
-              {sale.customer ? (
-                <>
-                  <div><strong>{sale.customer.name || 'N/A'}</strong></div>
-                  {sale.customer.company && (
-                    <div>{sale.customer.company}</div>
-                  )}
-                  {sale.customer.phone && (
-                    <div>Phone: {sale.customer.phone}</div>
-                  )}
-                  {sale.customer.email && (
-                    <div>Email: {sale.customer.email}</div>
-                  )}
-                </>
-              ) : (
-                <div>Walk-in Customer</div>
+              <div><strong>{party.name}</strong></div>
+              {party.company && (
+                <div>{party.company}</div>
+              )}
+              {party.phone && (
+                <div>Phone: {party.phone}</div>
+              )}
+              {party.email && (
+                <div>Email: {party.email}</div>
               )}
             </div>
           </div>

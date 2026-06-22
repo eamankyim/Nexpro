@@ -397,41 +397,66 @@ const StorefrontAuthPage = () => {
             </div>
           ) : null}
 
-          <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:justify-end">
-            <Button
-              type="button"
-              variant="outline"
-              className="rounded-full border-green-200 text-green-800 hover:bg-green-50"
-              onClick={() => setMode(isVerification || isSignup ? 'login' : 'signup')}
-            >
-              {isVerification ? 'Back to login' : isSignup ? 'I already have an account' : 'Create account'}
-            </Button>
-            <Button type="submit" className="rounded-full bg-green-700 hover:bg-green-800" disabled={isSubmitting}>
-              {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              {isVerification ? 'Verify and continue' : isSignup ? 'Create account and continue' : isOtpLogin ? 'Verify code and continue' : 'Sign in'}
-            </Button>
-          </div>
+          {isVerification ? (
+            <p className="text-center text-sm text-slate-600">
+              <button
+                type="button"
+                className="font-semibold text-green-800 hover:underline"
+                onClick={() => setMode('login')}
+              >
+                Back to sign in
+              </button>
+            </p>
+          ) : null}
+
+          <Button type="submit" className="w-full rounded-full bg-green-700 hover:bg-green-800" disabled={isSubmitting}>
+            {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            {isVerification ? 'Verify and continue' : isSignup ? 'Create account and continue' : isOtpLogin ? 'Verify code and continue' : 'Sign in'}
+          </Button>
 
           {isVerification ? (
-            <div className="text-center">
-              <Button
+            <p className="text-center text-sm text-slate-600">
+              <button
                 type="button"
-                variant="ghost"
-                className="rounded-full text-green-800 hover:bg-green-50"
+                className="font-semibold text-green-800 hover:underline disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={isResending || !form.email}
                 onClick={handleResend}
               >
-                {isResending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Resend verification code
-              </Button>
-            </div>
+                {isResending ? 'Sending verification code...' : 'Resend verification code'}
+              </button>
+            </p>
+          ) : null}
+
+          {!isVerification ? (
+            <p className="text-center text-sm text-slate-600">
+              {isSignup ? (
+                <>
+                  Already have an account?{' '}
+                  <button
+                    type="button"
+                    className="font-semibold text-green-800 hover:underline"
+                    onClick={() => setMode('login')}
+                  >
+                    Sign in
+                  </button>
+                </>
+              ) : (
+                <>
+                  Don&apos;t have an account?{' '}
+                  <button
+                    type="button"
+                    className="font-semibold text-green-800 hover:underline"
+                    onClick={() => setMode('signup')}
+                  >
+                    Sign up
+                  </button>
+                </>
+              )}
+            </p>
           ) : null}
 
           <p className="text-center text-xs text-slate-500">
-            Looking for seller access? <a className="font-semibold text-green-800" href={dashboardLink('/login')}>Use the Sabito business dashboard</a>.
-          </p>
-          <p className="text-center text-xs text-slate-500">
-            <Link className="font-semibold text-green-800" to="/products">Continue browsing without signing in</Link>
+            Looking for seller access? <a className="font-semibold text-green-800" href={dashboardLink('/login')}>Use the ABS Dashboard</a>.
           </p>
         </form>
       </section>

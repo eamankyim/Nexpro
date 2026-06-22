@@ -3,6 +3,7 @@ import dayjs from 'dayjs';
 import { MapPin, Phone, Globe, Mail } from 'lucide-react';
 import { API_BASE_URL } from '../services/api';
 import { getInvoiceTaxDisplay } from '../utils/invoiceTaxDisplay';
+import { formatLineItemQuantity } from '../utils/documentLineItems';
 
 const DEFAULT_TERMS_TEXT =
   'Payment is due within the specified payment terms. Late payments may incur additional charges.';
@@ -379,6 +380,7 @@ const PrintableInvoice = ({
           font-size: 11px;
           line-height: 1.65;
           color: #4b5563;
+          white-space: pre-line;
         }
         .footer {
           margin-top: 28px;
@@ -387,6 +389,7 @@ const PrintableInvoice = ({
           text-align: center;
           font-size: 11px;
           color: #9ca3af;
+          white-space: pre-line;
         }
         
         /* Thermal receipt layout */
@@ -706,7 +709,7 @@ const PrintableInvoice = ({
                     <div key={index} className="thermal-item-list">
                       <span className="thermal-item-name">{item.description || item.category || 'Item'}</span>
                       {productCode && <span className="thermal-item-name">Product Code: {productCode}</span>}
-                      <span className="thermal-item-amount">{qty} × ₵ {unitPrice} = ₵ {total}</span>
+                      <span className="thermal-item-amount">{formatLineItemQuantity(item, qty)} × ₵ {unitPrice} = ₵ {total}</span>
                     </div>
                   );
                 })
@@ -740,7 +743,7 @@ const PrintableInvoice = ({
             </div>
             <hr className="thermal-separator" />
             {(companyInfo.invoiceFooter || companyInfo.name) && (
-              <div className="thermal-thanks text-center">
+              <div className="thermal-thanks text-center" style={{ whiteSpace: 'pre-line' }}>
                 {companyInfo.invoiceFooter || companyInfo.name}
               </div>
             )}
@@ -885,7 +888,7 @@ const PrintableInvoice = ({
                 return (
                   <div key={index} className="receipt-item-row" style={{ display: 'block', padding: '6px 0', borderBottom: '1px solid #eee', fontSize: '12px' }}>
                     <div style={{ fontWeight: 500, marginBottom: 2 }}>{item.description || item.category || 'Item'}</div>
-                    <div style={{ fontSize: '11px', color: '#555' }}>{qty} × ₵ {unitPrice} = ₵ {total}</div>
+                    <div style={{ fontSize: '11px', color: '#555' }}>{formatLineItemQuantity(item, qty)} × ₵ {unitPrice} = ₵ {total}</div>
                     {productCode && <div style={{ fontSize: '11px', color: '#555' }}>Product Code: {productCode}</div>}
                   </div>
                 );
@@ -921,7 +924,7 @@ const PrintableInvoice = ({
                         )}
                       </td>
                       <td>{productCode || '-'}</td>
-                      <td className="text-center">{item.quantity || 1}</td>
+                      <td className="text-center">{formatLineItemQuantity(item)}</td>
                       <td className="text-right">{amountDisplay(item.unitPrice)}</td>
                       <td className="text-right">
                         <strong>{amountDisplay(item.total || item.unitPrice * (item.quantity || 1))}</strong>
@@ -989,7 +992,7 @@ const PrintableInvoice = ({
           <div className="notes-section">
             <div className="pay-to-block">
               <div className="pay-to-title">Pay to</div>
-              <div className="notes-content" style={{ whiteSpace: 'pre-line' }}>
+              <div className="notes-content">
                 {companyInfo.paymentDetails}
               </div>
             </div>

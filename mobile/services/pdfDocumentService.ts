@@ -189,6 +189,36 @@ function formatQuantity(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, '');
 }
 
+function getLineItemUnitSymbol(item: AnyRecord): string {
+  const metadata = asRecord(item.metadata);
+  const specifications = asRecord(item.specifications);
+  const product = asRecord(item.product);
+
+  const candidates = [
+    item.unitSymbol,
+    item.unit,
+    metadata.unitSymbol,
+    metadata.unit,
+    specifications.unitSymbol,
+    specifications.unit,
+    specifications.itemUnit,
+    item.itemUnit,
+    product.unit,
+  ];
+
+  const unit = candidates.map((value) => text(value)).find(Boolean);
+  if (unit) return unit;
+  if (text(item.pricingMethod) === 'square_foot') return 'sq ft';
+  return '';
+}
+
+export function formatLineItemQuantityDisplay(item: AnyRecord, quantity?: number): string {
+  const qty = quantity ?? getItemQuantity(item);
+  const formatted = formatQuantity(qty);
+  const unit = getLineItemUnitSymbol(item);
+  return unit ? `${formatted} (${unit})` : formatted;
+}
+
 function moneyValue(value: unknown, fallback = 0): number {
   if (value === undefined || value === null || value === '') return fallback;
   return toNumber(value as number | string | null | undefined);
@@ -226,7 +256,7 @@ function documentShell(title: string, body: string): string {
       .totals { margin-left: auto; margin-top: 18px; width: 280px; }
       .total-row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; color: #111827; font-size: 13px; font-weight: 500; }
       .grand { border-top: 1.5px solid #d1d5db; color: #166534; font-size: 18px; font-weight: 900; margin-top: 6px; padding-top: 12px; }
-      .footer { color: #374151; font-size: 12px; line-height: 1.5; margin-top: 26px; font-weight: 500; }
+      .footer { color: #374151; font-size: 12px; line-height: 1.5; margin-top: 26px; font-weight: 500; white-space: pre-line; }
     </style>
     <title>${escapeHtml(title)}</title>
   </head>
@@ -272,7 +302,7 @@ function renderItems(items: AnyRecord[]): string {
           <div>${escapeHtml(getItemName(item))}</div>
           ${productCode ? `<div class="muted-light">Code: ${escapeHtml(productCode)}</div>` : ''}
         </td>
-        <td>${escapeHtml(formatQuantity(quantity))}</td>
+        <td>${escapeHtml(formatLineItemQuantityDisplay(item, quantity))}</td>
         <td>${escapeHtml(formatCurrency(unitPrice))}</td>
         <td>${escapeHtml(formatCurrency(lineTotal))}</td>
       </tr>`;

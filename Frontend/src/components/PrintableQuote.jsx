@@ -1,5 +1,6 @@
 import React from 'react';
 import dayjs from 'dayjs';
+import { formatLineItemQuantity } from '../utils/documentLineItems';
 import { API_BASE_URL } from '../services/api';
 
 const formatAddress = (address) => {
@@ -232,6 +233,10 @@ const PrintableQuote = ({ quote, organization = {} }) => {
           font-size: 10px;
           color: #999;
           text-align: center;
+          white-space: pre-line;
+        }
+        .notes-body {
+          white-space: pre-line;
         }
         .printable-quote-footer a:hover {
           text-decoration: underline;
@@ -316,7 +321,7 @@ const PrintableQuote = ({ quote, organization = {} }) => {
                     </div>
                   )}
                 </td>
-                <td>{item.quantity}</td>
+                <td>{formatLineItemQuantity(item)}</td>
                 <td>₵ {parseFloat(item.unitPrice || 0).toFixed(2)}</td>
                 <td style={{ color: item.discountAmount > 0 ? '#52c41a' : 'inherit' }}>
                   {item.discountAmount > 0 ? (
@@ -384,7 +389,7 @@ const PrintableQuote = ({ quote, organization = {} }) => {
         {quote.notes && (
           <div className="notes-section">
             <div className="notes-title">Notes</div>
-            <div>{quote.notes}</div>
+            <div className="notes-body">{quote.notes}</div>
           </div>
         )}
 

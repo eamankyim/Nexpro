@@ -199,7 +199,7 @@ const hydrateInvoiceItemProductCodes = async (invoice, items) => {
     productIds.size
       ? Product.findAll({
           where: applyTenantFilter(invoice.tenantId, { id: { [Op.in]: [...productIds] } }),
-          attributes: ['id', 'sku', 'barcode'],
+          attributes: ['id', 'sku', 'barcode', 'unit'],
         })
       : [],
     variantIds.size
@@ -223,6 +223,7 @@ const hydrateInvoiceItemProductCodes = async (invoice, items) => {
     const variant = variantsById.get(productVariantId) || saleItem.variant || null;
     const productCode = getInvoiceItemProductCode({ item, saleItem, product, variant });
     const sku = pickTrimmed(item.sku, item.metadata?.sku, saleItem.sku, variant?.sku, product?.sku);
+    const unit = pickTrimmed(item.unit, item.metadata?.unit, product?.unit);
 
     return {
       ...item,
@@ -230,6 +231,7 @@ const hydrateInvoiceItemProductCodes = async (invoice, items) => {
       ...(productVariantId && !item.productVariantId ? { productVariantId } : {}),
       ...(sku && !item.sku ? { sku } : {}),
       ...(productCode ? { productCode } : {}),
+      ...(unit && !item.unit ? { unit } : {}),
     };
   });
 };
@@ -1025,6 +1027,7 @@ exports.createInvoice = async (req, res, next) => {
           productVariantId: item.productVariantId || item.variantId || undefined,
           quantity: qty,
           unitPrice,
+          unit: pickTrimmed(item.unit, item.metadata?.unit),
           discountAmount: lineDiscount,
           discountPercent: parseFloat(item.discountPercent || 0),
           discountReason: item.discountReason || null,
@@ -1990,6 +1993,7 @@ async function createInvoiceFromQuoteInternal(tenantId, quoteId, userId = null) 
         quantity: qi.quantity,
         unitPrice: qi.unitPrice,
         total: lineTotal,
+        unit: pickTrimmed(qi.metadata?.unit),
         productCode: pickTrimmed(qi.metadata?.productCode, qi.metadata?.barcode, qi.metadata?.sku),
         sku: pickTrimmed(qi.metadata?.sku),
         productVariantId: qi.metadata?.productVariantId || undefined,

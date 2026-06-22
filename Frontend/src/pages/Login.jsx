@@ -3,7 +3,6 @@ import { useNavigate, useSearchParams, Link, Navigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { GoogleLogin } from '@react-oauth/google';
 import { Eye, EyeOff, RefreshCw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { shouldSuppressAppGuidance } from '../utils/appGuidanceEligibility';
@@ -11,6 +10,8 @@ import { shouldRequireTenantOnboarding } from '../utils/tenantOnboarding';
 import { usePublicConfig } from '../context/PublicConfigContext';
 import { useResponsive } from '../hooks/useResponsive';
 import { showSuccess, showError } from '../utils/toast';
+import GoogleSignInButton from '../components/GoogleSignInButton';
+import { useGoogleSignIn } from '../components/GoogleSignInHost';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -223,6 +224,16 @@ const Login = () => {
     setGoogleLoading(false);
   }, []);
 
+  const googleSignIn = useGoogleSignIn();
+
+  useEffect(() => {
+    if (!googleSignIn) return undefined;
+    return googleSignIn.registerHandlers({
+      onSuccess: handleGoogleSuccess,
+      onError: handleGoogleError,
+    });
+  }, [googleSignIn, handleGoogleSuccess, handleGoogleError]);
+
   if (inviteTokenParam) {
     return <Navigate to={`/signup?token=${encodeURIComponent(inviteTokenParam)}`} replace />;
   }
@@ -357,19 +368,10 @@ const Login = () => {
 
               {/* Google Sign In Button - min-height so space is reserved while script loads */}
               {googleClientId ? (
-                <div className="flex justify-center min-h-[44px]" data-google-configured="true">
-                  <GoogleLogin
-                    onSuccess={handleGoogleSuccess}
-                    onError={handleGoogleError}
-                    useOneTap={false}
-                    theme="outline"
-                    size="large"
-                    type="standard"
-                    shape="rectangular"
-                    text="signin_with"
-                    width={isMobile ? 320 : 400}
-                  />
-                </div>
+                <GoogleSignInButton
+                  disabled={googleLoading}
+                  width={isMobile ? 320 : 400}
+                />
               ) : configLoaded ? null : (
                 <div className="flex justify-center min-h-[44px] items-center text-muted-foreground text-sm">
                   Loading sign-in options...

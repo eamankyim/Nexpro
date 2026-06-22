@@ -37,7 +37,7 @@ const shopperBenefits = [
 ];
 
 const sellerBenefits = [
-  'Launch a customer-ready storefront from the Sabito business dashboard',
+  'Launch a customer-ready storefront from the ABS Dashboard',
   'Publish products, categories, and promotions to the public marketplace',
   'Reach buyers with trade assurance and verified-store messaging',
   'Manage orders and fulfillment through the same Sabito seller tools',
@@ -79,6 +79,7 @@ const AboutPage = () => {
 
     <section className="rounded-2xl border border-green-900/10 bg-green-900 p-6 text-white sm:rounded-[2rem] md:p-10">
       <SectionHeader
+        variant="inverse"
         eyebrow="About & Contact"
         title="The customer marketplace built for African businesses"
         description={`${APP_NAME} brings together launched storefronts so customers can discover products, compare trusted sellers, and shop with confidence.`}
@@ -217,7 +218,7 @@ const AboutPage = () => {
           </span>
         </div>
         <p className="mt-6 rounded-2xl border border-white/15 bg-white/10 p-4 text-xs leading-6 text-green-50/70 sm:rounded-3xl">
-          Business owners should continue to manage storefronts from the Sabito business dashboard.
+          Business owners should continue to manage storefronts from the ABS Dashboard.
         </p>
       </div>
     </section>

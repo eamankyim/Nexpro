@@ -14,6 +14,7 @@ import {
   ShoppingBag,
   Pencil,
   Truck,
+  Building2,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
@@ -37,6 +38,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { cn } from '@/lib/utils';
 import { CURRENCY } from '../../constants';
@@ -206,8 +208,10 @@ const PaymentMethodOption = ({ method, isSelected }) => {
 /**
  * Payment method selection grouped by manual and automatic verification.
  */
-function PaymentMethodSelection({ activeGroup, activeMethod, onGroupChange, onMethodChange }) {
-  const methods = PAYMENT_METHOD_GROUPS[activeGroup] || [];
+function PaymentMethodSelection({ activeGroup, activeMethod, onGroupChange, onMethodChange, excludeMethodIds = [] }) {
+  const methods = (PAYMENT_METHOD_GROUPS[activeGroup] || []).filter(
+    (method) => !excludeMethodIds.includes(method.id)
+  );
 
   return (
     <div className={cn(SECTION_CARD, 'space-y-3 p-3')}>
@@ -322,6 +326,100 @@ function buildQuickCashAmounts(total) {
   )];
 
   return unique.slice(0, 4);
+}
+
+function DealerSettlementSection({
+  total,
+  dealer,
+  dealerSummary,
+  settlement,
+  onSettlementChange,
+  chargeToAccount,
+  onChargeToAccountChange,
+  amountPaid,
+  onAmountPaidChange,
+  creditOverride,
+  onCreditOverrideChange,
+  canOverrideCredit,
+  creditWarning,
+}) {
+  return (
+    <div className={cn(SECTION_CARD, 'p-3 space-y-3')}>
+      <div className="flex items-center gap-2">
+        <Building2 className="h-4 w-4 text-green-700" />
+        <span className="text-sm font-medium">Dealer settlement — {dealer?.businessName}</span>
+      </div>
+      {dealerSummary && (
+        <div className="grid grid-cols-2 gap-2 text-sm">
+          <div className="rounded-md border border-[#e5e7eb] p-2">
+            <div className="text-muted-foreground">Outstanding</div>
+            <div className="font-semibold">{dealerSummary.balanceLabel}</div>
+          </div>
+          <div className="rounded-md border border-[#e5e7eb] p-2">
+            <div className="text-muted-foreground">Available credit</div>
+            <div className="font-semibold">{dealerSummary.availableCreditLabel}</div>
+          </div>
+        </div>
+      )}
+      <RadioGroup value={settlement} onValueChange={onSettlementChange} className="space-y-2">
+        <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="account" />Charge full amount to account</label>
+        <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="pay_now" />Pay now (no account charge)</label>
+        <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="split" />Split (part account, part pay now)</label>
+      </RadioGroup>
+      {settlement === 'split' && (
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label className="text-xs">Charge to account</Label>
+            <Input type="number" min="0" step="0.01" value={chargeToAccount} onChange={(e) => onChargeToAccountChange(e.target.value)} />
+          </div>
+          <div>
+            <Label className="text-xs">Pay now</Label>
+            <Input type="number" min="0" step="0.01" value={amountPaid} onChange={(e) => onAmountPaidChange(e.target.value)} />
+          </div>
+        </div>
+      )}
+      {creditWarning && (
+        <Alert className="border border-amber-200 bg-amber-50">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription className="text-sm">{creditWarning}</AlertDescription>
+        </Alert>
+      )}
+      {creditWarning && canOverrideCredit && (
+        <label className="flex items-center gap-2 text-sm">
+          <Switch checked={creditOverride} onCheckedChange={onCreditOverrideChange} />
+          Manager override credit limit
+        </label>
+      )}
+    </div>
+  );
+}
+
+function DealerAccountComplete({ chargeToAccount, onConfirm, isProcessing, canComplete = true }) {
+  return (
+    <div className={SECTION_STACK}>
+      <div className="text-center py-2">
+        <p className="text-sm text-muted-foreground">Charge to dealer account</p>
+        <p className="text-3xl font-bold text-green-700 mt-1">{formatAmount(chargeToAccount)}</p>
+        <p className="text-xs text-muted-foreground mt-2">No payment collected at checkout.</p>
+      </div>
+      <StickyPaymentAction>
+        <Button
+          type="button"
+          className="w-full h-12 text-base font-medium bg-green-700 hover:bg-green-800"
+          disabled={!canComplete}
+          loading={isProcessing}
+          onClick={() => onConfirm(buildPaymentDetails('cash', { amountPaid: 0 }))}
+        >
+          <span className="inline-flex items-center gap-2">
+            <span className="h-5 w-5 rounded-full border border-white/70 flex items-center justify-center">
+              <Check className="h-3 w-3" aria-hidden />
+            </span>
+            Complete Sale
+          </span>
+        </Button>
+      </StickyPaymentAction>
+    </div>
+  );
 }
 
 /**
@@ -1031,6 +1129,10 @@ const POSPaymentModal = ({
   mobileMoneyFallbackMode = null,
   isProcessing = false,
   isRestaurant = false,
+  isDealerMode = false,
+  dealer = null,
+  dealerSummary = null,
+  canOverrideCredit = false,
 }) => {
   const [activeGroup, setActiveGroup] = useState('manual');
   const [activeMethod, setActiveMethod] = useState('cash');
@@ -1038,6 +1140,10 @@ const POSPaymentModal = ({
   const [customerSearchTerm, setCustomerSearchTerm] = useState('');
   const [deliveryRequired, setDeliveryRequired] = useState(false);
   const [selectedDeliveryBandId, setSelectedDeliveryBandId] = useState('');
+  const [dealerSettlement, setDealerSettlement] = useState('account');
+  const [dealerChargeToAccount, setDealerChargeToAccount] = useState('');
+  const [dealerAmountPaid, setDealerAmountPaid] = useState('');
+  const [dealerCreditOverride, setDealerCreditOverride] = useState(false);
   const { isMobile } = useResponsive();
 
   const { data: deliverySettingsData } = useQuery({
@@ -1061,6 +1167,10 @@ const POSPaymentModal = ({
     if (!isOpen) {
       setDeliveryRequired(false);
       setSelectedDeliveryBandId('');
+      setDealerSettlement('account');
+      setDealerChargeToAccount('');
+      setDealerAmountPaid('');
+      setDealerCreditOverride(false);
       return;
     }
     if (deliverySettings?.enabled === true && deliverySettings.requireSelectionAtCheckout === true) {
@@ -1079,6 +1189,29 @@ const POSPaymentModal = ({
     [total, deliveryFee]
   );
 
+  const resolvedDealerAmounts = useMemo(() => {
+    if (!isDealerMode) return { chargeToAccount: 0, amountPaid: checkoutTotal };
+    if (dealerSettlement === 'account') {
+      return { chargeToAccount: checkoutTotal, amountPaid: 0 };
+    }
+    if (dealerSettlement === 'pay_now') {
+      return { chargeToAccount: 0, amountPaid: checkoutTotal };
+    }
+    const charge = Math.max(0, parseDecimalInput(dealerChargeToAccount) || 0);
+    const paid = Math.max(0, parseDecimalInput(dealerAmountPaid) || 0);
+    return { chargeToAccount: charge, amountPaid: paid };
+  }, [isDealerMode, dealerSettlement, dealerChargeToAccount, dealerAmountPaid, checkoutTotal]);
+
+  const dealerCreditWarning = useMemo(() => {
+    if (!isDealerMode || !dealerSummary) return '';
+    const projected = (dealerSummary.balance || 0) + resolvedDealerAmounts.chargeToAccount;
+    const limit = parseFloat(dealer?.creditLimit || 0);
+    if (limit > 0 && projected > limit + 0.001 && !dealerCreditOverride) {
+      return `This sale would exceed the dealer credit limit (${formatAmount(limit)}).`;
+    }
+    return '';
+  }, [isDealerMode, dealerSummary, resolvedDealerAmounts.chargeToAccount, dealer?.creditLimit, dealerCreditOverride]);
+
   const deliveryValidationMessage = useMemo(() => {
     if (deliverySettings?.enabled !== true) return '';
     if (!deliveryRequired) return '';
@@ -1093,7 +1226,21 @@ const POSPaymentModal = ({
     fee: deliveryRequired ? deliveryFee : 0,
   }), [deliveryRequired, selectedDeliveryBand, deliveryFee]);
 
-  const canCompletePayment = !deliveryValidationMessage;
+  const canCompletePayment = !deliveryValidationMessage && !(isDealerMode && dealerCreditWarning && !dealerCreditOverride);
+
+  const dealerPayNowAmount = resolvedDealerAmounts.amountPaid;
+  const dealerUsesAccountOnly = isDealerMode && dealerPayNowAmount <= 0.001;
+  const dealerPaymentTotal = isDealerMode ? dealerPayNowAmount : checkoutTotal;
+  const dealerExcludeMethods = isDealerMode ? ['credit'] : [];
+
+  useEffect(() => {
+    if (!isOpen || !isDealerMode) return;
+    if (dealerUsesAccountOnly) return;
+    if (activeMethod === 'credit') {
+      setActiveMethod('cash');
+      setActiveGroup('manual');
+    }
+  }, [isOpen, isDealerMode, dealerUsesAccountOnly, activeMethod]);
 
   const filteredCustomers = useMemo(() => {
     if (!Array.isArray(customers) || customers.length === 0) return [];
@@ -1109,8 +1256,19 @@ const POSPaymentModal = ({
   }, [customers, customerSearchTerm]);
 
   const handleConfirm = useCallback((details) => {
-    onConfirmPayment({ ...details, sendToKitchen, delivery: deliveryPayload, total: checkoutTotal });
-  }, [onConfirmPayment, sendToKitchen, deliveryPayload, checkoutTotal]);
+    onConfirmPayment({
+      ...details,
+      sendToKitchen,
+      delivery: deliveryPayload,
+      total: checkoutTotal,
+      ...(isDealerMode ? {
+        dealerSettlement,
+        chargeToAccount: resolvedDealerAmounts.chargeToAccount,
+        amountPaid: resolvedDealerAmounts.amountPaid,
+        creditOverride: dealerCreditOverride,
+      } : {}),
+    });
+  }, [onConfirmPayment, sendToKitchen, deliveryPayload, checkoutTotal, isDealerMode, dealerSettlement, resolvedDealerAmounts, dealerCreditOverride]);
 
   const handleRequestMobileMoneyWithDelivery = useCallback((details) => {
     onRequestMobileMoney?.({ ...details, delivery: deliveryPayload, total: checkoutTotal });
@@ -1151,6 +1309,25 @@ const POSPaymentModal = ({
             deliveryLabel={selectedDeliveryBand?.label || ''}
           />
 
+          {isDealerMode && dealer && (
+            <DealerSettlementSection
+              total={checkoutTotal}
+              dealer={dealer}
+              dealerSummary={dealerSummary}
+              settlement={dealerSettlement}
+              onSettlementChange={setDealerSettlement}
+              chargeToAccount={dealerChargeToAccount}
+              onChargeToAccountChange={setDealerChargeToAccount}
+              amountPaid={dealerAmountPaid}
+              onAmountPaidChange={setDealerAmountPaid}
+              creditOverride={dealerCreditOverride}
+              onCreditOverrideChange={setDealerCreditOverride}
+              canOverrideCredit={canOverrideCredit}
+              creditWarning={dealerCreditWarning}
+            />
+          )}
+
+          {!isDealerMode && (
           <PaymentCustomerRow
             customer={customer}
             onChangeCustomer={onRequestChangeCustomer}
@@ -1162,6 +1339,7 @@ const POSPaymentModal = ({
             onSelectExistingCustomer={onSelectExistingCustomer}
             onRequestChangeCustomer={onRequestChangeCustomer}
           />
+          )}
 
           <DeliveryCheckoutSection
             deliverySettings={deliverySettings}
@@ -1176,12 +1354,15 @@ const POSPaymentModal = ({
             validationMessage={deliveryValidationMessage}
           />
 
+          {!dealerUsesAccountOnly && (
           <PaymentMethodSelection
             activeGroup={activeGroup}
             activeMethod={activeMethod}
             onGroupChange={handlePaymentGroupChange}
             onMethodChange={handlePaymentMethodChange}
+            excludeMethodIds={dealerExcludeMethods}
           />
+          )}
 
           {isRestaurant && (
             <div className={cn('flex items-center justify-between', SECTION_CARD, 'bg-muted/50 p-3')}>
@@ -1200,9 +1381,16 @@ const POSPaymentModal = ({
             </div>
           )}
 
-          {activeMethod === 'cash' && (
+          {dealerUsesAccountOnly ? (
+            <DealerAccountComplete
+              chargeToAccount={resolvedDealerAmounts.chargeToAccount}
+              onConfirm={handleConfirm}
+              isProcessing={isProcessing}
+              canComplete={canCompletePayment}
+            />
+          ) : activeMethod === 'cash' && (
             <CashPayment
-              total={checkoutTotal}
+              total={dealerPaymentTotal}
               items={items}
               onConfirm={handleConfirm}
               isProcessing={isProcessing}
@@ -1211,18 +1399,18 @@ const POSPaymentModal = ({
             />
           )}
 
-          {activeMethod === 'momo_direct' && (
+          {!dealerUsesAccountOnly && activeMethod === 'momo_direct' && (
             <ManualMobileMoneyPayment
-              total={checkoutTotal}
+              total={dealerPaymentTotal}
               onConfirm={handleConfirm}
               isProcessing={isProcessing}
               canComplete={canCompletePayment}
             />
           )}
 
-          {activeMethod === 'momo_prompt' && (
+          {!dealerUsesAccountOnly && activeMethod === 'momo_prompt' && (
             <MobileMoneyPayment
-              total={checkoutTotal}
+              total={dealerPaymentTotal}
               customer={customer}
               onRequestMobileMoney={handleRequestMobileMoneyWithDelivery}
               onConfirm={handleConfirm}
@@ -1234,15 +1422,15 @@ const POSPaymentModal = ({
             />
           )}
 
-          {activeMethod === 'card' && (
-            <AutomaticPaymentPlaceholder methodId="card" total={checkoutTotal} />
+          {!dealerUsesAccountOnly && activeMethod === 'card' && (
+            <AutomaticPaymentPlaceholder methodId="card" total={dealerPaymentTotal} />
           )}
 
-          {activeMethod === 'bank_transfer' && (
-            <AutomaticPaymentPlaceholder methodId="bank_transfer" total={checkoutTotal} />
+          {!dealerUsesAccountOnly && activeMethod === 'bank_transfer' && (
+            <AutomaticPaymentPlaceholder methodId="bank_transfer" total={dealerPaymentTotal} />
           )}
 
-          {activeMethod === 'credit' && (
+          {!dealerUsesAccountOnly && activeMethod === 'credit' && (
             <CreditPayment total={checkoutTotal} customer={customer} onConfirm={handleConfirm} isProcessing={isProcessing} canComplete={canCompletePayment} />
           )}
           </div>

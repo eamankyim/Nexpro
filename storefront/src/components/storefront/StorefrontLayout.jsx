@@ -331,7 +331,7 @@ export const StorefrontMobileMenu = ({ activePath = '/', onClose }) => {
 
         <div className="grid gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 sm:rounded-3xl">
           <p className="text-sm font-black text-slate-950">Become a seller</p>
-          <p className="text-sm leading-6 text-slate-600">Open a Sabito storefront and manage products from the business dashboard.</p>
+          <p className="text-sm leading-6 text-slate-600">Open a Sabito storefront and manage products from the ABS Dashboard.</p>
           <MobileMenuLink href={dashboardLink('/signup')} icon={Store} label="Open your store" onNavigate={closeMenu} />
         </div>
 
@@ -889,16 +889,22 @@ export const StoreScopedFooter = ({ store, isServiceStore = false, contactHref =
   );
 };
 
-export const SectionHeader = ({ eyebrow, title, description, action }) => (
-  <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-    <div className="min-w-0">
-      <p className="text-sm font-bold uppercase tracking-[0.18em] text-green-700">{eyebrow}</p>
-      <h1 className="mt-2 text-2xl font-extrabold tracking-tight text-slate-950 sm:text-3xl md:text-4xl">{title}</h1>
-      {description ? <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-500 md:text-base">{description}</p> : null}
+export const SectionHeader = ({ eyebrow, title, description, action, variant = 'default' }) => {
+  const isInverse = variant === 'inverse';
+
+  return (
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div className="min-w-0">
+        <p className={`text-sm font-bold uppercase tracking-[0.18em] ${isInverse ? 'text-amber-300' : 'text-green-700'}`}>{eyebrow}</p>
+        <h1 className={`mt-2 text-2xl font-extrabold tracking-tight sm:text-3xl md:text-4xl ${isInverse ? 'text-white' : 'text-slate-950'}`}>{title}</h1>
+        {description ? (
+          <p className={`mt-3 max-w-2xl text-sm leading-6 md:text-base ${isInverse ? 'text-white' : 'text-slate-500'}`}>{description}</p>
+        ) : null}
+      </div>
+      {action ? <div className="w-full shrink-0 sm:w-auto">{action}</div> : null}
     </div>
-    {action ? <div className="w-full shrink-0 sm:w-auto">{action}</div> : null}
-  </div>
-);
+  );
+};
 
 export const StoreCard = ({ store: storeItem }) => {
   const review = getReviewMeta(storeItem, 'New shop');
@@ -1186,7 +1192,7 @@ export const BuyerSidebar = () => {
         </div>
         <p className="mt-4 text-sm font-black text-slate-950">Become a seller</p>
         <p className="mt-2 text-sm leading-6 text-slate-600">
-          Open a Sabito storefront and manage products from the business dashboard.
+          Open a Sabito storefront and manage products from the ABS Dashboard.
         </p>
         <a
           href={dashboardLink('/signup')}

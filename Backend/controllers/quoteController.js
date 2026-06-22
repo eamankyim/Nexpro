@@ -7,6 +7,7 @@ const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const {
   applyStudioLocationFilter,
   attachStudioLocationToPayload,
+  resolveStudioLocationIdForJobFromQuote,
 } = require('../utils/studioLocationUtils');
 const {
   applyScopedFilters,
@@ -711,6 +712,7 @@ async function convertQuoteToJobInternal(tenantId, quoteId, createdBy) {
       finalPrice: quote.totalAmount,
       notes: quote.notes,
       tenantId,
+      studioLocationId: resolveStudioLocationIdForJobFromQuote(null, quote),
       createdBy: createdBy || null
     }, { transaction });
 
@@ -1244,6 +1246,7 @@ exports.convertQuoteToJob = async (req, res, next) => {
       finalPrice: quote.totalAmount,
       notes: quote.notes,
       tenantId: req.tenantId,
+      studioLocationId: resolveStudioLocationIdForJobFromQuote(req, quote),
       createdBy: req.user?.id || null,
       startDate: parseDate(startDate),
       dueDate: parseDate(dueDate),

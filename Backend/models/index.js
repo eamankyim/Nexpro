@@ -95,6 +95,10 @@ const MarketplaceOrderPayment = require('./MarketplaceOrderPayment');
 const MarketplaceLedgerEntry = require('./MarketplaceLedgerEntry');
 const MarketplacePayout = require('./MarketplacePayout');
 const MarketplaceDispute = require('./MarketplaceDispute');
+const Dealer = require('./Dealer');
+const DealerLedgerEntry = require('./DealerLedgerEntry');
+const DealerPriceTier = require('./DealerPriceTier');
+const DealerProductPrice = require('./DealerProductPrice');
 
 // Define relationships
 Tenant.hasMany(Customer, { foreignKey: 'tenantId', as: 'customers' });
@@ -638,6 +642,41 @@ Shop.hasMany(MaterialItem, { foreignKey: 'shopId', as: 'materialItems' });
 MaterialItem.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
 Sale.belongsTo(Customer, { foreignKey: 'customerId', as: 'customer' });
 Customer.hasMany(Sale, { foreignKey: 'customerId', as: 'sales' });
+Shop.hasMany(Dealer, { foreignKey: 'shopId', as: 'dealers' });
+Dealer.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+Dealer.hasMany(Sale, { foreignKey: 'dealerId', as: 'sales' });
+Sale.belongsTo(Dealer, { foreignKey: 'dealerId', as: 'dealer' });
+Tenant.hasMany(Dealer, { foreignKey: 'tenantId', as: 'dealers' });
+Dealer.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Tenant.hasMany(DealerPriceTier, { foreignKey: 'tenantId', as: 'dealerPriceTiers' });
+DealerPriceTier.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Dealer.belongsTo(DealerPriceTier, { foreignKey: 'priceTierId', as: 'priceTier' });
+DealerPriceTier.hasMany(Dealer, { foreignKey: 'priceTierId', as: 'dealers' });
+Tenant.hasMany(DealerProductPrice, { foreignKey: 'tenantId', as: 'dealerProductPrices' });
+DealerProductPrice.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Shop.hasMany(DealerProductPrice, { foreignKey: 'shopId', as: 'dealerProductPrices' });
+DealerProductPrice.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+Dealer.hasMany(DealerProductPrice, { foreignKey: 'dealerId', as: 'productPrices' });
+DealerProductPrice.belongsTo(Dealer, { foreignKey: 'dealerId', as: 'dealer' });
+DealerPriceTier.hasMany(DealerProductPrice, { foreignKey: 'priceTierId', as: 'productPrices' });
+DealerProductPrice.belongsTo(DealerPriceTier, { foreignKey: 'priceTierId', as: 'priceTier' });
+DealerProductPrice.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
+Product.hasMany(DealerProductPrice, { foreignKey: 'productId', as: 'dealerPrices' });
+DealerProductPrice.belongsTo(ProductVariant, { foreignKey: 'productVariantId', as: 'variant' });
+ProductVariant.hasMany(DealerProductPrice, { foreignKey: 'productVariantId', as: 'dealerPrices' });
+Tenant.hasMany(DealerLedgerEntry, { foreignKey: 'tenantId', as: 'dealerLedgerEntries' });
+DealerLedgerEntry.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Dealer.hasMany(DealerLedgerEntry, { foreignKey: 'dealerId', as: 'ledgerEntries' });
+DealerLedgerEntry.belongsTo(Dealer, { foreignKey: 'dealerId', as: 'dealer' });
+Shop.hasMany(DealerLedgerEntry, { foreignKey: 'shopId', as: 'dealerLedgerEntries' });
+DealerLedgerEntry.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+Sale.hasMany(DealerLedgerEntry, { foreignKey: 'saleId', as: 'dealerLedgerEntries' });
+DealerLedgerEntry.belongsTo(Sale, { foreignKey: 'saleId', as: 'sale' });
+Payment.hasMany(DealerLedgerEntry, { foreignKey: 'paymentId', as: 'dealerLedgerEntries' });
+DealerLedgerEntry.belongsTo(Payment, { foreignKey: 'paymentId', as: 'payment' });
+DealerLedgerEntry.belongsTo(User, { foreignKey: 'createdBy', as: 'createdByUser' });
+Dealer.hasMany(Payment, { foreignKey: 'dealerId', as: 'payments' });
+Payment.belongsTo(Dealer, { foreignKey: 'dealerId', as: 'dealer' });
 Sale.belongsTo(Invoice, { foreignKey: 'invoiceId', as: 'invoice' });
 // Note: Invoice.belongsTo(Sale) is already defined above with alias 'sale', so we don't need Invoice.hasOne(Sale)
 Sale.belongsTo(User, { foreignKey: 'soldBy', as: 'seller' });
@@ -892,6 +931,10 @@ module.exports = {
   MarketplaceLedgerEntry,
   MarketplacePayout,
   MarketplaceDispute,
+  Dealer,
+  DealerLedgerEntry,
+  DealerPriceTier,
+  DealerProductPrice,
 };
 
 

@@ -1341,7 +1341,7 @@ useEffect(() => {
   };
 
   // Helper function to calculate discount based on quantity
-  const calculateDiscount = (template, quantity, unitPriceOverride) => {
+  const calculateDiscount = (template, quantity, unitPriceOverride, { silent = false } = {}) => {
     if (!template || !quantity) return { discountPercent: 0, discountAmount: 0 };
 
     const unitPrice = unitPriceOverride ?? resolveTemplateUnitPrice(template);
@@ -1357,7 +1357,7 @@ useEffect(() => {
           const discountPercent = parseFloat(tier.discountPercent || 0);
           const discountAmount = Math.min(subtotal, (subtotal * discountPercent) / 100);
           
-          if (discountPercent > 0) {
+          if (discountPercent > 0 && !silent) {
             showInfo(`${discountPercent}% discount applied for quantity ${quantity}!`);
           }
           
@@ -1378,10 +1378,17 @@ useEffect(() => {
   };
 
   const updateJobItemAtIndex = (itemIndex, updater) => {
-    const items = form.getValues('items') || [];
-    const updatedItems = [...items];
-    updatedItems[itemIndex] = updater(updatedItems[itemIndex] || {});
-    setJobItemsValue(updatedItems);
+    const currentItem = (form.getValues('items') || [])[itemIndex] || {};
+    const updatedItem = updater(currentItem);
+
+    Object.keys(updatedItem).forEach((key) => {
+      if (updatedItem[key] !== currentItem[key]) {
+        form.setValue(`items.${itemIndex}.${key}`, updatedItem[key], {
+          shouldDirty: true,
+          shouldValidate: false,
+        });
+      }
+    });
   };
 
   const handleTemplateSelect = (templateId, itemIndex) => {
@@ -1478,7 +1485,7 @@ useEffect(() => {
       const quantity = newQuantity === '' ? '' : Math.max(1, toJobMoneyNumber(newQuantity, 1));
       const currentPrice = toJobMoneyNumber(currentItem.unitPrice ?? resolveTemplateUnitPrice(template), 0);
       const discount = template
-        ? calculateDiscount(template, quantity || 1, currentPrice)
+        ? calculateDiscount(template, quantity || 1, currentPrice, { silent: true })
         : {
             discountPercent: currentItem.discountPercent || 0,
             discountAmount: currentItem.discountAmount || 0,
@@ -1500,7 +1507,7 @@ useEffect(() => {
       const unitPrice = newUnitPrice === '' ? '' : Math.max(0, toJobMoneyNumber(newUnitPrice, 0));
       const quantity = toJobMoneyNumber(currentItem.quantity, 1);
       const discount = template
-        ? calculateDiscount(template, quantity, unitPrice || 0)
+        ? calculateDiscount(template, quantity, unitPrice || 0, { silent: true })
         : {
             discountPercent: currentItem.discountPercent || 0,
             discountAmount: currentItem.discountAmount || 0,

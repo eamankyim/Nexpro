@@ -31,6 +31,14 @@ const Payment = sequelize.define('Payment', {
       key: 'id'
     }
   },
+  dealerId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'dealers',
+      key: 'id'
+    }
+  },
   vendorId: {
     type: DataTypes.UUID,
     references: {

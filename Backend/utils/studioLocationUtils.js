@@ -221,6 +221,20 @@ const attachStudioLocationToPayload = (req, payload = {}) => {
 };
 
 /**
+ * Studio location for a job created from a quote: prefer active request scope, else quote's location.
+ * @param {object|null} req
+ * @param {{ studioLocationId?: string|null }} quote
+ * @returns {string|null}
+ */
+const resolveStudioLocationIdForJobFromQuote = (req, quote) => {
+  if (req) {
+    const fromReq = attachStudioLocationToPayload(req, {}).studioLocationId;
+    if (fromReq) return fromReq;
+  }
+  return quote?.studioLocationId || null;
+};
+
+/**
  * @param {string} userId
  * @param {string} tenantId
  * @param {string[]} studioLocationIds
@@ -258,5 +272,6 @@ module.exports = {
   getStudioLocationSqlFragment,
   getStudioLocationIdForWrite,
   attachStudioLocationToPayload,
+  resolveStudioLocationIdForJobFromQuote,
   setUserStudioLocations,
 };

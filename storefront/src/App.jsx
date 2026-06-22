@@ -27,6 +27,7 @@ import ShopperWishlistPage from './pages/ShopperWishlistPage';
 import StorefrontAuthPage from './pages/StorefrontAuthPage';
 import TrackOrderPage from './pages/TrackOrderPage';
 import ConnectionHealthBanner from './components/storefront/ConnectionHealthBanner';
+import GoogleSignInHost from './components/storefront/GoogleSignInHost';
 import ShopperAuthModal from './components/storefront/ShopperAuthModal';
 import { useStorefrontAuth } from './context/StorefrontAuthContext';
 import { useStorefrontBackgroundPrefetch } from './hooks/useStorefrontBackgroundPrefetch';
@@ -41,6 +42,7 @@ function App() {
         v7_relativeSplatPath: true,
       }}
     >
+      <GoogleSignInHost>
       <ConnectionHealthBanner />
       <Routes>
         <Route path="/" element={<MarketplaceHome />} />
@@ -88,6 +90,7 @@ function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <ShopperAuthModal />
+      </GoogleSignInHost>
     </BrowserRouter>
   );
 }

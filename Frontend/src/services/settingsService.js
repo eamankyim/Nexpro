@@ -220,6 +220,16 @@ const disconnectMtnCollectionCredentials = async (payload) => {
   return res?.data ?? res;
 };
 
+const getSidebarPreferences = async () => {
+  const res = await api.get('/settings/sidebar-preferences');
+  return res?.data?.data ?? res?.data ?? { hiddenSidebarKeys: [] };
+};
+
+const updateSidebarPreferences = async (payload) => {
+  const res = await api.patch('/settings/sidebar-preferences', payload);
+  return res?.data?.data ?? res?.data ?? { hiddenSidebarKeys: [] };
+};
+
 export default {
   getProfile,
   updateProfile,
@@ -260,6 +270,8 @@ export default {
   updatePaymentCollectionSettings,
   updateMtnCollectionCredentials,
   testMtnCollectionCredentials,
-  disconnectMtnCollectionCredentials
+  disconnectMtnCollectionCredentials,
+  getSidebarPreferences,
+  updateSidebarPreferences,
 };
 

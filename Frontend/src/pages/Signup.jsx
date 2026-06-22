@@ -3,7 +3,6 @@ import { useLocation, useNavigate, useSearchParams, Link } from 'react-router-do
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { GoogleLogin } from '@react-oauth/google';
 import { User, Mail, Loader2, Eye, EyeOff, RefreshCw, HelpCircle } from 'lucide-react';
 import authService from '../services/authService';
 import inviteService from '../services/inviteService';
@@ -11,6 +10,8 @@ import { useAuth } from '../context/AuthContext';
 import { usePublicConfig } from '../context/PublicConfigContext';
 import { useResponsive } from '../hooks/useResponsive';
 import { showSuccess, showError } from '../utils/toast';
+import GoogleSignInButton from '../components/GoogleSignInButton';
+import { useGoogleSignIn } from '../components/GoogleSignInHost';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -462,6 +463,16 @@ const Signup = () => {
     setWelcomeErrorMessage('Google sign-up was cancelled or failed.');
   }, []);
 
+  const googleSignIn = useGoogleSignIn();
+
+  useEffect(() => {
+    if (!googleSignIn) return undefined;
+    return googleSignIn.registerHandlers({
+      onSuccess: handleGoogleSignupSuccess,
+      onError: handleGoogleSignupError,
+    });
+  }, [googleSignIn, handleGoogleSignupSuccess, handleGoogleSignupError]);
+
   if (validating) {
     return (
       <div className="flex justify-center items-center min-h-screen bg-muted/50">
@@ -840,19 +851,11 @@ const Signup = () => {
                             </div>
                           </div>
                           {googleClientId ? (
-                            <div className="flex justify-center w-full min-h-[44px]" data-google-configured="true">
-                              <GoogleLogin
-                                onSuccess={handleGoogleSignupSuccess}
-                                onError={handleGoogleSignupError}
-                                useOneTap={false}
-                                theme="outline"
-                                size="large"
-                                type="standard"
-                                text="signup_with"
-                                shape="rectangular"
-                                width={isMobile ? 320 : 360}
-                              />
-                            </div>
+                            <GoogleSignInButton
+                              isSignup
+                              disabled={loading || checkingEmail}
+                              width={isMobile ? 320 : 360}
+                            />
                           ) : (
                             <div className="flex justify-center min-h-[44px] items-center text-muted-foreground text-sm">
                               Loading sign-up options...
