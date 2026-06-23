@@ -158,6 +158,8 @@ export default function ChatScreen() {
   const [loading, setLoading] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const handledInitialPromptRef = useRef<string | null>(null);
+  const lastSendAtRef = useRef(0);
+  const SEND_DEBOUNCE_MS = 800;
 
   const pagePrompts = useMemo(
     () => (pageContext ? ASSISTANT_PAGE_PROMPTS[pageContext] || [] : []),
@@ -172,9 +174,13 @@ export default function ChatScreen() {
   const sendMessage = useCallback(
     async (content: string) => {
       const text = (content || input).trim();
-      if (!text) return;
+      if (!text || loading) return;
 
-      const tapAt = Date.now();
+      const now = Date.now();
+      if (now - lastSendAtRef.current < SEND_DEBOUNCE_MS) return;
+      lastSendAtRef.current = now;
+
+      const tapAt = now;
       logger.info('Assistant', 'perf:send_tapped', { tapAt, textLength: text.length });
 
       setInput('');
@@ -221,7 +227,7 @@ export default function ChatScreen() {
         setLoading(false);
       }
     },
-    [input, messages, pageContext]
+    [input, messages, pageContext, loading]
   );
 
   useEffect(() => {

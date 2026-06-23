@@ -1,6 +1,6 @@
 const path = require('path');
 const fs = require('fs');
-const { Setting, User, Tenant, UserTenant } = require('../models');
+const { Setting, User, Tenant, UserTenant, TenantAccessAudit } = require('../models');
 
 /** Align with admin / billing plan ids (trial, starter, professional, enterprise). */
 const SUBSCRIPTION_PLAN_ALIASES = {
@@ -1580,7 +1580,23 @@ exports.getSidebarPreferences = async (req, res, next) => {
   try {
     const {
       getSidebarPreferences: buildSidebarPreferences,
+      getTenantDefaultHiddenSidebarKeys,
+      sanitizeHiddenSidebarKeys,
     } = require('../services/sidebarPreferenceHelper');
+    const { isConfigurationSupportMode } = require('../utils/supportAccess');
+
+    if (req.isSupportAccess && isConfigurationSupportMode(req.supportAccessMode)) {
+      const tenant = req.tenant || (await Tenant.findByPk(req.tenantId, { attributes: ['metadata'] }));
+      const hiddenSidebarKeys = getTenantDefaultHiddenSidebarKeys(tenant?.metadata);
+      return res.status(200).json({
+        success: true,
+        data: {
+          hiddenSidebarKeys,
+          source: 'tenant_default',
+        },
+      });
+    }
+
     const membership = req.tenantMembership;
     if (!membership) {
       return res.status(400).json({
@@ -1588,9 +1604,15 @@ exports.getSidebarPreferences = async (req, res, next) => {
         message: 'Tenant membership required',
       });
     }
+
+    const tenant = req.tenant || (await membership.getTenant?.());
+    const preferences = buildSidebarPreferences(membership, tenant?.metadata);
     res.status(200).json({
       success: true,
-      data: buildSidebarPreferences(membership),
+      data: {
+        hiddenSidebarKeys: preferences.hiddenSidebarKeys,
+        source: preferences.source,
+      },
     });
   } catch (error) {
     next(error);
@@ -1605,7 +1627,55 @@ exports.updateSidebarPreferences = async (req, res, next) => {
     const {
       sanitizeHiddenSidebarKeys,
       getSidebarPreferences: buildSidebarPreferences,
+      getTenantDefaultHiddenSidebarKeys,
     } = require('../services/sidebarPreferenceHelper');
+    const { isConfigurationSupportMode } = require('../utils/supportAccess');
+    const { hiddenSidebarKeys } = sanitizePayload(req.body || {});
+    const sanitized = sanitizeHiddenSidebarKeys(hiddenSidebarKeys);
+
+    if (req.isSupportAccess && isConfigurationSupportMode(req.supportAccessMode)) {
+      const tenant = await Tenant.findByPk(req.tenantId);
+      if (!tenant) {
+        return res.status(404).json({ success: false, message: 'Tenant not found' });
+      }
+      const beforeKeys = getTenantDefaultHiddenSidebarKeys(tenant.metadata);
+      const metadata =
+        tenant.metadata && typeof tenant.metadata === 'object'
+          ? { ...tenant.metadata }
+          : {};
+      metadata.defaultHiddenSidebarKeys = sanitized;
+      tenant.metadata = metadata;
+      await tenant.save();
+      invalidateTenantSettingsCache(req.tenantId);
+
+      await TenantAccessAudit.create({
+        tenantId: req.tenantId,
+        actorUserId: req.user.id,
+        action: 'tenant_settings_updated',
+        before: {
+          sections: ['sidebarDefaults'],
+          settings: {
+            sidebarDefaults: { hiddenSidebarKeys: beforeKeys },
+          },
+        },
+        after: {
+          sections: ['sidebarDefaults'],
+          settings: {
+            sidebarDefaults: { hiddenSidebarKeys: sanitized },
+          },
+        },
+        reason: req.supportAccessSession?.reason || 'Support configuration access sidebar update',
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          hiddenSidebarKeys: sanitized,
+          source: 'tenant_default',
+        },
+      });
+    }
+
     const membership = req.tenantMembership;
     if (!membership) {
       return res.status(400).json({
@@ -1614,8 +1684,6 @@ exports.updateSidebarPreferences = async (req, res, next) => {
       });
     }
 
-    const { hiddenSidebarKeys } = sanitizePayload(req.body || {});
-    const sanitized = sanitizeHiddenSidebarKeys(hiddenSidebarKeys);
     const metadata =
       membership.metadata && typeof membership.metadata === 'object'
         ? { ...membership.metadata }
@@ -1628,9 +1696,13 @@ exports.updateSidebarPreferences = async (req, res, next) => {
     );
     invalidateTenantMembershipCache(req.user.id, req.tenantId);
 
+    const preferences = buildSidebarPreferences({ metadata });
     res.status(200).json({
       success: true,
-      data: buildSidebarPreferences({ metadata }),
+      data: {
+        hiddenSidebarKeys: preferences.hiddenSidebarKeys,
+        source: preferences.source,
+      },
     });
   } catch (error) {
     next(error);

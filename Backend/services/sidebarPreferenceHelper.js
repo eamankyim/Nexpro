@@ -64,6 +64,17 @@ const getHiddenSidebarKeys = (metadata) => {
 };
 
 /**
+ * Tenant-wide default hidden sidebar keys (platform admin configurable).
+ * @param {unknown} tenantMetadata - Tenant.metadata
+ * @returns {string[]}
+ */
+const getTenantDefaultHiddenSidebarKeys = (tenantMetadata) => {
+  const raw = tenantMetadata?.defaultHiddenSidebarKeys;
+  if (!Array.isArray(raw)) return [];
+  return sanitizeHiddenSidebarKeys(raw);
+};
+
+/**
  * Keep only configurable keys; drop locked and unknown values.
  * @param {unknown} keys
  * @returns {string[]}
@@ -85,16 +96,35 @@ const sanitizeHiddenSidebarKeys = (keys) => {
 
 /**
  * Build API payload for sidebar preferences.
+ * Falls back to tenant defaults when the user has not customized their sidebar.
  * @param {object|null|undefined} membership - UserTenant instance or plain object
- * @returns {{ hiddenSidebarKeys: string[] }}
+ * @param {object|null|undefined} [tenantMetadata] - Tenant.metadata for workspace defaults
+ * @returns {{ hiddenSidebarKeys: string[], source: 'user'|'tenant_default'|'none' }}
  */
-const getSidebarPreferences = (membership) => {
+const getSidebarPreferences = (membership, tenantMetadata = null) => {
   const metadata =
     membership?.metadata && typeof membership.metadata === 'object'
       ? membership.metadata
       : {};
+
+  if (Array.isArray(metadata.hiddenSidebarKeys)) {
+    return {
+      hiddenSidebarKeys: getHiddenSidebarKeys(metadata),
+      source: 'user',
+    };
+  }
+
+  const tenantDefaults = getTenantDefaultHiddenSidebarKeys(tenantMetadata);
+  if (tenantDefaults.length > 0) {
+    return {
+      hiddenSidebarKeys: tenantDefaults,
+      source: 'tenant_default',
+    };
+  }
+
   return {
-    hiddenSidebarKeys: getHiddenSidebarKeys(metadata),
+    hiddenSidebarKeys: [],
+    source: 'none',
   };
 };
 
@@ -102,6 +132,7 @@ module.exports = {
   CONFIGURABLE_SIDEBAR_KEYS,
   LOCKED_SIDEBAR_KEYS,
   getHiddenSidebarKeys,
+  getTenantDefaultHiddenSidebarKeys,
   sanitizeHiddenSidebarKeys,
   getSidebarPreferences,
 };

@@ -70,11 +70,20 @@ const buildSupportTenantContext = (session) => {
   };
 };
 
+const SUPPORT_ACCESS_MODES = {
+  READ_ONLY: 'read_only',
+  CONFIGURATION: 'configuration',
+};
+
+const isConfigurationSupportMode = (mode) => mode === SUPPORT_ACCESS_MODES.CONFIGURATION;
+
 module.exports = {
   DEFAULT_SESSION_HOURS,
   MAX_REASON_LENGTH,
+  SUPPORT_ACCESS_MODES,
   resolveSupportSessionId,
   findActiveSupportSession,
   endOtherActiveSessions,
   buildSupportTenantContext,
+  isConfigurationSupportMode,
 };

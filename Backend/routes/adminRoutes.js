@@ -91,6 +91,10 @@ const {
   endSupportAccess,
   getActiveSupportAccess,
 } = require('../controllers/adminSupportAccessController');
+const {
+  getTenantSettings,
+  updateTenantSettings,
+} = require('../controllers/adminTenantSettingsController');
 
 const router = express.Router();
 
@@ -235,6 +239,8 @@ router.delete('/tenants/:id/cleanup/sales', requirePlatformAdminPermission('tena
 router.delete('/tenants/:id/cleanup/quotes', requirePlatformAdminPermission('tenants.delete'), cleanupTenantQuotes);
 router.get('/tenants/:id', requirePlatformAdminPermission('tenants.view'), getTenantById);
 router.get('/tenants/:id/access-audit', requirePlatformAdminPermission('tenants.view'), getTenantAccessAudit);
+router.get('/tenants/:id/settings', requirePlatformAdminPermission('tenants.update'), getTenantSettings);
+router.patch('/tenants/:id/settings', requirePlatformAdminPermission('tenants.update'), updateTenantSettings);
 
 /**
  * @swagger

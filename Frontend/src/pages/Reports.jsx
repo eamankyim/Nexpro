@@ -493,7 +493,7 @@ function ReportsInner() {
       fetchOverviewStats();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scopeReady, dateRange, groupBy, isSmartReport, isCompliance, dateFilter, activeShopId, activeStudioLocationId]);
+  }, [scopeReady, dateRange, isSmartReport, isCompliance, dateFilter, activeShopId, activeStudioLocationId]);
 
   // Fetch compliance report when on Compliance view and statement type or date changes
   useEffect(() => {

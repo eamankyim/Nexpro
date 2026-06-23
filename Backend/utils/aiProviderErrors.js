@@ -173,12 +173,15 @@ const buildBillingCircuitError = (tenantId) => {
 
 /**
  * Fast preflight: ensure a tenant or system Anthropic key exists before expensive work.
+ * Returns the resolved API key so callers can pass it to the provider without a second lookup.
  * @param {string | null | undefined} tenantId
+ * @returns {Promise<string>}
  */
 const assertAiProviderConfigured = async (tenantId) => {
   const tenantKey = await getTenantAnthropicApiKey(tenantId);
-  if (tenantKey || normalizedSystemKey()) {
-    return;
+  const apiKey = tenantKey || normalizedSystemKey();
+  if (apiKey) {
+    return apiKey;
   }
 
   const error = new Error(AI_PROVIDER_USER_MESSAGES.OPENAI_NOT_CONFIGURED);

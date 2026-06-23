@@ -134,6 +134,7 @@ const buildCartItemFromProduct = (product, variant = null) => {
     name,
     sku: variant?.sku || product.sku,
     productCode: variant?.barcode || getProductCode(product),
+    unit: variant?.unit || product.unit || undefined,
     baseUnitPrice: catalogUnitPrice,
     catalogUnitPrice,
     unitPrice: catalogUnitPrice,
@@ -956,6 +957,7 @@ const POS = () => {
       name: item.name,
       sku: item.sku,
       productCode: item.productCode,
+      unit: item.unit,
       quantity: item.quantity,
       baseUnitPrice: item.baseUnitPrice,
       catalogUnitPrice: item.catalogUnitPrice,
@@ -1511,110 +1513,107 @@ const POS = () => {
           {isDealerMode && (
             <Card className="border border-[#e5e7eb]">
               <CardContent className="p-4 space-y-3">
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium flex items-center gap-2">
+                    <Building2 className="h-4 w-4 text-[#166534]" />
+                    Dealer account
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <Popover open={dealerPickerOpen} onOpenChange={setDealerPickerOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={dealerPickerOpen}
+                          className="h-10 flex-1 justify-between font-normal border-border"
+                        >
+                          <span className="truncate text-left">
+                            {selectedDealer?.businessName || (
+                              <span className="text-muted-foreground">Search dealers by name or phone</span>
+                            )}
+                          </span>
+                          {dealerSearchLoading ? (
+                            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+                          ) : (
+                            <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${dealerPickerOpen ? 'rotate-180' : ''}`} />
+                          )}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                        <div className="p-2 border-b border-border">
+                          <Input
+                            placeholder="Search dealers by name or phone"
+                            value={dealerSearch}
+                            onChange={(e) => setDealerSearch(e.target.value)}
+                            className="h-9 border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                            autoFocus
+                          />
+                        </div>
+                        <ScrollArea className="max-h-48">
+                          {dealerSearchLoading ? (
+                            <div className="py-6 flex justify-center">
+                              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                            </div>
+                          ) : dealerOptions.length === 0 ? (
+                            <div className="py-6 text-center text-sm text-muted-foreground">
+                              {dealerSearch ? 'No dealers found' : 'Type to search dealers'}
+                            </div>
+                          ) : (
+                            <ul className="p-1">
+                              {dealerOptions.map((dealer) => (
+                                <li key={dealer.id}>
+                                  <button
+                                    type="button"
+                                    className="w-full text-left px-3 py-2 hover:bg-muted rounded-md text-sm flex flex-col"
+                                    onClick={() => {
+                                      selectDealer(dealer);
+                                      setDealerPickerOpen(false);
+                                    }}
+                                  >
+                                    <span className="font-medium text-foreground">{dealer.businessName}</span>
+                                    <span className="text-xs text-muted-foreground">
+                                      {dealer.phone ? `${dealer.phone} · ` : ''}
+                                      Outstanding {formatAmount(dealer.balance)} · Credit {formatAmount(dealer.availableCredit)}
+                                    </span>
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </ScrollArea>
+                      </PopoverContent>
+                    </Popover>
+                    {selectedDealer ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-10 w-10 shrink-0"
+                        onClick={clearDealerSelection}
+                        aria-label="Clear dealer selection"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    ) : null}
+                  </div>
+                  {selectedDealer && dealerSummary ? (
+                    <p className="text-xs text-muted-foreground">
+                      Outstanding {dealerSummary.balanceLabel} · Available credit {dealerSummary.availableCreditLabel}
+                    </p>
+                  ) : null}
+                </div>
                 {!activeShopId ? (
                   <Alert className="border border-[#e5e7eb]">
                     <AlertDescription>
-                      Select an active shop branch to search dealers for wholesale sales.
+                      Select an active shop branch to load products and apply branch wholesale prices.
                     </AlertDescription>
                   </Alert>
-                ) : (
-                  <>
-                    <div className="space-y-2">
-                      <Label className="text-sm font-medium flex items-center gap-2">
-                        <Building2 className="h-4 w-4 text-[#166534]" />
-                        Dealer account
-                      </Label>
-                      <div className="flex items-center gap-2">
-                        <Popover open={dealerPickerOpen} onOpenChange={setDealerPickerOpen}>
-                          <PopoverTrigger asChild>
-                            <Button
-                              variant="outline"
-                              role="combobox"
-                              aria-expanded={dealerPickerOpen}
-                              className="h-10 flex-1 justify-between font-normal border-border"
-                            >
-                              <span className="truncate text-left">
-                                {selectedDealer?.businessName || (
-                                  <span className="text-muted-foreground">Search dealers by name or phone</span>
-                                )}
-                              </span>
-                              {dealerSearchLoading ? (
-                                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
-                              ) : (
-                                <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${dealerPickerOpen ? 'rotate-180' : ''}`} />
-                              )}
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-                            <div className="p-2 border-b border-border">
-                              <Input
-                                placeholder="Search dealers by name or phone"
-                                value={dealerSearch}
-                                onChange={(e) => setDealerSearch(e.target.value)}
-                                className="h-9 border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
-                                autoFocus
-                              />
-                            </div>
-                            <ScrollArea className="max-h-48">
-                              {dealerSearchLoading ? (
-                                <div className="py-6 flex justify-center">
-                                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                                </div>
-                              ) : dealerOptions.length === 0 ? (
-                                <div className="py-6 text-center text-sm text-muted-foreground">
-                                  {dealerSearch ? 'No dealers found' : 'Type to search dealers'}
-                                </div>
-                              ) : (
-                                <ul className="p-1">
-                                  {dealerOptions.map((dealer) => (
-                                    <li key={dealer.id}>
-                                      <button
-                                        type="button"
-                                        className="w-full text-left px-3 py-2 hover:bg-muted rounded-md text-sm flex flex-col"
-                                        onClick={() => {
-                                          selectDealer(dealer);
-                                          setDealerPickerOpen(false);
-                                        }}
-                                      >
-                                        <span className="font-medium text-foreground">{dealer.businessName}</span>
-                                        <span className="text-xs text-muted-foreground">
-                                          {dealer.phone ? `${dealer.phone} · ` : ''}
-                                          Outstanding {formatAmount(dealer.balance)} · Credit {formatAmount(dealer.availableCredit)}
-                                        </span>
-                                      </button>
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-                            </ScrollArea>
-                          </PopoverContent>
-                        </Popover>
-                        {selectedDealer ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            className="h-10 w-10 shrink-0"
-                            onClick={clearDealerSelection}
-                            aria-label="Clear dealer selection"
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        ) : null}
-                      </div>
-                      {selectedDealer && dealerSummary ? (
-                        <p className="text-xs text-muted-foreground">
-                          Outstanding {dealerSummary.balanceLabel} · Available credit {dealerSummary.availableCreditLabel}
-                        </p>
-                      ) : null}
-                    </div>
-                    {isDealerMode && !selectedDealer && (
-                      <Alert className="border border-amber-200 bg-amber-50">
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertDescription>Add products after selecting a dealer. Wholesale prices apply automatically.</AlertDescription>
-                      </Alert>
-                    )}
-                  </>
+                ) : null}
+                {isDealerMode && !selectedDealer && (
+                  <Alert className="border border-amber-200 bg-amber-50">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>Add products after selecting a dealer. Wholesale prices apply automatically.</AlertDescription>
+                  </Alert>
                 )}
               </CardContent>
             </Card>

@@ -61,6 +61,8 @@ export async function refreshAfterSale(queryClient: QueryClient) {
     ['invoice'],
     ['customers'],
     ['customer'],
+    ['dealers'],
+    ['dealer'],
     ['dashboard'],
     ['orders'],
     ['deliveries-queue'],
@@ -81,6 +83,8 @@ export async function markAfterSaleStale(queryClient: QueryClient) {
     ['invoice'],
     ['customers'],
     ['customer'],
+    ['dealers'],
+    ['dealer'],
     ['dashboard'],
     ['orders'],
     ['deliveries-queue'],
@@ -140,6 +144,11 @@ export async function refreshAfterCustomerChange(queryClient: QueryClient) {
   await refreshRelatedQueries(queryClient, [['customers'], ['customer'], ['dashboard']]);
 }
 
+/** Dealer create/update / payment / dealer sale */
+export async function refreshAfterDealerChange(queryClient: QueryClient) {
+  await refreshRelatedQueries(queryClient, [['dealers'], ['dealer'], ['dashboard']]);
+}
+
 /** Lead / task workspace updates */
 export async function refreshAfterLeadChange(queryClient: QueryClient) {
   await refreshRelatedQueries(queryClient, [['leads'], ['lead']]);
@@ -192,6 +201,8 @@ const SCOPED_WORKSPACE_PREFIXES: QueryKeyPrefix[] = [
   ['invoice'],
   ['leads'],
   ['lead'],
+  ['dealers'],
+  ['dealer'],
   ['deliveries-queue'],
   ['store', 'online-orders'],
   ['store', 'setup-status'],

@@ -21,9 +21,9 @@ export function usePOSDealerMode({ activeShopId, enabled = true }) {
   const canOverrideCredit = isManager || isAdmin;
 
   const { data: dealerSearchData, isLoading: dealerSearchLoading } = useQuery({
-    queryKey: ['dealers', 'pos-search', activeShopId, debouncedDealerSearch],
+    queryKey: ['dealers', 'pos-search', debouncedDealerSearch],
     queryFn: () => dealerService.posSearch({ search: debouncedDealerSearch, limit: 20 }),
-    enabled: dealersEnabled && isDealerMode && !!activeShopId,
+    enabled: dealersEnabled && isDealerMode,
     staleTime: 30_000,
   });
 

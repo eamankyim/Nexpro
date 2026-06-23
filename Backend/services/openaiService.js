@@ -25,7 +25,7 @@ function getAnthropic(apiKey) {
 
 /** Require Anthropic client; tenant settings override the system env key when present. */
 async function requireAnthropic(options = {}) {
-  const tenantKey = await getTenantAnthropicApiKey(options.tenantId);
+  const tenantKey = options.apiKey || await getTenantAnthropicApiKey(options.tenantId);
   const client = getAnthropic(tenantKey);
   if (!client) {
     const err = new Error('AI is not configured. Set ANTHROPIC_API_KEY in .env to use AI features.');
@@ -34,6 +34,71 @@ async function requireAnthropic(options = {}) {
   }
   return client;
 }
+
+/**
+ * Trim assistant context JSON for the system prompt (smaller payload, faster provider response).
+ * @param {Object} context
+ * @param {'light' | 'full'} [tier='full']
+ * @returns {Object}
+ */
+const summarizeAssistantContext = (context, tier = 'full') => {
+  if (tier === 'light') {
+    return {
+      businessType: context.businessType,
+      tenantName: context.tenantName,
+      workspaceContact: context.workspaceContact,
+      dateFilter: context.dateFilter,
+    };
+  }
+
+  const summarized = {
+    businessType: context.businessType,
+    tenantName: context.tenantName,
+    workspaceContact: context.workspaceContact,
+    activeShopId: context.activeShopId,
+    dateFilter: context.dateFilter,
+    thisMonth: context.thisMonth,
+    today: context.today,
+    receivables: context.receivables,
+  };
+
+  if (context.selectedPeriod) {
+    summarized.selectedPeriod = {
+      label: context.selectedPeriod.label,
+      revenue: context.selectedPeriod.revenue,
+      expenses: context.selectedPeriod.expenses,
+      profit: context.selectedPeriod.profit,
+      newCustomers: context.selectedPeriod.newCustomers,
+      range: context.selectedPeriod.range,
+      topProducts: (context.selectedPeriod.topProducts || []).slice(0, 3),
+      recentSales: (context.selectedPeriod.recentSales || []).slice(0, 3),
+    };
+  }
+
+  if (context.last3Months) {
+    summarized.last3Months = {
+      revenue: context.last3Months.revenue,
+      expenses: context.last3Months.expenses,
+      profit: context.last3Months.profit,
+      newCustomers: context.last3Months.newCustomers,
+    };
+  }
+
+  if (context.inventory) {
+    summarized.inventory = {
+      lowStockCount: context.inventory.lowStockCount,
+      lowStockProducts: (context.inventory.lowStockProducts || []).slice(0, 5),
+      topProductsThisMonth: (context.inventory.topProductsThisMonth || []).slice(0, 3),
+    };
+  }
+
+  if (context.jobs) summarized.jobs = context.jobs;
+  if (context.recentSales?.length) {
+    summarized.recentSales = context.recentSales.slice(0, 3);
+  }
+
+  return summarized;
+};
 
 const STORE_BANNER_WIDTH = 1600;
 const STORE_BANNER_HEIGHT = 500;
@@ -431,7 +496,12 @@ const chatWithContext = async (messages, context, options = {}) => {
     const workspaceContact = context.workspaceContact || {};
     const supportGuide = getAssistantSupportGuide(businessType);
     const pageHint = getPageContextHint(pageContext);
-    const contextBlob = JSON.stringify(context, null, 2);
+    const contextTier = options.contextTier || 'full';
+    const contextBlob = JSON.stringify(
+      summarizeAssistantContext(context, contextTier),
+      null,
+      contextTier === 'light' ? 0 : 2
+    );
 
     const systemPrompt = `You are ABS Assistant for ${context.tenantName || 'this workspace'} (${businessType} business in African Business Suite). If you introduce yourself, say only "I'm ABS Assistant."
 
@@ -463,7 +533,10 @@ Formatting rules:
 - Email/SMS drafts: first line \`Subject: ...\`, blank line, then body. Sign with business name and contact when available.
 - Keep replies concise. If data is missing, say what is missing instead of guessing.`;
 
-    const anthropic = await requireAnthropic({ tenantId: options.tenantId });
+    const anthropic = await requireAnthropic({
+      tenantId: options.tenantId,
+      apiKey: options.apiKey,
+    });
     const claudeMessages = messages.map((m) => ({ role: m.role, content: m.content }));
     const claudeResponse = await anthropic.messages.create({
       model: 'claude-sonnet-4-5-20250929',

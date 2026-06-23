@@ -2,6 +2,7 @@ const {
   CONFIGURABLE_SIDEBAR_KEYS,
   LOCKED_SIDEBAR_KEYS,
   getHiddenSidebarKeys,
+  getTenantDefaultHiddenSidebarKeys,
   sanitizeHiddenSidebarKeys,
   getSidebarPreferences,
 } = require('../../../services/sidebarPreferenceHelper');
@@ -47,7 +48,26 @@ describe('sidebarPreferenceHelper', () => {
         getSidebarPreferences({
           metadata: { hiddenSidebarKeys: ['/vendors'] },
         })
-      ).toEqual({ hiddenSidebarKeys: ['/vendors'] });
+      ).toEqual({ hiddenSidebarKeys: ['/vendors'], source: 'user' });
+    });
+
+    it('falls back to tenant defaults when user has not customized', () => {
+      expect(
+        getSidebarPreferences(
+          { metadata: {} },
+          { defaultHiddenSidebarKeys: ['/leads', '/marketing'] }
+        )
+      ).toEqual({ hiddenSidebarKeys: ['/leads', '/marketing'], source: 'tenant_default' });
+    });
+  });
+
+  describe('getTenantDefaultHiddenSidebarKeys', () => {
+    it('reads tenant default hidden sidebar keys', () => {
+      expect(
+        getTenantDefaultHiddenSidebarKeys({
+          defaultHiddenSidebarKeys: ['/tasks', '/dashboard'],
+        })
+      ).toEqual(['/tasks']);
     });
   });
 

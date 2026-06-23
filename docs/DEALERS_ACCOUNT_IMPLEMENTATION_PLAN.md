@@ -19,8 +19,8 @@ JOSFAA ENT already maintains products per branch/shop (`Product.shopId`), not te
 - Unique constraint: `(tenantId, shopId, dealerId, productId, productVariantId)` (and tier variant).
 - `dealerPricingService.resolvePrice({ dealerId, productId, variantId, shopId })` — dealer-specific → tier → retail `sellingPrice` for **that shop's product row**.
 - All dealer pricing APIs require `shopId` (query param or `x-shop-id` via `shopContext`).
-- POS dealer mode uses active branch from `Frontend/src/context/ShopContext.jsx` (`activeShopId`); product search, dealer list, and price resolution scoped to that shop.
-- **Dealers are branch-scoped** (`Dealer.shopId`); each branch has its own dealer list and balance. Ledger entries keep `shopId` for attribution. Price tiers remain tenant-wide.
+- POS dealer mode uses active branch from `Frontend/src/context/ShopContext.jsx` (`activeShopId`) for **product search and price resolution**; dealer list and balances are **tenant-wide**.
+- **Dealers are org-wide** — one list per tenant, one running balance per dealer; `Dealer.shopId` is optional/legacy. Ledger entries keep `shopId` for branch attribution. Price tiers remain tenant-wide.
 
 ### 2. Opening balance only at go-live
 
@@ -66,7 +66,7 @@ Dealer ledger + statements + receivables reporting only. No AR journal posting /
 | Ledger | **`DealerLedgerEntry`** append-only + cached `Dealer.balance` |
 | Pricing | **`DealerProductPrice`** (+ optional `DealerPriceTier`), **scoped by `shopId`** |
 | Sale linkage | **`Sale.dealerId`**, `saleChannel: 'retail' \| 'dealer'` |
-| Dealer scope | **Per-branch** (`Dealer.shopId`); ledger entries carry `shopId` for attribution |
+| Dealer scope | **Tenant-wide** — one dealer list and balance per org; ledger entries carry `shopId` for branch attribution |
 | Mobile | **Out of v1** — web POS only |
 
 ### Ledger entry types
@@ -75,7 +75,7 @@ Dealer ledger + statements + receivables reporting only. No AR journal posting /
 
 ### Schema (key tables)
 
-**`dealers`** — `tenantId`, **`shopId`**, `businessName`, `contactName`, `phone`, `email`, `creditTerms`, `creditLimit`, `balance`, `priceTierId`, `notes`, `isActive`, `metadata` — unique `(tenantId, shopId, businessName)`
+**`dealers`** — `tenantId`, `shopId` (nullable, legacy), `businessName`, `contactName`, `phone`, `email`, `creditTerms`, `creditLimit`, `balance`, `priceTierId`, `notes`, `isActive`, `metadata` — unique `(tenantId, businessName)`
 
 **`dealer_product_prices`** — `tenantId`, **`shopId`**, `dealerId` (nullable), `priceTierId`, `productId`, `productVariantId`, `unitPrice`, `isActive`
 
@@ -163,7 +163,7 @@ Sidebar: `Frontend/src/constants/sidebarMenus.js` · Routes: `Frontend/src/App.j
 
 - Unit: `dealerBalanceService`, `dealerPricingService` (shop + dealer precedence), `saleController` dealer path
 - Integration: dealer sale → ledger → balance; concurrent sales same dealer
-- UAT: success criteria in `DEALERS_ACCOUNT_PROJECT.md` §9; dealer sale/payment at one branch does not affect another branch's dealer balance
+- UAT: success criteria in `DEALERS_ACCOUNT_PROJECT.md` §9; dealer sale at any branch updates the same org-wide balance; ledger shows branch on each entry
 
 ---
 
@@ -173,7 +173,7 @@ Sidebar: `Frontend/src/constants/sidebarMenus.js` · Routes: `Frontend/src/App.j
 - **Branch product drift** — same SKU may differ by branch; prices must target correct `productId` per `shopId`
 - **POS state** — isolate dealer mode in `usePOSDealerMode` hook; regression-test retail path
 
-**Resolved (locked):** per-branch catalog · per-branch dealers and balances · opening balance only · no accounting v1 · split payments in v1 · credit limit = warn + manager override
+**Resolved (locked):** per-branch catalog · org-wide dealers and balances · opening balance only · no accounting v1 · split payments in v1 · credit limit = warn + manager override
 
 ---
 

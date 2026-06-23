@@ -102,6 +102,7 @@ const extendStorefrontReviewsForServices = require('./extend-storefront-reviews-
 const addMetadataToJobs = require('./add-metadata-to-jobs');
 const createDealersAccountTables = require('./create-dealers-account-tables');
 const addShopIdToDealers = require('./add-shop-id-to-dealers');
+const makeDealersTenantWide = require('./make-dealers-tenant-wide');
 
 const migrate = async () => {
   try {
@@ -369,6 +370,7 @@ const migrate = async () => {
     await addMetadataToJobs.up();
     await createDealersAccountTables.up({ closeConnection: false });
     await addShopIdToDealers({ closeConnection: false });
+    await makeDealersTenantWide({ closeConnection: false });
 
     console.log('\n✅ Database migration completed successfully!');
     console.log('📊 Incremental schema updates applied.');

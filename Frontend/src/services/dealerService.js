@@ -1,15 +1,23 @@
 import api from './api';
 import { buildScopedQueryString } from '../utils/shopScope';
 
+const buildQueryString = (params = {}) => {
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return;
+    searchParams.append(key, String(value));
+  });
+  return searchParams.toString();
+};
+
 const dealerService = {
   getAll: async (params = {}) => {
-    const queryString = buildScopedQueryString(params);
+    const queryString = buildQueryString(params);
     return api.get(queryString ? `/dealers?${queryString}` : '/dealers');
   },
 
   getStats: async () => {
-    const queryString = buildScopedQueryString({});
-    const res = await api.get(queryString ? `/dealers/stats?${queryString}` : '/dealers/stats');
+    const res = await api.get('/dealers/stats');
     return res?.data || res;
   },
 
@@ -22,12 +30,12 @@ const dealerService = {
   patch: async (id, data) => api.patch(`/dealers/${id}`, data),
 
   posSearch: async (params = {}) => {
-    const queryString = buildScopedQueryString(params);
+    const queryString = buildQueryString(params);
     return api.get(queryString ? `/dealers/pos-search?${queryString}` : '/dealers/pos-search');
   },
 
   getLedger: async (id, params = {}) => {
-    const queryString = buildScopedQueryString(params);
+    const queryString = buildQueryString(params);
     return api.get(queryString ? `/dealers/${id}/ledger?${queryString}` : `/dealers/${id}/ledger`);
   },
 
@@ -40,10 +48,7 @@ const dealerService = {
     return api.get(qs ? `/dealers/${id}/statement?${qs}` : `/dealers/${id}/statement`);
   },
 
-  getOutstandingReport: async () => {
-    const queryString = buildScopedQueryString({});
-    return api.get(queryString ? `/dealers/report/outstanding?${queryString}` : '/dealers/report/outstanding');
-  },
+  getOutstandingReport: async () => api.get('/dealers/report/outstanding'),
 
   getPrices: async (id, params = {}) => {
     const queryString = buildScopedQueryString(params);

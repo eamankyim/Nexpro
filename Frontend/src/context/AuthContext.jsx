@@ -596,11 +596,12 @@ export const AuthProvider = ({ children }) => {
     [supportSession]
   );
 
-  const startSupportAccess = async (tenantId, { reason, supportTicketId, hours } = {}) => {
+  const startSupportAccess = async (tenantId, { reason, supportTicketId, hours, mode } = {}) => {
     const response = await adminService.startSupportAccess(tenantId, {
       reason,
       supportTicketId,
       hours,
+      mode,
     });
     const payload = response?.data || response;
     const session = payload?.session;

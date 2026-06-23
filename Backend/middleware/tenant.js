@@ -10,6 +10,7 @@ const {
   resolveSupportSessionId,
   findActiveSupportSession,
   buildSupportTenantContext,
+  isConfigurationSupportMode,
 } = require('../utils/supportAccess');
 const { enforceBillingAccess } = require('./billingEnforcement');
 
@@ -47,6 +48,12 @@ const isDriverAllowedEndpoint = (req) => {
   return false;
 };
 
+const isSettingsWriteEndpoint = (req) => {
+  const baseUrl = String(req.baseUrl || '');
+  const method = String(req.method || 'GET').toUpperCase();
+  return baseUrl === '/api/settings' && !['GET', 'HEAD', 'OPTIONS'].includes(method);
+};
+
 const tenantContext = async (req, res, next) => {
   try {
     if (!req.user) {
@@ -79,6 +86,16 @@ const tenantContext = async (req, res, next) => {
         return res.status(403).json({
           success: false,
           message: 'Support access is read-only. End support mode to make changes.',
+        });
+      }
+      if (
+        isConfigurationSupportMode(supportCtx.supportAccessMode) &&
+        !isReadMethod &&
+        !isSettingsWriteEndpoint(req)
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: 'Configuration support access only allows changes to workspace settings.',
         });
       }
 

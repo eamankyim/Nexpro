@@ -61,6 +61,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
+import AdminTenantSettingsPanel from '@/components/admin/AdminTenantSettingsPanel';
 
 dayjs.extend(relativeTime);
 
@@ -178,6 +179,7 @@ const AdminTenants = () => {
   const [tenantDetailTab, setTenantDetailTab] = useState('overview');
   const [supportAccessOpen, setSupportAccessOpen] = useState(false);
   const [supportReason, setSupportReason] = useState('');
+  const [supportMode, setSupportMode] = useState('read_only');
   const [supportStarting, setSupportStarting] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteConfirmSlug, setDeleteConfirmSlug] = useState('');
@@ -203,6 +205,7 @@ const AdminTenants = () => {
   const [cleanupSubmitting, setCleanupSubmitting] = useState(false);
 
   const canDeleteTenants = hasPermission('tenants.delete');
+  const canUpdateTenants = hasPermission('tenants.update');
   const debouncedCleanupSearch = useDebounce(cleanupSearch, DEBOUNCE_DELAYS.SEARCH);
 
   const canonicalPlanCatalog = useMemo(() => {
@@ -628,12 +631,17 @@ const AdminTenants = () => {
     }
     setSupportStarting(true);
     try {
-      await startSupportAccess(selectedTenant.id, { reason: supportReason.trim() });
-      showSuccess('Support access started (read-only)');
+      await startSupportAccess(selectedTenant.id, {
+        reason: supportReason.trim(),
+        mode: supportMode,
+      });
+      const modeLabel = supportMode === 'configuration' ? 'configuration' : 'read-only';
+      showSuccess(`Support access started (${modeLabel})`);
       setSupportAccessOpen(false);
       setSupportReason('');
+      setSupportMode('read_only');
       setDrawerVisible(false);
-      navigate('/dashboard');
+      navigate(supportMode === 'configuration' ? '/settings' : '/dashboard');
     } catch (error) {
       handleApiError(error, { context: 'start support access' });
     } finally {
@@ -1054,7 +1062,10 @@ const AdminTenants = () => {
         open={supportAccessOpen}
         onOpenChange={(open) => {
           setSupportAccessOpen(open);
-          if (!open) setSupportReason('');
+          if (!open) {
+            setSupportReason('');
+            setSupportMode('read_only');
+          }
         }}
       >
         <DialogContent className="sm:max-w-[520px]">
@@ -1066,20 +1077,40 @@ const AdminTenants = () => {
               <div className="space-y-1">
                 <DialogTitle>Start support access</DialogTitle>
                 <DialogDescription>
-                  View {selectedTenant?.name || 'this tenant'} in read-only mode to troubleshoot without their password.
+                  Open {selectedTenant?.name || 'this tenant'}&apos;s workspace to troubleshoot or configure settings.
                 </DialogDescription>
               </div>
             </div>
           </DialogHeader>
           <DialogBody className="space-y-4">
-            <div className="rounded-lg border border-border bg-muted/30 p-4">
+            <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-3">
               <div className="flex items-start gap-3">
                 <Badge variant="outline" className="shrink-0 border-emerald-200 bg-background text-emerald-700">
-                  Read-only
+                  {supportMode === 'configuration' ? 'Configuration' : 'Read-only'}
                 </Badge>
                 <p className="text-sm text-muted-foreground">
-                  Changes are blocked during support mode, and every access session is audited.
+                  {supportMode === 'configuration'
+                    ? 'You can edit workspace settings only. Other changes remain blocked, and every session is audited.'
+                    : 'Changes are blocked during support mode, and every access session is audited.'}
                 </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={supportMode === 'read_only' ? 'default' : 'outline'}
+                  onClick={() => setSupportMode('read_only')}
+                >
+                  Read-only
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={supportMode === 'configuration' ? 'default' : 'outline'}
+                  onClick={() => setSupportMode('configuration')}
+                >
+                  Configuration
+                </Button>
               </div>
             </div>
             <div className="space-y-2">
@@ -1193,9 +1224,10 @@ const AdminTenants = () => {
             </div>
           ) : selectedTenant ? (
             <Tabs value={tenantDetailTab} onValueChange={setTenantDetailTab} className="mt-4 flex flex-col flex-1 min-h-0">
-              <TabsList className={`grid w-full ${canDeleteTenants ? 'grid-cols-4' : 'grid-cols-3'} shrink-0`}>
+              <TabsList className={`grid w-full shrink-0 ${canDeleteTenants && canUpdateTenants ? 'grid-cols-5' : canDeleteTenants || canUpdateTenants ? 'grid-cols-4' : 'grid-cols-3'}`}>
                 <TabsTrigger value="overview">Overview</TabsTrigger>
                 <TabsTrigger value="access">Access control</TabsTrigger>
+                {canUpdateTenants && <TabsTrigger value="settings">Settings</TabsTrigger>}
                 <TabsTrigger value="billing">Billing</TabsTrigger>
                 {canDeleteTenants && <TabsTrigger value="cleanup">Cleanup</TabsTrigger>}
               </TabsList>
@@ -1207,15 +1239,30 @@ const AdminTenants = () => {
                   </CardHeader>
                   <CardContent className="space-y-2">
                     <p className="text-sm text-muted-foreground">
-                      Open this tenant&apos;s workspace in read-only mode to troubleshoot without their password.
+                      Open this tenant&apos;s workspace to troubleshoot or edit settings on their behalf.
                     </p>
-                    <Button
-                      variant="outline"
-                      onClick={() => setSupportAccessOpen(true)}
-                    >
-                      <Shield className="h-4 w-4 mr-2" />
-                      Enter workspace (read-only)
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setSupportMode('read_only');
+                          setSupportAccessOpen(true);
+                        }}
+                      >
+                        <Shield className="h-4 w-4 mr-2" />
+                        Enter workspace (read-only)
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setSupportMode('configuration');
+                          setSupportAccessOpen(true);
+                        }}
+                      >
+                        <Shield className="h-4 w-4 mr-2" />
+                        Configure settings
+                      </Button>
+                    </div>
                   </CardContent>
                 </Card>
               )}
@@ -1759,6 +1806,15 @@ const AdminTenants = () => {
                   </CardContent>
                 </Card>
               </TabsContent>
+
+              {canUpdateTenants && (
+                <TabsContent value="settings" className="mt-4 space-y-4 data-[state=inactive]:hidden">
+                  <AdminTenantSettingsPanel
+                    tenantId={selectedTenant?.id}
+                    tenantName={selectedTenant?.name}
+                  />
+                </TabsContent>
+              )}
             </Tabs>
           ) : (
             <Empty description="Select a tenant to view details" className="py-12" />

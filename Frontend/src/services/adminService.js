@@ -62,6 +62,10 @@ const updateTenantAccess = async (tenantId, payload) =>
 const updateTenantBranding = async (tenantId, payload) =>
   api.patch(`/admin/tenants/${tenantId}/branding`, payload);
 
+const getTenantSettings = async (tenantId) => api.get(`/admin/tenants/${tenantId}/settings`);
+const updateTenantSettings = async (tenantId, payload) =>
+  api.patch(`/admin/tenants/${tenantId}/settings`, payload);
+
 const getBillingSummary = async () => api.get('/admin/billing/summary');
 
 const getBillingTenants = async () => api.get('/admin/billing/tenants');
@@ -242,6 +246,8 @@ export default {
   deleteTenant,
   updateTenantAccess,
   updateTenantBranding,
+  getTenantSettings,
+  updateTenantSettings,
   getBillingSummary,
   getBillingTenants,
   getTenantSubscriptionPayments,

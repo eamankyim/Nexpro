@@ -33,7 +33,7 @@ const { getTenantAnthropicApiKey } = require('../../../services/tenantAiSettings
 const { Customer, Invoice, Expense, Job, Sale, Tenant, Setting, Product } = require('../../../models');
 const { sequelize } = require('../../../config/database');
 const { clearBillingCircuit } = require('../../../utils/aiProviderErrors');
-const { chat } = require('../../../controllers/assistantController');
+const { chat, clearAssistantContextCache } = require('../../../controllers/assistantController');
 
 const mockAssistantContextDependencies = () => {
   Customer.count.mockResolvedValue(0);
@@ -70,6 +70,7 @@ describe('assistantController.chat', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    clearAssistantContextCache();
     clearBillingCircuit('tenant-1');
     process.env.ANTHROPIC_API_KEY = 'system-key-123456789012345678901234567890';
     getTenantAnthropicApiKey.mockResolvedValue(null);
@@ -172,5 +173,38 @@ describe('assistantController.chat', () => {
     expect(res1.statusCode).toBe(402);
     expect(res2.statusCode).toBe(402);
     expect(openaiService.chatWithContext).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes resolved API key and uses light context for support questions', async () => {
+    openaiService.chatWithContext.mockResolvedValue('Open Settings → Operations to add your API key.');
+    getTenantAnthropicApiKey.mockResolvedValue('tenant-anthropic-key-1234567890');
+
+    const req = {
+      tenantId: 'tenant-1',
+      tenant: { businessType: 'shop' },
+      body: {
+        messages: [{ role: 'user', content: 'How do I add a customer?' }],
+      },
+      headers: {},
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    await chat(req, res, next);
+
+    expect(res.statusCode).toBe(200);
+    expect(openaiService.chatWithContext).toHaveBeenCalledWith(
+      req.body.messages,
+      expect.objectContaining({
+        businessType: 'shop',
+        tenantName: 'Test Shop',
+      }),
+      expect.objectContaining({
+        apiKey: 'tenant-anthropic-key-1234567890',
+        contextTier: 'light',
+      })
+    );
+    expect(Customer.count).not.toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
   });
 });

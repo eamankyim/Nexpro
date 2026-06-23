@@ -215,9 +215,7 @@ const Invoices = () => {
     queryKey: queryKeys.invoices.list(activeTenantId, activeShopId, activeStudioLocationId, invoicesQueryParams),
     queryFn: () => invoiceService.getAll(invoicesQueryParams),
     enabled: invoicesQueryEnabled,
-    staleTime: QUERY_STALE.TRANSACTIONAL,
-    refetchInterval: 60 * 1000,
-    refetchIntervalInBackground: false,
+    staleTime: QUERY_STALE.LIST,
     refetchOnWindowFocus: true,
     retry: 1,
   });
@@ -230,9 +228,7 @@ const Invoices = () => {
     queryKey: queryKeys.invoices.stats(activeTenantId, activeShopId, activeStudioLocationId),
     queryFn: () => invoiceService.getStats(),
     enabled: invoicesQueryEnabled,
-    staleTime: QUERY_STALE.TRANSACTIONAL,
-    refetchInterval: 60 * 1000,
-    refetchIntervalInBackground: false,
+    staleTime: QUERY_STALE.LIST,
     refetchOnWindowFocus: true,
     retry: 1,
   });
@@ -507,10 +503,18 @@ const Invoices = () => {
     setViewingInvoice(null);
   };
 
-  const handlePrint = (invoice) => {
+  const handlePrint = useCallback(async (invoice) => {
     setViewingInvoice(invoice);
     setPrintModalVisible(true);
-  };
+    try {
+      const response = await invoiceService.getById(invoice.id);
+      const full = response?.data ?? response;
+      if (full) setViewingInvoice(full);
+    } catch (error) {
+      console.error('Failed to load invoice for print:', error);
+      showError(error, 'Failed to load invoice for printing');
+    }
+  }, []);
 
   const handlePrintInvoice = () => {
     window.print();

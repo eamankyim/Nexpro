@@ -33,8 +33,8 @@ export const queryKeys = {
   },
   dealers: {
     all: ['dealers'],
-    list: (tenantId, shopId, params = {}) => ['dealers', tenantId, shopId, params],
-    stats: (tenantId, shopId) => ['dealers', 'stats', tenantId, shopId],
+    list: (tenantId, params = {}) => ['dealers', tenantId, params],
+    stats: (tenantId) => ['dealers', 'stats', tenantId],
     detail: (id) => ['dealer', id],
     ledger: (id, params = {}) => ['dealer', id, 'ledger', params],
     statement: (id, params = {}) => ['dealer', id, 'statement', params],

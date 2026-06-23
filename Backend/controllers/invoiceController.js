@@ -8,6 +8,7 @@ const {
   SaleItem,
   Product,
   ProductVariant,
+  Barcode,
   Prescription,
   Tenant,
   Setting,
@@ -48,6 +49,12 @@ const {
   organizationToEmailCompany,
 } = require('../utils/documentOrganizationUtils');
 const { resolveBusinessType } = require('../config/businessTypes');
+const {
+  pickTrimmed,
+  getLineItemUnitSymbol,
+  resolveDocumentLineItemProductCode,
+  enrichDocumentLineItems,
+} = require('../utils/documentLineItemUtils');
 
 const branchManagerInclude = () => ({
   model: User,
@@ -141,44 +148,40 @@ const plainRecord = (record) => (
   typeof record?.get === 'function' ? record.get({ plain: true }) : record
 );
 
-const pickTrimmed = (...values) => (
-  values
-    .map((value) => (value == null ? '' : String(value).trim()))
-    .find(Boolean) || ''
-);
-
-const getInvoiceItemOwnProductCode = (item) => pickTrimmed(
-  item?.metadata?.productCode,
-  item?.productCode,
-  item?.code,
-  item?.metadata?.barcode,
-  item?.barcode,
-  item?.sku,
-  item?.metadata?.sku
-);
-
-const getInvoiceItemProductCode = ({ item, saleItem, product, variant }) => pickTrimmed(
-  getInvoiceItemOwnProductCode(item),
-  saleItem?.metadata?.productCode,
-  saleItem?.productCode,
-  variant?.barcode,
-  product?.barcode,
-  saleItem?.sku,
-  variant?.sku,
-  product?.sku
-);
+const catalogBarcodeInclude = {
+  model: Barcode,
+  as: 'barcodes',
+  attributes: ['id', 'barcode', 'isActive'],
+  required: false,
+};
 
 const hydrateInvoiceItemProductCodes = async (invoice, items) => {
   if (!Array.isArray(items) || items.length === 0) return items;
 
-  const needsSaleItemFallback = invoice.saleId && items.some((item) => !getInvoiceItemOwnProductCode(item));
+  const needsSaleItemFallback = invoice.saleId && items.some((item) => {
+    const metadata = item?.metadata && typeof item.metadata === 'object' ? item.metadata : {};
+    return !resolveDocumentLineItemProductCode({ item })
+      || !getLineItemUnitSymbol(item)
+      || !(item?.productId || metadata.productId);
+  });
+
   const saleItems = needsSaleItemFallback
     ? (await SaleItem.findAll({
         where: { saleId: invoice.saleId },
         order: [['createdAt', 'ASC']],
         include: [
-          { model: Product, as: 'product', attributes: ['id', 'sku', 'barcode'], required: false },
-          { model: ProductVariant, as: 'variant', attributes: ['id', 'sku', 'barcode', 'productId'], required: false },
+          {
+            model: Product,
+            as: 'product',
+            attributes: ['id', 'sku', 'barcode', 'unit'],
+            required: false,
+          },
+          {
+            model: ProductVariant,
+            as: 'variant',
+            attributes: ['id', 'sku', 'barcode', 'productId'],
+            required: false,
+          },
         ],
       })).map(plainRecord)
     : [];
@@ -187,11 +190,12 @@ const hydrateInvoiceItemProductCodes = async (invoice, items) => {
   const variantIds = new Set();
   items.forEach((item, index) => {
     const saleItem = saleItems[index] || {};
-    if (item?.productId || item?.metadata?.productId || saleItem.productId) {
-      productIds.add(item.productId || item.metadata?.productId || saleItem.productId);
+    const metadata = item?.metadata && typeof item.metadata === 'object' ? item.metadata : {};
+    if (item?.productId || metadata.productId || saleItem.productId) {
+      productIds.add(item.productId || metadata.productId || saleItem.productId);
     }
-    if (item?.productVariantId || item?.metadata?.productVariantId || saleItem.productVariantId) {
-      variantIds.add(item.productVariantId || item.metadata?.productVariantId || saleItem.productVariantId);
+    if (item?.productVariantId || metadata.productVariantId || saleItem.productVariantId) {
+      variantIds.add(item.productVariantId || metadata.productVariantId || saleItem.productVariantId);
     }
   });
 
@@ -200,40 +204,21 @@ const hydrateInvoiceItemProductCodes = async (invoice, items) => {
       ? Product.findAll({
           where: applyTenantFilter(invoice.tenantId, { id: { [Op.in]: [...productIds] } }),
           attributes: ['id', 'sku', 'barcode', 'unit'],
+          include: [catalogBarcodeInclude],
         })
       : [],
     variantIds.size
       ? ProductVariant.findAll({
           where: { id: { [Op.in]: [...variantIds] } },
           attributes: ['id', 'sku', 'barcode', 'productId'],
+          include: [catalogBarcodeInclude],
         })
       : [],
   ]);
   const productsById = new Map(products.map((product) => [product.id, plainRecord(product)]));
   const variantsById = new Map(variants.map((variant) => [variant.id, plainRecord(variant)]));
 
-  return items.map((rawItem, index) => {
-    const item = rawItem && typeof rawItem === 'object' ? { ...rawItem } : rawItem;
-    if (!item || typeof item !== 'object') return item;
-
-    const saleItem = saleItems[index] || {};
-    const productId = item.productId || item.metadata?.productId || saleItem.productId || null;
-    const productVariantId = item.productVariantId || item.metadata?.productVariantId || saleItem.productVariantId || null;
-    const product = productsById.get(productId) || saleItem.product || null;
-    const variant = variantsById.get(productVariantId) || saleItem.variant || null;
-    const productCode = getInvoiceItemProductCode({ item, saleItem, product, variant });
-    const sku = pickTrimmed(item.sku, item.metadata?.sku, saleItem.sku, variant?.sku, product?.sku);
-    const unit = pickTrimmed(item.unit, item.metadata?.unit, product?.unit);
-
-    return {
-      ...item,
-      ...(productId && !item.productId ? { productId } : {}),
-      ...(productVariantId && !item.productVariantId ? { productVariantId } : {}),
-      ...(sku && !item.sku ? { sku } : {}),
-      ...(productCode ? { productCode } : {}),
-      ...(unit && !item.unit ? { unit } : {}),
-    };
-  });
+  return enrichDocumentLineItems(items, { productsById, variantsById, saleItems });
 };
 
 const invoiceToResponsePayload = async (invoice) => {
@@ -242,6 +227,48 @@ const invoiceToResponsePayload = async (invoice) => {
   payload.items = await hydrateInvoiceItemProductCodes(invoice, payload.items);
   payload.organization = await resolveInvoiceOrganization(invoice);
   return payload;
+};
+
+/** List/table payload: skip organization resolution and item code hydration. */
+const invoiceToListPayload = (invoice) => {
+  if (!invoice) return null;
+  return typeof invoice.toJSON === 'function' ? invoice.toJSON() : { ...invoice };
+};
+
+const invoiceListIncludes = () => {
+  const include = [
+    {
+      model: Customer,
+      as: 'customer',
+      attributes: ['id', 'name', 'company', 'email', 'phone'],
+    },
+    {
+      model: Job,
+      as: 'job',
+      attributes: ['id', 'jobNumber', 'title', 'status'],
+      required: false,
+    },
+  ];
+
+  if (Sale) {
+    include.push({
+      model: Sale,
+      as: 'sale',
+      attributes: ['id', 'saleNumber'],
+      required: false,
+    });
+  }
+
+  if (Prescription) {
+    include.push({
+      model: Prescription,
+      as: 'prescription',
+      attributes: ['id', 'prescriptionNumber', 'prescriptionDate'],
+      required: false,
+    });
+  }
+
+  return include;
 };
 
 const parsePaymentDateInput = (value) => {
@@ -692,57 +719,21 @@ exports.getInvoices = async (req, res, next) => {
       hasOrConditions: !!where[Op.or],
     });
 
-    // Build includes array
-    const include = [
-      {
-        model: Customer,
-        as: 'customer',
-        attributes: ['id', 'name', 'company', 'email', 'phone']
-      },
-      {
-        model: Job,
-        as: 'job',
-        attributes: ['id', 'jobNumber', 'title', 'status'],
-        required: false
-      }
-    ];
+    // Build includes array (slim: no branch managers or nested prescription customer)
+    const include = invoiceListIncludes();
 
-    // Include Sale if model is available (for shop/pharmacy business types)
-    if (Sale) {
-      include.push({
-        model: Sale,
-        as: 'sale',
-        attributes: ['id', 'saleNumber', 'createdAt', 'total'],
-        required: false
-      });
-    }
-    include.push(...invoiceBranchIncludes());
+    const [count, rows] = await Promise.all([
+      Invoice.count({ where, distinct: true, col: 'id' }),
+      Invoice.findAll({
+        where,
+        limit,
+        offset,
+        order: [['createdAt', 'DESC']],
+        include,
+      }),
+    ]);
 
-    // Include Prescription if model is available (for pharmacy business type)
-    if (Prescription) {
-      include.push({
-        model: Prescription,
-        as: 'prescription',
-        attributes: ['id', 'prescriptionNumber', 'prescriptionDate'],
-        include: [{
-          model: Customer,
-          as: 'customer',
-          attributes: ['id', 'name'],
-          required: false
-        }],
-        required: false
-      });
-    }
-
-    const { count, rows } = await Invoice.findAndCountAll({
-      where,
-      limit,
-      offset,
-      order: [['createdAt', 'DESC']],
-      include
-    });
-
-    const data = await Promise.all(rows.map((invoice) => invoiceToResponsePayload(invoice)));
+    const data = rows.map((invoice) => invoiceToListPayload(invoice));
 
     logInvoiceListDebug('GET /api/invoices result', {
       ...listLogContext,
@@ -3407,33 +3398,35 @@ exports.cancelInvoice = async (req, res, next) => {
 exports.getInvoiceStats = async (req, res, next) => {
   try {
     const baseWhere = await buildInvoiceVisibilityWhere(req);
+    const paidWhere = { ...baseWhere, status: 'paid' };
+    const unpaidWhere = { ...baseWhere, status: { [Op.in]: ['sent', 'draft'] } };
+    const overdueWhere = { ...baseWhere, status: 'overdue' };
+    const revenueWhere = {
+      ...baseWhere,
+      status: { [Op.ne]: 'cancelled' },
+      amountPaid: { [Op.gt]: 0 },
+    };
+    const outstandingWhere = {
+      ...baseWhere,
+      status: { [Op.notIn]: ['paid', 'cancelled'] },
+      balance: { [Op.gt]: 0 },
+    };
 
-    const totalInvoices = await Invoice.count({ where: baseWhere });
-    const paidInvoices = await Invoice.count({ where: { ...baseWhere, status: 'paid' } });
-    const unpaidInvoices = await Invoice.count({
-      where: { ...baseWhere, status: { [Op.in]: ['sent', 'draft'] } }
-    });
-    const overdueInvoices = await Invoice.count({
-      where: { ...baseWhere, status: 'overdue' }
-    });
-    
-    // Revenue card should reflect cash actually collected, including partial payments.
-    const totalRevenue =
-      (await Invoice.sum('amountPaid', {
-        where: {
-          ...baseWhere,
-          status: { [Op.ne]: 'cancelled' },
-          amountPaid: { [Op.gt]: 0 }
-        }
-      })) || 0;
-    const outstandingAmount =
-      (await Invoice.sum('balance', {
-        where: {
-          ...baseWhere,
-          status: { [Op.notIn]: ['paid', 'cancelled'] },
-          balance: { [Op.gt]: 0 }
-        }
-      })) || 0;
+    const [
+      totalInvoices,
+      paidInvoices,
+      unpaidInvoices,
+      overdueInvoices,
+      totalRevenue,
+      outstandingAmount,
+    ] = await Promise.all([
+      Invoice.count({ where: baseWhere }),
+      Invoice.count({ where: paidWhere }),
+      Invoice.count({ where: unpaidWhere }),
+      Invoice.count({ where: overdueWhere }),
+      Invoice.sum('amountPaid', { where: revenueWhere }),
+      Invoice.sum('balance', { where: outstandingWhere }),
+    ]);
 
     res.status(200).json({
       success: true,
@@ -3442,9 +3435,9 @@ exports.getInvoiceStats = async (req, res, next) => {
         paidInvoices,
         unpaidInvoices,
         overdueInvoices,
-        totalRevenue,
-        outstandingAmount
-      }
+        totalRevenue: totalRevenue || 0,
+        outstandingAmount: outstandingAmount || 0,
+      },
     });
   } catch (error) {
     next(error);

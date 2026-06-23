@@ -138,11 +138,11 @@ describe('dealerStatementService', () => {
   });
 
   describe('getOutstandingDealersReport', () => {
-    it('filters dealers by shopId when provided', async () => {
+    it('returns tenant-wide outstanding dealers', async () => {
       Dealer.findAll.mockResolvedValue([
         {
           id: 'dealer-1',
-          businessName: 'Branch A Dealer',
+          businessName: 'Org Dealer',
           contactName: null,
           phone: null,
           balance: 500,
@@ -151,10 +151,13 @@ describe('dealerStatementService', () => {
         },
       ]);
 
-      const report = await getOutstandingDealersReport('tenant-1', 'shop-a');
+      const report = await getOutstandingDealersReport('tenant-1');
 
       expect(Dealer.findAll).toHaveBeenCalledWith(expect.objectContaining({
-        where: expect.objectContaining({ tenantId: 'tenant-1', isActive: true, shopId: 'shop-a' }),
+        where: expect.objectContaining({ tenantId: 'tenant-1', isActive: true }),
+      }));
+      expect(Dealer.findAll).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.not.objectContaining({ shopId: expect.anything() }),
       }));
       expect(report.dealerCount).toBe(1);
       expect(report.totalOutstanding).toBe(500);

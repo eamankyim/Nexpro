@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
   Alert,
   Share,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 
@@ -22,6 +22,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { customerService } from '@/services/customerService';
+import { dealerService } from '@/services/dealerService';
 import { saleService } from '@/services/saleService';
 import { settingsService } from '@/services/settings';
 import { offlineQueueService } from '@/services/offlineQueueService';
@@ -30,8 +31,10 @@ import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
 import { resolveImageUrl } from '@/utils/fileUtils';
 import { formatSaleReceiptText } from '@/utils/formatSaleReceipt';
-import { refreshAfterCustomerChange, refreshAfterSale } from '@/utils/queryInvalidation';
+import { refreshAfterCustomerChange, refreshAfterSale, refreshAfterDealerChange } from '@/utils/queryInvalidation';
 import { parseDecimalInput } from '@/utils/formatCurrency';
+import { formatCurrency } from '@/utils/formatCurrency';
+import { getApiErrorMessage, parseApiEntity } from '@/utils/parseApiListResponse';
 
 const generateSaleClientId = () =>
   `mobile-sale-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
@@ -79,6 +82,7 @@ function computeCartTaxTotal({
 
 export default function CartScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ dealerId?: string; mode?: string }>();
   const { items, removeItem, updateQuantity, clearCart, getTotal, getSubtotal, getItemCount } =
     useCart();
   const { activeTenantId, activeTenant, hasFeature } = useAuth();
@@ -88,6 +92,13 @@ export default function CartScreen() {
   const queryClient = useQueryClient();
 
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
+  const [selectedDealer, setSelectedDealer] = useState<{
+    id: string;
+    businessName: string;
+    balance?: number | string;
+    availableCredit?: number | string;
+  } | null>(null);
+  const [loadingDealer, setLoadingDealer] = useState(false);
   const [customerModalVisible, setCustomerModalVisible] = useState(false);
   const [paymentModalVisible, setPaymentModalVisible] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'mobile_money' | 'card' | 'credit'>(
@@ -104,6 +115,43 @@ export default function CartScreen() {
   const isRestaurant = shopType === SHOP_TYPES.RESTAURANT;
   const resolvedType = resolveBusinessType(activeTenant?.businessType);
   const isRetailLike = resolvedType === 'shop' || resolvedType === 'pharmacy';
+  const isDealerMode =
+    params.mode === 'dealer' || !!params.dealerId || !!selectedDealer?.id;
+  const dealersFeatureEnabled = hasFeature('dealersAccount');
+
+  useEffect(() => {
+    const dealerId = params.dealerId ? String(params.dealerId) : '';
+    if (!dealerId || !dealersFeatureEnabled) return;
+
+    let cancelled = false;
+    const loadDealer = async () => {
+      setLoadingDealer(true);
+      try {
+        const res = await dealerService.getById(dealerId);
+        const dealer = parseApiEntity<{
+          id: string;
+          businessName: string;
+          balance?: number | string;
+          availableCredit?: number | string;
+        }>(res);
+        if (!cancelled && dealer?.id) {
+          setSelectedDealer(dealer);
+          setSelectedCustomer(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          Alert.alert('Dealer unavailable', getApiErrorMessage(err, 'Could not load dealer account.'));
+        }
+      } finally {
+        if (!cancelled) setLoadingDealer(false);
+      }
+    };
+
+    loadDealer();
+    return () => {
+      cancelled = true;
+    };
+  }, [params.dealerId, dealersFeatureEnabled]);
 
   const { data: customersResponse } = useQuery({
     queryKey: ['customers', 'list', activeTenantId, activeShopId, activeStudioLocationId],
@@ -163,8 +211,9 @@ export default function CartScreen() {
         throw error;
       }
     },
-    onSuccess: async (data: any, variables: { sendToKitchen?: boolean }) => {
+    onSuccess: async (data: any, variables: { sendToKitchen?: boolean; dealerId?: string }) => {
       const kitchenSent = variables?.sendToKitchen !== false;
+      const dealerSale = Boolean(variables?.dealerId);
       if (data?._offline) {
         clearCart();
         setPaymentModalVisible(false);
@@ -177,10 +226,11 @@ export default function CartScreen() {
       }
       clearCart();
       setPaymentModalVisible(false);
+      if (dealerSale) setSelectedDealer(null);
 
       const sale = data?.data ?? data;
       let generatedInvoice = sale?.invoice ?? null;
-      if (sale?.id && sale?.customerId && !sale?.invoiceId) {
+      if (!dealerSale && sale?.id && sale?.customerId && !sale?.invoiceId) {
         try {
           const invoiceResponse = await saleService.generateInvoice(sale.id);
           generatedInvoice = invoiceResponse?.data ?? invoiceResponse ?? null;
@@ -216,8 +266,18 @@ export default function CartScreen() {
         });
       }
       await refreshAfterSale(queryClient);
+      if (variables?.dealerId) {
+        await refreshAfterDealerChange(queryClient);
+      }
 
-      const offerShare = sale?.id && paymentMethod !== 'credit';
+      const offerShare = sale?.id && paymentMethod !== 'credit' && !dealerSale;
+
+      if (dealerSale) {
+        Alert.alert('Dealer sale recorded', 'The sale has been charged to the dealer account.', [
+          { text: 'OK', onPress: () => router.push('/(tabs)/sales') },
+        ]);
+        return;
+      }
 
       if (offerShare) {
         const shareTitle =
@@ -297,6 +357,49 @@ export default function CartScreen() {
       return;
     }
 
+    if (isDealerMode) {
+      if (!selectedDealer?.id) {
+        Alert.alert('Error', 'Select a dealer account before completing the sale');
+        return;
+      }
+      const total = payableTotal;
+      const saleItems = items.map((item) => {
+        const unitPrice = Number(item.unitPrice) || 0;
+        return {
+          productId: item.productId,
+          name: item.name,
+          sku: item.sku,
+          productCode: item.productCode,
+          quantity: item.quantity,
+          unitPrice,
+          totalPrice: unitPrice * item.quantity - (item.discount || 0),
+          discount: item.discount || 0,
+        };
+      });
+
+      const payload: any = {
+        clientId: generateSaleClientId(),
+        items: saleItems,
+        total,
+        subtotal: getSubtotal(),
+        discount: getSubtotal() - total,
+        dealerId: selectedDealer.id,
+        saleChannel: 'dealer',
+        customerId: null,
+        paymentMethod: 'cash',
+        amountPaid: 0,
+        chargeToAccount: total,
+        status: 'completed',
+        metadata: {
+          dealerBusinessName: selectedDealer.businessName,
+          dealerSettlement: 'charge_to_account',
+        },
+      };
+
+      createSaleMutation.mutate(payload);
+      return;
+    }
+
     let customerId = selectedCustomer?.id || null;
     if (!customerId && paymentMethod === 'mobile_money' && mobileMoneyNumber.trim()) {
       try {
@@ -370,6 +473,8 @@ export default function CartScreen() {
     amountTendered,
     mobileMoneyNumber,
     selectedCustomer,
+    selectedDealer,
+    isDealerMode,
     activeTenantId,
     createSaleMutation,
     clearCart,
@@ -384,6 +489,9 @@ export default function CartScreen() {
   }
   if (!hasFeature('paymentsExpenses')) {
     return <FeatureAccessDenied message="Checkout is not enabled for this workspace." />;
+  }
+  if (isDealerMode && !dealersFeatureEnabled) {
+    return <FeatureAccessDenied message="Dealers account is not enabled for this workspace." />;
   }
 
   if (items.length === 0) {
@@ -409,20 +517,44 @@ export default function CartScreen() {
   return (
     <ScreenShell style={styles.container}>
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-        {/* Customer Selection */}
-        <Pressable
-          onPress={() => setCustomerModalVisible(true)}
-          style={[styles.customerCard, { backgroundColor: cardBg, borderColor }]}
-        >
-          <AppIcon name="user" size={20} color={colors.tint} />
-          <View style={styles.customerInfo}>
-            <Text style={[styles.customerLabel, { color: mutedColor }]}>Customer</Text>
-            <Text style={[styles.customerName, { color: textColor }]}>
-              {selectedCustomer?.name || 'Walk-in Customer'}
-            </Text>
+        {/* Customer / dealer selection */}
+        {isDealerMode ? (
+          <View style={[styles.customerCard, { backgroundColor: cardBg, borderColor }]}>
+            <AppIcon name="briefcase" size={20} color={colors.tint} />
+            <View style={styles.customerInfo}>
+              <Text style={[styles.customerLabel, { color: mutedColor }]}>Dealer account</Text>
+              {loadingDealer && !selectedDealer ? (
+                <ActivityIndicator color={colors.tint} style={{ marginTop: 4 }} />
+              ) : (
+                <>
+                  <Text style={[styles.customerName, { color: textColor }]}>
+                    {selectedDealer?.businessName || 'Dealer not loaded'}
+                  </Text>
+                  {selectedDealer ? (
+                    <Text style={[styles.dealerMeta, { color: mutedColor }]}>
+                      Outstanding {formatCurrency(selectedDealer.balance)} · Available{' '}
+                      {formatCurrency(selectedDealer.availableCredit)}
+                    </Text>
+                  ) : null}
+                </>
+              )}
+            </View>
           </View>
-          <AppIcon name="chevron-right" size={16} color={mutedColor} />
-        </Pressable>
+        ) : (
+          <Pressable
+            onPress={() => setCustomerModalVisible(true)}
+            style={[styles.customerCard, { backgroundColor: cardBg, borderColor }]}
+          >
+            <AppIcon name="user" size={20} color={colors.tint} />
+            <View style={styles.customerInfo}>
+              <Text style={[styles.customerLabel, { color: mutedColor }]}>Customer</Text>
+              <Text style={[styles.customerName, { color: textColor }]}>
+                {selectedCustomer?.name || 'Walk-in Customer'}
+              </Text>
+            </View>
+            <AppIcon name="chevron-right" size={16} color={mutedColor} />
+          </Pressable>
+        )}
 
         {/* Cart Items */}
         <View style={styles.itemsContainer}>
@@ -640,7 +772,7 @@ export default function CartScreen() {
 
       <FormSheetModal
         visible={paymentModalVisible}
-        title={FORM_LABELS.cart.payment}
+        title={isDealerMode ? FORM_LABELS.cart.dealerSale : FORM_LABELS.cart.payment}
         onClose={() => setPaymentModalVisible(false)}
         cardBg={cardBg}
         borderColor={borderColor}
@@ -659,13 +791,15 @@ export default function CartScreen() {
             </Pressable>
             <Pressable
               onPress={handleCompletePayment}
-              disabled={createSaleMutation.isPending}
+              disabled={createSaleMutation.isPending || (isDealerMode && !selectedDealer?.id)}
               style={[styles.payButton, { backgroundColor: colors.tint }]}
             >
               {createSaleMutation.isPending ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Text style={styles.payButtonText}>{FORM_LABELS.cart.completeSale}</Text>
+                <Text style={styles.payButtonText}>
+                  {isDealerMode ? FORM_LABELS.cart.completeDealerSale : FORM_LABELS.cart.completeSale}
+                </Text>
               )}
             </Pressable>
           </View>
@@ -675,6 +809,17 @@ export default function CartScreen() {
                 Total: {CURRENCY.SYMBOL} {payableTotal.toFixed(CURRENCY.DECIMAL_PLACES)}
               </Text>
 
+              {isDealerMode ? (
+                <View style={[styles.dealerChargeCard, { borderColor, backgroundColor: cardBg }]}>
+                  <Text style={[styles.dealerChargeTitle, { color: textColor }]}>
+                    Charge {formatCurrency(payableTotal)} to {selectedDealer?.businessName || 'dealer'}
+                  </Text>
+                  <Text style={[styles.dealerChargeCopy, { color: mutedColor }]}>
+                    This sale will be added to the dealer account balance. No customer is required.
+                  </Text>
+                </View>
+              ) : (
+                <>
               {isRestaurant && (
                 <Pressable
                   onPress={() => setSendToKitchen((prev) => !prev)}
@@ -777,6 +922,8 @@ export default function CartScreen() {
                   </Text>
                 </View>
               )}
+                </>
+              )}
       </FormSheetModal>
     </ScreenShell>
   );
@@ -813,6 +960,15 @@ const styles = StyleSheet.create({
   customerInfo: { flex: 1 },
   customerLabel: { fontSize: 12, marginBottom: 2 },
   customerName: { fontSize: 16, fontWeight: '600' },
+  dealerMeta: { fontSize: 13, marginTop: 4 },
+  dealerChargeCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 14,
+    marginTop: 12,
+  },
+  dealerChargeTitle: { fontSize: 16, fontWeight: '700', marginBottom: 6 },
+  dealerChargeCopy: { fontSize: 14, lineHeight: 20 },
   itemsContainer: { gap: 12, marginBottom: 16 },
   cartItem: {
     flexDirection: 'row',

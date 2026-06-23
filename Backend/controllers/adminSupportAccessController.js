@@ -3,6 +3,7 @@ const { SupportAccessSession } = require('../models');
 const {
   DEFAULT_SESSION_HOURS,
   MAX_REASON_LENGTH,
+  SUPPORT_ACCESS_MODES,
   endOtherActiveSessions,
 } = require('../utils/supportAccess');
 const { getTenantEffectiveEntitlements } = require('../utils/tenantEntitlements');
@@ -59,6 +60,10 @@ exports.startSupportAccess = async (req, res, next) => {
 
     const sessionHours = Math.min(Math.max(Number(hours) || DEFAULT_SESSION_HOURS, 1), 8);
     const expiresAt = new Date(Date.now() + sessionHours * 60 * 60 * 1000);
+    const requestedMode = String(req.body?.mode || SUPPORT_ACCESS_MODES.READ_ONLY).trim();
+    const mode = requestedMode === SUPPORT_ACCESS_MODES.CONFIGURATION
+      ? SUPPORT_ACCESS_MODES.CONFIGURATION
+      : SUPPORT_ACCESS_MODES.READ_ONLY;
 
     await endOtherActiveSessions(req.user.id);
 
@@ -67,7 +72,7 @@ exports.startSupportAccess = async (req, res, next) => {
       adminUserId: req.user.id,
       supportTicketId: supportTicketId || null,
       reason: trimmedReason,
-      mode: 'read_only',
+      mode,
       expiresAt,
       metadata: {
         userAgent: req.headers['user-agent'] || null,

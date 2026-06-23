@@ -22,6 +22,11 @@ describe('documentLineItems', () => {
 
   it('formats line item quantity from item data', () => {
     expect(formatLineItemQuantity({ quantity: 5, unit: 'pcs' })).toBe('5 (pcs)');
+    expect(formatLineItemQuantity({ quantity: 10, unit: 'sqm' })).toBe('10 (sqm)');
     expect(formatLineItemQuantity({ quantity: 1 })).toBe('1');
+  });
+
+  it('formats decimal quantities with unit', () => {
+    expect(formatLineItemQuantity({ quantity: 10.5, unit: 'sqm' })).toBe('10.5 (sqm)');
   });
 });

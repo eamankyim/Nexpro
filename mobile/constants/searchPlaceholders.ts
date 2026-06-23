@@ -13,4 +13,5 @@ export const SEARCH_PLACEHOLDERS = {
   TASKS: 'Search tasks by title, description, assignee...',
   ORDERS: 'Order # or customer...',
   ONLINE_ORDERS: 'Order #, customer, or phone...',
+  DEALERS: 'Business name, contact, or phone...',
 } as const;

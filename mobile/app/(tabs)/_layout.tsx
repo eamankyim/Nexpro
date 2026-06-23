@@ -155,6 +155,7 @@ export default function TabLayout() {
       <Tabs.Screen name="expenses" options={{ href: null }} />
       <Tabs.Screen name="quotes" options={{ href: null }} />
       <Tabs.Screen name="sales" options={{ href: null }} />
+      <Tabs.Screen name="dealers" options={{ href: null, title: 'Dealers' }} />
       <Tabs.Screen name="leads" options={{ href: null }} />
       <Tabs.Screen name="tasks" options={{ href: null }} />
       <Tabs.Screen

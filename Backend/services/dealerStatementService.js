@@ -166,15 +166,11 @@ const getDealerStatement = async ({ dealerId, tenantId, startDate, endDate }) =>
 };
 
 /**
- * Outstanding dealers report — branch-scoped receivables.
+ * Outstanding dealers report — tenant-wide receivables.
  * @param {string} tenantId
- * @param {string|null} [shopId]
  */
-const getOutstandingDealersReport = async (tenantId, shopId = null) => {
+const getOutstandingDealersReport = async (tenantId) => {
   const where = applyTenantFilter(tenantId, { isActive: true });
-  if (shopId) {
-    where.shopId = shopId;
-  }
 
   const dealers = await Dealer.findAll({
     where,

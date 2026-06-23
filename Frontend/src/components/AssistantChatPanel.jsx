@@ -48,6 +48,8 @@ export default function AssistantChatPanel({ open, onOpenChange, pageContext }) 
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef(null);
+  const lastSendAtRef = useRef(0);
+  const SEND_DEBOUNCE_MS = 800;
 
   const scrollToBottom = useCallback(() => {
     if (scrollRef.current) {
@@ -75,6 +77,10 @@ export default function AssistantChatPanel({ open, onOpenChange, pageContext }) 
   const handleSend = useCallback(async (text) => {
     const trimmed = (text || inputValue).trim();
     if (!trimmed || loading) return;
+
+    const now = Date.now();
+    if (now - lastSendAtRef.current < SEND_DEBOUNCE_MS) return;
+    lastSendAtRef.current = now;
 
     const userMessage = { role: 'user', content: trimmed };
     setMessages((prev) => [...prev, userMessage]);

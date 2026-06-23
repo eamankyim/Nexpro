@@ -1,4 +1,4 @@
-const { Sale, SaleItem, Product, ProductVariant, Customer, Dealer, Shop, Invoice, User, SaleActivity, Tenant, Payment, Setting } = require('../models');
+const { Sale, SaleItem, Product, ProductVariant, Customer, Dealer, Shop, Invoice, User, SaleActivity, Tenant, Payment, Setting, Barcode } = require('../models');
 const { createInvoiceRevenueJournal } = require('../services/invoiceAccountingService');
 const { updateCustomerBalance } = require('../services/customerBalanceService');
 const { syncSaleInvoiceAndRefreshCustomerBalance } = require('../services/invoiceSaleService');
@@ -27,6 +27,12 @@ const {
   assertShopRecordAccess,
   userCanAccessShopId,
 } = require('../utils/shopUtils');
+const {
+  pickTrimmed,
+  resolveDocumentLineItemProductCode,
+  getLineItemUnitSymbol,
+  enrichDocumentLineItems,
+} = require('../utils/documentLineItemUtils');
 const {
   CUSTOMER_CONFIRMED_DELIVERY_ERROR_CODE,
   CUSTOMER_CONFIRMED_DELIVERY_ERROR_MESSAGE,
@@ -330,13 +336,16 @@ const autoCreateInvoiceFromSale = async (saleId, tenantId) => {
         const itemTotal = parseFloat(item.total || 0);
         const itemExclusive = Math.max(0, itemTotal - itemTax);
         const unitPriceNet = qty > 0 ? itemExclusive / qty : itemExclusive;
+        const metadata = item.metadata && typeof item.metadata === 'object' ? item.metadata : {};
         return {
           description: item.name || 'Sale item',
           category: 'Sale',
           productId: item.productId || undefined,
           productVariantId: item.productVariantId || undefined,
-          productCode: item.metadata?.productCode || item.sku || null,
+          productCode: pickTrimmed(metadata.productCode, item.sku),
           sku: item.sku || null,
+          unit: pickTrimmed(metadata.unit),
+          metadata,
           quantity: item.quantity,
           unitPrice: unitPriceNet,
           discountAmount: 0,
@@ -345,6 +354,46 @@ const autoCreateInvoiceFromSale = async (saleId, tenantId) => {
           total: itemExclusive
         };
       });
+
+      const productIds = new Set();
+      const variantIds = new Set();
+      sale.items.forEach((item) => {
+        if (item.productId) productIds.add(item.productId);
+        if (item.productVariantId) variantIds.add(item.productVariantId);
+      });
+
+      const catalogBarcodeInclude = {
+        model: Barcode,
+        as: 'barcodes',
+        attributes: ['id', 'barcode', 'isActive'],
+        required: false,
+      };
+
+      const [products, variants] = await Promise.all([
+        productIds.size
+          ? Product.findAll({
+            where: applyTenantFilter(tenantId, { id: { [Op.in]: [...productIds] } }),
+            attributes: ['id', 'sku', 'barcode', 'unit'],
+            include: [catalogBarcodeInclude],
+          })
+          : [],
+        variantIds.size
+          ? ProductVariant.findAll({
+            where: { id: { [Op.in]: [...variantIds] } },
+            attributes: ['id', 'sku', 'barcode', 'productId'],
+            include: [catalogBarcodeInclude],
+          })
+          : [],
+      ]);
+
+      const plainRecord = (record) => (
+        typeof record?.get === 'function' ? record.get({ plain: true }) : record
+      );
+      const productsById = new Map(products.map((product) => [product.id, plainRecord(product)]));
+      const variantsById = new Map(variants.map((variant) => [variant.id, plainRecord(variant)]));
+      const saleItems = sale.items.map((item) => plainRecord(item));
+
+      items = enrichDocumentLineItems(items, { productsById, variantsById, saleItems });
     } else {
       items = [
         {
@@ -494,18 +543,38 @@ const resolveSaleItemCatalogData = async ({ items, tenantId, shopId, transaction
     productIds.length
       ? Product.findAll({
         where: applyTenantFilter(tenantId, { id: { [Op.in]: productIds } }),
+        include: [{
+          model: Barcode,
+          as: 'barcodes',
+          attributes: ['id', 'barcode', 'isActive'],
+          required: false,
+        }],
         transaction
       })
       : [],
     variantIds.length
       ? ProductVariant.findAll({
         where: { id: { [Op.in]: variantIds } },
-        include: [{
-          model: Product,
-          as: 'product',
-          where: applyTenantFilter(tenantId, {}),
-          required: true
-        }],
+        include: [
+          {
+            model: Product,
+            as: 'product',
+            where: applyTenantFilter(tenantId, {}),
+            required: true,
+            include: [{
+              model: Barcode,
+              as: 'barcodes',
+              attributes: ['id', 'barcode', 'isActive'],
+              required: false,
+            }],
+          },
+          {
+            model: Barcode,
+            as: 'barcodes',
+            attributes: ['id', 'barcode', 'isActive'],
+            required: false,
+          },
+        ],
         transaction
       })
       : []
@@ -605,7 +674,18 @@ const resolveSaleItemCatalogData = async ({ items, tenantId, shopId, transaction
     const clientUnitPrice = parseSaleUnitPriceOverride(item.unitPrice);
     const effectiveUnitPrice = clientUnitPrice ?? catalogUnitPrice;
     const resolvedSku = variant?.sku || catalogProduct.sku || item.sku || null;
-    const resolvedProductCode = item.productCode || variant?.barcode || catalogProduct.barcode || null;
+    const plainProduct = typeof catalogProduct?.get === 'function'
+      ? catalogProduct.get({ plain: true })
+      : catalogProduct;
+    const plainVariant = variant
+      ? (typeof variant?.get === 'function' ? variant.get({ plain: true }) : variant)
+      : null;
+    const resolvedProductCode = resolveDocumentLineItemProductCode({
+      item,
+      product: plainProduct,
+      variant: plainVariant,
+    });
+    const resolvedUnit = getLineItemUnitSymbol(item, { product: plainProduct, variant: plainVariant });
     const priceOverridden = salePricesDiffer(effectiveUnitPrice, catalogUnitPrice);
 
     return {
@@ -614,6 +694,7 @@ const resolveSaleItemCatalogData = async ({ items, tenantId, shopId, transaction
       productVariantId: variant?.id || null,
       name: resolvedName,
       sku: resolvedSku,
+      unit: resolvedUnit || undefined,
       baseUnitPrice: catalogUnitPrice,
       catalogUnitPrice,
       originalUnitPrice: catalogUnitPrice,
@@ -1102,11 +1183,9 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
     if (!saleData.dealerId) {
       throw new Error('Dealer is required for dealer sales');
     }
-    const saleShopId = saleData.shopId || null;
     const dealerWhereClause = applyTenantFilter(tenantId, {
       id: saleData.dealerId,
       isActive: true,
-      ...(saleShopId ? { shopId: saleShopId } : {}),
     });
     dealer = await Dealer.findOne({
       where: dealerWhereClause,
@@ -1114,7 +1193,7 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
       lock: transaction.LOCK.UPDATE,
     });
     if (!dealer) {
-      throw new Error('Dealer not found or inactive for this branch');
+      throw new Error('Dealer not found or inactive');
     }
 
     const chargeToAccount = saleData.chargeToAccount != null
@@ -1228,6 +1307,7 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
       metadata: {
         ...(item.metadata && typeof item.metadata === 'object' ? item.metadata : {}),
         productCode: item.productCode || null,
+        unit: item.unit || null,
         originalUnitPrice: item.originalUnitPrice,
         catalogUnitPrice: item.catalogUnitPrice,
         priceOverridden: item.priceOverridden === true
@@ -1260,7 +1340,7 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
     await recordSaleCharge({
       tenantId,
       dealerId: sale.dealerId,
-      shopId: sale.shopId || dealer.shopId || saleData.shopId || null,
+      shopId: sale.shopId || saleData.shopId || null,
       amount: dealerChargeToAccount,
       saleId: sale.id,
       description: `Sale ${saleNumber} charged to account`,

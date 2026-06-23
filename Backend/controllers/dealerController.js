@@ -11,11 +11,7 @@ const {
 const { Op } = require('sequelize');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const {
-  applyShopFilter,
-  attachShopToPayload,
   getShopIdForWrite,
-  getShopSqlFragment,
-  assertShopRecordAccess,
 } = require('../utils/shopUtils');
 const { getPagination } = require('../utils/paginationUtils');
 const {
@@ -40,7 +36,7 @@ const {
   getOutstandingDealersReport,
 } = require('../services/dealerStatementService');
 
-const dealerWhere = (req, extra = {}) => applyShopFilter(req, applyTenantFilter(req.tenantId, extra));
+const dealerWhere = (req, extra = {}) => applyTenantFilter(req.tenantId, extra);
 
 const resolveShopId = (req) => {
   if (req.shopFilterId) return req.shopFilterId;
@@ -48,15 +44,8 @@ const resolveShopId = (req) => {
   return req.query.shopId || req.headers['x-shop-id'] || null;
 };
 
-const requireShopContext = (req, res) => {
-  if (!req.shopScoped) return true;
-  if (req.shopFilterId) return true;
-  res.status(400).json({
-    success: false,
-    message: 'Select an active shop branch to manage dealers.',
-  });
-  return false;
-};
+/** Branch attribution for ledger entries (sales, payments, adjustments). */
+const ledgerShopId = (req) => resolveShopId(req) || null;
 
 const mapDealerSummary = (dealer) => ({
   ...dealer.toJSON(),
@@ -69,17 +58,15 @@ const mapDealerSummary = (dealer) => ({
 // @route   GET /api/dealers/stats
 exports.getDealerStats = async (req, res, next) => {
   try {
-    if (!requireShopContext(req, res)) return;
     const tenantId = req.tenantId;
-    const shopFrag = getShopSqlFragment(req);
     const [result] = await sequelize.query(
       `SELECT
         COUNT(*)::int AS "totalDealers",
         COUNT(*) FILTER (WHERE "isActive" = true)::int AS "activeDealers",
         COALESCE(SUM(CASE WHEN "isActive" = true THEN balance ELSE 0 END), 0)::numeric AS "totalOutstanding",
         COALESCE(SUM(CASE WHEN "isActive" = true THEN GREATEST("creditLimit" - balance, 0) ELSE 0 END), 0)::numeric AS "totalAvailableCredit"
-      FROM dealers WHERE "tenantId" = :tenantId${shopFrag.sql}`,
-      { replacements: { tenantId, ...shopFrag.replacements }, type: sequelize.QueryTypes.SELECT }
+      FROM dealers WHERE "tenantId" = :tenantId`,
+      { replacements: { tenantId }, type: sequelize.QueryTypes.SELECT }
     );
 
     res.status(200).json({
@@ -100,7 +87,6 @@ exports.getDealerStats = async (req, res, next) => {
 // @route   GET /api/dealers
 exports.getDealers = async (req, res, next) => {
   try {
-    if (!requireShopContext(req, res)) return;
     const { page, limit, offset } = getPagination(req);
     const search = (req.query.search || '').trim();
     const isActive = req.query.isActive;
@@ -152,7 +138,6 @@ exports.getDealers = async (req, res, next) => {
 // @route   GET /api/dealers/pos-search
 exports.posSearchDealers = async (req, res, next) => {
   try {
-    if (!requireShopContext(req, res)) return;
     const search = (req.query.search || req.query.q || '').trim();
     const where = dealerWhere(req, { isActive: true });
     if (search) {
@@ -184,8 +169,7 @@ exports.posSearchDealers = async (req, res, next) => {
 // @route   GET /api/dealers/report/outstanding
 exports.getOutstandingReport = async (req, res, next) => {
   try {
-    if (!requireShopContext(req, res)) return;
-    const report = await getOutstandingDealersReport(req.tenantId, req.shopFilterId || null);
+    const report = await getOutstandingDealersReport(req.tenantId);
     res.status(200).json({ success: true, data: report });
   } catch (error) {
     next(error);
@@ -203,7 +187,6 @@ exports.getDealer = async (req, res, next) => {
     if (!dealer) {
       return res.status(404).json({ success: false, message: 'Dealer not found' });
     }
-    assertShopRecordAccess(req, dealer);
     res.status(200).json({ success: true, data: mapDealerSummary(dealer) });
   } catch (error) {
     next(error);
@@ -215,13 +198,10 @@ exports.getDealer = async (req, res, next) => {
 exports.createDealer = async (req, res, next) => {
   const transaction = await sequelize.transaction();
   try {
-    if (!requireShopContext(req, res)) {
-      await transaction.rollback();
-      return;
-    }
-    const payload = attachShopToPayload(req, sanitizePayload(req.body));
+    const payload = sanitizePayload(req.body);
     const openingBalance = payload.openingBalance != null ? parseAmount(payload.openingBalance) : 0;
     delete payload.openingBalance;
+    delete payload.shopId;
 
     const dealer = await Dealer.create({
       ...payload,
@@ -233,7 +213,7 @@ exports.createDealer = async (req, res, next) => {
       await recordOpeningBalance({
         tenantId: req.tenantId,
         dealerId: dealer.id,
-        shopId: dealer.shopId,
+        shopId: ledgerShopId(req),
         amount: openingBalance,
         entryDate: payload.openingBalanceDate ? new Date(payload.openingBalanceDate) : new Date(),
         createdBy: req.user?.id || null,
@@ -377,7 +357,7 @@ exports.recordDealerPayment = async (req, res, next) => {
     const ledgerEntry = await recordPayment({
       tenantId: req.tenantId,
       dealerId: dealer.id,
-      shopId: dealer.shopId,
+      shopId: ledgerShopId(req),
       amount,
       paymentId: payment.id,
       description: req.body.description || `Payment – ${paymentMethod.replace('_', ' ')}`,
@@ -432,7 +412,7 @@ exports.createLedgerAdjustment = async (req, res, next) => {
     const ledgerEntry = await recordAdjustment({
       tenantId: req.tenantId,
       dealerId: dealer.id,
-      shopId: dealer.shopId,
+      shopId: ledgerShopId(req),
       direction,
       amount,
       description: req.body.description || 'Manual adjustment',
@@ -592,7 +572,7 @@ exports.upsertDealerPrices = async (req, res, next) => {
 exports.getPriceTiers = async (req, res, next) => {
   try {
     const tiers = await DealerPriceTier.findAll({
-      where: dealerWhere(req, {}),
+      where: applyTenantFilter(req.tenantId, {}),
       order: [['name', 'ASC']],
     });
     res.status(200).json({ success: true, data: tiers });
@@ -620,7 +600,7 @@ exports.createPriceTier = async (req, res, next) => {
 exports.updatePriceTier = async (req, res, next) => {
   try {
     const tier = await DealerPriceTier.findOne({
-      where: dealerWhere(req, { id: req.params.tierId }),
+      where: applyTenantFilter(req.tenantId, { id: req.params.tierId }),
     });
     if (!tier) {
       return res.status(404).json({ success: false, message: 'Price tier not found' });

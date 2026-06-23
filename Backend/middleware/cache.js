@@ -189,6 +189,12 @@ const generateInvoiceListKey = (req) => {
   return key;
 };
 
+const generateInvoiceStatsKey = (req) => {
+  const tenantId = req.tenantId || '';
+  const role = req.tenantRole || req.user?.role || '';
+  return `invoices:stats:${tenantId}:role:${role}${getWorkspaceScopeCacheSegment(req)}`;
+};
+
 const toCacheTimingLabel = (cacheKey, req) => {
   const parts = String(cacheKey || '').split(':').filter(Boolean);
   const cleanPath = (value) => String(value || '')
@@ -396,8 +402,10 @@ const invalidateSaleListCache = (tenantId) => {
 };
 
 const invalidateInvoiceListCache = (tenantId) => {
-  const count = invalidateCache(tenantId, 'invoices:list:.*');
-  logCacheDebug('Invoice list invalidation', { tenantId, count });
+  const listCount = invalidateCache(tenantId, 'invoices:list:.*');
+  const statsCount = invalidateCache(tenantId, 'invoices:stats:.*');
+  const count = listCount + statsCount;
+  logCacheDebug('Invoice list invalidation', { tenantId, count, listCount, statsCount });
   return count;
 };
 
@@ -571,6 +579,7 @@ module.exports = {
   generateExpenseStatsKey,
   generatePublicCacheKey,
   generateInvoiceListKey,
+  generateInvoiceStatsKey,
   getShopCacheSegment,
   invalidateCache,
   invalidateDashboardCache,

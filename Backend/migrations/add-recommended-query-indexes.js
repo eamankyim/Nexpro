@@ -52,6 +52,14 @@ const INDEXES = [
       ON products ("tenantId", "isActive", "trackStock", "shopId", "quantityOnHand", "reorderLevel");
     `,
   },
+  {
+    table: 'invoices',
+    name: 'idx_invoices_tenant_studioLocation_createdAt',
+    createSql: `
+      CREATE INDEX IF NOT EXISTS "idx_invoices_tenant_studioLocation_createdAt"
+      ON invoices ("tenantId", "studioLocationId", "createdAt" DESC);
+    `,
+  },
 ];
 
 const isMissingRelationOrColumn = (error) => {

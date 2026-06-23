@@ -33,6 +33,86 @@ const parseClientSubmittedAt = (headerValue) => {
   return parsed;
 };
 
+/** In-memory cache for assistant context (per tenant + shop + date range). */
+const assistantContextCache = new Map();
+const ASSISTANT_CONTEXT_TTL_MS = 90 * 1000;
+
+const buildAssistantContextCacheKey = (tenantId, options = {}) => {
+  const shop = options.shopFilterId || 'none';
+  const start = options.startDate || 'none';
+  const end = options.endDate || 'none';
+  const tier = options.tier || 'full';
+  return `${tenantId}:${shop}:${start}:${end}:${tier}`;
+};
+
+const getCachedAssistantContext = (cacheKey) => {
+  const entry = assistantContextCache.get(cacheKey);
+  if (entry && Date.now() - entry.timestamp < ASSISTANT_CONTEXT_TTL_MS) {
+    return entry.data;
+  }
+  if (entry) assistantContextCache.delete(cacheKey);
+  return null;
+};
+
+const setCachedAssistantContext = (cacheKey, data) => {
+  if (assistantContextCache.size > 200) {
+    const oldestKey = assistantContextCache.keys().next().value;
+    assistantContextCache.delete(oldestKey);
+  }
+  assistantContextCache.set(cacheKey, { data, timestamp: Date.now() });
+};
+
+/**
+ * Heuristic: support/how-to and draft requests need less business data in context.
+ * @param {string} message
+ * @returns {'light' | 'full'}
+ */
+const resolveAssistantContextTier = (message) => {
+  const text = String(message || '').trim().toLowerCase();
+  if (!text) return 'full';
+  if (text.length < 24 && !/\d|revenue|sales|profit|invoice|stock|customer|expense|owe|debt|collect/.test(text)) {
+    return 'light';
+  }
+  if (/^(hi|hello|hey|thanks|thank you|ok|okay)\b/.test(text)) return 'light';
+  if (/\b(how do i|how to|where (is|can|do)|help me|show me how|navigate|menu|settings|steps to)\b/.test(text)) {
+    return 'light';
+  }
+  if (/\b(draft|write|compose|message|email|sms|whatsapp|reminder|template)\b/.test(text) && !/\b(how much|total|revenue|sales|profit|owe|outstanding)\b/.test(text)) {
+    return 'light';
+  }
+  return 'full';
+};
+
+/**
+ * Minimal tenant context for support/draft questions (no heavy aggregates).
+ * @param {string} tenantId
+ * @returns {Promise<Object>}
+ */
+async function getAssistantContextLight(tenantId) {
+  const [tenant, orgSetting] = await Promise.all([
+    Tenant.findByPk(tenantId, {
+      attributes: ['id', 'businessType', 'name', 'metadata'],
+    }),
+    Setting.findOne({
+      where: { tenantId, key: 'organization' },
+      attributes: ['value'],
+    }),
+  ]);
+  const meta = tenant?.metadata || {};
+  const org = orgSetting?.value || {};
+  return {
+    businessType: tenant?.businessType || 'printing_press',
+    tenantName: tenant?.name || 'Business',
+    workspaceContact: {
+      businessName: tenant?.name || 'Business',
+      email: String(org.email || meta.email || '').trim() || null,
+      phone: String(org.phone || meta.phone || '').trim() || null,
+      website: String(org.website || meta.website || '').trim() || null,
+    },
+    dateFilter: { active: false },
+  };
+}
+
 /**
  * Build tenant-scoped context for ABS Assistant (this month, today, receivables, inventory, etc.).
  * @param {string} tenantId
@@ -593,16 +673,27 @@ exports.chat = async (req, res, next) => {
       return sendAssistantError(res, circuitError);
     }
 
-    await assertAiProviderConfigured(req.tenantId);
+    const apiKey = await assertAiProviderConfigured(req.tenantId);
     timings.preflightMs = toDurationMs(preflightStart);
 
-    const contextStart = process.hrtime.bigint();
-    const context = await getAssistantContext(req.tenantId, {
+    const contextTier = resolveAssistantContextTier(lastMessage.content);
+    const contextOptions = {
       shopFilterId: req.shopFilterId || null,
       startDate: typeof startDate === 'string' ? startDate : undefined,
       endDate: typeof endDate === 'string' ? endDate : undefined,
       periodLabel: typeof periodLabel === 'string' ? periodLabel : undefined,
-    });
+      tier: contextTier,
+    };
+    const contextCacheKey = buildAssistantContextCacheKey(req.tenantId, contextOptions);
+
+    const contextStart = process.hrtime.bigint();
+    let context = getCachedAssistantContext(contextCacheKey);
+    if (!context) {
+      context = contextTier === 'light'
+        ? await getAssistantContextLight(req.tenantId)
+        : await getAssistantContext(req.tenantId, contextOptions);
+      setCachedAssistantContext(contextCacheKey, context);
+    }
     timings.contextMs = toDurationMs(contextStart);
     const businessType = req.tenant?.businessType || context.businessType;
 
@@ -611,6 +702,8 @@ exports.chat = async (req, res, next) => {
       businessType,
       tenantId: req.tenantId,
       pageContext: typeof pageContext === 'string' ? pageContext : undefined,
+      apiKey,
+      contextTier,
     });
     timings.providerMs = toDurationMs(providerStart);
 
@@ -642,4 +735,8 @@ exports.chat = async (req, res, next) => {
     });
     next(error);
   }
+};
+
+exports.clearAssistantContextCache = () => {
+  assistantContextCache.clear();
 };

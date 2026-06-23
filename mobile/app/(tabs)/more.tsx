@@ -55,6 +55,9 @@ export default function MoreScreen() {
       items.push({ id: 'store', label: 'Online store', icon: 'shopping-cart', route: '/(tabs)/store' });
       items.push({ id: 'online-orders', label: 'Online orders', icon: 'package', route: '/(tabs)/online-orders' });
     }
+    if ((isShop || isPharmacy) && hasFeature('dealersAccount')) {
+      items.push({ id: 'dealers', label: 'Dealers', icon: 'briefcase', route: '/(tabs)/dealers' });
+    }
     if (isStudio && hasFeature('paymentsExpenses')) {
       items.push({ id: 'store', label: 'Studio store', icon: 'shopping-cart', route: '/(tabs)/store' });
       items.push({ id: 'store-services', label: 'Studio services', icon: 'cut-outline', route: '/(tabs)/store-services' });

@@ -90,10 +90,6 @@ const Dealers = () => {
   const { activeTenantId, isManager, isAdmin, hasFeature } = useAuth();
   const dealersAccountEnabled = hasFeature('dealersAccount');
   const shopContext = useShopOptional();
-  const activeShopId = shopContext?.activeShopId ?? null;
-  const isShopWorkspace = shopContext?.isShopWorkspace ?? false;
-  const activeShopName = shopContext?.activeShop?.name ?? null;
-  const needsShopSelection = isShopWorkspace && !activeShopId;
   const queryClient = useQueryClient();
 
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
@@ -109,7 +105,8 @@ const Dealers = () => {
   const [statementEnd, setStatementEnd] = useState(dayjs().endOf('month').format('YYYY-MM-DD'));
   const [isDownloadingStatementPdf, setIsDownloadingStatementPdf] = useState(false);
   const [filters, setFilters] = useState({ isActive: 'all' });
-  const statementPrintRef = useRef(null);
+  const statementPreviewRef = useRef(null);
+  const statementModalRef = useRef(null);
 
   const form = useForm({
     resolver: zodResolver(dealerSchema),
@@ -157,17 +154,17 @@ const Dealers = () => {
   }), [pagination.current, pagination.pageSize, debouncedSearchText, filters.isActive]);
 
   const { data: statsResponse, isLoading: statsLoading } = useQuery({
-    queryKey: queryKeys.dealers.stats(activeTenantId, activeShopId),
+    queryKey: queryKeys.dealers.stats(activeTenantId),
     queryFn: () => dealerService.getStats(),
     staleTime: QUERY_STALE.DEFAULT,
-    enabled: !!activeTenantId && !needsShopSelection,
+    enabled: !!activeTenantId,
   });
 
   const { data: dealersResponse, isLoading, refetch } = useQuery({
-    queryKey: queryKeys.dealers.list(activeTenantId, activeShopId, listParams),
+    queryKey: queryKeys.dealers.list(activeTenantId, listParams),
     queryFn: () => dealerService.getAll(listParams),
     staleTime: QUERY_STALE.DEFAULT,
-    enabled: !!activeTenantId && !needsShopSelection,
+    enabled: !!activeTenantId,
   });
 
   const dealers = useMemo(() => {
@@ -267,10 +264,19 @@ const Dealers = () => {
     return `dealer-statement-${dealerSlug}-${statementStart}-to-${statementEnd}.pdf`;
   }, [viewingDealer?.businessName, statementStart, statementEnd]);
 
-  const getStatementPrintElement = useCallback(
-    () => statementPrintRef.current?.querySelector('#printable-dealer-statement'),
-    [],
-  );
+  const getStatementPrintWrapper = useCallback(() => {
+    if (printModalOpen && statementModalRef.current) return statementModalRef.current;
+    return statementPreviewRef.current;
+  }, [printModalOpen]);
+
+  const getStatementPrintElement = useCallback(() => {
+    const wrapper = getStatementPrintWrapper();
+    if (!wrapper) return null;
+    const printableId = printModalOpen
+      ? 'printable-dealer-statement-modal'
+      : 'printable-dealer-statement';
+    return wrapper.querySelector(`#${printableId}`);
+  }, [getStatementPrintWrapper, printModalOpen]);
 
   const handleDownloadStatementPdf = useCallback(async () => {
     const element = getStatementPrintElement();
@@ -295,10 +301,10 @@ const Dealers = () => {
   }, [getStatementPrintElement, statementData, statementPdfFilename]);
 
   const handlePrintStatement = useCallback(() => {
-    const wrapper = statementPrintRef.current;
+    const wrapper = getStatementPrintWrapper();
     if (!wrapper || !statementData) return;
     openPrintDialog(wrapper, `Dealer-Statement-${viewingDealer?.businessName || 'dealer'}`);
-  }, [statementData, viewingDealer?.businessName]);
+  }, [statementData, viewingDealer?.businessName, getStatementPrintWrapper]);
 
   const openCreate = () => {
     setEditingDealer(null);
@@ -475,12 +481,13 @@ const Dealers = () => {
             </Button>
           </div>
           {statementData && (
-            <div className="border border-[#e5e7eb] rounded-lg overflow-hidden max-h-[420px] overflow-y-auto">
+            <div
+              ref={statementPreviewRef}
+              className="border border-[#e5e7eb] rounded-lg overflow-hidden max-h-[420px] overflow-y-auto"
+            >
               <PrintableDealerStatement
                 statement={statementData}
                 organization={organization}
-                hideDealerAccount
-                printableId=""
               />
             </div>
           )}
@@ -529,21 +536,9 @@ const Dealers = () => {
     <div className="space-y-6">
       <WelcomeSection
         welcomeMessage="Dealers"
-        subText={
-          activeShopName
-            ? `Manage wholesale dealer accounts for ${activeShopName}.`
-            : 'Manage wholesale dealer accounts, balances, and statements.'
-        }
+        subText="Manage wholesale dealer accounts, balances, and statements across your organisation."
       />
 
-      {needsShopSelection ? (
-        <Alert className="border border-[#e5e7eb]">
-          <AlertDescription>
-            Select an active shop branch from the header to view and manage dealers for that branch.
-          </AlertDescription>
-        </Alert>
-      ) : (
-        <>
       <div className="flex justify-end -mt-2 mb-4">
         <Button onClick={openCreate} className="bg-[#166534] hover:bg-[#14532d]">
           <Plus className="h-4 w-4 mr-2" />Add dealer
@@ -584,28 +579,14 @@ const Dealers = () => {
         />
       )}
 
-        </>
-      )}
-
       <MobileFormDialog
         open={modalVisible}
         onOpenChange={setModalVisible}
         title={editingDealer ? 'Edit dealer' : 'Add dealer'}
-        description={
-          activeShopName
-            ? `This dealer account will belong to ${activeShopName}. Wholesale prices are set per branch catalogue.`
-            : 'Dealer accounts belong to the active shop branch. Wholesale prices are set per branch catalogue.'
-        }
+        description="Dealer accounts are shared across all branches. Wholesale prices are still set per branch catalogue."
       >
         <Form {...form}>
           <form onSubmit={form.handleSubmit((values) => saveMutation.mutate(values))} className="space-y-4">
-            {activeShopName && !editingDealer && (
-              <Alert className="border border-[#e5e7eb]">
-                <AlertDescription className="text-sm">
-                  Branch: <span className="font-medium">{activeShopName}</span>
-                </AlertDescription>
-              </Alert>
-            )}
             <FormField control={form.control} name="businessName" render={({ field }) => (
               <FormItem><FormLabel>Business name</FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>
             )} />
@@ -744,46 +725,42 @@ const Dealers = () => {
         </DialogContent>
       </Dialog>
 
-      {drawerVisible && statementData && (
-        <div
-          ref={statementPrintRef}
-          className="fixed left-[-9999px] top-0 w-[210mm] pointer-events-none"
-          aria-hidden="true"
-        >
-          <PrintableDealerStatement statement={statementData} organization={organization} />
-        </div>
-      )}
-
       <Dialog open={printModalOpen} onOpenChange={setPrintModalOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          {statementData && (
-            <>
+        {printModalOpen && statementData && (
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Statement preview</DialogTitle>
+              <DialogDescription>
+                Review the dealer account statement before printing or downloading.
+              </DialogDescription>
+            </DialogHeader>
+            <div ref={statementModalRef}>
               <PrintableDealerStatement
                 statement={statementData}
                 organization={organization}
-                printableId=""
+                printableId="printable-dealer-statement-modal"
               />
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setPrintModalOpen(false)}>Close</Button>
-                <Button variant="outline" onClick={handlePrintStatement}>
-                  <Printer className="h-4 w-4 mr-2" />Print
-                </Button>
-                <Button
-                  className="bg-[#166534] hover:bg-[#14532d]"
-                  onClick={handleDownloadStatementPdf}
-                  disabled={isDownloadingStatementPdf}
-                >
-                  {isDownloadingStatementPdf ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Download className="h-4 w-4 mr-2" />
-                  )}
-                  Download PDF
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-        </DialogContent>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setPrintModalOpen(false)}>Close</Button>
+              <Button variant="outline" onClick={handlePrintStatement}>
+                <Printer className="h-4 w-4 mr-2" />Print
+              </Button>
+              <Button
+                className="bg-[#166534] hover:bg-[#14532d]"
+                onClick={handleDownloadStatementPdf}
+                disabled={isDownloadingStatementPdf}
+              >
+                {isDownloadingStatementPdf ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4 mr-2" />
+                )}
+                Download PDF
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        )}
       </Dialog>
     </div>
   );

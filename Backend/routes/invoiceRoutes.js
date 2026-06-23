@@ -22,8 +22,15 @@ const { shopContext } = require('../middleware/shopContext');
 const { studioLocationContext } = require('../middleware/studioLocationContext');
 const { exportLimiter } = require('../middleware/rateLimiter');
 const { timeCrudAction } = require('../middleware/crudTiming');
+const {
+  cacheMiddleware,
+  generateInvoiceListKey,
+  generateInvoiceStatsKey,
+} = require('../middleware/cache');
 
 const router = express.Router();
+const invoiceListCache = cacheMiddleware(45, generateInvoiceListKey);
+const invoiceStatsCache = cacheMiddleware(45, generateInvoiceStatsKey);
 
 router.use(protect);
 router.use(tenantContext);
@@ -37,10 +44,10 @@ router.use((req, res, next) => {
   next();
 });
 
-router.get('/stats/summary', getInvoiceStats);
+router.get('/stats/summary', invoiceStatsCache, getInvoiceStats);
 
 router.route('/')
-  .get(timeCrudAction('invoices.list'), getInvoices)
+  .get(invoiceListCache, timeCrudAction('invoices.list'), getInvoices)
   .post(authorize('admin', 'manager', 'staff'), timeCrudAction('invoices.create'), createInvoice);
 
 router.get('/export', exportLimiter, authorize('admin', 'manager'), exportInvoices);

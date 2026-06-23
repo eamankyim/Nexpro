@@ -5,7 +5,7 @@ jest.mock('../../../config/database', () => ({
 }));
 
 jest.mock('../../../models', () => ({
-  Invoice: { findOne: jest.fn(), findAndCountAll: jest.fn(), destroy: jest.fn() },
+  Invoice: { findOne: jest.fn(), findAndCountAll: jest.fn(), findAll: jest.fn(), count: jest.fn(), destroy: jest.fn() },
   Job: { findAll: jest.fn().mockResolvedValue([]) },
   Sale: { findAll: jest.fn().mockResolvedValue([]) },
   Customer: {},
@@ -693,7 +693,8 @@ describe('invoiceController getInvoices list visibility', () => {
     jest.clearAllMocks();
     Job.findAll.mockResolvedValue([]);
     Sale.findAll.mockResolvedValue([]);
-    Invoice.findAndCountAll.mockResolvedValue({ count: 0, rows: [] });
+    Invoice.count.mockResolvedValue(0);
+    Invoice.findAll.mockResolvedValue([]);
   });
 
   it('applies shop read filter and sale sourceType for shop tenants', async () => {
@@ -712,7 +713,7 @@ describe('invoiceController getInvoices list visibility', () => {
 
     await invoiceController.getInvoices(req, res, next);
 
-    expect(Invoice.findAndCountAll).toHaveBeenCalledWith(
+    expect(Invoice.count).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           tenantId: 'tenant-1',
@@ -720,6 +721,15 @@ describe('invoiceController getInvoices list visibility', () => {
             { [Op.or]: [{ sourceType: 'sale' }, { sourceType: 'quote' }] },
             { [Op.or]: [{ shopId: 'shop-a' }, { shopId: null }] },
           ]),
+        }),
+        distinct: true,
+        col: 'id',
+      })
+    );
+    expect(Invoice.findAll).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId: 'tenant-1',
         }),
       })
     );

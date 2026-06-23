@@ -45,7 +45,7 @@ ABS will add **Dealers Account**, **separate from Customers**, so your retail li
 4. **Account statements** — Printable/shareable for any date range  
 5. **POS — dealer first** — Select dealer → products at dealer prices → charge to account and/or pay now  
 
-**Benefits:** correct wholesale pricing every time · one clear POS flow · total outstanding visibility per branch · professional statements · **Dealers module at all branches for one fee**
+**Benefits:** correct wholesale pricing every time · one clear POS flow · total outstanding visibility across the organisation · professional statements · **Dealers module at all branches for one fee**
 
 ---
 
@@ -109,13 +109,13 @@ JOSFAA ENT is on **Enterprise Pro** (GHS 30,000). **Dealers Account** is a **sep
 
 *One-time fees in GHS, exclusive of applicable taxes.*
 
-**One fee unlocks Dealers at every branch.** GHS 5,000 covers the **Dealers Account module across all JOSFAA ENT branches** under your enterprise tenant — **no per-branch module fee** (Enterprise Pro, up to **10 branches**). Each branch maintains **its own dealer list and balances**; the fee is not per shared org-wide account. At GA, other ABS tenants pay **standard GHS 10,000 per tenant** (all their branches included).
+**One fee unlocks Dealers at every branch.** GHS 5,000 covers the **Dealers Account module across all JOSFAA ENT branches** under your enterprise tenant — **no per-branch module fee** (Enterprise Pro, up to **10 branches**). **One dealer list and org-wide balance** shared across branches; ledger entries still show which branch each sale or payment happened at. At GA, other ABS tenants pay **standard GHS 10,000 per tenant** (all their branches included).
 
 ### Justification
 
 Dealers Account is a **major module**: dealer registry, running ledger, dealer pricing, dealer-first POS, statements, receivables reporting, credit checks, and permissions. The GHS 10,000 standard price reflects design, engineering, testing, and support — and the value of correct bulk pricing, one source of truth for balances, and professional dealer statements. Separate from your Enterprise Pro license.
 
-**50% launch partner discount for JOSFAA ENT:** You **requested this feature first** and will **pilot v1** — shaping requirements, UAT, production use, and reference partnership. Discount applies **only to JOSFAA ENT**; module access covers all branches, with **separate dealer accounts per branch**. GA price for others: **GHS 10,000 per tenant**.
+**50% launch partner discount for JOSFAA ENT:** You **requested this feature first** and will **pilot v1** — shaping requirements, UAT, production use, and reference partnership. Discount applies **only to JOSFAA ENT**; module access covers all branches with **one shared dealer account per business name**. GA price for others: **GHS 10,000 per tenant**.
 
 ### Included · Not included · Payment terms
 
@@ -139,8 +139,9 @@ Full GHS 5,000 upfront also accepted.
 **Assumptions:**
 
 - Shop workspace at all JOSFAA ENT branches (up to 10) · GHS amounts · manual payments at shop in v1  
-- **Dealers are branch-scoped** — each shop branch has its own dealer list and running balance (the same business name may exist at different branches as separate accounts)  
+- **Dealers are tenant-wide** — one dealer list and org-wide running balance per organisation; any branch can sell to or record payments for the same dealer account  
 - **Products and retail prices are managed per branch**, as you do today — dealer wholesale prices are set against each branch’s product catalogue  
+- **Ledger entries tag the branch** (`shopId`) where each sale or payment occurred, for statements and audit  
 - **Go-live setup uses opening balances only** — we will load your dealer list and each dealer’s current balance as at go-live; past notebook transactions are not imported into v1  
 - **v1 focuses on the dealer ledger, statements, and receivables reporting** — a clear running account for day-to-day operations; deeper tie-in with the full accounting module can be considered later if you need it  
 - Retail customers stay in the existing Customers module · JOSFAA ENT provides dealer names, opening balances, credit terms, and sample wholesale prices per branch at setup  
@@ -153,7 +154,7 @@ Full GHS 5,000 upfront also accepted.
 2. See correct balance; dealer prices auto-apply when dealer selected **first**  
 3. Record payment and see balance drop immediately  
 4. Generate/share statements; get credit-limit warnings  
-5. See total outstanding across dealers **at the active branch**  
+5. See total outstanding across dealers **organisation-wide**  
 6. Confirm flow matches bulk-buyer workflow; retail POS unchanged  
 
 ---
@@ -186,7 +187,7 @@ Full GHS 5,000 upfront also accepted.
 | **Client** | JOSFAA ENT |
 | **Feature** | Dealers Account · ABS |
 | **Version** | 1.1 — proposal for client review |
-| **Pricing** | GHS 5,000 one-time (50% off GHS 10,000); module at all branches; dealer accounts per branch |
+| **Pricing** | GHS 5,000 one-time (50% off GHS 10,000); module at all branches; org-wide dealer accounts |
 | **Next step** | Discovery workshop and commercial sign-off |
 
 *Questions: contact your ABS account representative. Thank you for requesting this feature — we look forward to building it with JOSFAA ENT.*

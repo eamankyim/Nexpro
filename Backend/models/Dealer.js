@@ -14,7 +14,7 @@ const Dealer = sequelize.define('Dealer', {
   },
   shopId: {
     type: DataTypes.UUID,
-    allowNull: false,
+    allowNull: true,
     references: { model: 'shops', key: 'id' },
   },
   businessName: {
@@ -72,12 +72,11 @@ const Dealer = sequelize.define('Dealer', {
   timestamps: true,
   indexes: [
     { fields: ['tenantId'] },
-    { fields: ['tenantId', 'shopId'] },
-    { fields: ['tenantId', 'shopId', 'isActive'] },
+    { fields: ['tenantId', 'isActive'] },
     {
       unique: true,
-      fields: ['tenantId', 'shopId', 'businessName'],
-      name: 'uq_dealers_tenant_shop_business_name',
+      fields: ['tenantId', 'businessName'],
+      name: 'uq_dealers_tenant_business_name',
     },
   ],
   hooks: {

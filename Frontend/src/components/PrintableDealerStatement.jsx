@@ -160,11 +160,21 @@ const PrintableDealerStatement = ({
               <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Bill to</div>
               <div className="font-semibold text-base">{statement.dealer.businessName}</div>
               {statement.dealer.contactName && <div className="text-sm">{statement.dealer.contactName}</div>}
-              {statement.dealer.phone && (
-                <div className="text-sm inline-flex items-center gap-1 mt-1"><Phone className="h-3.5 w-3.5" />{statement.dealer.phone}</div>
-              )}
-              {statement.dealer.email && (
-                <div className="text-sm inline-flex items-center gap-1"><Mail className="h-3.5 w-3.5" />{statement.dealer.email}</div>
+              {(statement.dealer.phone || statement.dealer.email) && (
+                <div className="mt-1 space-y-1">
+                  {statement.dealer.phone && (
+                    <div className="text-sm flex items-center gap-1">
+                      <Phone className="h-3.5 w-3.5 shrink-0" />
+                      <span>{statement.dealer.phone}</span>
+                    </div>
+                  )}
+                  {statement.dealer.email && (
+                    <div className="text-sm flex items-center gap-1">
+                      <Mail className="h-3.5 w-3.5 shrink-0" />
+                      <span>{statement.dealer.email}</span>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}
