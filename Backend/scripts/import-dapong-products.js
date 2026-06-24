@@ -22,19 +22,17 @@
  *
  * Usage (from Backend/):
  *   # Parse/preview only (no database)
- *   node scripts/import-dapong-products.js --parse-only --source "/path/to/Dapong stocks for Sulas.xlsx"
+ *   node scripts/import-dapong-products.js --parse-only
  *
- *   # Dry run against tenant + shop
+ *   # Dry run against tenant + shop (default source: data/dapong-stocks.xlsx)
  *   node scripts/import-dapong-products.js \
  *     --tenant-name "Sulas Enterprise" \
- *     --shop-name "Dapong-spintex" \
- *     --source "/path/to/Dapong stocks for Sulas.xlsx"
+ *     --shop-name "Dapong-spintex"
  *
  *   # Execute import
  *   node scripts/import-dapong-products.js \
  *     --tenant-name "Sulas Enterprise" \
  *     --shop-name "Dapong-spintex" \
- *     --source "/path/to/Dapong stocks for Sulas.xlsx" \
  *     --execute --confirm-import
  *
  * Env overrides (optional):
@@ -45,6 +43,7 @@
 require('dotenv').config();
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const ExcelJS = require('exceljs');
 const { Op } = require('sequelize');
@@ -53,8 +52,8 @@ const { User, UserTenant, Tenant, Product, Shop, Barcode } = require('../models'
 
 const DEFAULT_TENANT_NAME = process.env.DAPONG_IMPORT_TENANT_NAME || 'Sulas Enterprise';
 const DEFAULT_SHOP_NAME = process.env.DAPONG_IMPORT_SHOP_NAME || 'Dapong-spintex';
-const DEFAULT_SOURCE = process.env.DAPONG_IMPORT_SOURCE
-  || path.resolve('/Users/us/Desktop/Dapong stocks for Sulas.xlsx');
+const DEFAULT_IMPORT_FILENAME = 'dapong-stocks.xlsx';
+const LEGACY_DESKTOP_FILENAME = 'Dapong stocks for Sulas.xlsx';
 
 const SAMPLE_LIMIT = 12;
 const VALUE_FLAGS = new Set([
@@ -95,14 +94,14 @@ const tenantName = normalizeText(getArgValue('--tenant-name', DEFAULT_TENANT_NAM
 const explicitShopId = normalizeText(getArgValue('--shop-id', process.env.DAPONG_IMPORT_SHOP_ID || '')) || null;
 const explicitShopName = normalizeText(getArgValue('--shop-name', DEFAULT_SHOP_NAME)) || DEFAULT_SHOP_NAME;
 const onDuplicate = normalizeText(getArgValue('--on-duplicate', process.env.DAPONG_IMPORT_ON_DUPLICATE || 'skip')).toLowerCase();
-const sourcePath = path.resolve(process.cwd(), getArgValue('--source', DEFAULT_SOURCE));
+const sourcePath = resolveSourcePath(getArgValue('--source', null));
 
 const USAGE = `
 Usage:
   node scripts/import-dapong-products.js [--parse-only] [--tenant-name <name> | --tenant-slug <slug> | --tenant-id <uuid> | --email <user-email>] [--shop-id <uuid> | --shop-name <name>] [--source <path-to-xlsx>] [--on-duplicate skip|update] [--execute --confirm-import]
 
 Examples:
-  node scripts/import-dapong-products.js --parse-only --source "/Users/us/Desktop/Dapong stocks for Sulas.xlsx"
+  node scripts/import-dapong-products.js --parse-only
 
   node scripts/import-dapong-products.js --tenant-name "Sulas Enterprise" --shop-name "Dapong-spintex"
 
@@ -156,6 +155,119 @@ function normalizedKey(value) {
   return normalizeText(value).toLowerCase();
 }
 
+/**
+ * Expand a leading tilde to the user's home directory.
+ * @param {string} inputPath
+ * @returns {string}
+ */
+function expandUserPath(inputPath) {
+  const trimmed = normalizeText(inputPath);
+  if (!trimmed) return trimmed;
+  if (trimmed === '~') return os.homedir();
+  if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+    return path.join(os.homedir(), trimmed.slice(2));
+  }
+  return trimmed;
+}
+
+/**
+ * Default workbook locations when --source is omitted (first match wins).
+ * @returns {string[]}
+ */
+function buildDefaultSourceCandidates() {
+  const candidates = [];
+
+  if (process.env.DAPONG_IMPORT_SOURCE) {
+    candidates.push(process.env.DAPONG_IMPORT_SOURCE);
+  }
+
+  candidates.push(path.resolve(process.cwd(), 'data', DEFAULT_IMPORT_FILENAME));
+  candidates.push(path.resolve(__dirname, 'data', DEFAULT_IMPORT_FILENAME));
+
+  const legacyDesktopPath = path.join(os.homedir(), 'Desktop', LEGACY_DESKTOP_FILENAME);
+  if (fs.existsSync(legacyDesktopPath)) {
+    candidates.push(legacyDesktopPath);
+  }
+
+  return candidates;
+}
+
+/**
+ * Resolve --source to an absolute path. Relative paths are tried from cwd and scripts/.
+ * When --source is omitted, checks DAPONG_IMPORT_SOURCE, data/dapong-stocks.xlsx (cwd),
+ * scripts/data/dapong-stocks.xlsx, then legacy ~/Desktop/ file if it exists.
+ * @param {string|null|undefined} explicitPath
+ * @returns {string}
+ */
+function resolveSourcePath(explicitPath) {
+  const candidates = [];
+
+  if (explicitPath) {
+    const expanded = expandUserPath(explicitPath);
+    if (path.isAbsolute(expanded)) {
+      candidates.push(path.normalize(expanded));
+    } else {
+      candidates.push(path.resolve(process.cwd(), expanded));
+      candidates.push(path.resolve(__dirname, expanded));
+    }
+  } else {
+    for (const candidate of buildDefaultSourceCandidates()) {
+      const expanded = expandUserPath(candidate);
+      if (path.isAbsolute(expanded)) {
+        candidates.push(path.normalize(expanded));
+      } else {
+        candidates.push(path.resolve(process.cwd(), expanded));
+        candidates.push(path.resolve(__dirname, expanded));
+      }
+    }
+  }
+
+  const seen = new Set();
+  for (const candidate of candidates) {
+    if (!candidate || seen.has(candidate)) continue;
+    seen.add(candidate);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  return path.resolve(process.cwd(), 'data', DEFAULT_IMPORT_FILENAME);
+}
+
+function formatSourceNotFoundMessage(resolvedPath) {
+  const backendDataPath = path.resolve(process.cwd(), 'data', DEFAULT_IMPORT_FILENAME);
+  const scriptsDataPath = path.resolve(__dirname, 'data', DEFAULT_IMPORT_FILENAME);
+  const lines = [
+    `Source file not found: ${resolvedPath}`,
+    '',
+    'Place the workbook at one of these locations, or pass --source with a quoted absolute path:',
+    `  ${backendDataPath}`,
+    `  ${scriptsDataPath}`,
+  ];
+
+  if (process.platform === 'linux') {
+    lines.push(
+      '',
+      'On Linux/VPS the Excel file must be uploaded to the server (it is not on your Mac Desktop).',
+      `Recommended path: ${backendDataPath}`,
+      '',
+      'From your Mac, upload with scp (adjust host if needed):',
+      '  scp "/Users/us/Desktop/Dapong stocks for Sulas.xlsx" root@vmi2989486:~/nexpro/Backend/data/dapong-stocks.xlsx',
+      '',
+      'Then on the VPS (from Backend/):',
+      '  node scripts/import-dapong-products.js --tenant-name "Sulas Enterprise" --shop-name "Dapong-spintex"',
+    );
+  } else {
+    const legacyDesktopPath = path.join(os.homedir(), 'Desktop', LEGACY_DESKTOP_FILENAME);
+    lines.push(
+      '',
+      'Example:',
+      `  scp "${legacyDesktopPath}" user@your-vps:~/nexpro/Backend/data/${DEFAULT_IMPORT_FILENAME}`,
+      `  node scripts/import-dapong-products.js --parse-only --source "${backendDataPath}"`,
+    );
+  }
+
+  return lines.join('\n');
+}
+
 function toNumber(value, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
@@ -196,7 +308,7 @@ function parseDapongRow(rowNumber, row) {
  * @param {string} filePath
  */
 async function loadDapongRows(filePath) {
-  if (!fs.existsSync(filePath)) fail(`Source file not found: ${filePath}`);
+  if (!fs.existsSync(filePath)) fail(formatSourceNotFoundMessage(filePath));
 
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(filePath);

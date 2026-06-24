@@ -41,5 +41,9 @@ coverage/
 temp/
 tmp/
 
+# Import workbooks (upload manually; see data/README.md)
+data/*.xlsx
+!data/dapong-stocks.xlsx
+
 
 .vercel
