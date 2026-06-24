@@ -144,6 +144,60 @@ describe('dealerController tenant scope', () => {
     expect(res.status).toHaveBeenCalledWith(200);
   });
 
+  it('createDealer accepts empty email as optional', async () => {
+    const transaction = { commit: jest.fn(), rollback: jest.fn() };
+    sequelize.transaction.mockResolvedValue(transaction);
+    Dealer.create.mockResolvedValue({
+      id: 'dealer-1',
+      balance: 0,
+      creditLimit: 0,
+      reload: jest.fn(),
+      toJSON: () => ({ id: 'dealer-1', balance: 0, creditLimit: 0, email: null }),
+    });
+
+    const req = {
+      tenantId: 'tenant-1',
+      shopScoped: true,
+      shopFilterId: 'shop-a',
+      body: { businessName: 'Danito Enterprise', email: '' },
+    };
+    const res = mockRes();
+    const next = jest.fn();
+
+    await dealerController.createDealer(req, res, next);
+
+    expect(Dealer.create).toHaveBeenCalledWith(
+      expect.objectContaining({ businessName: 'Danito Enterprise', email: null, tenantId: 'tenant-1' }),
+      expect.any(Object),
+    );
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('createDealer returns 400 for invalid email', async () => {
+    const transaction = { commit: jest.fn(), rollback: jest.fn() };
+    sequelize.transaction.mockResolvedValue(transaction);
+
+    const req = {
+      tenantId: 'tenant-1',
+      body: { businessName: 'Danito Enterprise', email: 'not-an-email' },
+    };
+    const res = mockRes();
+    const next = jest.fn();
+
+    await dealerController.createDealer(req, res, next);
+
+    expect(Dealer.create).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      success: false,
+      error: 'Please enter a valid email address',
+      errorCode: 'VALIDATION_ERROR',
+    }));
+    expect(transaction.rollback).toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+  });
+
   it('createDealer does not attach shopId to dealer row', async () => {
     const transaction = { commit: jest.fn(), rollback: jest.fn() };
     sequelize.transaction.mockResolvedValue(transaction);

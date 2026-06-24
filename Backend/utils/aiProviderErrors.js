@@ -31,7 +31,19 @@ const extractProviderMessage = (error) => {
       return nested.message.trim();
     }
   }
-  return String(error?.message || '').trim();
+
+  const bodyError = error?.body?.error || error?.response?.data?.error;
+  if (bodyError && typeof bodyError.message === 'string' && bodyError.message.trim()) {
+    return bodyError.message.trim();
+  }
+
+  const raw = String(error?.message || '').trim();
+  const jsonMatch = raw.match(/\{[\s\S]*"message"\s*:\s*"([^"]+)"/);
+  if (jsonMatch?.[1]) {
+    return jsonMatch[1].trim();
+  }
+
+  return raw;
 };
 
 const isBillingCreditError = (error) => {

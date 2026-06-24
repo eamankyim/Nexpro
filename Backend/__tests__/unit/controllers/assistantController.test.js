@@ -149,6 +149,42 @@ describe('assistantController.chat', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
+  it('returns 402 for Anthropic SDK body billing errors', async () => {
+    openaiService.chatWithContext.mockRejectedValue({
+      status: 400,
+      message: '400 Bad Request',
+      body: {
+        error: {
+          type: 'invalid_request_error',
+          message: 'Your credit balance is too low to access the Anthropic API.',
+        },
+      },
+    });
+
+    const req = {
+      tenantId: 'tenant-1',
+      tenant: { businessType: 'shop' },
+      body: {
+        messages: [{ role: 'user', content: 'Summarize this month' }],
+      },
+      headers: {},
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    await chat(req, res, next);
+
+    expect(res.statusCode).toBe(402);
+    expect(res.body).toMatchObject({
+      success: false,
+      errorCode: 'AI_PROVIDER_BILLING_REQUIRED',
+    });
+    expect(res.body.error).toBe(
+      'Platform AI credit is finished. Set up AI credit or add your AI API key in Settings.'
+    );
+    expect(next).not.toHaveBeenCalled();
+  });
+
   it('short-circuits repeat billing failures via the circuit breaker', async () => {
     openaiService.chatWithContext.mockRejectedValue({
       status: 400,

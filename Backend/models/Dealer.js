@@ -32,7 +32,14 @@ const Dealer = sequelize.define('Dealer', {
   email: {
     type: DataTypes.STRING(255),
     allowNull: true,
-    validate: { isEmail: true },
+    validate: {
+      isValidEmail(value) {
+        if (value == null || String(value).trim() === '') return;
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+          throw new Error('Please provide a valid email address');
+        }
+      },
+    },
   },
   creditTerms: {
     type: DataTypes.STRING(120),
@@ -81,13 +88,15 @@ const Dealer = sequelize.define('Dealer', {
   ],
   hooks: {
     beforeCreate: (dealer) => {
-      if (dealer.email && typeof dealer.email === 'string') {
-        dealer.email = dealer.email.trim().toLowerCase();
+      if (dealer.email !== undefined && dealer.email !== null && typeof dealer.email === 'string') {
+        const trimmed = dealer.email.trim();
+        dealer.email = trimmed === '' ? null : trimmed.toLowerCase();
       }
     },
     beforeUpdate: (dealer) => {
-      if (dealer.changed('email') && dealer.email && typeof dealer.email === 'string') {
-        dealer.email = dealer.email.trim().toLowerCase();
+      if (dealer.changed('email') && dealer.email !== undefined && dealer.email !== null && typeof dealer.email === 'string') {
+        const trimmed = dealer.email.trim();
+        dealer.email = trimmed === '' ? null : trimmed.toLowerCase();
       }
     },
   },

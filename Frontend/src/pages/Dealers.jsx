@@ -58,7 +58,7 @@ const optionalString = z.preprocess(
 const dealerSchema = z.object({
   businessName: z.string().min(1, 'Enter business name'),
   contactName: optionalString,
-  email: z.union([z.literal(''), z.string().email('Enter a valid email')]),
+  email: z.string().email('Enter a valid email').optional().or(z.literal('')),
   phone: optionalString,
   creditTerms: optionalString,
   creditLimit: z.preprocess(

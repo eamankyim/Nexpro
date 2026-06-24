@@ -56,6 +56,19 @@ describe('aiProviderErrors', () => {
     })).toBe(true);
   });
 
+  it('detects billing credit errors from Anthropic SDK body payloads', () => {
+    expect(isBillingCreditError({
+      status: 400,
+      message: '400 Bad Request',
+      body: {
+        error: {
+          type: 'invalid_request_error',
+          message: 'Your credit balance is too low to access the Anthropic API.',
+        },
+      },
+    })).toBe(true);
+  });
+
   it('normalizes provider billing errors without leaking raw provider details', () => {
     expect(() => normalizeAiProviderError({
       status: 400,

@@ -16,7 +16,10 @@ const sendAssistantError = (res, error) => {
   const classified = classifyAiProviderError(error);
   const statusCode = classified?.statusCode || error.statusCode || 500;
   const errorCode = classified?.errorCode || error.errorCode || error.code || 'INTERNAL_ERROR';
-  const message = classified?.message || error.message || 'Server Error';
+  const message = classified?.message
+    || (error.aiProviderError ? error.message : null)
+    || error.message
+    || 'Server Error';
 
   return res.status(statusCode).json({
     success: false,

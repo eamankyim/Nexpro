@@ -38,6 +38,52 @@ const {
 
 const dealerWhere = (req, extra = {}) => applyTenantFilter(req.tenantId, extra);
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Normalize optional dealer fields; empty email becomes null. */
+const normalizeDealerPayload = (payload) => {
+  const out = { ...payload };
+  if (out.email !== undefined) {
+    const trimmed = String(out.email ?? '').trim();
+    if (trimmed === '') {
+      out.email = null;
+    } else {
+      out.email = trimmed.toLowerCase();
+      if (!EMAIL_PATTERN.test(out.email)) {
+        const err = new Error('Please enter a valid email address');
+        err.statusCode = 400;
+        err.errorCode = 'VALIDATION_ERROR';
+        throw err;
+      }
+    }
+  }
+  ['contactName', 'phone', 'creditTerms', 'notes'].forEach((key) => {
+    if (out[key] === '') out[key] = null;
+  });
+  return out;
+};
+
+const respondDealerValidationError = (error, res, next) => {
+  if (error.statusCode === 400 && error.errorCode === 'VALIDATION_ERROR') {
+    return res.status(400).json({
+      success: false,
+      error: error.message,
+      errorCode: 'VALIDATION_ERROR',
+    });
+  }
+  if (error.name === 'SequelizeValidationError') {
+    const emailErr = error.errors?.find((e) => e.path === 'email');
+    if (emailErr) {
+      return res.status(400).json({
+        success: false,
+        error: 'Please enter a valid email address',
+        errorCode: 'VALIDATION_ERROR',
+      });
+    }
+  }
+  return next(error);
+};
+
 const resolveShopId = (req) => {
   if (req.shopFilterId) return req.shopFilterId;
   if (req.shopScoped) return getShopIdForWrite(req);
@@ -198,7 +244,7 @@ exports.getDealer = async (req, res, next) => {
 exports.createDealer = async (req, res, next) => {
   const transaction = await sequelize.transaction();
   try {
-    const payload = sanitizePayload(req.body);
+    const payload = normalizeDealerPayload(sanitizePayload(req.body));
     const openingBalance = payload.openingBalance != null ? parseAmount(payload.openingBalance) : 0;
     delete payload.openingBalance;
     delete payload.shopId;
@@ -226,7 +272,7 @@ exports.createDealer = async (req, res, next) => {
     res.status(201).json({ success: true, data: mapDealerSummary(dealer) });
   } catch (error) {
     await transaction.rollback();
-    next(error);
+    return respondDealerValidationError(error, res, next);
   }
 };
 
@@ -238,13 +284,13 @@ exports.updateDealer = async (req, res, next) => {
     if (!dealer) {
       return res.status(404).json({ success: false, message: 'Dealer not found' });
     }
-    const payload = sanitizePayload(req.body);
+    const payload = normalizeDealerPayload(sanitizePayload(req.body));
     delete payload.openingBalance;
     delete payload.balance;
     await dealer.update(payload);
     res.status(200).json({ success: true, data: mapDealerSummary(dealer) });
   } catch (error) {
-    next(error);
+    return respondDealerValidationError(error, res, next);
   }
 };
 
