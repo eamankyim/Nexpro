@@ -46,6 +46,10 @@ import { EMPTY_STATES } from '../constants/microcopy';
 import { getEmptyStateProps } from '../components/ui/empty-state';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import { showSuccess, showError, showWarning } from '../utils/toast';
+import {
+  OTHER_DROPDOWN_VALUE,
+  resolveOtherDropdownValue,
+} from '../utils/customDropdownOther';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -445,8 +449,19 @@ const Leads = () => {
   };
 
   const onLeadSubmit = async (values) => {
+    const resolvedSource = resolveOtherDropdownValue(values.source, leadSourceOtherValue);
+    if (values.source === OTHER_DROPDOWN_VALUE && !resolvedSource) {
+      showWarning('Enter a source name for "Other (specify)", or pick a source from the list.');
+      return;
+    }
+
+    if (resolvedSource) {
+      void customDropdownService.saveCustomOption('lead_source', resolvedSource, resolvedSource);
+    }
+
     const payload = {
       ...values,
+      source: resolvedSource || values.source,
       assignedTo: values.assignedTo || null,
       nextFollowUp: values.nextFollowUp ? values.nextFollowUp.toISOString() : null
     };

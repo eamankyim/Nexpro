@@ -19,6 +19,10 @@ import DashboardStatsCard from '../components/DashboardStatsCard';
 import StatusChip from '../components/StatusChip';
 import WelcomeSection from '../components/WelcomeSection';
 import { showSuccess, showError, showWarning } from '../utils/toast';
+import {
+  OTHER_DROPDOWN_VALUE,
+  resolveOtherDropdownValue,
+} from '../utils/customDropdownOther';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -334,6 +338,16 @@ const Pricing = () => {
 
   const onSubmit = async (values) => {
     try {
+      const resolvedCategory = resolveOtherDropdownValue(values.category, categoryOtherValue);
+      if (values.category === OTHER_DROPDOWN_VALUE && !resolvedCategory) {
+        showWarning('Enter a category name for "Other (specify)", or pick a category from the list.');
+        return;
+      }
+      if (resolvedCategory) {
+        values.category = resolvedCategory;
+        void customDropdownService.saveCustomOption('job_category', resolvedCategory, resolvedCategory);
+      }
+
       // Set deprecated fields for backwards compatibility
       values.basePrice = 0;
       values.setupFee = 0;

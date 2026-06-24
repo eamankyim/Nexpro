@@ -31,6 +31,7 @@ import { generatePDF, openPrintDialog } from '../utils/pdfUtils';
 import dayjs from 'dayjs';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import quoteService from '../services/quoteService';
+import jobService from '../services/jobService';
 import { guardOnline } from '../utils/onlineRequired';
 import customerService from '../services/customerService';
 import productService from '../services/productService';
@@ -52,7 +53,12 @@ import DashboardTable from '../components/DashboardTable';
 import ViewToggle from '../components/ViewToggle';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
-import { showSuccess, showError } from '../utils/toast';
+import { showSuccess, showError, showWarning } from '../utils/toast';
+import {
+  hasUnresolvedOtherCategory,
+  resolveOtherCategoryItems,
+  collectResolvedCategories,
+} from '../utils/customDropdownOther';
 import { EMPTY_STATES } from '../constants/microcopy';
 import { getEmptyStateProps } from '../components/ui/empty-state';
 import {
@@ -146,6 +152,7 @@ const statusOptions = [
 
 const quoteItemSchema = z.object({
   productId: z.string().optional().or(z.literal('')),
+  category: z.string().optional().or(z.literal('')),
   description: z.string().min(1, 'Description is required'),
   quantity: integerOrEmptySchema(z, 1).refine((v) => v >= 1, 'Quantity must be at least 1'),
   unitPrice: numberOrEmptySchema(z),
@@ -378,6 +385,10 @@ const Quotes = () => {
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
   const { activeStudioLocationId, scopeReady } = useWorkspaceScope();
+  const businessType = activeTenant?.businessType || 'printing_press';
+  const isShop = businessType === 'shop';
+  const isPharmacy = businessType === 'pharmacy';
+  const isRetailQuote = isShop || isPharmacy;
   const { isMobile } = useResponsive();
   const queryClient = useQueryClient();
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
@@ -405,6 +416,7 @@ const Quotes = () => {
   const [quoteToConvert, setQuoteToConvert] = useState(null);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [lineItemDescriptionOptions, setLineItemDescriptionOptions] = useState([]);
+  const [categoryOtherInputs, setCategoryOtherInputs] = useState({});
   const quotesQueryEnabled = scopeReady && !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId);
 
   const quotesQueryParams = useMemo(() => {
@@ -468,6 +480,33 @@ const Quotes = () => {
 
   const organization = organizationData?.data?.data || organizationData?.data || {};
 
+  const { data: customCategories = [] } = useQuery({
+    queryKey: ['customCategories'],
+    queryFn: async () => customDropdownService.getCustomOptions('job_category') || [],
+    enabled: scopeReady && !isRetailQuote,
+    staleTime: QUERY_STALE.SLOW,
+  });
+
+  const { data: jobItemCategoriesApi = [] } = useQuery({
+    queryKey: queryKeys.jobs.categories(activeTenantId, activeStudioLocationId, businessType),
+    queryFn: () => jobService.getCategories(),
+    enabled: scopeReady && !isRetailQuote,
+    staleTime: QUERY_STALE.METADATA,
+  });
+
+  const jobItemCategoriesGrouped = useMemo(() => {
+    const apiCats = Array.isArray(jobItemCategoriesApi?.data)
+      ? jobItemCategoriesApi.data
+      : (Array.isArray(jobItemCategoriesApi) ? jobItemCategoriesApi : []);
+    const byGroup = new Map();
+    apiCats.forEach((cat) => {
+      const group = cat.group || 'Other';
+      if (!byGroup.has(group)) byGroup.set(group, []);
+      byGroup.get(group).push({ value: cat.value, label: cat.label });
+    });
+    return byGroup;
+  }, [jobItemCategoriesApi]);
+
   const quotePrintOrganization = useMemo(() => {
     const branch = quotePrintable?.shop || quotePrintable?.studioLocation || null;
     return mergeBranchOrganization(branch, organization);
@@ -500,7 +539,7 @@ const Quotes = () => {
       status: 'draft',
       validUntil: null,
       notes: '',
-      items: [{ productId: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
+      items: [{ productId: '', category: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
       autoSendToCustomer: false,
       sendMessage: DEFAULT_QUOTE_SEND_MESSAGE,
       taxRate: '',
@@ -553,6 +592,56 @@ const Quotes = () => {
   useEffect(() => {
     loadLineItemDescriptionOptions();
   }, [loadLineItemDescriptionOptions]);
+
+  const handleQuoteCategoryChange = useCallback((value, itemIndex) => {
+    if (value === '__OTHER__') {
+      setCategoryOtherInputs((prev) => ({ ...prev, [itemIndex]: '' }));
+      return;
+    }
+    setCategoryOtherInputs((prev) => {
+      const next = { ...prev };
+      delete next[itemIndex];
+      return next;
+    });
+  }, []);
+
+  const handleSaveQuoteCustomCategory = useCallback(async (customValue, itemIndex) => {
+    if (!customValue || !customValue.trim()) {
+      showWarning('Please enter a category name');
+      return;
+    }
+
+    try {
+      const saved = await customDropdownService.saveCustomOption('job_category', customValue.trim());
+      if (!saved) return;
+
+      queryClient.invalidateQueries({ queryKey: ['customCategories'] });
+      const currentItems = form.getValues('items') || [];
+      const nextItems = currentItems.map((row, i) =>
+        i === itemIndex ? { ...row, category: saved.value } : row
+      );
+      form.setValue('items', nextItems, { shouldDirty: true, shouldValidate: true });
+      setCategoryOtherInputs((prev) => {
+        const next = { ...prev };
+        delete next[itemIndex];
+        return next;
+      });
+      showSuccess(`"${saved.label}" added to categories`);
+    } catch (error) {
+      showError(error, error.response?.data?.error || 'Failed to save custom category');
+    }
+  }, [form, queryClient]);
+
+  const persistQuoteCustomCategories = useCallback(async (items = []) => {
+    const uniqueCategories = collectResolvedCategories(items);
+    if (uniqueCategories.length === 0) return;
+    await Promise.allSettled(
+      uniqueCategories.map((category) =>
+        customDropdownService.saveCustomOption('job_category', category, category)
+      )
+    );
+    queryClient.invalidateQueries({ queryKey: ['customCategories'] });
+  }, [queryClient]);
 
   const persistLineItemDescriptions = useCallback(async (items = []) => {
     const uniqueDescriptions = [...new Set(
@@ -639,7 +728,7 @@ const Quotes = () => {
         status: 'draft',
         validUntil: null,
         notes: '',
-        items: [{ productId: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
+        items: [{ productId: '', category: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
         taxRate: '',
       });
       void refetchCustomers();
@@ -741,11 +830,12 @@ const Quotes = () => {
       status: 'draft',
       validUntil: null,
       notes: '',
-      items: [{ productId: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
+      items: [{ productId: '', category: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
       autoSendToCustomer: false,
       sendMessage: DEFAULT_QUOTE_SEND_MESSAGE,
       taxRate: '',
     });
+    setCategoryOtherInputs({});
     setEditingQuote(null);
     setQuoteModalVisible(true);
     void refetchCustomers();
@@ -769,6 +859,7 @@ const Quotes = () => {
       notes: details.notes || '',
       items: (details.items || []).map((item) => ({
         productId: item.productId || '',
+        category: item.metadata?.category || '',
         description: item.description,
         quantity: item.quantity,
         unitPrice: parseFloat(item.unitPrice),
@@ -779,6 +870,7 @@ const Quotes = () => {
           ? parseFloat(details.taxRate)
           : ''
     });
+    setCategoryOtherInputs({});
     setQuoteModalVisible(true);
   };
 
@@ -806,6 +898,20 @@ const Quotes = () => {
   };
 
   const onSubmit = async (values) => {
+    let items = values.items || [];
+    if (!isRetailQuote) {
+      items = resolveOtherCategoryItems(items, categoryOtherInputs);
+      if (hasUnresolvedOtherCategory(items)) {
+        showWarning('Enter a category name for each "Other (specify)" line item, or pick a category from the list.');
+        return;
+      }
+      const missingCategory = items.some((item) => !String(item.category || '').trim());
+      if (missingCategory) {
+        showWarning('Select a category for each quote line item.');
+        return;
+      }
+    }
+
     const payload = {
       customerId: values.customerId,
       title: values.title,
@@ -813,14 +919,21 @@ const Quotes = () => {
       status: values.status,
       validUntil: values.validUntil ? dayjs(values.validUntil).format('YYYY-MM-DD') : null,
       notes: values.notes,
-      items: (values.items || []).map((item) => ({
-        ...(item.productId && { productId: item.productId }),
-        description: item.description,
-        quantity: Number(item.quantity || 0),
-        unitPrice: Number(item.unitPrice || 0),
-        discountAmount: Number(item.discountAmount || 0),
-        ...(item.metadata && Object.keys(item.metadata).length > 0 ? { metadata: item.metadata } : {}),
-      }))
+      items: items.map((item) => {
+        const category = String(item.category || '').trim();
+        const metadata = {
+          ...(item.metadata && typeof item.metadata === 'object' ? item.metadata : {}),
+          ...(category ? { category } : {}),
+        };
+        return {
+          ...(item.productId && { productId: item.productId }),
+          description: item.description,
+          quantity: Number(item.quantity || 0),
+          unitPrice: Number(item.unitPrice || 0),
+          discountAmount: Number(item.discountAmount || 0),
+          ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+        };
+      })
     };
     if (organization.tax?.enabled && values.taxRate !== undefined && values.taxRate !== '') {
       payload.taxRate = Number(values.taxRate);
@@ -862,10 +975,12 @@ const Quotes = () => {
       if (editingQuote) {
         await quoteService.update(editingQuote.id, payload);
         await persistLineItemDescriptions(payload.items);
+        await persistQuoteCustomCategories(items);
         showSuccess('Quote updated successfully');
       } else {
         const createRes = await quoteService.create(payload);
         await persistLineItemDescriptions(payload.items);
+        await persistQuoteCustomCategories(items);
         showSuccess('Quote created successfully');
         const delivery = createRes?.data?.delivery;
         if (delivery) {
@@ -881,6 +996,7 @@ const Quotes = () => {
         }
       }
       setQuoteModalVisible(false);
+      setCategoryOtherInputs({});
       form.reset();
       await refreshAfterQuoteChange(queryClient);
       refetchQuotes();
@@ -890,10 +1006,6 @@ const Quotes = () => {
     }
   };
 
-  const businessType = activeTenant?.businessType || 'printing_press';
-  const isShop = businessType === 'shop';
-  const isPharmacy = businessType === 'pharmacy';
-  const isRetailQuote = isShop || isPharmacy;
   const quoteProductPickerDisabled = !isRetailQuote || !activeTenantId || (shopContext?.isShopWorkspace && !activeShopId);
 
   const openConvertToJobModal = useCallback((quote) => {
@@ -1382,7 +1494,8 @@ const Quotes = () => {
                 {(viewingQuote.items || []).length ? (
                   <div className="space-y-0">
                     <div className="grid grid-cols-12 gap-2 pb-2 border-b border-gray-200 text-sm font-semibold text-foreground">
-                      <div className="col-span-6">Description</div>
+                      {!isRetailQuote && <div className="col-span-3">Category</div>}
+                      <div className={!isRetailQuote ? 'col-span-3' : 'col-span-6'}>Description</div>
                       <div className="col-span-2 text-right">Qty</div>
                       <div className="col-span-2 text-right">Unit price (₵)</div>
                       <div className="col-span-2 text-right">Total (₵)</div>
@@ -1392,11 +1505,20 @@ const Quotes = () => {
                         key={item.id}
                         className="grid grid-cols-12 gap-2 py-3 border-b border-gray-200/80 last:border-b-0 text-sm"
                       >
-                        <div className="col-span-6">
+                        {!isRetailQuote && (
+                          <div className="col-span-3 text-foreground">
+                            {item.metadata?.category || '—'}
+                          </div>
+                        )}
+                        <div className={!isRetailQuote ? 'col-span-3' : 'col-span-6'}>
                           <div className="font-medium text-foreground">{item.description}</div>
-                          {item.metadata && Object.keys(item.metadata || {}).length > 0 && (
+                          {item.metadata && Object.keys(item.metadata || {}).filter((key) => key !== 'category').length > 0 && (
                             <div className="text-muted-foreground text-xs mt-0.5">
-                              {JSON.stringify(item.metadata)}
+                              {JSON.stringify(
+                                Object.fromEntries(
+                                  Object.entries(item.metadata || {}).filter(([key]) => key !== 'category')
+                                )
+                              )}
                             </div>
                           )}
                         </div>
@@ -1800,6 +1922,78 @@ const Quotes = () => {
                         )}
                       />
                     )}
+                    {!isRetailQuote && (
+                      <>
+                        <FormField
+                          control={form.control}
+                          name={`items.${index}.category`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Category / job type</FormLabel>
+                              <Select
+                                onValueChange={(value) => {
+                                  field.onChange(value);
+                                  handleQuoteCategoryChange(value, index);
+                                }}
+                                value={field.value || undefined}
+                              >
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select category" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  {Array.from(jobItemCategoriesGrouped.entries()).map(([groupName, groupItems]) => (
+                                    <div key={groupName}>
+                                      <div className="px-2 py-1.5 text-sm font-semibold">{groupName}</div>
+                                      {groupItems.map((cat) => (
+                                        <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>
+                                      ))}
+                                    </div>
+                                  ))}
+                                  {customCategories.length > 0 && (
+                                    <>
+                                      <div className="px-2 py-1.5 text-sm font-semibold">Custom Categories</div>
+                                      {customCategories.map((cat) => (
+                                        <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>
+                                      ))}
+                                    </>
+                                  )}
+                                  <div className="px-2 py-1.5 text-sm font-semibold">Other</div>
+                                  <SelectItem value="__OTHER__">Other (specify)</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        {categoryOtherInputs[index] !== undefined && (
+                          <div>
+                            <Label>Enter category name</Label>
+                            <div className="flex gap-2 mt-2">
+                              <Input
+                                className="flex-1"
+                                placeholder="e.g., Custom Service"
+                                value={categoryOtherInputs[index] || ''}
+                                onChange={(e) => setCategoryOtherInputs((prev) => ({ ...prev, [index]: e.target.value }))}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    handleSaveQuoteCustomCategory(categoryOtherInputs[index], index);
+                                  }
+                                }}
+                              />
+                              <Button
+                                type="button"
+                                onClick={() => handleSaveQuoteCustomCategory(categoryOtherInputs[index], index)}
+                              >
+                                Save
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
                     <FormField
                       control={form.control}
                       name={`items.${index}.description`}
@@ -1886,7 +2080,7 @@ const Quotes = () => {
               <Button
                 type="button"
                 variant="dashed"
-                onClick={() => append({ productId: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 })}
+                onClick={() => append({ productId: '', category: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 })}
                 className="w-full"
               >
                 <Plus className="h-4 w-4 mr-2" />

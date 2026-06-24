@@ -21,6 +21,7 @@ const {
   resolveDocumentOrganization,
   organizationToEmailCompany,
 } = require('../utils/documentOrganizationUtils');
+const { resolveQuoteItemCategory } = require('../utils/resolveQuoteItemCategory');
 
 const quoteBranchIncludes = () => [
   { model: Shop, as: 'shop', required: false },
@@ -721,7 +722,7 @@ async function convertQuoteToJobInternal(tenantId, quoteId, createdBy) {
         jobId: job.id,
         quoteItemId: item.id,
         tenantId,
-        category: item.description,
+        category: resolveQuoteItemCategory(item),
         description: item.description,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
@@ -732,6 +733,13 @@ async function convertQuoteToJobInternal(tenantId, quoteId, createdBy) {
         specifications: item.metadata || {}
       }));
       await JobItem.bulkCreate(jobItems, { transaction });
+    }
+
+    if (quoteItems.length) {
+      const primaryCategory = resolveQuoteItemCategory(quoteItems[0]);
+      if (primaryCategory) {
+        await job.update({ jobType: primaryCategory }, { transaction });
+      }
     }
 
     await JobStatusHistory.create({
@@ -1258,7 +1266,7 @@ exports.convertQuoteToJob = async (req, res, next) => {
         jobId: job.id,
         quoteItemId: item.id,
         tenantId: req.tenantId,
-        category: item.description,
+        category: resolveQuoteItemCategory(item),
         description: item.description,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
@@ -1269,6 +1277,13 @@ exports.convertQuoteToJob = async (req, res, next) => {
         specifications: item.metadata || {}
       }));
       await JobItem.bulkCreate(jobItems, { transaction });
+    }
+
+    if (quoteItems.length) {
+      const primaryCategory = resolveQuoteItemCategory(quoteItems[0]);
+      if (primaryCategory) {
+        await job.update({ jobType: primaryCategory }, { transaction });
+      }
     }
 
     await JobStatusHistory.create({

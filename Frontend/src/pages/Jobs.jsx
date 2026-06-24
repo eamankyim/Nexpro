@@ -44,6 +44,11 @@ import WelcomeSection from '../components/WelcomeSection';
 import { EMPTY_STATES } from '../constants/microcopy';
 import { getEmptyStateProps } from '../components/ui/empty-state';
 import { showSuccess, showError, showWarning, showInfo } from '../utils/toast';
+import {
+  hasUnresolvedOtherCategory,
+  resolveOtherCategoryItems,
+  collectResolvedCategories,
+} from '../utils/customDropdownOther';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -1536,14 +1541,8 @@ useEffect(() => {
 
       // "Other (specify)" keeps category as __OTHER__ until Save; merge typed text on submit so the job still saves
       if (values.items && values.items.length > 0) {
-        values.items = values.items.map((item, idx) => {
-          if (item.category !== '__OTHER__') return item;
-          const custom = (categoryOtherInputs[idx] ?? '').trim();
-          if (custom) return { ...item, category: custom };
-          return item;
-        });
-        const unresolvedOther = values.items.some((item) => item.category === '__OTHER__');
-        if (unresolvedOther) {
+        values.items = resolveOtherCategoryItems(values.items, categoryOtherInputs);
+        if (hasUnresolvedOtherCategory(values.items)) {
           showWarning('Enter a category name for each "Other (specify)" line item, or pick a category from the list.');
           setSubmittingJob(false);
           return;
@@ -1659,6 +1658,17 @@ useEffect(() => {
         );
       };
 
+      const persistCustomCategories = async () => {
+        const uniqueCategories = collectResolvedCategories(cleanedItems);
+        if (uniqueCategories.length === 0) return;
+        await Promise.allSettled(
+          uniqueCategories.map((category) =>
+            customDropdownService.saveCustomOption('job_category', category, category)
+          )
+        );
+        queryClient.invalidateQueries({ queryKey: ['customCategories'] });
+      };
+
       // Build job data, only including valid fields
       const jobData = {
         customerId: values.customerId,
@@ -1684,11 +1694,13 @@ useEffect(() => {
         // Update existing job
         response = await jobService.update(editingJobId, jobData);
         await persistLineItemDescriptions();
+        await persistCustomCategories();
         showSuccess('Job updated successfully');
       } else {
         // Create new job
         response = await jobService.create(jobData);
         await persistLineItemDescriptions();
+        await persistCustomCategories();
         
         // Check if invoice was auto-generated
         if (response.invoice) {
