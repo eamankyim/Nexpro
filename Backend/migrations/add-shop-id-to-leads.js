@@ -34,11 +34,12 @@ const addShopIdToLeads = async () => {
     `);
 
     console.log('  ➡️  Backfilling shopId for shop/pharmacy tenant leads...');
+    // PostgreSQL UPDATE...FROM cannot reference the target table (leads) inside FROM joins.
     await sequelize.query(`
       UPDATE leads
       SET "shopId" = s.id
       FROM shops s
-      INNER JOIN tenants t ON t.id = leads."tenantId"
+      INNER JOIN tenants t ON t."id" = s."tenantId"
       WHERE leads."tenantId" = s."tenantId"
         AND s."isDefault" = true
         AND leads."shopId" IS NULL
@@ -53,7 +54,7 @@ const addShopIdToLeads = async () => {
         WHERE "isActive" = true
         ORDER BY "tenantId", "isDefault" DESC, "createdAt" ASC
       ) s
-      INNER JOIN tenants t ON t.id = leads."tenantId"
+      INNER JOIN tenants t ON t."id" = s."tenantId"
       WHERE leads."tenantId" = s."tenantId"
         AND leads."shopId" IS NULL
         AND t."businessType" IN ('shop', 'pharmacy');
