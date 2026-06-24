@@ -35,17 +35,17 @@ const addShopIdToLeads = async () => {
 
     console.log('  ➡️  Backfilling shopId for shop/pharmacy tenant leads...');
     await sequelize.query(`
-      UPDATE leads l
+      UPDATE leads
       SET "shopId" = s.id
       FROM shops s
-      INNER JOIN tenants t ON t.id = l."tenantId"
-      WHERE l."tenantId" = s."tenantId"
+      INNER JOIN tenants t ON t.id = leads."tenantId"
+      WHERE leads."tenantId" = s."tenantId"
         AND s."isDefault" = true
-        AND l."shopId" IS NULL
+        AND leads."shopId" IS NULL
         AND t."businessType" IN ('shop', 'pharmacy');
     `);
     await sequelize.query(`
-      UPDATE leads l
+      UPDATE leads
       SET "shopId" = s.id
       FROM (
         SELECT DISTINCT ON ("tenantId") id, "tenantId"
@@ -53,9 +53,9 @@ const addShopIdToLeads = async () => {
         WHERE "isActive" = true
         ORDER BY "tenantId", "isDefault" DESC, "createdAt" ASC
       ) s
-      INNER JOIN tenants t ON t.id = l."tenantId"
-      WHERE l."tenantId" = s."tenantId"
-        AND l."shopId" IS NULL
+      INNER JOIN tenants t ON t.id = leads."tenantId"
+      WHERE leads."tenantId" = s."tenantId"
+        AND leads."shopId" IS NULL
         AND t."businessType" IN ('shop', 'pharmacy');
     `);
 
