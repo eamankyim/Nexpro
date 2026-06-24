@@ -1586,8 +1586,14 @@ exports.getSidebarPreferences = async (req, res, next) => {
     const { isConfigurationSupportMode } = require('../utils/supportAccess');
 
     if (req.isSupportAccess && isConfigurationSupportMode(req.supportAccessMode)) {
-      const tenant = req.tenant || (await Tenant.findByPk(req.tenantId, { attributes: ['metadata'] }));
-      const hiddenSidebarKeys = getTenantDefaultHiddenSidebarKeys(tenant?.metadata);
+      const tenant = req.tenant || (await Tenant.findByPk(req.tenantId, { attributes: ['metadata', 'businessType'] }));
+      const shopType =
+        tenant?.metadata?.businessSubType || tenant?.metadata?.shopType || null;
+      const hiddenSidebarKeys = getTenantDefaultHiddenSidebarKeys(
+        tenant?.metadata,
+        tenant?.businessType,
+        shopType
+      );
       return res.status(200).json({
         success: true,
         data: {
@@ -1606,7 +1612,11 @@ exports.getSidebarPreferences = async (req, res, next) => {
     }
 
     const tenant = req.tenant || (await membership.getTenant?.());
-    const preferences = buildSidebarPreferences(membership, tenant?.metadata);
+    const preferences = buildSidebarPreferences(
+      membership,
+      tenant?.metadata,
+      tenant?.businessType || req.tenant?.businessType
+    );
     res.status(200).json({
       success: true,
       data: {
@@ -1631,14 +1641,24 @@ exports.updateSidebarPreferences = async (req, res, next) => {
     } = require('../services/sidebarPreferenceHelper');
     const { isConfigurationSupportMode } = require('../utils/supportAccess');
     const { hiddenSidebarKeys } = sanitizePayload(req.body || {});
-    const sanitized = sanitizeHiddenSidebarKeys(hiddenSidebarKeys);
+    const tenantForType =
+      req.tenant ||
+      (await Tenant.findByPk(req.tenantId, { attributes: ['metadata', 'businessType'] }));
+    const businessType = tenantForType?.businessType || null;
+    const shopType =
+      tenantForType?.metadata?.businessSubType || tenantForType?.metadata?.shopType || null;
+    const sanitized = sanitizeHiddenSidebarKeys(hiddenSidebarKeys, businessType, shopType);
 
     if (req.isSupportAccess && isConfigurationSupportMode(req.supportAccessMode)) {
-      const tenant = await Tenant.findByPk(req.tenantId);
+      const tenant = tenantForType || (await Tenant.findByPk(req.tenantId));
       if (!tenant) {
         return res.status(404).json({ success: false, message: 'Tenant not found' });
       }
-      const beforeKeys = getTenantDefaultHiddenSidebarKeys(tenant.metadata);
+      const beforeKeys = getTenantDefaultHiddenSidebarKeys(
+        tenant.metadata,
+        tenant.businessType,
+        shopType
+      );
       const metadata =
         tenant.metadata && typeof tenant.metadata === 'object'
           ? { ...tenant.metadata }
@@ -1696,7 +1716,11 @@ exports.updateSidebarPreferences = async (req, res, next) => {
     );
     invalidateTenantMembershipCache(req.user.id, req.tenantId);
 
-    const preferences = buildSidebarPreferences({ metadata });
+    const preferences = buildSidebarPreferences(
+      { metadata },
+      tenantForType?.metadata,
+      businessType
+    );
     res.status(200).json({
       success: true,
       data: {

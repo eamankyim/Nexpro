@@ -4,7 +4,11 @@ import { Loader2, PanelLeft } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import settingsService from '@/services/settingsService';
 import { showError, showSuccess } from '@/utils/toast';
-import { SIDEBAR_MENU_GROUPS } from '@/constants/sidebarMenus';
+import {
+  SIDEBAR_MENU_GROUPS,
+  filterHiddenSidebarKeysForTenant,
+  filterSidebarMenuGroupsForBusinessType,
+} from '@/constants/sidebarMenus';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,32 +19,49 @@ import { useSidebarPreferences } from '@/hooks/useSidebarPreferences';
  * Settings card for choosing which optional sidebar menus to show.
  */
 export default function SidebarMenusSettings() {
-  const { activeTenant, isManager, isAdmin, isDriver, isPlatformAdmin } = useAuth();
+  const { activeTenant, isManager, isAdmin, isDriver, isPlatformAdmin, hasFeature } = useAuth();
   const isManagerOrAdmin = isManager || isAdmin;
   const queryClient = useQueryClient();
   const { hiddenSidebarKeys, isLoading } = useSidebarPreferences();
   const [draftHiddenKeys, setDraftHiddenKeys] = useState([]);
   const [initialized, setInitialized] = useState(false);
 
+  const businessType = activeTenant?.businessType || null;
+  const shopType =
+    activeTenant?.metadata?.businessSubType ||
+    activeTenant?.metadata?.shopType ||
+    null;
+
+  const sidebarFilterCtx = useMemo(
+    () => ({
+      businessType,
+      shopType,
+      hasFeature,
+      isPlatformAdmin,
+      isManagerOrAdmin,
+    }),
+    [businessType, hasFeature, isManagerOrAdmin, isPlatformAdmin, shopType]
+  );
+
   useEffect(() => {
     if (!isLoading) {
-      setDraftHiddenKeys(hiddenSidebarKeys);
+      setDraftHiddenKeys(filterHiddenSidebarKeysForTenant(hiddenSidebarKeys, sidebarFilterCtx));
       setInitialized(true);
     }
-  }, [hiddenSidebarKeys, isLoading]);
+  }, [hiddenSidebarKeys, isLoading, sidebarFilterCtx]);
 
   const visibleGroups = useMemo(() => {
     if (isDriver) return [];
-    return SIDEBAR_MENU_GROUPS.map((group) => ({
-      ...group,
-      items: group.items.filter((item) => !item.managerOnly || isManagerOrAdmin),
-    })).filter((group) => group.items.length > 0);
-  }, [isDriver, isManagerOrAdmin]);
+    return filterSidebarMenuGroupsForBusinessType(SIDEBAR_MENU_GROUPS, sidebarFilterCtx);
+  }, [isDriver, sidebarFilterCtx]);
 
   const updateMutation = useMutation({
     mutationFn: (keys) => settingsService.updateSidebarPreferences({ hiddenSidebarKeys: keys }),
     onSuccess: (data) => {
-      const nextKeys = data?.hiddenSidebarKeys ?? [];
+      const nextKeys = filterHiddenSidebarKeysForTenant(
+        data?.hiddenSidebarKeys ?? [],
+        sidebarFilterCtx
+      );
       setDraftHiddenKeys(nextKeys);
       queryClient.setQueryData(
         ['settings', 'sidebar-preferences', activeTenant?.id],
@@ -70,15 +91,17 @@ export default function SidebarMenusSettings() {
   }, []);
 
   const handleSave = useCallback(() => {
-    updateMutation.mutate(draftHiddenKeys);
-  }, [draftHiddenKeys, updateMutation]);
+    updateMutation.mutate(filterHiddenSidebarKeysForTenant(draftHiddenKeys, sidebarFilterCtx));
+  }, [draftHiddenKeys, sidebarFilterCtx, updateMutation]);
 
   const hasChanges = useMemo(() => {
     if (!initialized) return false;
-    const current = [...hiddenSidebarKeys].sort().join('|');
+    const current = filterHiddenSidebarKeysForTenant(hiddenSidebarKeys, sidebarFilterCtx)
+      .sort()
+      .join('|');
     const draft = [...draftHiddenKeys].sort().join('|');
     return current !== draft;
-  }, [draftHiddenKeys, hiddenSidebarKeys, initialized]);
+  }, [draftHiddenKeys, hiddenSidebarKeys, initialized, sidebarFilterCtx]);
 
   if (isDriver || (isPlatformAdmin && visibleGroups.length === 0)) {
     return null;

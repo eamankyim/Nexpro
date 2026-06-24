@@ -116,7 +116,11 @@ const getTenantAdminSettings = async (tenantId) => {
     jobInvoice: buildJobInvoicePayload(jobInvoiceSetting),
     customerNotifications: buildCustomerNotificationPayload(customerNotificationsSetting),
     sidebarDefaults: {
-      hiddenSidebarKeys: getTenantDefaultHiddenSidebarKeys(tenant.metadata),
+      hiddenSidebarKeys: getTenantDefaultHiddenSidebarKeys(
+        tenant.metadata,
+        tenant.businessType,
+        tenant.metadata?.businessSubType || tenant.metadata?.shopType || null
+      ),
     },
   };
 };
@@ -219,7 +223,13 @@ const updateTenantAdminSettings = async ({ tenantId, actorUserId, payload, reaso
   }
 
   if (incoming.sidebarDefaults && typeof incoming.sidebarDefaults === 'object') {
-    const sanitized = sanitizeHiddenSidebarKeys(incoming.sidebarDefaults.hiddenSidebarKeys);
+    const shopType =
+      tenantRow.metadata?.businessSubType || tenantRow.metadata?.shopType || null;
+    const sanitized = sanitizeHiddenSidebarKeys(
+      incoming.sidebarDefaults.hiddenSidebarKeys,
+      tenantRow.businessType,
+      shopType
+    );
     const metadata =
       tenantRow.metadata && typeof tenantRow.metadata === 'object'
         ? { ...tenantRow.metadata }

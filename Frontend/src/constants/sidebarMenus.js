@@ -1,3 +1,5 @@
+import { STUDIO_LIKE_TYPES, isQuotesEnabledForTenant } from './index.js';
+
 /** Core navigation items that must always remain visible in the sidebar. */
 export const LOCKED_SIDEBAR_KEYS = [
   '/dashboard',
@@ -52,6 +54,43 @@ export const CONFIGURABLE_SIDEBAR_KEYS = [
 
 const LOCKED_KEY_SET = new Set(LOCKED_SIDEBAR_KEYS);
 const CONFIGURABLE_KEY_SET = new Set(CONFIGURABLE_SIDEBAR_KEYS);
+
+const STORE_CHILD_KEYS = [
+  '/store',
+  '/store/listings',
+  '/store/services',
+  '/store/orders',
+  '/store/settings',
+];
+
+const ADVANCED_CHILD_KEYS = [
+  '/reviews',
+  '/deliveries',
+  '/tasks',
+  '/automations',
+  '/leads',
+  '/marketing',
+  '/vendors',
+  '/dealers',
+  '/payroll',
+  '/accounting',
+  '/quotes',
+  '/employees',
+  '/shops',
+  '/pharmacies',
+  '/prescriptions',
+  '/drugs',
+  '/pricing',
+  '/studio-locations',
+];
+
+const REPORTS_CHILD_KEYS = [
+  '/reports/overview',
+  '/reports/smart-report',
+  '/reports/compliance',
+  '/export-data',
+  '/users',
+];
 
 /**
  * Grouped sidebar menu options for the Settings UI.
@@ -125,6 +164,145 @@ export const SIDEBAR_MENU_GROUPS = [
 ];
 
 /**
+ * Whether a configurable sidebar key is relevant for the tenant's business type and features.
+ * Mirrors visibility rules in Sidebar.jsx getMenuItems().
+ * @param {string} key
+ * @param {{ businessType?: string|null, shopType?: string|null, hasFeature?: (key: string) => boolean, isPlatformAdmin?: boolean }} ctx
+ * @returns {boolean}
+ */
+export const isConfigurableSidebarKeyForTenant = (key, ctx = {}) => {
+  const {
+    businessType = null,
+    shopType = null,
+    hasFeature = () => true,
+    isPlatformAdmin = false,
+  } = ctx;
+  const isStudio = STUDIO_LIKE_TYPES.includes(businessType);
+
+  switch (key) {
+    case 'store':
+      return (
+        !isPlatformAdmin &&
+        STORE_CHILD_KEYS.some((childKey) =>
+          isConfigurableSidebarKeyForTenant(childKey, ctx)
+        )
+      );
+    case '/store':
+    case '/store/settings':
+      return !isPlatformAdmin;
+    case '/store/listings':
+    case '/store/orders':
+      return !isPlatformAdmin && !isStudio;
+    case '/store/services':
+      return !isPlatformAdmin && isStudio;
+
+    case 'company-assets':
+    case '/materials':
+    case '/equipment':
+      return hasFeature('materials');
+
+    case 'advanced':
+      return ADVANCED_CHILD_KEYS.some((childKey) =>
+        isConfigurableSidebarKeyForTenant(childKey, ctx)
+      );
+    case '/reviews':
+      return !isPlatformAdmin && hasFeature('crm');
+    case '/deliveries':
+      return hasFeature('deliveries');
+    case '/tasks':
+      return !isPlatformAdmin && hasFeature('jobAutomation');
+    case '/automations':
+      return hasFeature('automations');
+    case '/leads':
+      return !isPlatformAdmin && hasFeature('leadPipeline');
+    case '/marketing':
+      return hasFeature('marketing');
+    case '/vendors':
+      return hasFeature('vendors');
+    case '/dealers':
+      return !isPlatformAdmin && !isStudio && hasFeature('dealersAccount');
+    case '/payroll':
+      return hasFeature('payroll');
+    case '/accounting':
+      return hasFeature('accounting');
+    case '/quotes':
+      return (
+        hasFeature('quoteAutomation') &&
+        isQuotesEnabledForTenant(businessType, shopType)
+      );
+    case '/employees':
+      return hasFeature('payroll');
+    case '/shops':
+      return businessType === 'shop' && hasFeature('shopsModule');
+    case '/pharmacies':
+    case '/prescriptions':
+    case '/drugs':
+      return businessType === 'pharmacy' && hasFeature('pharmacyOps');
+    case '/pricing':
+      return hasFeature('pricingTemplates') && isStudio;
+    case '/studio-locations':
+      return isStudio && hasFeature('studioLocationsModule');
+
+    case 'reports':
+      return REPORTS_CHILD_KEYS.some((childKey) =>
+        isConfigurableSidebarKeyForTenant(childKey, ctx)
+      );
+    case '/reports/overview':
+    case '/reports/smart-report':
+    case '/reports/compliance':
+      return hasFeature('reports');
+    case '/export-data':
+      return hasFeature('advancedReporting');
+    case '/users':
+      return hasFeature('roleManagement');
+
+    default:
+      return false;
+  }
+};
+
+/**
+ * Filter sidebar menu groups for the Settings UI by workspace business type and features.
+ * @param {typeof SIDEBAR_MENU_GROUPS} groups
+ * @param {{ businessType?: string|null, shopType?: string|null, hasFeature?: (key: string) => boolean, isPlatformAdmin?: boolean, isManagerOrAdmin?: boolean }} ctx
+ * @returns {typeof SIDEBAR_MENU_GROUPS}
+ */
+export const filterSidebarMenuGroupsForBusinessType = (groups, ctxOrBusinessType = {}, shopType = null) => {
+  const normalizedCtx =
+    typeof ctxOrBusinessType === 'string'
+      ? {
+          businessType: ctxOrBusinessType,
+          shopType,
+          hasFeature: () => true,
+          isPlatformAdmin: false,
+        }
+      : ctxOrBusinessType;
+  const { isManagerOrAdmin = false } = normalizedCtx;
+
+  return groups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => {
+        if (item.managerOnly && !isManagerOrAdmin) return false;
+        return isConfigurableSidebarKeyForTenant(item.key, normalizedCtx);
+      }),
+    }))
+    .filter((group) => group.items.length > 0);
+};
+
+/**
+ * Drop hidden keys that do not apply to the tenant's business type or features.
+ * @param {string[]} hiddenKeys
+ * @param {Parameters<typeof isConfigurableSidebarKeyForTenant>[1]} ctx
+ * @returns {string[]}
+ */
+export const filterHiddenSidebarKeysForTenant = (hiddenKeys, ctx = {}) => {
+  return sanitizeHiddenSidebarKeys(hiddenKeys).filter((key) =>
+    isConfigurableSidebarKeyForTenant(key, ctx)
+  );
+};
+
+/**
  * Remove hidden keys from nav items; locked keys are never removed.
  * @param {Array} items - Sidebar nav items
  * @param {string[]} hiddenKeys - Keys to hide
@@ -161,9 +339,10 @@ export const isSidebarKeyHidden = (hiddenKeys, key) => {
 
 /**
  * @param {unknown} keys
+ * @param {Parameters<typeof filterHiddenSidebarKeysForTenant>[1]} [ctx]
  * @returns {string[]}
  */
-export const sanitizeHiddenSidebarKeys = (keys) => {
+export const sanitizeHiddenSidebarKeys = (keys, ctx = null) => {
   if (!Array.isArray(keys)) return [];
   const seen = new Set();
   const result = [];
@@ -171,6 +350,7 @@ export const sanitizeHiddenSidebarKeys = (keys) => {
     if (typeof key !== 'string') continue;
     const trimmed = key.trim();
     if (!trimmed || LOCKED_KEY_SET.has(trimmed) || !CONFIGURABLE_KEY_SET.has(trimmed)) continue;
+    if (ctx && !isConfigurableSidebarKeyForTenant(trimmed, ctx)) continue;
     if (seen.has(trimmed)) continue;
     seen.add(trimmed);
     result.push(trimmed);

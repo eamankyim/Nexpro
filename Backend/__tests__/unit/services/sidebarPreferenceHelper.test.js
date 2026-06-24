@@ -5,6 +5,7 @@ const {
   getTenantDefaultHiddenSidebarKeys,
   sanitizeHiddenSidebarKeys,
   getSidebarPreferences,
+  isSidebarMenuKeyAllowedForBusinessType,
 } = require('../../../services/sidebarPreferenceHelper');
 
 describe('sidebarPreferenceHelper', () => {
@@ -25,6 +26,45 @@ describe('sidebarPreferenceHelper', () => {
           '/leads',
         ])
       ).toEqual(['/leads', '/marketing']);
+    });
+
+    it('drops shop-only keys for studio business types', () => {
+      expect(
+        sanitizeHiddenSidebarKeys(
+          ['/shops', '/leads', '/store/listings'],
+          'printing_press'
+        )
+      ).toEqual(['/leads']);
+    });
+
+    it('drops pharmacy-only keys for shop business types', () => {
+      expect(
+        sanitizeHiddenSidebarKeys(
+          ['/pharmacies', '/prescriptions', '/drugs', '/tasks'],
+          'shop'
+        )
+      ).toEqual(['/tasks']);
+    });
+
+    it('drops studio-only keys for pharmacy business types', () => {
+      expect(
+        sanitizeHiddenSidebarKeys(
+          ['/studio-locations', '/pricing', '/store/services', '/tasks'],
+          'pharmacy'
+        )
+      ).toEqual(['/tasks']);
+    });
+  });
+
+  describe('isSidebarMenuKeyAllowedForBusinessType', () => {
+    it('allows shop keys only for shop workspaces', () => {
+      expect(isSidebarMenuKeyAllowedForBusinessType('/shops', 'shop')).toBe(true);
+      expect(isSidebarMenuKeyAllowedForBusinessType('/shops', 'printing_press')).toBe(false);
+    });
+
+    it('allows pharmacy keys only for pharmacy workspaces', () => {
+      expect(isSidebarMenuKeyAllowedForBusinessType('/drugs', 'pharmacy')).toBe(true);
+      expect(isSidebarMenuKeyAllowedForBusinessType('/drugs', 'salon')).toBe(false);
     });
   });
 

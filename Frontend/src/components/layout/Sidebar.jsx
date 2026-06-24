@@ -43,7 +43,7 @@ import AppLogo from '@/components/AppLogo';
 import { useHintMode } from '@/context/HintModeContext';
 import { usePWAInstall } from '@/context/PWAInstallContext';
 import { APP_NAME, isQuotesEnabledForTenant, STUDIO_LIKE_TYPES } from '@/constants';
-import { filterHiddenNavItems } from '@/constants/sidebarMenus';
+import { filterHiddenNavItems, sanitizeHiddenSidebarKeys } from '@/constants/sidebarMenus';
 import settingsService from '@/services/settingsService';
 import { useSidebarPreferences } from '@/hooks/useSidebarPreferences';
 import { API_BASE_URL } from '@/services/api';
@@ -175,7 +175,11 @@ const getMenuItems = (
   if (!isPlatformAdmin && hasFeature('crm')) {
     baseItems.push({ key: '/customers', icon: Users, label: 'Customers', tooltip: MENU_HINTS['/customers'] });
   }
-  if (!isPlatformAdmin && hasFeature('dealersAccount')) {
+  if (
+    !isPlatformAdmin &&
+    !STUDIO_LIKE_TYPES.includes(businessType) &&
+    hasFeature('dealersAccount')
+  ) {
     baseItems.push({ key: '/dealers', icon: Building2, label: 'Dealers', tooltip: MENU_HINTS['/dealers'] });
   }
   if (hasFeature('invoices') || hasFeature('expenses')) {
@@ -367,7 +371,17 @@ export function Sidebar({ collapsed, onCollapse }) {
     activeTenant?.metadata?.shopType ||
     null;
 
-  const { hiddenSidebarKeys } = useSidebarPreferences();
+  const { hiddenSidebarKeys: rawHiddenSidebarKeys } = useSidebarPreferences();
+
+  const hiddenSidebarKeys = useMemo(
+    () =>
+      sanitizeHiddenSidebarKeys(
+        rawHiddenSidebarKeys,
+        activeTenant?.businessType || null,
+        shopType
+      ),
+    [rawHiddenSidebarKeys, activeTenant?.businessType, shopType]
+  );
 
   const menuItems = useMemo(() => {
     const items = getMenuItems(
@@ -794,7 +808,18 @@ export function MobileSidebar() {
     activeTenant?.metadata?.businessSubType ||
     activeTenant?.metadata?.shopType ||
     null;
-  const { hiddenSidebarKeys } = useSidebarPreferences();
+  const { hiddenSidebarKeys: rawHiddenSidebarKeys } = useSidebarPreferences();
+
+  const hiddenSidebarKeys = useMemo(
+    () =>
+      sanitizeHiddenSidebarKeys(
+        rawHiddenSidebarKeys,
+        activeTenant?.businessType || null,
+        shopType
+      ),
+    [rawHiddenSidebarKeys, activeTenant?.businessType, shopType]
+  );
+
   const menuItems = useMemo(() => {
     const items = getMenuItems(
       businessType,
