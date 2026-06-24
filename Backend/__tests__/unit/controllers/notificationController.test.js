@@ -1,6 +1,10 @@
+const { Op } = require('sequelize');
+
 jest.mock('../../../config/database', () => ({
   sequelize: {
     where: jest.fn((...args) => ({ whereArgs: args })),
+    fn: jest.fn((name, ...args) => ({ fn: name, args })),
+    literal: jest.fn((value) => ({ literal: value })),
     col: jest.fn((name) => ({ col: name })),
     query: jest.fn(),
     QueryTypes: { SELECT: 'SELECT' },
@@ -59,7 +63,8 @@ jest.mock('../../../services/pushNotificationService', () => ({
 }));
 
 const { Notification, Product } = require('../../../models');
-const { getNotifications } = require('../../../controllers/notificationController');
+const { sequelize } = require('../../../config/database');
+const { getNotifications, getNotificationSummary } = require('../../../controllers/notificationController');
 
 const makeRes = () => {
   const res = {};
@@ -145,6 +150,50 @@ describe('notificationController', () => {
         productId: 'product-1',
       }),
     }));
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('applies shop scope filter when shopFilterId is set', async () => {
+    const req = {
+      tenantId: 'tenant-1',
+      tenant: { businessType: 'service' },
+      user: { id: 'user-1' },
+      query: {},
+      shopFilterId: 'shop-1',
+    };
+    const res = makeRes();
+    const next = jest.fn();
+
+    await getNotifications(req, res, next);
+
+    const call = Notification.findAndCountAll.mock.calls[0][0];
+    expect(call.where[Op.and]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ whereArgs: expect.any(Array) }),
+    ]));
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('includes shop scope in notification summary SQL', async () => {
+    sequelize.query.mockResolvedValue([{ total: 2, unread: 1, recent: 1 }]);
+
+    const req = {
+      tenantId: 'tenant-1',
+      tenant: { businessType: 'shop' },
+      user: { id: 'user-1' },
+      shopFilterId: 'shop-1',
+    };
+    const res = makeRes();
+    const next = jest.fn();
+
+    await getNotificationSummary(req, res, next);
+
+    expect(sequelize.query).toHaveBeenCalledWith(
+      expect.stringContaining(`COALESCE("metadata"->>'shopId', '') IN ('', :shopFilterId)`),
+      expect.objectContaining({
+        replacements: expect.objectContaining({ shopFilterId: 'shop-1' }),
+      })
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
     expect(next).not.toHaveBeenCalled();
   });
 });

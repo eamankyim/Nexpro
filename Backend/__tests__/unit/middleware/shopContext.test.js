@@ -61,4 +61,21 @@ describe('shopContext', () => {
 
     expect(req.shopFilterId).toBe('shop-valid');
   });
+
+  it('activates shop scope for pharmacy tenants', async () => {
+    resolveBusinessType.mockReturnValue('pharmacy');
+
+    const req = {
+      tenant: { businessType: 'pharmacy', name: 'Pharmacy' },
+      tenantId: 'tenant-1',
+      user: { id: 'user-1' },
+      tenantRole: 'admin',
+      headers: { 'x-shop-id': 'shop-valid' },
+    };
+
+    await runMiddleware(req);
+
+    expect(req.shopScoped).toBe(true);
+    expect(req.shopFilterId).toBe('shop-valid');
+  });
 });

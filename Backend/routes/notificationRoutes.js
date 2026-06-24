@@ -2,6 +2,7 @@ const express = require('express');
 const { protect } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
 const { shopContext } = require('../middleware/shopContext');
+const { studioLocationContext } = require('../middleware/studioLocationContext');
 const { cacheMiddleware, generateNotificationSummaryKey } = require('../middleware/cache');
 const {
   getNotifications,
@@ -16,6 +17,7 @@ const router = express.Router();
 router.use(protect);
 router.use(tenantContext);
 router.use(shopContext);
+router.use(studioLocationContext);
 
 // Cache summary for 60s to reduce repeated DB hits (same user/tenant)
 router.get('/summary', cacheMiddleware(30, generateNotificationSummaryKey), getNotificationSummary);

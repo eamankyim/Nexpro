@@ -5,7 +5,7 @@ jest.mock('../../../config/database', () => ({
 }));
 
 jest.mock('../../../models', () => ({
-  Invoice: { findOne: jest.fn(), findAndCountAll: jest.fn(), findAll: jest.fn(), count: jest.fn(), destroy: jest.fn() },
+  Invoice: { findOne: jest.fn(), findAndCountAll: jest.fn(), findAll: jest.fn(), count: jest.fn(), sum: jest.fn(), destroy: jest.fn() },
   Job: { findAll: jest.fn().mockResolvedValue([]) },
   Sale: { findAll: jest.fn().mockResolvedValue([]) },
   Customer: {},
@@ -697,7 +697,7 @@ describe('invoiceController getInvoices list visibility', () => {
     Invoice.findAll.mockResolvedValue([]);
   });
 
-  it('applies shop read filter and sale sourceType for shop tenants', async () => {
+  it('applies strict shop filter and sale sourceType for shop tenants', async () => {
     const req = {
       query: { page: '1', limit: '20', shopId: 'shop-a' },
       headers: {},
@@ -717,10 +717,8 @@ describe('invoiceController getInvoices list visibility', () => {
       expect.objectContaining({
         where: expect.objectContaining({
           tenantId: 'tenant-1',
-          [Op.and]: expect.arrayContaining([
-            { [Op.or]: [{ sourceType: 'sale' }, { sourceType: 'quote' }] },
-            { [Op.or]: [{ shopId: 'shop-a' }, { shopId: null }] },
-          ]),
+          shopId: 'shop-a',
+          [Op.or]: [{ sourceType: 'sale' }, { sourceType: 'quote' }],
         }),
         distinct: true,
         col: 'id',
@@ -730,6 +728,38 @@ describe('invoiceController getInvoices list visibility', () => {
       expect.objectContaining({
         where: expect.objectContaining({
           tenantId: 'tenant-1',
+          shopId: 'shop-a',
+        }),
+      })
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('getInvoiceStats applies the same strict shop filter as list', async () => {
+    const req = {
+      query: {},
+      headers: {},
+      tenantId: 'tenant-1',
+      tenant: { businessType: 'shop' },
+      shopScoped: true,
+      shopFilterId: 'shop-a',
+      user: { id: 'user-1', role: 'admin' },
+      tenantRole: 'admin',
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    Invoice.count.mockResolvedValue(3);
+    Invoice.sum.mockResolvedValue(100);
+
+    await invoiceController.getInvoiceStats(req, res, next);
+
+    expect(Invoice.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId: 'tenant-1',
+          shopId: 'shop-a',
         }),
       })
     );

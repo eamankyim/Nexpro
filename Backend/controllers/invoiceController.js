@@ -29,7 +29,6 @@ const {
 } = require('../utils/studioLocationUtils');
 const {
   applyScopedFilters,
-  applyScopedReadFilters,
   attachScopedToPayload,
   assertShopRecordAccess,
 } = require('../utils/shopUtils');
@@ -547,7 +546,7 @@ const generateInvoiceNumber = async (tenantId) => {
 
 /**
  * Visibility rules for invoice list and summary stats (must stay in sync).
- * Applies tenant scope, business-type sourceType rules, and staff visibility.
+ * Applies tenant scope, business-type sourceType rules, staff visibility, and active branch (shop/studio).
  *
  * @param {import('express').Request} req
  * @returns {Promise<Object>} Sequelize where clause
@@ -592,14 +591,14 @@ const buildInvoiceVisibilityWhere = async (req) => {
     }
   }
 
-  return applyScopedReadFilters(req, where);
+  return applyScopedFilters(req, where);
 };
 
 const invoiceWhere = (req, extra = {}) =>
   applyScopedFilters(req, applyTenantFilter(req.tenantId, extra));
 
 const invoiceReadWhere = (req, extra = {}) =>
-  applyScopedReadFilters(req, applyTenantFilter(req.tenantId, extra));
+  applyScopedFilters(req, applyTenantFilter(req.tenantId, extra));
 
 /**
  * Load one invoice using the same visibility rules as the list endpoint.
@@ -768,7 +767,7 @@ exports.exportInvoices = async (req, res, next) => {
     const { format = 'csv', status } = req.query;
     const { sendCSV, sendExcel, COLUMN_DEFINITIONS } = require('../utils/dataExport');
 
-    const where = applyTenantFilter(req.tenantId, {});
+    const where = await buildInvoiceVisibilityWhere(req);
     if (status) where.status = status;
 
     const invoices = await Invoice.findAll({
@@ -1062,6 +1061,11 @@ exports.createInvoice = async (req, res, next) => {
       null;
     const scopedMeta = attachScopedToPayload(req, {});
 
+    let resolvedShopId = scopedMeta.shopId || null;
+    if (isJobLinked && job?.shopId) {
+      resolvedShopId = job.shopId;
+    }
+
     // Create invoice
     const invoice = await Invoice.create({
       invoiceNumber,
@@ -1069,7 +1073,7 @@ exports.createInvoice = async (req, res, next) => {
       customerId: resolvedCustomerId,
       tenantId: req.tenantId,
       studioLocationId,
-      shopId: scopedMeta.shopId || null,
+      shopId: resolvedShopId,
       sourceType,
       invoiceDate: new Date(),
       dueDate: dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // Default 30 days

@@ -288,7 +288,7 @@ const Leads = () => {
   } = useQuery({
     queryKey: queryKeys.leads.list(activeTenantId, activeStudioLocationId, leadQueryParams),
     queryFn: () => leadService.getAll(leadQueryParams),
-    enabled: scopeReady && (!studioLocationCtx?.isStudioWorkspace || !!activeStudioLocationId),
+    enabled: scopeReady && (!studioLocationCtx?.isStudioWorkspace || !!activeStudioLocationId || !!studioLocationCtx?.canAccessAll),
     staleTime: QUERY_STALE.LIST,
     refetchOnWindowFocus: true,
   });
@@ -300,7 +300,7 @@ const Leads = () => {
   } = useQuery({
     queryKey: queryKeys.leads.summary(activeTenantId, activeStudioLocationId),
     queryFn: () => leadService.getSummary(),
-    enabled: scopeReady && (!studioLocationCtx?.isStudioWorkspace || !!activeStudioLocationId),
+    enabled: scopeReady && (!studioLocationCtx?.isStudioWorkspace || !!activeStudioLocationId || !!studioLocationCtx?.canAccessAll),
     staleTime: QUERY_STALE.LIST,
     refetchOnWindowFocus: true,
   });

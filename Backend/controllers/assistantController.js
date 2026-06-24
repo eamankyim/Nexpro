@@ -39,10 +39,11 @@ const ASSISTANT_CONTEXT_TTL_MS = 90 * 1000;
 
 const buildAssistantContextCacheKey = (tenantId, options = {}) => {
   const shop = options.shopFilterId || 'none';
+  const studio = options.studioLocationFilterId || 'none';
   const start = options.startDate || 'none';
   const end = options.endDate || 'none';
   const tier = options.tier || 'full';
-  return `${tenantId}:${shop}:${start}:${end}:${tier}`;
+  return `${tenantId}:${shop}:${studio}:${start}:${end}:${tier}`;
 };
 
 const getCachedAssistantContext = (cacheKey) => {
@@ -121,6 +122,7 @@ async function getAssistantContextLight(tenantId) {
  */
 async function getAssistantContext(tenantId, options = {}) {
   const shopFilterId = options.shopFilterId || null;
+  const studioLocationFilterId = options.studioLocationFilterId || null;
   const selectedDateFilter = parseReportDateRange(options.startDate, options.endDate);
   const hasSelectedPeriod = Boolean(selectedDateFilter);
   const [selectedStart, selectedEnd] = hasSelectedPeriod ? selectedDateFilter[Op.between] : [null, null];
@@ -161,12 +163,21 @@ async function getAssistantContext(tenantId, options = {}) {
   const isShopOrPharmacy = businessType === 'shop' || businessType === 'pharmacy';
   const isStudio = ['printing_press', 'mechanic', 'barber', 'salon', 'studio'].includes(businessType);
 
-  const saleWhereBase = { tenantId, ...(shopFilterId ? { shopId: shopFilterId } : {}) };
+  const scopedTenantWhere = { tenantId };
+  if (shopFilterId) scopedTenantWhere.shopId = shopFilterId;
+  if (studioLocationFilterId) scopedTenantWhere.studioLocationId = studioLocationFilterId;
+
+  const saleWhereBase = { ...scopedTenantWhere };
   const productWhereBase = {
-    tenantId,
+    ...scopedTenantWhere,
     isActive: true,
-    ...(shopFilterId ? { shopId: shopFilterId } : {}),
   };
+  const expenseWhereBase = { tenantId };
+  if (shopFilterId) expenseWhereBase.shopId = shopFilterId;
+  if (studioLocationFilterId) expenseWhereBase.studioLocationId = studioLocationFilterId;
+  const invoiceWhereBase = { tenantId };
+  if (studioLocationFilterId) invoiceWhereBase.studioLocationId = studioLocationFilterId;
+  const jobWhereBase = { ...scopedTenantWhere };
 
   const [
     totalCustomers,
@@ -214,7 +225,7 @@ async function getAssistantContext(tenantId, options = {}) {
         }) || 0
       : Invoice.sum('amountPaid', {
           where: {
-            tenantId,
+            ...invoiceWhereBase,
             status: { [Op.ne]: 'cancelled' },
             amountPaid: { [Op.gt]: 0 },
             [Op.and]: [
@@ -227,7 +238,7 @@ async function getAssistantContext(tenantId, options = {}) {
         }) || 0,
     Expense.sum('amount', {
       where: {
-        tenantId,
+        ...expenseWhereBase,
         expenseDate: { [Op.between]: [firstDayOfMonth, lastDayOfMonth] },
       },
     }) || 0,
@@ -241,7 +252,7 @@ async function getAssistantContext(tenantId, options = {}) {
         }) || 0
       : Invoice.sum('amountPaid', {
           where: {
-            tenantId,
+            ...invoiceWhereBase,
             status: { [Op.ne]: 'cancelled' },
             amountPaid: { [Op.gt]: 0 },
             [Op.and]: [
@@ -254,7 +265,7 @@ async function getAssistantContext(tenantId, options = {}) {
         }) || 0,
     Expense.sum('amount', {
       where: {
-        tenantId,
+        ...expenseWhereBase,
         expenseDate: { [Op.between]: [todayStart, todayEnd] },
       },
     }) || 0,
@@ -268,7 +279,7 @@ async function getAssistantContext(tenantId, options = {}) {
         }) || 0
       : Invoice.sum('amountPaid', {
           where: {
-            tenantId,
+            ...invoiceWhereBase,
             status: { [Op.ne]: 'cancelled' },
             amountPaid: { [Op.gt]: 0 },
             [Op.and]: [
@@ -281,7 +292,7 @@ async function getAssistantContext(tenantId, options = {}) {
         }) || 0,
     Expense.sum('amount', {
       where: {
-        tenantId,
+        ...expenseWhereBase,
         expenseDate: { [Op.between]: [firstDayThreeMonthsAgo, lastDayOfMonth] },
       },
     }) || 0,
@@ -294,14 +305,14 @@ async function getAssistantContext(tenantId, options = {}) {
     }),
     Invoice.sum('balance', {
       where: {
-        tenantId,
+        ...invoiceWhereBase,
         balance: { [Op.gt]: 0 },
         status: { [Op.notIn]: ['paid', 'cancelled'] },
       },
     }) || 0,
     Invoice.sum('balance', {
       where: {
-        tenantId,
+        ...invoiceWhereBase,
         balance: { [Op.gt]: 0 },
         dueDate: { [Op.lt]: today },
         status: { [Op.notIn]: ['paid', 'cancelled'] },
@@ -309,7 +320,7 @@ async function getAssistantContext(tenantId, options = {}) {
     }) || 0,
     Invoice.count({
       where: {
-        tenantId,
+        ...invoiceWhereBase,
         balance: { [Op.gt]: 0 },
         status: { [Op.notIn]: ['paid', 'cancelled'] },
       },
@@ -320,7 +331,7 @@ async function getAssistantContext(tenantId, options = {}) {
         [sequelize.fn('SUM', sequelize.col('Invoice.balance')), 'outstanding'],
       ],
       where: {
-        tenantId,
+        ...invoiceWhereBase,
         balance: { [Op.gt]: 0 },
         status: { [Op.notIn]: ['paid', 'cancelled'] },
       },
@@ -388,10 +399,10 @@ async function getAssistantContext(tenantId, options = {}) {
         )
       : Promise.resolve([]),
     isStudio
-      ? Job.count({ where: { tenantId, status: 'new' } })
+      ? Job.count({ where: { ...jobWhereBase, status: 'new' } })
       : Promise.resolve(0),
     isStudio
-      ? Job.count({ where: { tenantId, status: 'in_progress' } })
+      ? Job.count({ where: { ...jobWhereBase, status: 'in_progress' } })
       : Promise.resolve(0),
   ]);
 
@@ -679,6 +690,7 @@ exports.chat = async (req, res, next) => {
     const contextTier = resolveAssistantContextTier(lastMessage.content);
     const contextOptions = {
       shopFilterId: req.shopFilterId || null,
+      studioLocationFilterId: req.studioLocationFilterId || null,
       startDate: typeof startDate === 'string' ? startDate : undefined,
       endDate: typeof endDate === 'string' ? endDate : undefined,
       periodLabel: typeof periodLabel === 'string' ? periodLabel : undefined,

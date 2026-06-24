@@ -6,13 +6,21 @@ const {
 } = require('../services/varianceDetectionService');
 
 /**
+ * Resolve shop scope from request context (middleware) with optional query override.
+ * @param {object} req
+ * @returns {string|undefined}
+ */
+const resolveVarianceShopId = (req) => req.shopFilterId || req.query.shopId || undefined;
+
+/**
  * Get stock variance report
  * @route GET /api/variance/stock
  */
 exports.getStockVariance = async (req, res) => {
   try {
     const tenantId = req.tenantId;
-    const { shopId, threshold, daysBack } = req.query;
+    const { threshold, daysBack } = req.query;
+    const shopId = resolveVarianceShopId(req);
 
     const result = await detectStockVariance(tenantId, {
       shopId,
@@ -38,7 +46,8 @@ exports.getStockVariance = async (req, res) => {
 exports.getSuspiciousPatterns = async (req, res) => {
   try {
     const tenantId = req.tenantId;
-    const { shopId, daysBack } = req.query;
+    const { daysBack } = req.query;
+    const shopId = resolveVarianceShopId(req);
 
     const result = await detectSuspiciousPatterns(tenantId, {
       shopId,
@@ -63,7 +72,8 @@ exports.getSuspiciousPatterns = async (req, res) => {
 exports.getLeakageReport = async (req, res) => {
   try {
     const tenantId = req.tenantId;
-    const { shopId, daysBack } = req.query;
+    const { daysBack } = req.query;
+    const shopId = resolveVarianceShopId(req);
 
     const result = await generateLeakageReport(tenantId, {
       shopId,
@@ -88,7 +98,8 @@ exports.getLeakageReport = async (req, res) => {
 exports.runDetection = async (req, res) => {
   try {
     const tenantId = req.tenantId;
-    const { shopId, threshold, daysBack } = req.body;
+    const { threshold, daysBack } = req.body;
+    const shopId = req.shopFilterId || req.body.shopId || undefined;
 
     // Run variance detection
     const varianceResult = await detectStockVariance(tenantId, {
@@ -155,7 +166,7 @@ exports.runDetection = async (req, res) => {
 exports.getDashboardSummary = async (req, res) => {
   try {
     const tenantId = req.tenantId;
-    const { shopId } = req.query;
+    const shopId = resolveVarianceShopId(req);
 
     // Get last 30 days variance
     const varianceResult = await detectStockVariance(tenantId, { shopId, daysBack: 30 });

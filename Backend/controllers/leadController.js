@@ -14,10 +14,9 @@ const taskAutomationService = require('../services/taskAutomationService');
 const { invalidateCustomerListCache } = require('../middleware/cache');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const {
-  applyStudioLocationFilter,
-  attachStudioLocationToPayload,
+  applyStudioLocationReadFilter,
 } = require('../utils/studioLocationUtils');
-const { attachScopedToPayload } = require('../utils/shopUtils');
+const { applyShopReadFilter, attachScopedToPayload } = require('../utils/shopUtils');
 
 /** Empty string is not a valid UUID for PostgreSQL; treat as unassigned. */
 const normalizeAssignedTo = (value) => {
@@ -55,7 +54,7 @@ const buildLeadInclude = () => ([
 ]);
 
 const leadWhere = (req, extra = {}) =>
-  applyStudioLocationFilter(req, applyTenantFilter(req.tenantId, extra));
+  applyShopReadFilter(req, applyStudioLocationReadFilter(req, applyTenantFilter(req.tenantId, extra)));
 
 exports.getLeads = async (req, res, next) => {
   try {
@@ -201,7 +200,7 @@ exports.createLead = async (req, res, next) => {
     }
 
     const lead = await Lead.create(
-      attachStudioLocationToPayload(req, {
+      attachScopedToPayload(req, {
         ...payload,
         tenantId: req.tenantId,
         source: payload.source || 'unknown',

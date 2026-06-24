@@ -71,6 +71,7 @@ const addStudioTypeToStudioLocations = require('./add-studio-type-to-studio-loca
 const addShopIdToExpenses = require('./add-shop-id-to-expenses');
 const addShopIdToRetailEntities = require('./add-shop-id-to-retail-entities');
 const addStudioLocationIdToLeads = require('./add-studio-location-id-to-leads');
+const addShopIdToLeads = require('./add-shop-id-to-leads');
 const addStudioLocationIdToOperationalModules = require('./add-studio-location-id-to-operational-modules');
 const addPaymentTokenToInvoices = require('./add-payment-token-to-invoices');
 const addAdminLeadIdToJobs = require('./add-admin-lead-id-to-jobs');
@@ -339,6 +340,7 @@ const migrate = async () => {
 
     // Leads scoped to studio locations (multi-branch studio workspaces)
     await addStudioLocationIdToLeads();
+    await addShopIdToLeads();
 
     // Customer email/phone unique per studio/shop branch (tenant-wide when unscoped)
     const fixCustomerUniquenessPerScope = require('./fix-customer-uniqueness-per-scope');

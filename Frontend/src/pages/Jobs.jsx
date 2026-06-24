@@ -232,6 +232,7 @@ const Jobs = () => {
     activeStudioLocationId,
     activeStudioLocation,
     isStudioWorkspace,
+    canAccessAllStudioLocations,
   } = useWorkspaceScope();
   const { isMobile } = useResponsive();
   const queryClient = useQueryClient();
@@ -467,7 +468,7 @@ const Jobs = () => {
     refetchOnWindowFocus: true,
     refetchInterval: 60 * 1000,
     refetchIntervalInBackground: false,
-    enabled: scopeReady && (!isStudioWorkspace || !!activeStudioLocationId),
+    enabled: scopeReady && (!isStudioWorkspace || !!activeStudioLocationId || canAccessAllStudioLocations),
   });
 
   // Use backend pagination directly

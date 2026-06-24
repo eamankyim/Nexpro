@@ -19,14 +19,16 @@ const isShopAccessRoute = (req) =>
 
 const allowsAllShopScope = (req) => req.allowAllShopScope === true;
 
+const SHOP_SCOPED_BUSINESS_TYPES = ['shop', 'pharmacy'];
+
 /**
- * Resolves shop scope for retail (shop) tenants.
+ * Resolves shop scope for retail (shop/pharmacy) tenants.
  * Must run after tenantContext.
  */
 const shopContext = async (req, res, next) => {
   try {
     const businessType = resolveBusinessType(req.tenant?.businessType);
-    if (businessType !== 'shop') {
+    if (!SHOP_SCOPED_BUSINESS_TYPES.includes(businessType)) {
       req.shopScoped = false;
       return next();
     }

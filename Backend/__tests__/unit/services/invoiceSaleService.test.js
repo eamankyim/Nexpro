@@ -209,6 +209,30 @@ describe('invoiceSaleService.syncLinkedInvoiceFromSale', () => {
 
     expect(result).toBeNull();
   });
+
+  it('backfills invoice shopId from the linked sale when missing', async () => {
+    const invoice = buildInvoice({
+      saleId: 'sale-1',
+      shopId: null,
+      amountPaid: 0,
+      status: 'sent',
+    });
+    Invoice.findOne.mockResolvedValue(invoice);
+
+    await syncLinkedInvoiceFromSale({
+      id: 'sale-1',
+      tenantId: 'tenant-1',
+      customerId: 'customer-1',
+      invoiceId: 'invoice-1',
+      shopId: 'shop-a',
+      amountPaid: 40,
+    }, { tenantId: 'tenant-1' });
+
+    expect(invoice.update).toHaveBeenCalledWith(
+      expect.objectContaining({ amountPaid: 40, shopId: 'shop-a' }),
+      { transaction: null }
+    );
+  });
 });
 
 describe('invoiceSaleService.syncSaleInvoiceAndRefreshCustomerBalance', () => {

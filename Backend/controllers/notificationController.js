@@ -68,8 +68,67 @@ function getStockAlertSyncKey(req) {
   return [
     req.tenantId,
     req.user?.id,
-    req.shopFilterId || 'all'
+    req.shopFilterId || 'all',
+    req.studioLocationFilterId || 'all',
   ].join(':');
+}
+
+/**
+ * Filter notifications by branch metadata (scoped + workspace-wide with null scope).
+ * @param {object} req
+ * @param {object} [where]
+ */
+function applyNotificationScopeFilter(req, where = {}) {
+  const scopeConditions = [];
+
+  if (req.shopFilterId) {
+    scopeConditions.push(
+      sequelize.where(
+        sequelize.fn('COALESCE', sequelize.literal(`"metadata"->>'shopId'`), ''),
+        { [Op.in]: ['', req.shopFilterId] }
+      )
+    );
+  }
+
+  if (req.studioLocationFilterId) {
+    scopeConditions.push(
+      sequelize.where(
+        sequelize.fn('COALESCE', sequelize.literal(`"metadata"->>'studioLocationId'`), ''),
+        { [Op.in]: ['', req.studioLocationFilterId] }
+      )
+    );
+  }
+
+  if (!scopeConditions.length) return where;
+
+  const existingAnd = where[Op.and]
+    ? (Array.isArray(where[Op.and]) ? where[Op.and] : [where[Op.and]])
+    : [];
+
+  return {
+    ...where,
+    [Op.and]: [...existingAnd, ...scopeConditions],
+  };
+}
+
+function buildNotificationScopeSql(req) {
+  const fragments = [];
+  const replacements = {};
+
+  if (req.shopFilterId) {
+    fragments.push(`COALESCE("metadata"->>'shopId', '') IN ('', :shopFilterId)`);
+    replacements.shopFilterId = req.shopFilterId;
+  }
+
+  if (req.studioLocationFilterId) {
+    fragments.push(`COALESCE("metadata"->>'studioLocationId', '') IN ('', :studioLocationFilterId)`);
+    replacements.studioLocationFilterId = req.studioLocationFilterId;
+  }
+
+  return {
+    sql: fragments.length ? ` AND ${fragments.join(' AND ')}` : '',
+    replacements,
+  };
 }
 
 async function syncStockAlertNotificationsThrottled(req) {
@@ -283,9 +342,9 @@ exports.getNotifications = async (req, res, next) => {
     const type = req.query.type;
     const unreadOnly = req.query.unread === 'true';
 
-    const where = applyTenantFilter(req.tenantId, {
+    const where = applyNotificationScopeFilter(req, applyTenantFilter(req.tenantId, {
       userId: req.user.id
-    });
+    }));
 
     if (type) {
       where.type = type;
@@ -440,6 +499,7 @@ exports.getNotificationSummary = async (req, res, next) => {
     triggerStockAlertNotificationsSync(req);
 
     const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    const scope = buildNotificationScopeSql(req);
 
     const [summaryRow] = await sequelize.query(
       `SELECT
@@ -447,9 +507,14 @@ exports.getNotificationSummary = async (req, res, next) => {
          COUNT(*) FILTER (WHERE "isRead" = false)::int AS unread,
          COUNT(*) FILTER (WHERE "createdAt" >= :cutoff)::int AS recent
        FROM notifications
-       WHERE "tenantId" = :tenantId AND "userId" = :userId`,
+       WHERE "tenantId" = :tenantId AND "userId" = :userId${scope.sql}`,
       {
-        replacements: { tenantId: req.tenantId, userId: req.user.id, cutoff: fortyEightHoursAgo },
+        replacements: {
+          tenantId: req.tenantId,
+          userId: req.user.id,
+          cutoff: fortyEightHoursAgo,
+          ...scope.replacements,
+        },
         type: sequelize.QueryTypes.SELECT
       }
     );

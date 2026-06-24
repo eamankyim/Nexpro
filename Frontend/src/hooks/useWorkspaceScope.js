@@ -11,6 +11,7 @@ import { useStudioLocationOptional } from '../context/StudioLocationContext';
  *   activeStudioLocationId: string|null,
  *   isShopWorkspace: boolean,
  *   isStudioWorkspace: boolean,
+ *   canAccessAllStudioLocations: boolean,
  *   scopeReady: boolean
  * }}
  */
@@ -24,13 +25,21 @@ export function useWorkspaceScope() {
   const activeStudioLocation = studio?.activeLocation ?? null;
   const isShopWorkspace = !!shop?.isShopWorkspace;
   const isStudioWorkspace = !!studio?.isStudioWorkspace;
+  const canAccessAllStudioLocations = !!studio?.canAccessAll;
 
   const scopeReady = useMemo(() => {
     if (!activeTenantId) return false;
     if (isShopWorkspace && !activeShopId) return false;
-    if (isStudioWorkspace && !activeStudioLocationId) return false;
+    if (isStudioWorkspace && !activeStudioLocationId && !canAccessAllStudioLocations) return false;
     return true;
-  }, [activeTenantId, isShopWorkspace, activeShopId, isStudioWorkspace, activeStudioLocationId]);
+  }, [
+    activeTenantId,
+    isShopWorkspace,
+    activeShopId,
+    isStudioWorkspace,
+    activeStudioLocationId,
+    canAccessAllStudioLocations,
+  ]);
 
   return {
     activeTenantId,
@@ -39,6 +48,7 @@ export function useWorkspaceScope() {
     activeStudioLocation,
     isShopWorkspace,
     isStudioWorkspace,
+    canAccessAllStudioLocations,
     scopeReady,
   };
 }

@@ -255,6 +255,10 @@ async function syncLinkedInvoiceFromSale(sale, options = {}) {
   const totalAmount = toNumber(invoice.totalAmount);
   const updatePayload = { amountPaid };
 
+  if (sale.shopId && !invoice.shopId) {
+    updatePayload.shopId = sale.shopId;
+  }
+
   if (totalAmount > 0 && amountPaid >= totalAmount - PAID_TOLERANCE) {
     updatePayload.paidDate = invoice.paidDate || new Date();
   }

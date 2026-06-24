@@ -78,7 +78,9 @@ const generateReportCacheKey = (tenantId, reportType, params = {}) => {
 const generateNotificationSummaryKey = (req) => {
   const tenantId = req.tenantId || '';
   const userId = req.user?.id || '';
-  return `notifications:summary:${tenantId}:${userId}`;
+  const shopId = req.shopFilterId || 'all';
+  const studioLocationId = req.studioLocationFilterId || 'all';
+  return `notifications:summary:${tenantId}:${userId}:${shopId}:${studioLocationId}`;
 };
 
 const getOrganizationSettingsCacheKey = (tenantId) => `settings:${tenantId}:organization`;
