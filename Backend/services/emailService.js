@@ -182,7 +182,7 @@ class EmailService {
    * @param {string} html - HTML body
    * @param {string} [text] - Plain text body (optional)
    * @param {Array} [attachments] - Attachments (optional)
-   * @param {Object} [options] - Optional: { categories } for SendGrid (e.g. ['transactional','signup']) to improve deliverability
+   * @param {Object} [options] - Optional: { categories, replyTo: { email, name? } } for SendGrid (e.g. ['transactional','signup']) to improve deliverability
    * @returns {Promise<Object>} - { success, messageId?, error? }
    */
   async sendPlatformMessage(to, subject, html, text = null, attachments = [], options = {}) {
@@ -210,9 +210,11 @@ class EmailService {
       }
 
       const diag = this.getConfigDiagnostic(config);
+      const replyTo = options.replyTo?.email ? options.replyTo : null;
+      const replyToMask = replyTo ? this.maskEmail(replyTo.email) : 'none';
       console.log(
         `${logPrefix}[platform_send_start]${contextText} to=${toMask} subject="${subjectShort}" ` +
-          `provider=${diag.provider} from=${diag.effectiveFromMasked} fromMatchesSmtpUser=${diag.fromMatchesSmtpUser}`
+          `provider=${diag.provider} from=${diag.effectiveFromMasked} fromMatchesSmtpUser=${diag.fromMatchesSmtpUser} replyTo=${replyToMask}`
       );
 
       // SendGrid: use HTTP API (port 443) instead of SMTP to avoid firewall/port 587 issues
@@ -224,6 +226,7 @@ class EmailService {
           subject,
           html,
           text: text || html.replace(/<[^>]*>/g, ''),
+          ...(replyTo ? { replyTo: { email: replyTo.email, name: replyTo.name || undefined } } : {}),
           ...(attachments.length ? { attachments: attachments.map(a => ({ content: (a.content || a.buffer || '').toString('base64'), filename: a.filename || 'file', type: a.contentType || 'application/octet-stream' })) } : {}),
           ...(options.categories && options.categories.length ? { categories: options.categories } : {})
         };
@@ -243,7 +246,12 @@ class EmailService {
         subject,
         html,
         text: text || html.replace(/<[^>]*>/g, ''),
-        attachments
+        attachments,
+        ...(replyTo
+          ? {
+            replyTo: replyTo.name ? `${replyTo.name} <${replyTo.email}>` : replyTo.email,
+          }
+          : {}),
       };
       const info = await transporter.sendMail(mailOptions);
       console.log(

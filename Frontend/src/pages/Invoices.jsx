@@ -27,7 +27,7 @@ import PrintableInvoice from '../components/PrintableInvoice';
 import StatusChip from '../components/StatusChip';
 import DetailSkeleton from '../components/DetailSkeleton';
 import { showSuccess, showError } from '../utils/toast';
-import { generatePDF } from '../utils/pdfUtils';
+import { generatePDF, openPrintDialog } from '../utils/pdfUtils';
 import { resolvePaymentNotePayload } from '../utils/paymentNotes';
 import dayjs from 'dayjs';
 import { Button } from '@/components/ui/button';
@@ -191,6 +191,7 @@ const Invoices = () => {
   const markAsPaidSubmitInFlightRef = useRef(false);
   const paymentClientRequestIdRef = useRef(null);
   const markAsPaidClientRequestIdRef = useRef(null);
+  const printPreviewRef = useRef(null);
   const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const invoicesQueryEnabled = scopeReady && !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId);
@@ -517,14 +518,18 @@ const Invoices = () => {
   }, []);
 
   const handlePrintInvoice = () => {
-    window.print();
+    if (!viewingInvoice) return;
+    const wrapper = printPreviewRef.current;
+    if (wrapper) {
+      openPrintDialog(wrapper, `Invoice-${viewingInvoice.invoiceNumber}`);
+    }
   };
 
   const handleDownloadInvoice = async () => {
     if (!viewingInvoice) return;
 
     try {
-      const invoiceElement = document.querySelector('.printable-invoice');
+      const invoiceElement = printPreviewRef.current?.querySelector('.printable-invoice');
 
       if (!invoiceElement) {
         showError(null, 'Invoice not found');
@@ -1470,8 +1475,8 @@ const Invoices = () => {
       </MobileFormDialog>
 
       <Dialog open={printModalVisible} onOpenChange={setPrintModalVisible}>
-        <DialogContent className="max-w-[100vw] sm:max-w-6xl max-h-[100dvh] sm:max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden">
-          <DialogHeader className="px-3 sm:px-6 py-3 border-b flex-shrink-0 text-left">
+        <DialogContent className="max-w-[100vw] sm:max-w-6xl max-h-[100dvh] sm:max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden [&>button]:no-print">
+          <DialogHeader className="px-3 sm:px-6 py-3 border-b flex-shrink-0 text-left no-print">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
                 <DialogTitle>Print Invoice</DialogTitle>
@@ -1479,7 +1484,7 @@ const Invoices = () => {
                   Preview, download, or print this invoice
                 </DialogDescription>
               </div>
-              <div className="flex gap-2 w-full sm:w-auto">
+              <div className="flex gap-2 w-full sm:w-auto no-print">
                 <Button
                   variant="outline"
                   className="flex-1 sm:flex-initial"
@@ -1497,7 +1502,10 @@ const Invoices = () => {
           </DialogHeader>
           {viewingInvoice && (
             <div className="print-invoice-preview flex-1 overflow-y-auto overflow-x-hidden bg-muted/30 p-2 sm:p-4">
-              <div className="print-invoice-preview-inner w-full max-w-full sm:max-w-[900px] sm:mx-auto">
+              <div
+                ref={printPreviewRef}
+                className="print-invoice-preview-inner w-full max-w-full sm:max-w-[900px] sm:mx-auto"
+              >
                 <PrintableInvoice
                   invoice={viewingInvoice}
                   organization={printOrganization}

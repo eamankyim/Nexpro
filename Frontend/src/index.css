@@ -649,7 +649,8 @@ html {
    ============================================ */
 
 @media print {
-  .no-print {
+  .no-print,
+  .print-hide {
     display: none !important;
   }
 }

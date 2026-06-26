@@ -1160,9 +1160,15 @@ const getServiceBookingStats = async (req) => {
     countServiceBookings(req, { status: 'in_progress', [Op.and]: [serviceBookingPaymentCondition(paidStatuses)] }),
     countServiceBookings(req, { status: 'completed' }),
     countServiceBookings(req, { status: 'cancelled' }),
-    Job.sum('finalPrice', { where: paidRevenueWhere, include: [paidRevenueInclude] }),
+    Job.sum('finalPrice', {
+      where: paidRevenueWhere,
+      include: [{ ...paidRevenueInclude, attributes: [] }],
+    }),
     countServiceBookings(req, { createdAt: { [Op.between]: [todayStart, todayEnd] } }),
-    Job.sum('finalPrice', { where: todayRevenueWhere, include: [serviceBookingLeadInclude(req)] }),
+    Job.sum('finalPrice', {
+      where: todayRevenueWhere,
+      include: [{ ...serviceBookingLeadInclude(req), attributes: [] }],
+    }),
   ]);
 
   return {

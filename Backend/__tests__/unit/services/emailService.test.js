@@ -153,6 +153,33 @@ describe('emailService diagnostics', () => {
     }));
   });
 
+  it('passes replyTo through platform SMTP sends', async () => {
+    const sendMail = jest.fn().mockResolvedValue({
+      messageId: 'gmail-message-2',
+      responseCode: 250,
+      response: '250 OK',
+    });
+    nodemailer.createTransport.mockReturnValue({ sendMail });
+    process.env.PLATFORM_EMAIL_PROVIDER = 'gmail';
+    process.env.PLATFORM_GMAIL_USER = 'platform@gmail.com';
+    process.env.PLATFORM_GMAIL_APP_PASSWORD = 'app-password';
+    process.env.PLATFORM_EMAIL_FROM_NAME = 'ABS';
+
+    const result = await emailService.sendPlatformMessage(
+      'invitee@example.com',
+      'Team invite',
+      '<p>Join us</p>',
+      'Join us',
+      [],
+      { replyTo: { email: 'manager@example.com', name: 'Team Manager' } }
+    );
+
+    expect(result).toMatchObject({ success: true, messageId: 'gmail-message-2' });
+    expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({
+      replyTo: 'Team Manager <manager@example.com>',
+    }));
+  });
+
   it('fails tenant sends without falling back when workspace email is missing', async () => {
     Setting.findOne.mockResolvedValue(null);
 

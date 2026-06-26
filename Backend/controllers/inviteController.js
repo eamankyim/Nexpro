@@ -242,64 +242,121 @@ exports.generateInvite = async (req, res, next) => {
         const tenantDiag = tenantEmailConfig.config
           ? emailService.getConfigDiagnostic(tenantEmailConfig.config)
           : null;
+        const useTenantEmail = tenantEmailConfig.ok;
+        const platformConfig = useTenantEmail ? null : await emailService.resolvePlatformConfig?.();
+        const platformDiag = platformConfig ? emailService.getConfigDiagnostic(platformConfig) : null;
+        const emailSource = useTenantEmail ? 'tenant_config' : 'platform_fallback';
+
         console.log('[Invite Email] Dispatch started', {
           inviteRequestId,
           inviteId: invite.id,
           inviteType: 'workspace_user',
-          emailSource: 'tenant_config',
+          emailSource,
           to: emailService.maskEmail(normalizedEmail),
           inviterUserId: req.user?.id,
           tenantId: req.tenantId,
           tenantEmailReady: tenantEmailConfig.ok,
           tenantEmailReason: tenantEmailConfig.reason,
-          provider: tenantEmailConfig.provider || tenantDiag?.provider || 'unknown',
-          fromEmail: tenantDiag?.effectiveFromMasked || '(empty)',
-          fromMatchesSmtpUser: tenantDiag?.fromMatchesSmtpUser || 'n/a',
+          platformEmailReady: useTenantEmail ? 'n/a' : !!platformConfig,
+          provider: useTenantEmail
+            ? (tenantEmailConfig.provider || tenantDiag?.provider || 'unknown')
+            : (platformConfig?.provider || 'unknown'),
+          fromEmail: useTenantEmail
+            ? (tenantDiag?.effectiveFromMasked || '(empty)')
+            : (platformDiag?.effectiveFromMasked || '(empty)'),
+          fromMatchesSmtpUser: useTenantEmail
+            ? (tenantDiag?.fromMatchesSmtpUser || 'n/a')
+            : (platformDiag?.fromMatchesSmtpUser || 'n/a'),
           frontendUrl,
         });
-        if (!tenantEmailConfig.ok) {
-          throw new Error(`${tenantEmailConfig.error} Platform email fallback is disabled for tenant invites.`);
-        }
+
         const { isChannelEnabledForEvent } = require('../services/messageDeliveryRulesService');
         const inviteEmailEnabled = await isChannelEnabledForEvent(req.tenantId, 'team_invite', 'email');
         if (!inviteEmailEnabled) {
           throw new Error('Team invite email is disabled in message delivery rules.');
         }
-        let result = null;
-        let usedProvider = tenantEmailConfig.provider || 'smtp';
 
-        console.log('[Invite Email] Sending via tenant email config', {
-          inviteRequestId,
-          inviteId: invite.id,
-          tenantId: req.tenantId,
-          emailSource: 'tenant_config',
-          provider: usedProvider,
-          fromEmail: tenantDiag.effectiveFromMasked,
-          smtpUser: tenantDiag.smtpUserMasked,
-          fromMatchesSmtpUser: tenantDiag.fromMatchesSmtpUser,
-        });
-        result = await sendWithRetry(
-          () => emailService.sendMessage(req.tenantId, normalizedEmail, subject, html, text, [], null, {
-            context: {
-              requestId: req.id || req.headers?.['x-request-id'],
-              inviteRequestId,
-              inviteId: invite.id,
-              userId: req.user?.id,
-              source: 'tenant_invite_email',
-            },
-          }),
-          'tenant_email'
-        );
+        if (!useTenantEmail && !platformConfig) {
+          throw new Error(
+            `${tenantEmailConfig.error} Platform email is also not configured; invite could not be sent.`
+          );
+        }
+
+        let result = null;
+        let usedProvider = useTenantEmail
+          ? (tenantEmailConfig.provider || 'smtp')
+          : (platformConfig?.provider || 'unknown');
+
+        if (useTenantEmail) {
+          console.log('[Invite Email] Sending via tenant email config', {
+            inviteRequestId,
+            inviteId: invite.id,
+            tenantId: req.tenantId,
+            emailSource: 'tenant_config',
+            provider: usedProvider,
+            fromEmail: tenantDiag.effectiveFromMasked,
+            smtpUser: tenantDiag.smtpUserMasked,
+            fromMatchesSmtpUser: tenantDiag.fromMatchesSmtpUser,
+          });
+          result = await sendWithRetry(
+            () => emailService.sendMessage(req.tenantId, normalizedEmail, subject, html, text, [], null, {
+              context: {
+                requestId: req.id || req.headers?.['x-request-id'],
+                inviteRequestId,
+                inviteId: invite.id,
+                userId: req.user?.id,
+                source: 'tenant_invite_email',
+              },
+            }),
+            'tenant_email'
+          );
+        } else {
+          const replyTo = inviter?.email
+            ? { email: inviter.email, name: inviterName }
+            : undefined;
+          console.log('[Invite Email] Tenant email not configured. Using platform sender.', {
+            inviteRequestId,
+            inviteId: invite.id,
+            tenantId: req.tenantId,
+            emailSource: 'platform_fallback',
+            platformProvider: platformConfig?.provider || 'unknown',
+            fromEmail: platformDiag?.effectiveFromMasked || '(empty)',
+            replyTo: replyTo ? emailService.maskEmail(replyTo.email) : '(none)',
+          });
+          result = await sendWithRetry(
+            () => emailService.sendPlatformMessage(
+              normalizedEmail,
+              subject,
+              html,
+              text,
+              [],
+              {
+                categories: ['transactional', 'signup'],
+                replyTo,
+                context: {
+                  requestId: req.id || req.headers?.['x-request-id'],
+                  inviteRequestId,
+                  inviteId: invite.id,
+                  tenantId: req.tenantId,
+                  userId: req.user?.id,
+                  source: 'platform_invite_fallback',
+                },
+              }
+            ),
+            'platform_email'
+          );
+        }
+
         if (!result?.success) {
-          const tenantError = result?.error || 'Invite email send failed';
+          const sendError = result?.error || 'Invite email send failed';
           await InviteToken.update(
             {
               emailStatus: 'failed',
-              emailLastError: String(tenantError).slice(0, 5000),
+              emailLastError: String(sendError).slice(0, 5000),
             },
             { where: { id: invite.id } }
           );
-          throw new Error(tenantError);
+          throw new Error(sendError);
         }
         await InviteToken.update(
           {
@@ -314,7 +371,7 @@ exports.generateInvite = async (req, res, next) => {
           to: emailService.maskEmail(normalizedEmail),
           messageId: result?.messageId || null,
           provider: usedProvider,
-          emailSource: 'tenant_config',
+          emailSource,
         });
       } catch (err) {
         await InviteToken.update(
