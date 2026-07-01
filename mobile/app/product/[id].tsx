@@ -31,6 +31,7 @@ import {
 } from '@/components/EntityDetailLayout';
 import { ScreenShell } from '@/components/ScreenShell';
 import { FORM_LABELS } from '@/constants/formLabels';
+import { useAuth } from '@/context/AuthContext';
 import { useCart } from '@/context/CartContext';
 import { productService } from '@/services/productService';
 import { resolveImageUrl } from '@/utils/fileUtils';
@@ -88,6 +89,8 @@ export default function ProductDetailScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { addItem } = useCart();
+  const { isManager, tenantRole } = useAuth();
+  const canDeleteProduct = isManager || tenantRole === 'staff';
   const { colors, bg, cardBg, borderColor, textColor, mutedColor } = useEntityDetailTheme();
   const inputBg = bg === '#f9fafb' ? '#f9fafb' : '#18181b';
 
@@ -492,17 +495,19 @@ export default function ProductDetailScreen() {
         mutedColor={mutedColor}
         footer={
           <View style={styles.editFooter}>
-            <Pressable
-              onPress={handleDelete}
-              disabled={deleteMutation.isPending}
-              style={[styles.editBtn, styles.deleteBtn, { borderColor: '#ef4444' }]}
-            >
-              {deleteMutation.isPending ? (
-                <ActivityIndicator color="#ef4444" />
-              ) : (
-                <Text style={styles.deleteText}>{FORM_LABELS.product.delete}</Text>
-              )}
-            </Pressable>
+            {canDeleteProduct ? (
+              <Pressable
+                onPress={handleDelete}
+                disabled={deleteMutation.isPending}
+                style={[styles.editBtn, styles.deleteBtn, { borderColor: '#ef4444' }]}
+              >
+                {deleteMutation.isPending ? (
+                  <ActivityIndicator color="#ef4444" />
+                ) : (
+                  <Text style={styles.deleteText}>{FORM_LABELS.product.delete}</Text>
+                )}
+              </Pressable>
+            ) : null}
             <Pressable
               onPress={handleSave}
               disabled={updateMutation.isPending}

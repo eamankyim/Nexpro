@@ -16,6 +16,7 @@ import { Image } from 'expo-image';
 
 import { AppIcon, type AppIconName } from '@/components/AppIcon';
 import { FormSheetModal } from '@/components/FormSheetModal';
+import { CartQuantitySheet } from '@/components/CartQuantitySheet';
 import { FORM_LABELS } from '@/constants/formLabels';
 import { useCart } from '@/context/CartContext';
 import { useAuth } from '@/context/AuthContext';
@@ -110,6 +111,7 @@ export default function CartScreen() {
   const [quickCustomerName, setQuickCustomerName] = useState('');
   const [findingCustomer, setFindingCustomer] = useState(false);
   const [sendToKitchen, setSendToKitchen] = useState(true);
+  const [quantityEditItem, setQuantityEditItem] = useState<(typeof items)[number] | null>(null);
 
   const shopType = activeTenant?.metadata?.shopType;
   const isRestaurant = shopType === SHOP_TYPES.RESTAURANT;
@@ -592,7 +594,14 @@ export default function CartScreen() {
                     >
                       <AppIcon name="minus" size={14} color={textColor} />
                     </Pressable>
-                    <Text style={[styles.quantityText, { color: textColor }]}>{item.quantity}</Text>
+                    <Pressable
+                      onPress={() => setQuantityEditItem(item)}
+                      style={styles.quantityValueBtn}
+                      accessibilityLabel={`Edit quantity for ${item.name}`}
+                      accessibilityRole="button"
+                    >
+                      <Text style={[styles.quantityText, { color: textColor }]}>{item.quantity}</Text>
+                    </Pressable>
                     <Pressable
                       onPress={() => updateQuantity(item.id, item.quantity + 1)}
                       style={[styles.quantityBtn, { borderColor }]}
@@ -925,6 +934,19 @@ export default function CartScreen() {
                 </>
               )}
       </FormSheetModal>
+
+      <CartQuantitySheet
+        visible={!!quantityEditItem}
+        item={quantityEditItem}
+        onClose={() => setQuantityEditItem(null)}
+        onApply={updateQuantity}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+        inputBg={inputBg}
+        tintColor={colors.tint}
+      />
     </ScreenShell>
   );
 }
@@ -993,6 +1015,13 @@ const styles = StyleSheet.create({
     height: 44,
     borderRadius: 10,
     borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quantityValueBtn: {
+    minWidth: 44,
+    minHeight: 44,
+    paddingHorizontal: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },

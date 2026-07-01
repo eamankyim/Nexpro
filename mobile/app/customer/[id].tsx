@@ -85,7 +85,8 @@ export default function CustomerDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { activeTenant, isAdmin } = useAuth();
+  const { activeTenant, isManager, tenantRole } = useAuth();
+  const canManageCustomer = isManager || tenantRole === 'staff';
   const { cardBg, borderColor, textColor, mutedColor, bg, colors } = useEntityDetailTheme();
   const [editOpen, setEditOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
@@ -297,7 +298,7 @@ export default function CustomerDetailScreen() {
   ].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   const customerPrimaryIsCreateJob = isStudio;
   const customerMoreActions: DetailMoreAction[] = [
-    ...(customerPrimaryIsCreateJob
+    ...(customerPrimaryIsCreateJob && canManageCustomer
       ? [{
           key: 'edit',
           label: 'Edit customer',
@@ -306,7 +307,7 @@ export default function CustomerDetailScreen() {
           disabled: isAnyActionActive,
         }]
       : []),
-    ...(isAdmin
+    ...(canManageCustomer
       ? [{
           key: 'delete',
           label: 'Delete',
@@ -406,7 +407,7 @@ export default function CustomerDetailScreen() {
               onPress={handleCreateJob}
               disabled={isAnyActionActive}
             />
-          ) : (
+          ) : canManageCustomer ? (
             <DetailActionButton
               label="Edit customer"
               icon="edit"
@@ -414,7 +415,7 @@ export default function CustomerDetailScreen() {
               onPress={openEdit}
               disabled={isAnyActionActive}
             />
-          )}
+          ) : null}
           <DetailMoreActions actions={customerMoreActions} disabled={isAnyActionActive} />
         </DetailFooter>
       </ScreenShell>

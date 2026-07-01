@@ -38,6 +38,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import POSNumpad from './POSNumpad';
+import POSQuantityDialog from './POSQuantityDialog';
 import { usePOSConfig } from '../../hooks/usePOSConfig';
 import { CURRENCY } from '../../constants';
 import { formatAmount, parseDecimalInput } from '../../utils/formatNumber';
@@ -45,7 +46,7 @@ import { formatAmount, parseDecimalInput } from '../../utils/formatNumber';
 /**
  * Cart item component
  */
-const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount, onEditPrice }) => {
+const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount, onEditPrice, onEditQuantity }) => {
   const unitPrice = Number(item.unitPrice);
   const catalogUnitPrice = Number(item.catalogUnitPrice ?? item.baseUnitPrice ?? item.unitPrice);
   const quantity = Number(item.quantity) || 0;
@@ -96,7 +97,19 @@ const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount, onEditPric
           </TooltipTrigger>
           <TooltipContent>Reduce by one</TooltipContent>
         </Tooltip>
-        <span className="w-10 text-center font-semibold text-foreground min-w-[2.5rem]">{quantity}</span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className="h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 rounded-md border border-border bg-background text-center font-semibold text-foreground hover:bg-muted"
+              onClick={() => onEditQuantity(item)}
+              aria-label={`Edit quantity for ${item.name}`}
+            >
+              {quantity}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Tap to enter quantity</TooltipContent>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -222,6 +235,8 @@ const POSCart = ({
   const [discountValue, setDiscountValue] = useState('');
   const [priceDialogOpen, setPriceDialogOpen] = useState(false);
   const [priceValue, setPriceValue] = useState('');
+  const [quantityDialogOpen, setQuantityDialogOpen] = useState(false);
+  const [quantityEditItem, setQuantityEditItem] = useState(null);
   const [isCartDiscount, setIsCartDiscount] = useState(false);
   const [quickFormExpanded, setQuickFormExpanded] = useState(false);
   const [customerSelectValue, setCustomerSelectValue] = useState('');
@@ -282,6 +297,16 @@ const POSCart = ({
     setPriceValue((item.unitPrice ?? 0).toString());
     setPriceDialogOpen(true);
   }, []);
+
+  const handleEditItemQuantity = useCallback((item) => {
+    setQuantityEditItem(item);
+    setQuantityDialogOpen(true);
+  }, []);
+
+  const handleApplyQuantity = useCallback((itemId, quantity) => {
+    onUpdateQuantity(itemId, quantity);
+    setQuantityEditItem(null);
+  }, [onUpdateQuantity]);
 
   const handleEditCartDiscount = useCallback(() => {
     setEditingItem(null);
@@ -553,6 +578,7 @@ const POSCart = ({
                   onRemove={onRemoveItem}
                   onEditDiscount={handleEditItemDiscount}
                   onEditPrice={handleEditItemPrice}
+                  onEditQuantity={handleEditItemQuantity}
                 />
               ))}
             </ScrollArea>
@@ -703,6 +729,13 @@ const POSCart = ({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <POSQuantityDialog
+        open={quantityDialogOpen}
+        onOpenChange={setQuantityDialogOpen}
+        item={quantityEditItem}
+        onApply={handleApplyQuantity}
+      />
     </Card>
   );
 };

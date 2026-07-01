@@ -29,6 +29,7 @@ import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
 import { FormInput, FormLabel } from '@/components/FormField';
 import { BarcodeScanner } from '@/components/BarcodeScanner';
+import { CartQuantitySheet } from '@/components/CartQuantitySheet';
 import { parseProductQRPayload, isProductQRCode } from '@/utils/productQR';
 import { parseApiEntity, parseApiListResponse } from '@/utils/parseApiListResponse';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -76,6 +77,13 @@ export default function ScanScreen() {
     });
     return map;
   }, [cartItems]);
+  const cartItemByProductId = useMemo(() => {
+    const map = new Map<string, (typeof cartItems)[number]>();
+    cartItems.forEach((item) => {
+      map.set(item.productId, item);
+    });
+    return map;
+  }, [cartItems]);
 
   const businessType = activeTenant?.businessType ?? 'printing_press';
   const isStudio = resolveBusinessType(businessType) === 'studio';
@@ -87,6 +95,7 @@ export default function ScanScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [scannerVisible, setScannerVisible] = useState(false);
   const [scannedProduct, setScannedProduct] = useState<any>(null);
+  const [quantityEditItem, setQuantityEditItem] = useState<(typeof cartItems)[number] | null>(null);
   const [jobForm, setJobForm] = useState({
     customerId: '',
     title: '',
@@ -358,6 +367,24 @@ export default function ScanScreen() {
       updateQuantity(cartItemId, currentQty + delta);
     },
     [selectedCartItemByProductId, cartQuantityByProductId, updateQuantity]
+  );
+
+  const handleOpenQuantityEditor = useCallback(
+    (product: {
+      id: string;
+      name: string;
+      trackStock?: boolean;
+      quantityOnHand?: number | null;
+    }) => {
+      const cartItem = cartItemByProductId.get(product.id);
+      if (!cartItem) return;
+      setQuantityEditItem({
+        ...cartItem,
+        trackStock: product.trackStock ?? cartItem.trackStock,
+        quantityOnHand: product.quantityOnHand ?? cartItem.quantityOnHand,
+      });
+    },
+    [cartItemByProductId]
   );
 
   const handleOpenProducts = useCallback(() => {
@@ -836,9 +863,19 @@ export default function ScanScreen() {
                           >
                             <AppIcon name="minus" size={16} color="#fff" />
                           </Pressable>
-                          <Text style={[styles.cartQuantityValue, { color: textColor }]}>
-                            {quantityInCart}
-                          </Text>
+                          <Pressable
+                            onPress={(e) => {
+                              e.stopPropagation();
+                              handleOpenQuantityEditor(p);
+                            }}
+                            style={styles.cartQuantityValueBtn}
+                            accessibilityLabel={`Edit quantity for ${p.name}`}
+                            accessibilityRole="button"
+                          >
+                            <Text style={[styles.cartQuantityValue, { color: textColor }]}>
+                              {quantityInCart}
+                            </Text>
+                          </Pressable>
                           <Pressable
                             onPress={(e) => {
                               e.stopPropagation();
@@ -975,6 +1012,19 @@ export default function ScanScreen() {
         visible={scannerVisible}
         onClose={() => setScannerVisible(false)}
         onScan={handleScan}
+      />
+
+      <CartQuantitySheet
+        visible={!!quantityEditItem}
+        item={quantityEditItem}
+        onClose={() => setQuantityEditItem(null)}
+        onApply={updateQuantity}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+        inputBg={inputBg}
+        tintColor={colors.tint}
       />
     </>
   );
@@ -1184,6 +1234,13 @@ const styles = StyleSheet.create({
     height: 44,
     borderRadius: 22,
     borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cartQuantityValueBtn: {
+    minWidth: 44,
+    minHeight: 44,
+    paddingHorizontal: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },

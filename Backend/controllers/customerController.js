@@ -254,7 +254,7 @@ exports.updateCustomer = async (req, res, next) => {
 
 // @desc    Delete customer
 // @route   DELETE /api/customers/:id
-// @access  Private
+// @access  Private (admin, manager, staff)
 exports.deleteCustomer = async (req, res, next) => {
   try {
     const customer = await Customer.findOne({

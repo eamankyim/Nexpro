@@ -101,6 +101,6 @@ router.route('/:id/store-listing')
 router.route('/:id')
   .get(timeCrudAction('products.read'), getProduct)
   .put(authorize('admin', 'manager', 'staff'), timeCrudAction('products.update'), updateProduct)
-  .delete(authorize('admin'), timeCrudAction('products.delete'), deleteProduct);
+  .delete(authorize('admin', 'manager', 'staff'), timeCrudAction('products.delete'), deleteProduct);
 
 module.exports = router;

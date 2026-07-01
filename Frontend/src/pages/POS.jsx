@@ -147,7 +147,9 @@ const buildCartItemFromProduct = (product, variant = null) => {
     priceOverridden: false,
     quantity: 1,
     discount: 0,
-    tax: 0
+    tax: 0,
+    trackStock: variant?.trackStock ?? product?.trackStock,
+    quantityOnHand: variant?.quantityOnHand ?? product?.quantityOnHand,
   };
 };
 

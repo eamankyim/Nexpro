@@ -54,6 +54,7 @@ import { parseProductQRPayload } from '../../utils/productQR';
 import { resolveImageUrl } from '../../utils/fileUtils';
 import { QRCodeScanner } from './POSProductSearch';
 import POSNumpad from './POSNumpad';
+import POSQuantityDialog from './POSQuantityDialog';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useDebounce } from '../../hooks/useDebounce';
 import { CURRENCY } from '../../constants';
@@ -124,7 +125,9 @@ const buildCartItem = (product, variant = null) => {
     priceOverridden: false,
     quantity: 1,
     discount: 0,
-    tax: 0
+    tax: 0,
+    trackStock: variant?.trackStock ?? product?.trackStock,
+    quantityOnHand: variant?.quantityOnHand ?? product?.quantityOnHand,
   };
 };
 
@@ -202,7 +205,7 @@ const PAYMENT_METHODS = [
 /**
  * Cart Item Component for Review Screen – with image
  */
-const CartItemRow = ({ item, onUpdateQuantity, onRemove, onEditPrice }) => {
+const CartItemRow = ({ item, onUpdateQuantity, onRemove, onEditPrice, onEditQuantity }) => {
   const { isMobile } = useResponsive();
   const itemTotal = item.unitPrice * item.quantity;
   const imageSrc = item.imageUrl ? resolveImageUrl(item.imageUrl) : null;
@@ -241,7 +244,14 @@ const CartItemRow = ({ item, onUpdateQuantity, onRemove, onEditPrice }) => {
         >
           <Minus className={`${isMobile ? 'h-3 w-3' : 'h-3 w-3'}`} />
         </Button>
-        <span className={`${isMobile ? 'w-7 text-xs' : 'w-8 text-sm'} text-center font-medium`}>{item.quantity}</span>
+        <button
+          type="button"
+          className={`${isMobile ? 'h-11 w-11 text-xs' : 'h-11 w-11 text-sm'} min-h-[44px] min-w-[44px] rounded-md border border-border bg-background text-center font-medium hover:bg-muted`}
+          onClick={() => onEditQuantity(item)}
+          aria-label={`Edit quantity for ${item.name}`}
+        >
+          {item.quantity}
+        </button>
         <Button
           variant="outline"
           size="icon"
@@ -314,6 +324,8 @@ const POSScanMode = ({
   const [variantPickerProduct, setVariantPickerProduct] = useState(null);
   const [priceDialogItem, setPriceDialogItem] = useState(null);
   const [priceValue, setPriceValue] = useState('');
+  const [quantityDialogOpen, setQuantityDialogOpen] = useState(false);
+  const [quantityEditItem, setQuantityEditItem] = useState(null);
   
   // Customer state
   const [customerName, setCustomerName] = useState('');
@@ -431,6 +443,16 @@ const POSScanMode = ({
     setPriceDialogItem(item);
     setPriceValue((item.unitPrice ?? 0).toString());
   }, []);
+
+  const openQuantityDialog = useCallback((item) => {
+    setQuantityEditItem(item);
+    setQuantityDialogOpen(true);
+  }, []);
+
+  const handleApplyQuantity = useCallback((itemId, quantity) => {
+    updateCartItemQuantity(itemId, quantity);
+    setQuantityEditItem(null);
+  }, [updateCartItemQuantity]);
 
   const updateCartItemPrice = useCallback(() => {
     const nextUnitPrice = parseDecimalInput(priceValue);
@@ -716,6 +738,7 @@ const POSScanMode = ({
                         onUpdateQuantity={updateCartItemQuantity}
                         onRemove={removeCartItem}
                         onEditPrice={openPriceDialog}
+                        onEditQuantity={openQuantityDialog}
                       />
                     ))}
                   </div>
@@ -1097,6 +1120,12 @@ const POSScanMode = ({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <POSQuantityDialog
+        open={quantityDialogOpen}
+        onOpenChange={setQuantityDialogOpen}
+        item={quantityEditItem}
+        onApply={handleApplyQuantity}
+      />
       </div>
     </div>
   );

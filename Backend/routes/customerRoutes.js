@@ -59,7 +59,7 @@ router.route('/find-or-create')
 router.route('/:id')
   .get(timeCrudAction('customers.read'), getCustomer)
   .put(authorize('admin', 'manager', 'staff'), timeCrudAction('customers.update'), updateCustomer)
-  .delete(authorize('admin'), timeCrudAction('customers.delete'), deleteCustomer);
+  .delete(authorize('admin', 'manager', 'staff'), timeCrudAction('customers.delete'), deleteCustomer);
 
 router
   .route('/:id/activities')

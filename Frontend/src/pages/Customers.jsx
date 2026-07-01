@@ -119,7 +119,8 @@ const Customers = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
-  const { isManager, isAdmin, user, activeTenant, activeTenantId } = useAuth();
+  const { isManager, tenantRole, activeTenant, activeTenantId } = useAuth();
+  const canManageCustomer = isManager || tenantRole === 'staff';
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
   const { activeStudioLocationId, scopeReady } = useWorkspaceScope();
@@ -526,7 +527,7 @@ const Customers = () => {
   const customerDrawerMoreMenuItems = useMemo(() => {
     if (!viewingCustomer) return [];
     const items = [];
-    if (isManager) {
+    if (canManageCustomer) {
       items.push({
         key: 'edit',
         label: 'Edit customer',
@@ -537,7 +538,7 @@ const Customers = () => {
         },
       });
     }
-    if (isAdmin) {
+    if (canManageCustomer) {
       items.push({
         key: 'delete',
         label: 'Delete customer',
@@ -546,7 +547,7 @@ const Customers = () => {
       });
     }
     return items;
-  }, [viewingCustomer, isManager, isAdmin, handleEdit]);
+  }, [viewingCustomer, canManageCustomer, handleEdit]);
 
   const onSubmit = async (values) => {
     if (values.howDidYouHear === '__OTHER__') {
@@ -680,7 +681,7 @@ const Customers = () => {
     filters.customerType !== 'all' ||
     !!debouncedSearchText;
 
-  const canAddCustomer = isManager || user?.role === 'staff';
+  const canAddCustomer = canManageCustomer;
 
   const customersEmptyState = useMemo(() => {
     if (hasActiveFilters) {
@@ -742,7 +743,7 @@ const Customers = () => {
             </TooltipTrigger>
             <TooltipContent>Reload customer list</TooltipContent>
           </Tooltip>
-          {(isManager || user?.role === 'staff') && (
+          {canAddCustomer && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -1118,7 +1119,7 @@ const Customers = () => {
         width={720}
         primaryAction={customerDrawerPrimaryAction}
         moreMenuItems={customerDrawerMoreMenuItems}
-        onDelete={isAdmin && viewingCustomer ? () => handleDelete(viewingCustomer.id) : null}
+        onDelete={canManageCustomer && viewingCustomer ? () => handleDelete(viewingCustomer.id) : null}
         deleteConfirmTitle="Delete customer?"
         deleteConfirmText="This permanently removes the customer and cannot be undone. Customers with linked jobs or invoices may fail to delete."
         deleteButtonLabel="Delete"

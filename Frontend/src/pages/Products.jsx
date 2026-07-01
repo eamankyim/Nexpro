@@ -641,7 +641,7 @@ const quickVendorSchema = z.object({
 // =============================================
 
 const Products = () => {
-  const { activeTenant, activeTenantId, tenantRole, isAdmin } = useAuth();
+  const { activeTenant, activeTenantId, tenantRole, isManager } = useAuth();
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
   const { scopeReady, activeStudioLocationId } = useWorkspaceScope();
@@ -655,6 +655,7 @@ const Products = () => {
   const shopType = useActiveShopType();
   const shopTypeFields = SHOP_TYPE_FIELDS[shopType] || [];
   const canViewProductSensitiveFields = tenantRole !== 'staff';
+  const canDeleteProduct = isManager || tenantRole === 'staff';
 
   // Shop-type-specific unit options (restaurant gets extra units)
   const unitOptions = useMemo(() => {
@@ -3990,7 +3991,7 @@ const Products = () => {
                     <Plus className="h-4 w-4 mr-2" />
                     Add Variant
                   </DropdownMenuItem>
-                  {isAdmin && (
+                  {canDeleteProduct && (
                     <>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem

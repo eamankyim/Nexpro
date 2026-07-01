@@ -15,6 +15,8 @@ type CartItem = {
   sku?: string;
   barcode?: string;
   productCode?: string;
+  trackStock?: boolean;
+  quantityOnHand?: number | null;
 };
 
 type CartContextType = {
@@ -145,6 +147,8 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
           sku: product.sku,
           barcode: product.barcode,
           productCode,
+          trackStock: product.trackStock,
+          quantityOnHand: product.quantityOnHand,
         };
         return [...prev, newItem];
       });
