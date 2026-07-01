@@ -39,6 +39,21 @@ import { getApiErrorMessage, parseApiEntity } from '@/utils/parseApiListResponse
 import { refreshAfterInventoryChange } from '@/utils/queryInvalidation';
 import { getOutOfStockMessage, isProductOutOfStock } from '@/utils/productStock';
 
+type ProductVariant = {
+  id: string;
+  name: string;
+  sku?: string;
+  barcode?: string;
+  sellingPrice?: number;
+  costPrice?: number;
+  quantityOnHand?: number;
+  attributes?: {
+    size?: string;
+    color?: string;
+    model?: string;
+  };
+};
+
 type ProductDetail = {
   id: string;
   name: string;
@@ -53,6 +68,8 @@ type ProductDetail = {
   imageUrl?: string | null;
   category?: { id: string; name: string };
   isActive?: boolean;
+  hasVariants?: boolean;
+  variants?: ProductVariant[];
 };
 
 const getAlternateBarcode = (product?: ProductDetail | null) => {
@@ -76,6 +93,19 @@ export default function ProductDetailScreen() {
 
   const [editOpen, setEditOpen] = useState(false);
   const [restockOpen, setRestockOpen] = useState(false);
+  const [variantDetailOpen, setVariantDetailOpen] = useState(false);
+  const [variantEditOpen, setVariantEditOpen] = useState(false);
+  const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
+  const [variantEditForm, setVariantEditForm] = useState({
+    size: '',
+    color: '',
+    model: '',
+    sku: '',
+    barcode: '',
+    sellingPrice: '',
+    costPrice: '',
+    quantityOnHand: '',
+  });
   const [editForm, setEditForm] = useState({
     name: '',
     sku: '',
@@ -93,6 +123,38 @@ export default function ProductDetailScreen() {
   });
 
   const product = useMemo(() => parseApiEntity<ProductDetail>(data), [data]);
+  const variants = useMemo(() => product?.variants ?? [], [product?.variants]);
+
+  const openVariantDetail = useCallback((variant: ProductVariant) => {
+    setSelectedVariant(variant);
+    setVariantDetailOpen(true);
+  }, []);
+
+  const closeVariantDetail = useCallback(() => {
+    setVariantDetailOpen(false);
+    setSelectedVariant(null);
+  }, []);
+
+  const openVariantEdit = useCallback((variant: ProductVariant) => {
+    setSelectedVariant(variant);
+    setVariantEditForm({
+      size: variant.attributes?.size || '',
+      color: variant.attributes?.color || '',
+      model: variant.attributes?.model || '',
+      sku: variant.sku || '',
+      barcode: variant.barcode || '',
+      sellingPrice: variant.sellingPrice?.toString() || product?.sellingPrice?.toString() || '',
+      costPrice: variant.costPrice?.toString() || '',
+      quantityOnHand: variant.quantityOnHand?.toString() || '0',
+    });
+    setVariantDetailOpen(false);
+    setVariantEditOpen(true);
+  }, [product?.sellingPrice]);
+
+  const closeVariantEdit = useCallback(() => {
+    setVariantEditOpen(false);
+    setSelectedVariant(null);
+  }, []);
 
   const openEdit = useCallback(() => {
     if (!product) return;
@@ -138,6 +200,56 @@ export default function ProductDetailScreen() {
     },
     onError: (err: unknown) => {
       Alert.alert('Error', getApiErrorMessage(err, 'Failed to delete product'));
+    },
+  });
+
+  const updateVariantMutation = useMutation({
+    mutationFn: () => {
+      if (!selectedVariant) throw new Error('No variant selected');
+      const variantName =
+        variantEditForm.model.trim() ||
+        variantEditForm.size.trim() ||
+        variantEditForm.color.trim() ||
+        selectedVariant.name;
+      const attributes: Record<string, string> = {};
+      if (variantEditForm.size.trim()) attributes.size = variantEditForm.size.trim();
+      if (variantEditForm.color.trim()) attributes.color = variantEditForm.color.trim();
+      if (variantEditForm.model.trim()) attributes.model = variantEditForm.model.trim();
+      return productService.updateProductVariant(selectedVariant.id, {
+        name: variantName,
+        sku: variantEditForm.sku.trim() || undefined,
+        barcode: variantEditForm.barcode.trim() || undefined,
+        sellingPrice: parseFloat(variantEditForm.sellingPrice),
+        costPrice: variantEditForm.costPrice ? parseFloat(variantEditForm.costPrice) : undefined,
+        quantityOnHand: variantEditForm.quantityOnHand ? parseFloat(variantEditForm.quantityOnHand) : 0,
+        attributes,
+      });
+    },
+    onSuccess: async () => {
+      await refreshAfterInventoryChange(queryClient);
+      await queryClient.invalidateQueries({ queryKey: ['product', id] });
+      closeVariantEdit();
+      Alert.alert('Success', 'Variant updated successfully');
+    },
+    onError: (err: unknown) => {
+      Alert.alert('Error', getApiErrorMessage(err, 'Failed to update variant'));
+    },
+  });
+
+  const deleteVariantMutation = useMutation({
+    mutationFn: () => {
+      if (!selectedVariant) throw new Error('No variant selected');
+      return productService.deleteProductVariant(selectedVariant.id);
+    },
+    onSuccess: async () => {
+      await refreshAfterInventoryChange(queryClient);
+      await queryClient.invalidateQueries({ queryKey: ['product', id] });
+      closeVariantDetail();
+      closeVariantEdit();
+      Alert.alert('Success', 'Variant deleted successfully');
+    },
+    onError: (err: unknown) => {
+      Alert.alert('Error', getApiErrorMessage(err, 'Failed to delete variant'));
     },
   });
 
@@ -212,6 +324,30 @@ export default function ProductDetailScreen() {
       ]
     );
   }, [deleteMutation, product]);
+
+  const handleDeleteVariant = useCallback(() => {
+    if (!selectedVariant) return;
+    Alert.alert(
+      'Delete Variant',
+      `Are you sure you want to delete "${selectedVariant.name}"? Past sales that used this variant will keep their records.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => deleteVariantMutation.mutate() },
+      ]
+    );
+  }, [deleteVariantMutation, selectedVariant]);
+
+  const handleSaveVariant = useCallback(() => {
+    if (!variantEditForm.sellingPrice) {
+      Alert.alert('Error', 'Selling price is required');
+      return;
+    }
+    if (!variantEditForm.size.trim() && !variantEditForm.color.trim() && !variantEditForm.model.trim()) {
+      Alert.alert('Error', 'At least one of size, color, or model is required');
+      return;
+    }
+    updateVariantMutation.mutate();
+  }, [updateVariantMutation, variantEditForm]);
 
   if (isLoading) return <DetailLoading title="Product" />;
   if (!product) return <DetailNotFound title="Product" entityLabel="Product" />;
@@ -304,6 +440,36 @@ export default function ProductDetailScreen() {
               <DetailInfoRow icon="list" label="Category" value={product.category.name} />
             ) : null}
           </DetailSectionCard>
+
+          {variants.length > 0 ? (
+            <DetailSectionCard title={`Variants (${variants.length})`} icon="list">
+              {variants.map((variant) => (
+                <Pressable
+                  key={variant.id}
+                  onPress={() => openVariantDetail(variant)}
+                  style={[styles.variantRow, { borderColor }]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`View variant ${variant.name}`}
+                >
+                  <View style={styles.variantRowMain}>
+                    <Text style={[styles.variantName, { color: textColor }]}>{variant.name}</Text>
+                    {variant.sku ? (
+                      <Text style={[styles.variantMeta, { color: mutedColor }]}>SKU: {variant.sku}</Text>
+                    ) : null}
+                  </View>
+                  <View style={styles.variantRowEnd}>
+                    <Text style={[styles.variantPrice, { color: textColor }]}>
+                      {formatCurrency(variant.sellingPrice ?? product.sellingPrice)}
+                    </Text>
+                    <Text style={[styles.variantMeta, { color: mutedColor }]}>
+                      Stock: {variant.quantityOnHand ?? 0}
+                    </Text>
+                  </View>
+                  <AppIcon name="chevron-right" size={16} color={mutedColor} />
+                </Pressable>
+              ))}
+            </DetailSectionCard>
+          ) : null}
         </ScrollView>
         <DetailFooter>
           <DetailActionButton
@@ -428,6 +594,173 @@ export default function ProductDetailScreen() {
         inputBg={inputBg}
         tintColor={colors.tint}
       />
+
+      <FormSheetModal
+        visible={variantDetailOpen}
+        title={selectedVariant?.name || FORM_LABELS.variant.detailTitle}
+        onClose={closeVariantDetail}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+        footer={
+          <View style={styles.editFooter}>
+            <Pressable
+              onPress={handleDeleteVariant}
+              disabled={deleteVariantMutation.isPending}
+              style={[styles.editBtn, styles.deleteBtn, { borderColor: '#ef4444' }]}
+            >
+              {deleteVariantMutation.isPending ? (
+                <ActivityIndicator color="#ef4444" />
+              ) : (
+                <Text style={styles.deleteText}>{FORM_LABELS.variant.delete}</Text>
+              )}
+            </Pressable>
+            <Pressable
+              onPress={() => selectedVariant && openVariantEdit(selectedVariant)}
+              style={[styles.editBtn, { backgroundColor: colors.tint, borderColor: colors.tint }]}
+            >
+              <Text style={styles.saveText}>Edit</Text>
+            </Pressable>
+          </View>
+        }
+      >
+        {selectedVariant ? (
+          <>
+            {selectedVariant.sku ? (
+              <DetailInfoRow icon="tag" label="SKU" value={selectedVariant.sku} />
+            ) : null}
+            {selectedVariant.barcode ? (
+              <DetailInfoRow icon="tag" label="Barcode" value={selectedVariant.barcode} />
+            ) : null}
+            {selectedVariant.attributes?.size ? (
+              <DetailInfoRow icon="list" label="Size" value={selectedVariant.attributes.size} />
+            ) : null}
+            {selectedVariant.attributes?.color ? (
+              <DetailInfoRow icon="list" label="Color" value={selectedVariant.attributes.color} />
+            ) : null}
+            {selectedVariant.attributes?.model ? (
+              <DetailInfoRow icon="list" label="Model" value={selectedVariant.attributes.model} />
+            ) : null}
+            <DetailInfoRow
+              icon="money"
+              label="Selling Price"
+              value={formatCurrency(selectedVariant.sellingPrice ?? product.sellingPrice)}
+              valueColor={colors.tint}
+            />
+            {selectedVariant.costPrice != null ? (
+              <DetailInfoRow icon="money" label="Cost Price" value={formatCurrency(selectedVariant.costPrice)} />
+            ) : null}
+            <DetailInfoRow icon="archive" label="Stock" value={`${selectedVariant.quantityOnHand ?? 0} units`} />
+          </>
+        ) : null}
+      </FormSheetModal>
+
+      <FormSheetModal
+        visible={variantEditOpen}
+        title={FORM_LABELS.variant.editTitle}
+        onClose={closeVariantEdit}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+        footer={
+          <View style={styles.editFooter}>
+            <Pressable
+              onPress={handleDeleteVariant}
+              disabled={deleteVariantMutation.isPending}
+              style={[styles.editBtn, styles.deleteBtn, { borderColor: '#ef4444' }]}
+            >
+              {deleteVariantMutation.isPending ? (
+                <ActivityIndicator color="#ef4444" />
+              ) : (
+                <Text style={styles.deleteText}>{FORM_LABELS.variant.delete}</Text>
+              )}
+            </Pressable>
+            <Pressable
+              onPress={handleSaveVariant}
+              disabled={updateVariantMutation.isPending}
+              style={[styles.editBtn, { backgroundColor: colors.tint, borderColor: colors.tint }]}
+            >
+              {updateVariantMutation.isPending ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.saveText}>{FORM_LABELS.variant.save}</Text>
+              )}
+            </Pressable>
+          </View>
+        }
+      >
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.variant.size}</Text>
+          <TextInput
+            style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
+            value={variantEditForm.size}
+            onChangeText={(t) => setVariantEditForm((p) => ({ ...p, size: t }))}
+          />
+        </View>
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.variant.color}</Text>
+          <TextInput
+            style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
+            value={variantEditForm.color}
+            onChangeText={(t) => setVariantEditForm((p) => ({ ...p, color: t }))}
+          />
+        </View>
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.variant.model}</Text>
+          <TextInput
+            style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
+            value={variantEditForm.model}
+            onChangeText={(t) => setVariantEditForm((p) => ({ ...p, model: t }))}
+          />
+        </View>
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.variant.sku}</Text>
+          <TextInput
+            style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
+            value={variantEditForm.sku}
+            onChangeText={(t) => setVariantEditForm((p) => ({ ...p, sku: t }))}
+          />
+        </View>
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.variant.barcode}</Text>
+          <TextInput
+            style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
+            value={variantEditForm.barcode}
+            onChangeText={(t) => setVariantEditForm((p) => ({ ...p, barcode: t }))}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.variant.costPrice}</Text>
+          <TextInput
+            style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
+            value={variantEditForm.costPrice}
+            onChangeText={(t) => setVariantEditForm((p) => ({ ...p, costPrice: t }))}
+            keyboardType="decimal-pad"
+          />
+        </View>
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.variant.sellingPrice}</Text>
+          <TextInput
+            style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
+            value={variantEditForm.sellingPrice}
+            onChangeText={(t) => setVariantEditForm((p) => ({ ...p, sellingPrice: t }))}
+            keyboardType="decimal-pad"
+          />
+        </View>
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.variant.quantityOnHand}</Text>
+          <TextInput
+            style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
+            value={variantEditForm.quantityOnHand}
+            onChangeText={(t) => setVariantEditForm((p) => ({ ...p, quantityOnHand: t }))}
+            keyboardType="number-pad"
+          />
+        </View>
+      </FormSheetModal>
     </>
   );
 }
@@ -458,4 +791,17 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 16,
   },
+  variantRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    minHeight: 44,
+  },
+  variantRowMain: { flex: 1, minWidth: 0 },
+  variantRowEnd: { alignItems: 'flex-end' },
+  variantName: { fontSize: 15, fontWeight: '600' },
+  variantPrice: { fontSize: 14, fontWeight: '600' },
+  variantMeta: { fontSize: 12, marginTop: 2 },
 });

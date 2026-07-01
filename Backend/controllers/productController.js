@@ -1271,6 +1271,15 @@ exports.deleteProductVariant = async (req, res, next) => {
       });
     }
 
+    try {
+      assertShopRecordAccess(req, variant.product);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
+    }
+
     const productId = variant.productId;
     await variant.destroy();
 
@@ -1286,11 +1295,19 @@ exports.deleteProductVariant = async (req, res, next) => {
       );
     }
 
+    invalidateProductListCache(req.tenantId);
+
     res.status(200).json({
       success: true,
       message: 'Variant deleted successfully'
     });
   } catch (error) {
+    if (error?.name === 'SequelizeForeignKeyConstraintError') {
+      return res.status(409).json({
+        success: false,
+        message: 'This variant cannot be deleted because it is still linked to other records.',
+      });
+    }
     next(error);
   }
 };

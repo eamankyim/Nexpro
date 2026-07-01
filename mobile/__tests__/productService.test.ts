@@ -2,6 +2,7 @@ jest.mock('@/services/api', () => ({
   api: {
     get: jest.fn(),
     put: jest.fn(),
+    delete: jest.fn(),
   },
 }));
 
@@ -44,5 +45,22 @@ describe('productService.adjustStock', () => {
         },
       },
     });
+  });
+});
+
+describe('productService.deleteProductVariant', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('calls DELETE /products/variants/:variantId', async () => {
+    jest.mocked(api.delete).mockResolvedValue({
+      data: { success: true, message: 'Variant deleted successfully' },
+    });
+
+    const result = await productService.deleteProductVariant('variant-1');
+
+    expect(api.delete).toHaveBeenCalledWith('/products/variants/variant-1');
+    expect(result).toEqual({ success: true, message: 'Variant deleted successfully' });
   });
 });

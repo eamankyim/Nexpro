@@ -1009,6 +1009,7 @@ const Invoices = () => {
           <InvoiceDetailsDrawerContent
             invoice={viewingInvoice}
             showJobDetails={isStudioLike}
+            showProductCode={!isStudioLike}
           />
         ) : null}
       </DetailsDrawer>
@@ -1510,6 +1511,7 @@ const Invoices = () => {
                   invoice={viewingInvoice}
                   organization={printOrganization}
                   screenLayout={isMobile ? 'mobile' : 'auto'}
+                  showProductCode={!isStudioLike}
                 />
               </div>
             </div>

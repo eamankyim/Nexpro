@@ -43,6 +43,7 @@ import {
   ArrowRightLeft,
   MoreVertical,
   Store,
+  ChevronRight,
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import { useDebounce } from '../hooks/useDebounce';
@@ -702,6 +703,9 @@ const Products = () => {
   const [submitting, setSubmitting] = useState(false);
   const [variantFormOpen, setVariantFormOpen] = useState(false);
   const [editingVariant, setEditingVariant] = useState(null);
+  const [variantDetailOpen, setVariantDetailOpen] = useState(false);
+  const [selectedVariantDetail, setSelectedVariantDetail] = useState(null);
+  const [variantDeleteDialogOpen, setVariantDeleteDialogOpen] = useState(false);
   const [productImageUploading, setProductImageUploading] = useState(false);
   /** 'compressing' | 'uploading' — for progress label; null when idle */
   const [productImagePhase, setProductImagePhase] = useState(null);
@@ -1579,6 +1583,49 @@ const Products = () => {
     variantForm.reset();
   }, [variantForm]);
 
+  const refreshSelectedProduct = useCallback(() => {
+    if (!selectedProduct?.id) return;
+    productService.getProductById(selectedProduct.id).then((r) => {
+      const data = r?.data?.data ?? r?.data ?? r;
+      if (data?.id) setSelectedProduct(data);
+    });
+  }, [selectedProduct?.id]);
+
+  const handleOpenVariantDetail = useCallback((variant) => {
+    setSelectedVariantDetail(variant);
+    setVariantDetailOpen(true);
+  }, []);
+
+  const handleCloseVariantDetail = useCallback(() => {
+    setVariantDetailOpen(false);
+    setSelectedVariantDetail(null);
+    setVariantDeleteDialogOpen(false);
+  }, []);
+
+  const handleEditVariantFromDetail = useCallback(() => {
+    if (!selectedVariantDetail) return;
+    const variant = selectedVariantDetail;
+    handleCloseVariantDetail();
+    handleOpenVariantForm(variant);
+  }, [handleCloseVariantDetail, handleOpenVariantForm, selectedVariantDetail]);
+
+  const handleDeleteVariantConfirm = async () => {
+    if (!selectedVariantDetail?.id) return;
+    setSubmitting(true);
+    try {
+      await productService.deleteProductVariant(selectedVariantDetail.id);
+      showSuccess('Variant deleted successfully');
+      handleCloseVariantDetail();
+      refreshAfterInventoryChange(queryClient);
+      refreshSelectedProduct();
+    } catch (error) {
+      showError(error, 'Failed to delete variant');
+    } finally {
+      setSubmitting(false);
+      setVariantDeleteDialogOpen(false);
+    }
+  };
+
   const handleVariantFormSubmit = async (values) => {
     if (!selectedProduct?.id) return;
     setSubmitting(true);
@@ -1612,10 +1659,7 @@ const Products = () => {
 
       handleCloseVariantForm();
       refreshAfterInventoryChange(queryClient);
-      productService.getProductById(selectedProduct.id).then((r) => {
-        const data = r?.data?.data ?? r?.data ?? r;
-        if (data?.id) setSelectedProduct(data);
-      });
+      refreshSelectedProduct();
     } catch (error) {
       showError(error, editingVariant ? 'Failed to update variant' : 'Failed to add variant');
     } finally {
@@ -4132,22 +4176,30 @@ const Products = () => {
                 {selectedProduct.variants && selectedProduct.variants.length > 0 ? (
                   <div className="space-y-2">
                     {selectedProduct.variants.map((variant) => (
-                      <div key={variant.id} className="flex items-center justify-between py-2 border-b border-border last:border-b-0">
-                        <div>
+                      <button
+                        key={variant.id}
+                        type="button"
+                        onClick={() => handleOpenVariantDetail(variant)}
+                        className="flex w-full items-center justify-between gap-3 py-2 border-b border-border last:border-b-0 text-left hover:bg-muted/40 rounded-md px-1 -mx-1 transition-colors"
+                      >
+                        <div className="min-w-0 flex-1">
                           <p className="font-medium text-foreground">{variant.name}</p>
                           {variant.sku && (
                             <p className="text-xs text-muted-foreground">SKU: {variant.sku}</p>
                           )}
                         </div>
-                        <div className="text-right">
-                          <p className="font-medium text-foreground">
-                            {valueFormatter(variant.sellingPrice || selectedProduct.sellingPrice)}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            Stock: {variant.quantityOnHand}
-                          </p>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div className="text-right">
+                            <p className="font-medium text-foreground">
+                              {valueFormatter(variant.sellingPrice || selectedProduct.sellingPrice)}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Stock: {variant.quantityOnHand}
+                            </p>
+                          </div>
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
                         </div>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 ) : (
@@ -4370,6 +4422,86 @@ const Products = () => {
               </form>
             </Form>
       </MobileFormDialog>
+
+      {/* Variant Detail Sheet */}
+      <Sheet open={variantDetailOpen} onOpenChange={(open) => !open && handleCloseVariantDetail()}>
+        <SheetContent side="right" className="flex w-full min-w-0 flex-col overflow-hidden sm:max-w-md">
+          <SheetHeader className="pr-8">
+            <SheetTitle>{selectedVariantDetail?.name || 'Variant'}</SheetTitle>
+            <SheetDescription>
+              {selectedProduct?.name ? `Variant of ${selectedProduct.name}` : 'Product variant details'}
+            </SheetDescription>
+          </SheetHeader>
+          {selectedVariantDetail && (
+            <div className="flex-1 overflow-y-auto py-4">
+              <Descriptions column={1} className="space-y-0">
+                {selectedVariantDetail.sku && (
+                  <DescriptionItem label="SKU">{selectedVariantDetail.sku}</DescriptionItem>
+                )}
+                {selectedVariantDetail.barcode && (
+                  <DescriptionItem label="Barcode">{selectedVariantDetail.barcode}</DescriptionItem>
+                )}
+                {selectedVariantDetail.attributes?.size && (
+                  <DescriptionItem label="Size">{selectedVariantDetail.attributes.size}</DescriptionItem>
+                )}
+                {selectedVariantDetail.attributes?.color && (
+                  <DescriptionItem label="Color">{selectedVariantDetail.attributes.color}</DescriptionItem>
+                )}
+                {selectedVariantDetail.attributes?.model && (
+                  <DescriptionItem label="Model">{selectedVariantDetail.attributes.model}</DescriptionItem>
+                )}
+                <DescriptionItem label="Selling Price">
+                  {valueFormatter(selectedVariantDetail.sellingPrice ?? selectedProduct?.sellingPrice)}
+                </DescriptionItem>
+                {canViewProductSensitiveFields && selectedVariantDetail.costPrice != null && (
+                  <DescriptionItem label="Cost Price">
+                    {valueFormatter(selectedVariantDetail.costPrice)}
+                  </DescriptionItem>
+                )}
+                <DescriptionItem label="Stock">
+                  {selectedVariantDetail.quantityOnHand ?? 0}
+                </DescriptionItem>
+              </Descriptions>
+            </div>
+          )}
+          <SheetFooter className="gap-2 border-t border-border pt-4">
+            <Button
+              type="button"
+              variant="outline"
+              className="text-destructive border-destructive hover:bg-destructive/10"
+              onClick={() => setVariantDeleteDialogOpen(true)}
+            >
+              <Trash2 className="h-4 w-4 mr-1" />
+              Delete
+            </Button>
+            <Button type="button" onClick={handleEditVariantFromDetail}>
+              <Pencil className="h-4 w-4 mr-1" />
+              Edit
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+
+      <AlertDialog open={variantDeleteDialogOpen} onOpenChange={setVariantDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Variant</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete &quot;{selectedVariantDetail?.name}&quot;? Past sales that used this variant will keep their records. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={submitting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteVariantConfirm}
+              loading={submitting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Create / Manage Category Dialog */}
       <MobileFormDialog

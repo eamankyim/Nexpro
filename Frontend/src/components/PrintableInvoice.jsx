@@ -67,7 +67,9 @@ const PrintableInvoice = ({
   /** When true, show XXX instead of monetary values (e.g. for sample/preview) */
   maskAmounts = false,
   /** 'mobile' enables phone-style card layout on screen (print/PDF stays document layout). */
-  screenLayout = 'auto'
+  screenLayout = 'auto',
+  /** Retail/shop types show product codes on line items; studio-like types hide them. */
+  showProductCode = true,
 }) => {
   if (!invoice) return null;
 
@@ -708,7 +710,7 @@ const PrintableInvoice = ({
                   return (
                     <div key={index} className="thermal-item-list">
                       <span className="thermal-item-name">{item.description || item.category || 'Item'}</span>
-                      {productCode && <span className="thermal-item-name">Product Code: {productCode}</span>}
+                      {productCode && showProductCode && <span className="thermal-item-name">Product Code: {productCode}</span>}
                       <span className="thermal-item-amount">{formatLineItemQuantity(item, qty)} × ₵ {unitPrice} = ₵ {total}</span>
                     </div>
                   );
@@ -889,7 +891,7 @@ const PrintableInvoice = ({
                   <div key={index} className="receipt-item-row" style={{ display: 'block', padding: '6px 0', borderBottom: '1px solid #eee', fontSize: '12px' }}>
                     <div style={{ fontWeight: 500, marginBottom: 2 }}>{item.description || item.category || 'Item'}</div>
                     <div style={{ fontSize: '11px', color: '#555' }}>{formatLineItemQuantity(item, qty)} × ₵ {unitPrice} = ₵ {total}</div>
-                    {productCode && <div style={{ fontSize: '11px', color: '#555' }}>Product Code: {productCode}</div>}
+                    {productCode && showProductCode && <div style={{ fontSize: '11px', color: '#555' }}>Product Code: {productCode}</div>}
                   </div>
                 );
               })
@@ -903,7 +905,7 @@ const PrintableInvoice = ({
             <thead>
               <tr>
                 <th style={{ width: '48%' }}>Description</th>
-                <th style={{ width: '16%' }}>Product Code</th>
+                <th style={{ width: showProductCode ? '16%' : '0%', display: showProductCode ? undefined : 'none' }}>Product Code</th>
                 <th className="text-center" style={{ width: '14%' }}>QTY</th>
                 <th className="text-right" style={{ width: '11%' }}>Unit Price</th>
                 <th className="text-right" style={{ width: '11%' }}>Amount</th>
@@ -923,7 +925,9 @@ const PrintableInvoice = ({
                           </div>
                         )}
                       </td>
-                      <td>{productCode || '-'}</td>
+                      {showProductCode ? (
+                        <td>{productCode || '-'}</td>
+                      ) : null}
                       <td className="text-center">{formatLineItemQuantity(item)}</td>
                       <td className="text-right">{amountDisplay(item.unitPrice)}</td>
                       <td className="text-right">
@@ -934,7 +938,7 @@ const PrintableInvoice = ({
                 })
               ) : (
                 <tr>
-                  <td colSpan="5" className="text-center">No items</td>
+                  <td colSpan={showProductCode ? 5 : 4} className="text-center">No items</td>
                 </tr>
               )}
             </tbody>

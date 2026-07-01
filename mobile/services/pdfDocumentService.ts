@@ -290,13 +290,13 @@ function renderHeader(source: AnyRecord, title: string, number: string): string 
   </div>`;
 }
 
-function renderItems(items: AnyRecord[]): string {
+function renderItems(items: AnyRecord[], showProductCode = true): string {
   const rows = items.length
     ? items.map((item) => {
       const quantity = getItemQuantity(item);
       const unitPrice = getItemUnitPrice(item);
       const lineTotal = getItemLineTotal(item);
-      const productCode = getItemProductCode(item);
+      const productCode = showProductCode ? getItemProductCode(item) : '';
       return `<tr>
         <td>
           <div>${escapeHtml(getItemName(item))}</div>
@@ -345,7 +345,8 @@ export function getInvoicePdfFilename(invoice: AnyRecord): string {
   return `${filenameSafe(pickFirst(invoice.invoiceNumber, invoice.id, 'invoice'))}.pdf`;
 }
 
-export async function shareInvoicePdf(invoice: AnyRecord) {
+export async function shareInvoicePdf(invoice: AnyRecord, options: { showProductCode?: boolean } = {}) {
+  const showProductCode = options.showProductCode !== false;
   const customer = asRecord(invoice.customer);
   const items = getItems(invoice);
   const total = moneyValue(invoice.totalAmount ?? invoice.total);
@@ -371,7 +372,7 @@ export async function shareInvoicePdf(invoice: AnyRecord) {
           ${invoice.dueDate ? `<div>Due: ${escapeHtml(formatDate(invoice.dueDate as string))}</div>` : ''}
         </div>
       </div>
-      ${renderItems(items)}
+      ${renderItems(items, showProductCode)}
       <div class="totals">
         <div class="total-row"><span>Subtotal</span><strong>${escapeHtml(formatCurrency(moneyValue(invoice.subtotal, total)))}</strong></div>
         ${discount > 0 ? `<div class="total-row"><span>Discount</span><strong>-${escapeHtml(formatCurrency(discount))}</strong></div>` : ''}

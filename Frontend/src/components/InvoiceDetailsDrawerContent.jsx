@@ -89,7 +89,7 @@ function getItemProductCode(item) {
  * Mobile-first invoice details layout for DetailsDrawer (section cards per design mock).
  * @param {{ invoice: object, showJobDetails?: boolean }} props
  */
-function InvoiceDetailsDrawerContent({ invoice, showJobDetails = true }) {
+function InvoiceDetailsDrawerContent({ invoice, showJobDetails = true, showProductCode = true }) {
   const [itemsExpanded, setItemsExpanded] = useState(false);
 
   const items = invoice?.items || [];
@@ -193,7 +193,7 @@ function InvoiceDetailsDrawerContent({ invoice, showJobDetails = true }) {
                         <span className="block truncate text-sm text-foreground">
                           {item.description || item.category || 'Item'}
                         </span>
-                        {productCode && (
+                        {showProductCode && productCode && (
                           <span className="block truncate text-xs text-muted-foreground">
                             Code: {productCode}
                           </span>

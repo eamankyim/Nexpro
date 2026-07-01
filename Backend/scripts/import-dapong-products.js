@@ -17,8 +17,15 @@
  * - Dry run by default
  * - Requires --execute and --confirm-import for real writes
  * - Resolves tenant by --tenant-id, --tenant-slug, --tenant-name, or --email
- * - Resolves shop by --shop-id or --shop-name (required unless SHOP_ID env is set)
+ * - Resolves shop by --shop-id (exact UUID) or --shop-name (fuzzy: case-insensitive,
+ *   dapong/danpong spelling, partial "spintex" match)
  * - Skips duplicates by default; use --on-duplicate update to refresh stock
+ *
+ * --source (important):
+ * - Default when omitted: data/dapong-stocks.xlsx (or DAPONG_IMPORT_SOURCE env)
+ * - For sortings_capitalized.xlsx you MUST pass --source explicitly:
+ *     --source data/sortings_capitalized.xlsx
+ * - Use ONE line on VPS/SSH (no backslash continuations; blank lines break args)
  *
  * Usage (from Backend/):
  *   # Parse/preview only (no database)
@@ -27,16 +34,17 @@
  *   # Parse sortings workbook (same A/B/C layout as dapong-stocks)
  *   node scripts/import-dapong-products.js --parse-only --source data/sortings_capitalized.xlsx
  *
- *   # Dry run against tenant + shop (default source: data/dapong-stocks.xlsx)
- *   node scripts/import-dapong-products.js \
- *     --tenant-name "Sulas Enterprise" \
- *     --shop-name "Dapong-spintex"
+ *   # Dry run (default source: data/dapong-stocks.xlsx)
+ *   node scripts/import-dapong-products.js --tenant-name "Sulas Enterprise" --shop-name "DANPONG-SPINTEX"
+ *
+ *   # Dry run with sortings file (required --source)
+ *   node scripts/import-dapong-products.js --tenant-name "Sulas Enterprise" --shop-name "DANPONG-SPINTEX" --source data/sortings_capitalized.xlsx
  *
  *   # Execute import
- *   node scripts/import-dapong-products.js \
- *     --tenant-name "Sulas Enterprise" \
- *     --shop-name "Dapong-spintex" \
- *     --execute --confirm-import
+ *   node scripts/import-dapong-products.js --tenant-name "Sulas Enterprise" --shop-name "DANPONG-SPINTEX" --source data/sortings_capitalized.xlsx --execute --confirm-import
+ *
+ *   # If name match fails, copy shop UUID from error output and use --shop-id
+ *   node scripts/import-dapong-products.js --tenant-name "Sulas Enterprise" --shop-id "<uuid>" --source data/sortings_capitalized.xlsx
  *
  * Env overrides (optional):
  *   DAPONG_IMPORT_TENANT_ID, DAPONG_IMPORT_TENANT_NAME, DAPONG_IMPORT_TENANT_SLUG
@@ -52,6 +60,7 @@ const ExcelJS = require('exceljs');
 const { Op } = require('sequelize');
 const { sequelize, testConnection } = require('../config/database');
 const { User, UserTenant, Tenant, Product, Shop, Barcode } = require('../models');
+const { filterShopsByName, shopNameMatches } = require('../utils/importShopMatchUtils');
 
 const DEFAULT_TENANT_NAME = process.env.DAPONG_IMPORT_TENANT_NAME || 'Sulas Enterprise';
 const DEFAULT_SHOP_NAME = process.env.DAPONG_IMPORT_SHOP_NAME || 'Dapong-spintex';
@@ -103,12 +112,19 @@ const USAGE = `
 Usage:
   node scripts/import-dapong-products.js [--parse-only] [--tenant-name <name> | --tenant-slug <slug> | --tenant-id <uuid> | --email <user-email>] [--shop-id <uuid> | --shop-name <name>] [--source <path-to-xlsx>] [--on-duplicate skip|update] [--execute --confirm-import]
 
+--source:
+  Default: data/dapong-stocks.xlsx (when omitted)
+  For sortings_capitalized.xlsx pass: --source data/sortings_capitalized.xlsx
+
+--shop-name:
+  Fuzzy match (case-insensitive, dapong/danpong, spintex). Use --shop-id if match fails.
+
 Examples:
   node scripts/import-dapong-products.js --parse-only
 
-  node scripts/import-dapong-products.js --tenant-name "Sulas Enterprise" --shop-name "Dapong-spintex"
+  node scripts/import-dapong-products.js --tenant-name "Sulas Enterprise" --shop-name "DANPONG-SPINTEX" --source data/sortings_capitalized.xlsx
 
-  node scripts/import-dapong-products.js --tenant-name "Sulas Enterprise" --shop-name "Dapong-spintex" --execute --confirm-import
+  node scripts/import-dapong-products.js --tenant-name "Sulas Enterprise" --shop-id "<uuid>" --source data/sortings_capitalized.xlsx --execute --confirm-import
 `;
 
 function validateArgs() {
@@ -255,8 +271,8 @@ function formatSourceNotFoundMessage(resolvedPath) {
       'From your Mac, upload with scp (adjust host if needed):',
       '  scp "/Users/us/Desktop/Dapong stocks for Sulas.xlsx" root@vmi2989486:~/nexpro/Backend/data/dapong-stocks.xlsx',
       '',
-      'Then on the VPS (from Backend/):',
-      '  node scripts/import-dapong-products.js --tenant-name "Sulas Enterprise" --shop-name "Dapong-spintex"',
+      'Then on the VPS (one line, no backslash continuations):',
+      '  node scripts/import-dapong-products.js --tenant-name "Sulas Enterprise" --shop-name "DANPONG-SPINTEX" --source data/sortings_capitalized.xlsx',
     );
   } else {
     const legacyDesktopPath = path.join(os.homedir(), 'Desktop', LEGACY_DESKTOP_FILENAME);
@@ -492,7 +508,7 @@ async function resolveShop(tenantId) {
   if (explicitShopId) {
     const shop = await Shop.findOne({ where: { id: explicitShopId, tenantId } });
     if (!shop) fail(`No shop ${explicitShopId} found for tenant ${tenantId}`);
-    if (explicitShopName && !normalizedKey(shop.name).includes(normalizedKey(explicitShopName))) {
+    if (explicitShopName && !shopNameMatches(explicitShopName, shop.name)) {
       fail(`Shop ${explicitShopId} (${shop.name}) does not match --shop-name "${explicitShopName}"`);
     }
     return shop;
@@ -511,16 +527,14 @@ async function resolveShop(tenantId) {
     fail(`No shops found for tenant ${tenantId}`);
   }
 
-  const searchName = normalizedKey(explicitShopName);
-  const exactMatches = shops.filter((shop) => normalizedKey(shop.name) === searchName);
-  const partialMatches = shops.filter((shop) => normalizedKey(shop.name).includes(searchName));
-  const matches = exactMatches.length ? exactMatches : partialMatches;
+  const matches = filterShopsByName(shops, explicitShopName);
 
   if (!matches.length) {
     console.error(`\nNo shop matching "${explicitShopName}" found. Available shops:`);
     shops.forEach((shop) => {
       console.error(`- ${shop.id} (${shop.name})${shop.isDefault ? ' default' : ''}`);
     });
+    console.error('\nRe-run with --shop-id <uuid> from the list above.');
     process.exit(1);
   }
 

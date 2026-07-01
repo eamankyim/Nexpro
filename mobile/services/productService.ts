@@ -170,4 +170,40 @@ export const productService = {
     // Backend returns: { success: true, message: '...' }
     return res.data;
   },
+
+  getProductVariants: async (productId: string) => {
+    const res = await api.get(`/products/${productId}/variants`);
+    return res.data;
+  },
+
+  createProductVariant: async (productId: string, data: {
+    name: string;
+    sku?: string;
+    barcode?: string;
+    sellingPrice?: number;
+    costPrice?: number;
+    quantityOnHand?: number;
+    attributes?: Record<string, string>;
+  }) => {
+    const res = await api.post(`/products/${productId}/variants`, data);
+    return res.data;
+  },
+
+  updateProductVariant: async (variantId: string, data: {
+    name?: string;
+    sku?: string;
+    barcode?: string;
+    sellingPrice?: number;
+    costPrice?: number;
+    quantityOnHand?: number;
+    attributes?: Record<string, string>;
+  }) => {
+    const res = await api.put(`/products/variants/${variantId}`, data);
+    return res.data;
+  },
+
+  deleteProductVariant: async (variantId: string) => {
+    const res = await api.delete(`/products/variants/${variantId}`);
+    return res.data;
+  },
 };

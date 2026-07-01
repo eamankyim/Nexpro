@@ -3,7 +3,11 @@ const { Job, Expense, Customer, Vendor, Invoice, JobItem, Lead, Sale, SaleItem, 
 const { Op } = require('sequelize');
 const { applyTenantFilter } = require('../utils/tenantUtils');
 const { applyShopFilter, getShopSqlFragment } = require('../utils/shopUtils');
-const { applyStudioLocationReadFilter, getStudioLocationSqlFragment } = require('../utils/studioLocationUtils');
+const {
+  scopedReportWhere,
+  jobScopeSqlFragment,
+  documentScopeSqlFragment,
+} = require('../utils/reportScopeUtils');
 const { resolveBusinessType } = require('../config/businessTypes');
 const { classifyAiProviderError, AI_PROVIDER_USER_MESSAGES } = require('../utils/aiProviderErrors');
 
@@ -19,12 +23,8 @@ const isRetailBusiness = (req) => {
 const isStudioBusiness = (req) =>
   resolveBusinessType(req.tenant?.businessType) === 'studio';
 
-/** Tenant + studio location read filter for invoice-backed reports. */
-const scopedInvoiceWhere = (req, extra = {}) =>
-  applyStudioLocationReadFilter(req, applyTenantFilter(req.tenantId, extra));
-
-const invoiceStudioSqlFragment = (req, tableAlias = '') =>
-  getStudioLocationSqlFragment(req, tableAlias);
+const invoiceDocumentSqlFragment = (req, tableAlias = '') =>
+  documentScopeSqlFragment(req, tableAlias);
 
 const scopedSaleWhere = (req, dateFilter = {}) =>
   scopedRetailWhere(req, {
@@ -180,7 +180,7 @@ const INVOICE_PAID_AT_LITERAL = 'COALESCE("Invoice"."paidDate", "Invoice"."updat
 const buildCollectedRevenueWhere = (reqOrTenantId, dateFilter = null) => {
   const isReq = reqOrTenantId && typeof reqOrTenantId === 'object' && reqOrTenantId.tenantId;
   const where = isReq
-    ? scopedInvoiceWhere(reqOrTenantId, {
+    ? scopedReportWhere(reqOrTenantId, {
         status: { [Op.ne]: 'cancelled' },
         amountPaid: { [Op.gt]: 0 },
       })
@@ -200,7 +200,7 @@ const buildCollectedRevenueWhere = (reqOrTenantId, dateFilter = null) => {
 };
 
 const buildOutstandingInvoiceWhere = (req, dateFilter = null, extra = {}) =>
-  scopedInvoiceWhere(req, {
+  scopedReportWhere(req, {
     status: { [Op.in]: ['sent', 'partial', 'overdue'] },
     balance: { [Op.gt]: 0 },
     ...extra,
@@ -275,7 +275,7 @@ exports.getRevenueReport = async (req, res, next) => {
     }
 
     const revWhere = buildCollectedRevenueWhere(req, dateFilter);
-    const studioFrag = invoiceStudioSqlFragment(req);
+    const studioFrag = invoiceDocumentSqlFragment(req);
 
     const getRevenueByPeriod = () => {
       if (groupBy === 'hour') {
@@ -376,7 +376,7 @@ exports.getExpenseReport = async (req, res, next) => {
     
     const dateFilter = resolveDateFilterFromQuery(req.query);
 
-    const expenseWhere = scopedRetailWhere(req, {
+    const expenseWhere = scopedReportWhere(req, {
       approvalStatus: 'approved',
       isArchived: false,
       ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
@@ -456,7 +456,7 @@ exports.getOutstandingPaymentsReport = async (req, res, next) => {
     const OUTSTANDING_INVOICE_LIMIT = isSlim ? 15 : 500;
     const TOP_CUSTOMER_LIMIT = isSlim ? 10 : 50;
     const outstandingWhere = buildOutstandingInvoiceWhere(req, dateFilter);
-    const agingBaseWhere = (dueDateExtra) => scopedInvoiceWhere(req, {
+    const agingBaseWhere = (dueDateExtra) => scopedReportWhere(req, {
       status: { [Op.in]: ['sent', 'partial', 'overdue'] },
       balance: { [Op.gt]: 0 },
       ...dueDateExtra,
@@ -555,6 +555,7 @@ exports.getSalesReport = async (req, res, next) => {
     const { startDate, endDate, groupBy = 'category' } = req.query;
     
     const dateFilter = resolveDateFilterFromQuery(req.query);
+    const jobFrag = jobScopeSqlFragment(req);
 
     // Sales by category - using JobItem.category (more accurate than jobType)
     let salesByCategory;
@@ -569,14 +570,15 @@ exports.getSalesReport = async (req, res, next) => {
         FROM "job_items" AS "JobItem"
         INNER JOIN "jobs" AS "job" ON "JobItem"."jobId" = "job"."id"
         WHERE "JobItem"."tenantId" = :tenantId
-          AND "job"."createdAt" BETWEEN :startDate AND :endDate
+          AND "job"."createdAt" BETWEEN :startDate AND :endDate${jobFrag.sql}
         GROUP BY "JobItem"."category"
         ORDER BY SUM("JobItem"."totalPrice") DESC
       `, {
         replacements: {
           tenantId: req.tenantId,
           startDate: dateFilter[Op.between][0],
-          endDate: dateFilter[Op.between][1]
+          endDate: dateFilter[Op.between][1],
+          ...jobFrag.replacements,
         },
         type: sequelize.QueryTypes.SELECT
       });
@@ -590,12 +592,13 @@ exports.getSalesReport = async (req, res, next) => {
           AVG("JobItem"."unitPrice") as "averagePrice"
         FROM "job_items" AS "JobItem"
         INNER JOIN "jobs" AS "job" ON "JobItem"."jobId" = "job"."id"
-        WHERE "JobItem"."tenantId" = :tenantId
+        WHERE "JobItem"."tenantId" = :tenantId${jobFrag.sql}
         GROUP BY "JobItem"."category"
         ORDER BY SUM("JobItem"."totalPrice") DESC
       `, {
         replacements: {
-          tenantId: req.tenantId
+          tenantId: req.tenantId,
+          ...jobFrag.replacements,
         },
         type: sequelize.QueryTypes.SELECT
       });
@@ -618,7 +621,7 @@ exports.getSalesReport = async (req, res, next) => {
         [sequelize.fn('SUM', sequelize.literal('"Job"."finalPrice"')), 'totalSales'],
         [sequelize.fn('COUNT', sequelize.literal('"Job"."id"')), 'jobCount']
       ],
-      where: applyTenantFilter(req.tenantId, {
+      where: scopedReportWhere(req, {
         ...(hasDateFilter(dateFilter) && { createdAt: dateFilter })
       }),
       include: [{
@@ -638,7 +641,7 @@ exports.getSalesReport = async (req, res, next) => {
         [sequelize.fn('SUM', sequelize.col('finalPrice')), 'totalSales'],
         [sequelize.fn('COUNT', sequelize.col('id')), 'jobCount']
       ],
-      where: applyTenantFilter(req.tenantId, {
+      where: scopedReportWhere(req, {
         ...(hasDateFilter(dateFilter) && { createdAt: dateFilter })
       }),
       group: [sequelize.literal(`CAST("createdAt" AS DATE)`)],
@@ -655,7 +658,7 @@ exports.getSalesReport = async (req, res, next) => {
           [sequelize.literal(`CAST("createdAt" AS DATE)`), 'date'],
           [sequelize.fn('COUNT', sequelize.col('id')), 'incoming']
         ],
-        where: applyTenantFilter(req.tenantId, {
+        where: scopedReportWhere(req, {
           createdAt: dateFilter
         }),
         group: [sequelize.literal(`CAST("createdAt" AS DATE)`)],
@@ -669,7 +672,7 @@ exports.getSalesReport = async (req, res, next) => {
           [sequelize.literal(`CAST("completionDate" AS DATE)`), 'date'],
           [sequelize.fn('COUNT', sequelize.col('id')), 'completed']
         ],
-        where: applyTenantFilter(req.tenantId, {
+        where: scopedReportWhere(req, {
           status: 'completed',
           completionDate: {
             [Op.and]: [
@@ -736,7 +739,7 @@ exports.getSalesReport = async (req, res, next) => {
           [sequelize.literal(`CAST("createdAt" AS DATE)`), 'date'],
           [sequelize.fn('COUNT', sequelize.col('id')), 'incoming']
         ],
-        where: applyTenantFilter(req.tenantId, {}),
+        where: scopedReportWhere(req, {}),
         group: [sequelize.literal(`CAST("createdAt" AS DATE)`)],
         order: [[sequelize.literal(`CAST("createdAt" AS DATE)`), 'ASC']],
         raw: true
@@ -748,7 +751,7 @@ exports.getSalesReport = async (req, res, next) => {
           [sequelize.literal(`CAST("completionDate" AS DATE)`), 'date'],
           [sequelize.fn('COUNT', sequelize.col('id')), 'completed']
         ],
-        where: applyTenantFilter(req.tenantId, {
+        where: scopedReportWhere(req, {
           status: 'completed',
           completionDate: {
             [Op.not]: null
@@ -814,7 +817,7 @@ exports.getSalesReport = async (req, res, next) => {
         [sequelize.fn('SUM', sequelize.col('finalPrice')), 'totalSales'],
         [sequelize.fn('COUNT', sequelize.col('id')), 'jobCount']
       ],
-      where: applyTenantFilter(req.tenantId, {
+      where: scopedReportWhere(req, {
         ...(hasDateFilter(dateFilter) && { createdAt: dateFilter })
       }),
       group: ['status'],
@@ -823,14 +826,14 @@ exports.getSalesReport = async (req, res, next) => {
 
     // Total sales
     const totalSales = await Job.sum('finalPrice', {
-      where: applyTenantFilter(req.tenantId, {
+      where: scopedReportWhere(req, {
         ...(hasDateFilter(dateFilter) && { createdAt: dateFilter })
       })
     }) || 0;
 
     // Total jobs count
     const totalJobs = await Job.count({
-      where: applyTenantFilter(req.tenantId, {
+      where: scopedReportWhere(req, {
         ...(hasDateFilter(dateFilter) && { createdAt: dateFilter })
       })
     }) || 0;
@@ -915,7 +918,7 @@ exports.getProfitLossReport = async (req, res, next) => {
     const [revenue, operatingExpenses, cogs] = await Promise.all([
       resolveOverviewRevenueTotal(req, dateFilter),
       Expense.sum('amount', {
-        where: scopedRetailWhere(req, {
+        where: scopedReportWhere(req, {
           approvalStatus: 'approved',
           isArchived: false,
           ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
@@ -973,7 +976,7 @@ exports.getIncomeExpenditureReport = async (req, res, next) => {
     const dateFilter = resolveDateFilterFromQuery(req.query);
 
     const revWhere = buildCollectedRevenueWhere(req, dateFilter);
-    const expenseWhere = scopedRetailWhere(req, {
+    const expenseWhere = scopedReportWhere(req, {
       approvalStatus: 'approved',
       isArchived: false,
       ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
@@ -1044,7 +1047,7 @@ exports.getProfitLossComplianceReport = async (req, res, next) => {
     const dateFilter = resolveDateFilterFromQuery(req.query);
 
     const revWhere = buildCollectedRevenueWhere(req, dateFilter);
-    const expenseWhere = scopedRetailWhere(req, {
+    const expenseWhere = scopedReportWhere(req, {
       approvalStatus: 'approved',
       isArchived: false,
       ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
@@ -1123,7 +1126,7 @@ exports.getFinancialPositionReport = async (req, res, next) => {
 
     // Debtors (trade receivables): outstanding invoice balance – customers with pending invoices; 0 when none
     const debtors = await Invoice.sum('balance', {
-      where: applyTenantFilter(req.tenantId, {
+      where: scopedReportWhere(req, {
         status: { [Op.in]: ['sent', 'partial', 'overdue'] },
         balance: { [Op.gt]: 0 },
         invoiceDate: { [Op.lte]: asAtEnd }
@@ -1146,7 +1149,7 @@ exports.getFinancialPositionReport = async (req, res, next) => {
       attributes: [
         [sequelize.literal('COALESCE(SUM("MaterialItem"."quantityOnHand" * "MaterialItem"."unitCost"), 0)'), 'totalValue']
       ],
-      where: applyTenantFilter(req.tenantId, {}),
+      where: scopedReportWhere(req, {}),
       raw: true
     });
     const materialsValue = parseFloat(materialsResult[0]?.totalValue || 0);
@@ -1156,7 +1159,7 @@ exports.getFinancialPositionReport = async (req, res, next) => {
     // Retained earnings: cumulative profit (revenue - expenses) up to end date
     const revToDate = await Invoice.sum('amountPaid', {
       where: {
-        ...applyTenantFilter(req.tenantId, {
+        ...scopedReportWhere(req, {
           status: { [Op.ne]: 'cancelled' },
           amountPaid: { [Op.gt]: 0 }
         }),
@@ -1166,7 +1169,7 @@ exports.getFinancialPositionReport = async (req, res, next) => {
       }
     }) || 0;
     const expToDate = await Expense.sum('amount', {
-      where: scopedRetailWhere(req, {
+      where: scopedReportWhere(req, {
         approvalStatus: 'approved',
         isArchived: false,
         expenseDate: { [Op.lte]: asAtEnd }
@@ -1220,7 +1223,7 @@ exports.getCashFlowReport = async (req, res, next) => {
     const dateFilter = resolveDateFilterFromQuery(req.query);
 
     const revWhere = buildCollectedRevenueWhere(req, dateFilter);
-    const expenseWhere = scopedRetailWhere(req, {
+    const expenseWhere = scopedReportWhere(req, {
       approvalStatus: 'approved',
       isArchived: false,
       ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
@@ -1267,14 +1270,14 @@ exports.getKpiSummary = async (req, res, next) => {
     const [totalRevenue, totalExpenses, activeCustomers, pendingInvoices] = await Promise.all([
       resolveOverviewRevenueTotal(req, dateFilter),
       Expense.sum('amount', {
-        where: scopedRetailWhere(req, {
+        where: scopedReportWhere(req, {
           approvalStatus: 'approved',
           isArchived: false,
           ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter }),
         }),
       }) || 0,
       Customer.count({
-        where: scopedRetailWhere(req, { isActive: true }),
+        where: scopedReportWhere(req, { isActive: true }),
       }),
       Invoice.sum('balance', {
         where: buildOutstandingInvoiceWhere(req, dateFilter),
@@ -1374,13 +1377,13 @@ exports.getPipelineSummary = async (req, res, next) => {
 
     try {
       activeJobs = await Job.count({
-        where: applyTenantFilter(req.tenantId, {
+        where: scopedReportWhere(req, {
           status: { [Op.notIn]: ['completed', 'cancelled'] },
         })
       });
       if (hasPeriod) {
         jobsCreatedInPeriod = await Job.count({
-          where: applyTenantFilter(req.tenantId, { createdAt: dateFilter })
+          where: scopedReportWhere(req, { createdAt: dateFilter })
         });
       }
     } catch (e) {
@@ -1390,14 +1393,14 @@ exports.getPipelineSummary = async (req, res, next) => {
     try {
       // Lead model uses status: new, contacted, qualified, lost, converted (not closed_won/closed_lost)
       openLeads = await Lead.count({
-        where: applyTenantFilter(req.tenantId, {
+        where: scopedReportWhere(req, {
           status: { [Op.notIn]: ['lost', 'converted'] },
           isActive: true
         })
       });
       if (hasPeriod) {
         leadsCreatedInPeriod = await Lead.count({
-          where: applyTenantFilter(req.tenantId, { createdAt: dateFilter })
+          where: scopedReportWhere(req, { createdAt: dateFilter })
         });
       }
     } catch (e) {
@@ -1406,14 +1409,14 @@ exports.getPipelineSummary = async (req, res, next) => {
 
     try {
       pendingInvoices = await Invoice.count({
-        where: applyTenantFilter(req.tenantId, {
+        where: scopedReportWhere(req, {
           status: { [Op.in]: ['sent', 'partial'] },
           balance: { [Op.gt]: 0 }
         })
       });
       if (hasPeriod) {
         invoicesIssuedInPeriod = await Invoice.count({
-          where: applyTenantFilter(req.tenantId, { invoiceDate: dateFilter })
+          where: scopedReportWhere(req, { invoiceDate: dateFilter })
         });
       }
     } catch (e) {
@@ -1453,6 +1456,7 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
     logReport('[Service Analytics] Query params:', { startDate, endDate });
     
     const dateFilter = resolveDateFilterFromQuery(req.query);
+    const jobFrag = jobScopeSqlFragment(req);
     if (hasDateFilter(dateFilter)) {
       const [start, end] = dateFilter[Op.between];
       logReport('[Service Analytics] Date filter applied:', { start, end });
@@ -1478,14 +1482,15 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
           FROM "job_items" AS "JobItem"
           INNER JOIN "jobs" AS "job" ON "JobItem"."jobId" = "job"."id"
           WHERE "JobItem"."tenantId" = :tenantId
-            AND "job"."createdAt" BETWEEN :startDate AND :endDate
+            AND "job"."createdAt" BETWEEN :startDate AND :endDate${jobFrag.sql}
           GROUP BY "JobItem"."category"
           ORDER BY SUM("JobItem"."totalPrice") DESC
         `, {
           replacements: {
             tenantId: req.tenantId,
             startDate: dateFilter[Op.between][0],
-            endDate: dateFilter[Op.between][1]
+            endDate: dateFilter[Op.between][1],
+            ...jobFrag.replacements,
           },
           type: sequelize.QueryTypes.SELECT
         });
@@ -1502,12 +1507,13 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
             MAX("JobItem"."unitPrice") as "maxPrice"
           FROM "job_items" AS "JobItem"
           INNER JOIN "jobs" AS "job" ON "JobItem"."jobId" = "job"."id"
-          WHERE "JobItem"."tenantId" = :tenantId
+          WHERE "JobItem"."tenantId" = :tenantId${jobFrag.sql}
           GROUP BY "JobItem"."category"
           ORDER BY SUM("JobItem"."totalPrice") DESC
         `, {
           replacements: {
-            tenantId: req.tenantId
+            tenantId: req.tenantId,
+            ...jobFrag.replacements,
           },
           type: sequelize.QueryTypes.SELECT
         });
@@ -1532,14 +1538,15 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
           FROM "job_items" AS "JobItem"
           INNER JOIN "jobs" AS "job" ON "JobItem"."jobId" = "job"."id"
           WHERE "JobItem"."tenantId" = :tenantId
-            AND "job"."createdAt" BETWEEN :startDate AND :endDate
+            AND "job"."createdAt" BETWEEN :startDate AND :endDate${jobFrag.sql}
           GROUP BY CAST("job"."createdAt" AS DATE)
           ORDER BY CAST("job"."createdAt" AS DATE) ASC
         `, {
           replacements: {
             tenantId: req.tenantId,
             startDate: dateFilter[Op.between][0],
-            endDate: dateFilter[Op.between][1]
+            endDate: dateFilter[Op.between][1],
+            ...jobFrag.replacements,
           },
           type: sequelize.QueryTypes.SELECT
         });
@@ -1552,12 +1559,13 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
             COUNT("JobItem"."id") as "itemCount"
           FROM "job_items" AS "JobItem"
           INNER JOIN "jobs" AS "job" ON "JobItem"."jobId" = "job"."id"
-          WHERE "JobItem"."tenantId" = :tenantId
+          WHERE "JobItem"."tenantId" = :tenantId${jobFrag.sql}
           GROUP BY CAST("job"."createdAt" AS DATE)
           ORDER BY CAST("job"."createdAt" AS DATE) ASC
         `, {
           replacements: {
-            tenantId: req.tenantId
+            tenantId: req.tenantId,
+            ...jobFrag.replacements,
           },
           type: sequelize.QueryTypes.SELECT
         });
@@ -1588,7 +1596,7 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
           INNER JOIN "jobs" AS "job" ON "JobItem"."jobId" = "job"."id"
           LEFT JOIN "customers" AS "customer" ON "job"."customerId" = "customer"."id"
           WHERE "JobItem"."tenantId" = :tenantId
-            AND "job"."createdAt" BETWEEN :startDate AND :endDate
+            AND "job"."createdAt" BETWEEN :startDate AND :endDate${jobFrag.sql}
           GROUP BY "job"."customerId", "customer"."id", "customer"."name", "customer"."company", "customer"."email"
           ORDER BY SUM("JobItem"."totalPrice") DESC
           LIMIT 20
@@ -1596,7 +1604,8 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
           replacements: {
             tenantId: req.tenantId,
             startDate: dateFilter[Op.between][0],
-            endDate: dateFilter[Op.between][1]
+            endDate: dateFilter[Op.between][1],
+            ...jobFrag.replacements,
           },
           type: sequelize.QueryTypes.SELECT
         });
@@ -1614,13 +1623,14 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
           FROM "job_items" AS "JobItem"
           INNER JOIN "jobs" AS "job" ON "JobItem"."jobId" = "job"."id"
           LEFT JOIN "customers" AS "customer" ON "job"."customerId" = "customer"."id"
-          WHERE "JobItem"."tenantId" = :tenantId
+          WHERE "JobItem"."tenantId" = :tenantId${jobFrag.sql}
           GROUP BY "job"."customerId", "customer"."id", "customer"."name", "customer"."company", "customer"."email"
           ORDER BY SUM("JobItem"."totalPrice") DESC
           LIMIT 20
         `, {
           replacements: {
-            tenantId: req.tenantId
+            tenantId: req.tenantId,
+            ...jobFrag.replacements,
           },
           type: sequelize.QueryTypes.SELECT
         });
@@ -1660,12 +1670,13 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
           FROM "job_items" AS "JobItem"
           INNER JOIN "jobs" AS "job" ON "JobItem"."jobId" = "job"."id"
           WHERE "JobItem"."tenantId" = :tenantId
-            AND "job"."createdAt" BETWEEN :startDate AND :endDate
+            AND "job"."createdAt" BETWEEN :startDate AND :endDate${jobFrag.sql}
         `, {
           replacements: {
             tenantId: req.tenantId,
             startDate: dateFilter[Op.between][0],
-            endDate: dateFilter[Op.between][1]
+            endDate: dateFilter[Op.between][1],
+            ...jobFrag.replacements,
           },
           type: sequelize.QueryTypes.SELECT
         });
@@ -1678,10 +1689,11 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
             SUM("JobItem"."quantity") as "totalQuantity"
           FROM "job_items" AS "JobItem"
           INNER JOIN "jobs" AS "job" ON "JobItem"."jobId" = "job"."id"
-          WHERE "JobItem"."tenantId" = :tenantId
+          WHERE "JobItem"."tenantId" = :tenantId${jobFrag.sql}
         `, {
           replacements: {
-            tenantId: req.tenantId
+            tenantId: req.tenantId,
+            ...jobFrag.replacements,
           },
           type: sequelize.QueryTypes.SELECT
         });
@@ -2098,7 +2110,7 @@ exports.getProductStockSummary = async (req, res, next) => {
 // @access  Private
 exports.getMaterialsSummary = async (req, res, next) => {
   try {
-    const where = applyTenantFilter(req.tenantId, {});
+    const where = scopedReportWhere(req, {});
     const [totals] = await MaterialItem.findAll({
       attributes: [
         [sequelize.fn('COUNT', sequelize.col('MaterialItem.id')), 'totalItems'],
@@ -2145,7 +2157,7 @@ exports.getMaterialsMovements = async (req, res, next) => {
 
     const dateFilter = resolveDateFilterFromQuery(req.query);
 
-    const movementWhere = applyTenantFilter(req.tenantId, {
+    const movementWhere = scopedReportWhere(req, {
       ...(hasDateFilter(dateFilter) && { occurredAt: dateFilter })
     });
 
@@ -2366,7 +2378,7 @@ exports.getVatReport = async (req, res, next) => {
     }
 
     // Get VAT from invoices
-    const invoiceVatWhere = applyTenantFilter(req.tenantId, {
+    const invoiceVatWhere = scopedReportWhere(req, {
       ...invoiceDateFilter
     });
 
@@ -2381,7 +2393,7 @@ exports.getVatReport = async (req, res, next) => {
     });
 
     // Get VAT from sales (POS)
-    const saleVatWhere = applyTenantFilter(req.tenantId, {
+    const saleVatWhere = scopedRetailWhere(req, {
       ...saleDateFilter
     });
 
@@ -2664,7 +2676,7 @@ exports.getOverviewPhase2 = async (req, res, next) => {
         return { success: false, data: null };
       }),
       Customer.count({
-        where: scopedRetailWhere(req, { isActive: true }),
+        where: scopedReportWhere(req, { isActive: true }),
       }),
       Invoice.sum('balance', {
         where: buildOutstandingInvoiceWhere(req, dateFilter),
@@ -2720,17 +2732,17 @@ async function computeOverviewPeriodMetrics(req, rangeStart, rangeEnd) {
   const dateFilter = { [Op.between]: [rangeStart, rangeEnd] };
   const endOfRange = new Date(rangeEnd);
 
-  const customerScopeAtEnd = scopedRetailWhere(req, {
+  const customerScopeAtEnd = scopedReportWhere(req, {
     isActive: true,
     createdAt: { [Op.lte]: endOfRange }
   });
 
-  const invoicePeriodWhere = applyTenantFilter(req.tenantId, {
+  const invoicePeriodWhere = scopedReportWhere(req, {
     status: { [Op.ne]: 'cancelled' },
     invoiceDate: dateFilter
   });
 
-  const expenseWhere = scopedRetailWhere(req, {
+  const expenseWhere = scopedReportWhere(req, {
     approvalStatus: 'approved',
     isArchived: false,
     expenseDate: dateFilter
@@ -2752,7 +2764,7 @@ async function computeOverviewPeriodMetrics(req, rangeStart, rangeEnd) {
     Expense.sum('amount', { where: expenseWhere }) || 0,
     getRetailCogsTotal(req, dateFilter),
     Customer.count({
-      where: scopedRetailWhere(req, {
+      where: scopedReportWhere(req, {
         isActive: true,
         createdAt: dateFilter
       })
@@ -2770,14 +2782,14 @@ async function computeOverviewPeriodMetrics(req, rangeStart, rangeEnd) {
           raw: true
         }),
     Invoice.sum('balance', {
-      where: applyTenantFilter(req.tenantId, {
+      where: scopedReportWhere(req, {
         status: { [Op.in]: ['sent', 'partial', 'overdue'] },
         balance: { [Op.gt]: 0 },
         invoiceDate: dateFilter
       })
     }) || 0,
     Invoice.sum('balance', {
-      where: applyTenantFilter(req.tenantId, {
+      where: scopedReportWhere(req, {
         status: { [Op.in]: ['sent', 'partial', 'overdue'] },
         balance: { [Op.gt]: 0 }
       })

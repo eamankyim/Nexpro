@@ -39,6 +39,7 @@ import {
 } from '@/utils/paymentCollection';
 import { parseApiEntity } from '@/utils/parseApiListResponse';
 import { refreshAfterInvoicePayment } from '@/utils/queryInvalidation';
+import { STUDIO_LIKE_TYPES } from '@/constants';
 import { InvoiceRecordPaymentSheet } from '@/components/InvoiceRecordPaymentSheet';
 import { usePaystackReconciliation } from '@/hooks/usePaystackReconciliation';
 
@@ -88,7 +89,7 @@ export default function InvoiceDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { activeTenantId, isAdmin, isManager } = useAuth();
+  const { activeTenantId, activeTenant, isAdmin, isManager } = useAuth();
   const { colors, cardBg, borderColor, textColor, mutedColor } = useEntityDetailTheme();
   const [showPaymentSheet, setShowPaymentSheet] = useState(false);
   const [awaitingPaystackReturn, setAwaitingPaystackReturn] = useState(false);
@@ -104,6 +105,10 @@ export default function InvoiceDetailScreen() {
   });
 
   const invoice = useMemo(() => parseApiEntity<InvoiceDetail>(data), [data]);
+  const showProductCode = useMemo(
+    () => !STUDIO_LIKE_TYPES.includes((activeTenant?.businessType || '') as (typeof STUDIO_LIKE_TYPES)[number]),
+    [activeTenant?.businessType]
+  );
 
   const { data: paymentCollectionData, isLoading: paymentCollectionLoading } = useQuery({
     queryKey: ['settings', 'payment-collection', activeTenantId],
@@ -193,7 +198,7 @@ export default function InvoiceDetailScreen() {
     if (!invoice) return;
     await runExclusiveAction('pdf', async () => {
       try {
-        await shareInvoicePdf(invoice as unknown as Record<string, unknown>);
+        await shareInvoicePdf(invoice as unknown as Record<string, unknown>, { showProductCode });
       } catch (err: unknown) {
         Alert.alert('Invoice unavailable', err instanceof Error ? err.message : 'Could not prepare this invoice PDF.');
       }
@@ -454,7 +459,7 @@ export default function InvoiceDetailScreen() {
                     <Text style={[styles.itemName, { color: textColor }]} numberOfLines={1}>
                       {item.description} x{formatLineItemQuantityDisplay(item as Record<string, unknown>)}
                     </Text>
-                    {getItemProductCode(item) ? (
+                    {showProductCode && getItemProductCode(item) ? (
                       <Text style={[styles.itemCode, { color: mutedColor }]} numberOfLines={1}>
                         Code: {getItemProductCode(item)}
                       </Text>
