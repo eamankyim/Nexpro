@@ -24,6 +24,9 @@
  *   # Parse/preview only (no database)
  *   node scripts/import-dapong-products.js --parse-only
  *
+ *   # Parse sortings workbook (same A/B/C layout as dapong-stocks)
+ *   node scripts/import-dapong-products.js --parse-only --source data/sortings_capitalized.xlsx
+ *
  *   # Dry run against tenant + shop (default source: data/dapong-stocks.xlsx)
  *   node scripts/import-dapong-products.js \
  *     --tenant-name "Sulas Enterprise" \

@@ -24,7 +24,6 @@ import {
   Copy,
   Trash2,
   Eye,
-  Barcode,
   TrendingUp,
   TrendingDown,
   Share2,
@@ -584,6 +583,23 @@ const getProductBarcodeAliases = (product) => {
 };
 
 const getProductAlternateBarcode = (product) => getProductBarcodeAliases(product)[0] || '';
+
+/** Product Code column / drawer — dedicated product code only (no SKU or primary barcode fallback). */
+const getProductCodeForTable = (product) => {
+  if (!product) return '';
+
+  const pickTrimmed = (...values) => (
+    values
+      .map((value) => (value == null ? '' : String(value).trim()))
+      .find(Boolean) || ''
+  );
+
+  return pickTrimmed(
+    product.productCode,
+    product.metadata?.productCode,
+    getProductAlternateBarcode(product),
+  );
+};
 
 const variantSchema = z.object({
   name: z.string().optional(),
@@ -1816,7 +1832,7 @@ const Products = () => {
       key: 'name',
       title: 'Product',
       width: '22rem',
-      cellClassName: 'min-w-0',
+      cellClassName: 'min-w-0 max-w-[22rem] overflow-hidden',
       render: (_, record) => (
         <div className="flex min-w-0 max-w-full items-center gap-3">
           <div className="w-10 h-10 shrink-0 rounded border border-border bg-muted overflow-hidden flex items-center justify-center">
@@ -1837,16 +1853,15 @@ const Products = () => {
             )}
           </div>
           <div className="min-w-0 flex-1 overflow-hidden">
-            <span className="block font-medium truncate" title={record.name || ''}>
+            <span className="block max-w-full font-medium truncate" title={record.name || ''}>
               {record.name}
             </span>
             <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
               {record.sku && (
-                <span className="truncate" title={record.sku ? `SKU: ${record.sku}` : ''}>
+                <span className="block max-w-full truncate" title={record.sku ? `SKU: ${record.sku}` : ''}>
                   SKU: {record.sku}
                 </span>
               )}
-              {record.barcode && <Barcode className="h-3 w-3 shrink-0" />}
             </div>
           </div>
         </div>
@@ -1855,17 +1870,8 @@ const Products = () => {
     {
       key: 'productCode',
       title: 'Product Code',
-      render: (_, record) => getProductAlternateBarcode(record) || '-',
+      render: (_, record) => getProductCodeForTable(record) || '-',
       hidden: isMobile,
-    },
-    {
-      key: 'category',
-      title: 'Category',
-      render: (_, record) => (
-        <Badge variant="default">
-          {record.category?.name || 'Uncategorized'}
-        </Badge>
-      ),
     },
     {
       key: 'quantityOnHand',
@@ -1923,13 +1929,6 @@ const Products = () => {
         <ActionColumn
           onView={() => handleViewProduct(record)}
           record={record}
-          extraActions={[
-            {
-              label: 'Publish to store',
-              onClick: () => handleOpenStoreListing(record),
-              icon: <Store className="h-4 w-4" />,
-            },
-          ]}
         />
       ),
     },
@@ -1937,7 +1936,6 @@ const Products = () => {
     isMobile,
     canViewProductSensitiveFields,
     handleViewProduct,
-    handleOpenStoreListing,
   ]);
 
   const handleRefresh = () => {
@@ -3983,7 +3981,7 @@ const Products = () => {
                   {selectedProduct.barcode || '-'}
                 </DescriptionItem>
                 <DescriptionItem label="Product Code">
-                  {getProductAlternateBarcode(selectedProduct) || '-'}
+                  {getProductCodeForTable(selectedProduct) || '-'}
                 </DescriptionItem>
               </Descriptions>
             </DrawerSectionCard>

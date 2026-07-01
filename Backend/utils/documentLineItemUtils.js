@@ -58,6 +58,18 @@ const getLineItemUnitSymbol = (item, context = {}) => {
 };
 
 /**
+ * Resolve product code for catalog table/drawer display.
+ * Uses only the dedicated product code field or alternate barcode — not SKU or primary barcode.
+ * @param {Object|null|undefined} record
+ * @returns {string}
+ */
+const resolveCatalogProductCode = (record) => pickTrimmed(
+  record?.metadata?.productCode,
+  record?.productCode,
+  getAlternateBarcodeFromRecord(record),
+);
+
+/**
  * Resolve product code for invoice/quote/receipt line items.
  * Prefers explicit item metadata, then alternate barcodes, then sku/primary barcode.
  * @param {{ item?: Object, saleItem?: Object, product?: Object, variant?: Object }} context
@@ -126,6 +138,7 @@ module.exports = {
   pickTrimmed,
   getAlternateBarcodeFromRecord,
   getLineItemUnitSymbol,
+  resolveCatalogProductCode,
   resolveDocumentLineItemProductCode,
   enrichDocumentLineItems,
 };

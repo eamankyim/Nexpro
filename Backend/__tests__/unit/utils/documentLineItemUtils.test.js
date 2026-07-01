@@ -53,6 +53,27 @@ describe('documentLineItemUtils', () => {
     expect(enriched[0].unit).toBe('sqm');
   });
 
+  it('resolves catalog product code without sku or primary barcode fallback', () => {
+    const { resolveCatalogProductCode } = require('../../../utils/documentLineItemUtils');
+
+    expect(resolveCatalogProductCode({
+      sku: 'SKU-ONLY',
+      barcode: 'PRIMARY-BC',
+      barcodes: [{ barcode: 'ALT-CODE', isActive: true }],
+    })).toBe('ALT-CODE');
+
+    expect(resolveCatalogProductCode({
+      sku: 'SKU-ONLY',
+      barcode: 'PRIMARY-BC',
+    })).toBe('');
+
+    expect(resolveCatalogProductCode({
+      productCode: 'META-CODE',
+      sku: 'SKU-ONLY',
+      barcode: 'PRIMARY-BC',
+    })).toBe('META-CODE');
+  });
+
   it('falls back to sale item metadata for product code and unit', () => {
     const enriched = enrichDocumentLineItems([
       { description: 'Tiles', quantity: 10 },

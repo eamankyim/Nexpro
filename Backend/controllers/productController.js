@@ -15,6 +15,7 @@ const {
   assertShopRecordAccess,
   userCanAccessShopId,
 } = require('../utils/shopUtils');
+const { resolveCatalogProductCode } = require('../utils/documentLineItemUtils');
 
 const PRODUCT_STAFF_SENSITIVE_FIELDS = [
   'costPrice',
@@ -67,6 +68,30 @@ const stripSensitiveProductFields = (record, req) => {
 const stripSensitiveProductListFields = (records, req) => {
   if (canViewProductSensitiveFields(req) || !Array.isArray(records)) return records;
   return records.map((record) => stripSensitiveProductFields(record, req));
+};
+
+const PRODUCT_LIST_BARCODE_ATTRIBUTES = ['barcode', 'isActive'];
+
+const formatProductForList = (record, req) => {
+  const stripped = stripSensitiveProductFields(record, req);
+  const plain = typeof stripped?.get === 'function'
+    ? stripped.get({ plain: true })
+    : (stripped && typeof stripped === 'object' ? { ...stripped } : stripped);
+
+  if (!plain || typeof plain !== 'object') return plain;
+
+  plain.productCode = resolveCatalogProductCode(plain) || null;
+
+  if (plain.metadata && typeof plain.metadata === 'object') {
+    delete plain.metadata;
+  }
+
+  return plain;
+};
+
+const formatProductListResponse = (records, req) => {
+  if (!Array.isArray(records)) return records;
+  return records.map((record) => formatProductForList(record, req));
 };
 
 const stripStaffProductWritePayload = (payload, req) => {
@@ -272,14 +297,33 @@ exports.getProducts = async (req, res, next) => {
       where.isActive = isActive === 'true' || isActive === true;
     }
     if (search) {
-      const searchCondition = {
-        [Op.or]: [
-        { name: { [Op.iLike]: `%${search}%` } },
-        { sku: { [Op.iLike]: `%${search}%` } },
-        { barcode: { [Op.iLike]: `%${search}%` } },
-        { brand: { [Op.iLike]: `%${search}%` } }
-        ],
-      };
+      const searchPattern = `%${search}%`;
+      const searchOrConditions = [
+        { name: { [Op.iLike]: searchPattern } },
+        { sku: { [Op.iLike]: searchPattern } },
+        { barcode: { [Op.iLike]: searchPattern } },
+        { brand: { [Op.iLike]: searchPattern } },
+        Product.sequelize.where(
+          Product.sequelize.cast(Product.sequelize.literal(`"Product"."metadata"->>'productCode'`), 'text'),
+          { [Op.iLike]: searchPattern },
+        ),
+      ];
+
+      const aliasMatches = await Barcode.findAll({
+        where: {
+          tenantId: req.tenantId,
+          productId: { [Op.ne]: null },
+          barcode: { [Op.iLike]: searchPattern },
+        },
+        attributes: ['productId'],
+        raw: true,
+      });
+      const aliasProductIds = [...new Set(aliasMatches.map((row) => row.productId).filter(Boolean))];
+      if (aliasProductIds.length > 0) {
+        searchOrConditions.push({ id: { [Op.in]: aliasProductIds } });
+      }
+
+      const searchCondition = { [Op.or]: searchOrConditions };
 
       where[Op.and] = Array.isArray(where[Op.and])
         ? [...where[Op.and]]
@@ -299,10 +343,19 @@ exports.getProducts = async (req, res, next) => {
       offset,
       attributes: {
         exclude: ['metadata'],
+        include: [
+          [Product.sequelize.literal(`"Product"."metadata"->>'productCode'`), 'productCode'],
+        ],
       },
       include: [
         { model: Shop, as: 'shop', attributes: ['id', 'name'] },
         { model: ProductCategory, as: 'category', attributes: ['id', 'name'] },
+        {
+          model: Barcode,
+          as: 'barcodes',
+          required: false,
+          attributes: PRODUCT_LIST_BARCODE_ATTRIBUTES,
+        },
         ...(includeVariants ? [{
           model: ProductVariant,
           as: 'variants',
@@ -323,7 +376,7 @@ exports.getProducts = async (req, res, next) => {
         limit,
         totalPages: Math.ceil(count / limit)
       },
-      data: stripSensitiveProductListFields(rows, req)
+      data: formatProductListResponse(rows, req)
     });
   } catch (error) {
     next(error);
@@ -944,11 +997,18 @@ exports.getProductByBarcode = async (req, res, next) => {
       });
     }
 
+    const productCodeMatchConditions = barcodeCandidates.map((code) => (
+      Product.sequelize.literal(
+        `TRIM("Product"."metadata"->>'productCode') = ${Product.sequelize.escape(String(code))}`,
+      )
+    ));
+
     let productWhere = applyTenantFilter(req.tenantId, {
       [Op.or]: [
         { barcode: { [Op.in]: barcodeCandidates } },
-        { sku: { [Op.in]: barcodeCandidates } }
-      ]
+        { sku: { [Op.in]: barcodeCandidates } },
+        ...productCodeMatchConditions,
+      ],
     });
 
     if (req.shopScoped) {
