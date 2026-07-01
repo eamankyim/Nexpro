@@ -24,6 +24,7 @@ const BUSINESS_TYPE_FEATURES = {
     'tasks',
     'orders',
     // Feature keys must match `Backend/config/features.js` registry.
+    'dealersAccount',
     'shopsModule',
     'pos',
     'materialsTracking',
@@ -81,6 +82,7 @@ const BUSINESS_TYPE_FEATURES = {
     'payroll',
     'roleManagement',
     'tasks',
+    'dealersAccount',
     'pharmacyManagement',
     'prescriptions',
     'materialsTracking',

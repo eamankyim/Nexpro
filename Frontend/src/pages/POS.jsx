@@ -14,7 +14,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { computeDocumentTax } from '../utils/taxCalculationClient';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { RefreshCw, Users, Loader2, Camera, CreditCard, UserPlus, Phone, Building2, AlertCircle, ChevronDown, X } from 'lucide-react';
+import { RefreshCw, Users, Loader2, Camera, CreditCard, UserPlus, Phone, Building2, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { SecondaryButton } from '@/components/ui/secondary-button';
@@ -36,6 +36,12 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 
 // POS Components
 import POSCart from '../components/pos/POSCart';
@@ -501,6 +507,7 @@ const POS = () => {
 
   // Scan Mode state
   const [scanModeOpen, setScanModeOpen] = useState(false);
+  const [cartSheetOpen, setCartSheetOpen] = useState(false);
   const { isMobile: isMobileWidth } = useResponsive();
   const safeAreaInsets = useSafeAreaInsets();
   const [isMobile, setIsMobile] = useState(isMobileWidth);
@@ -935,6 +942,7 @@ const POS = () => {
         }
       }
     }
+    setCartSheetOpen(false);
     setPaymentModalOpen(true);
   }, [cart, selectedCustomer, quickCustomerPhone, quickCustomerName, handleFindOrCreateCustomer, isDealerMode, selectedDealer?.id]);
 
@@ -1356,6 +1364,56 @@ const POS = () => {
     return `calc(0.75rem + ${safeBottom + chromeBuffer}px)`;
   }, [isMobile, safeAreaInsets.bottom]);
 
+  const posCartProps = useMemo(() => ({
+    items: cart,
+    totalsOverride: cartTotals,
+    onUpdateQuantity: updateCartItemQuantity,
+    onRemoveItem: removeCartItem,
+    onUpdateItemDiscount: updateCartItemDiscount,
+    onUpdateItemPrice: updateCartItemPrice,
+    customer: selectedCustomer,
+    customers: customersList,
+    onSelectCustomer: (customer) => {
+      setSelectedCustomer(customer);
+      setQuickCustomerName('');
+      setQuickCustomerPhone('');
+    },
+    onClearCustomer: () => {
+      setSelectedCustomer(null);
+      setQuickCustomerName('');
+      setQuickCustomerPhone('');
+    },
+    showQuickCustomerForm: true,
+    quickCustomerName,
+    quickCustomerPhone,
+    onQuickCustomerNameChange: setQuickCustomerName,
+    onQuickCustomerPhoneChange: setQuickCustomerPhone,
+    isDealerMode,
+    dealer: selectedDealer,
+    dealerSummary,
+    cartDiscount,
+    onUpdateCartDiscount: setCartDiscount,
+    onCheckout: handleCheckout,
+    onClearCart: clearCart,
+  }), [
+    cart,
+    cartTotals,
+    updateCartItemQuantity,
+    removeCartItem,
+    updateCartItemDiscount,
+    updateCartItemPrice,
+    selectedCustomer,
+    customersList,
+    quickCustomerName,
+    quickCustomerPhone,
+    isDealerMode,
+    selectedDealer,
+    dealerSummary,
+    cartDiscount,
+    handleCheckout,
+    clearCart,
+  ]);
+
   if (!isShop) {
     return (
       <div className="p-4 md:p-6 space-y-4 md:space-y-6">
@@ -1640,40 +1698,9 @@ const POS = () => {
           />
         </div>
 
-        {/* Right side - Cart */}
+        {/* Right side - Cart (desktop) */}
         <div className="hidden lg:block lg:col-span-2 min-h-0 overflow-y-auto">
-          <POSCart
-            items={cart}
-            totalsOverride={cartTotals}
-            onUpdateQuantity={updateCartItemQuantity}
-            onRemoveItem={removeCartItem}
-            onUpdateItemDiscount={updateCartItemDiscount}
-            onUpdateItemPrice={updateCartItemPrice}
-            customer={selectedCustomer}
-            customers={customersList}
-            onSelectCustomer={(customer) => {
-              setSelectedCustomer(customer);
-              setQuickCustomerName('');
-              setQuickCustomerPhone('');
-            }}
-            onClearCustomer={() => {
-              setSelectedCustomer(null);
-              setQuickCustomerName('');
-              setQuickCustomerPhone('');
-            }}
-            showQuickCustomerForm
-            quickCustomerName={quickCustomerName}
-            quickCustomerPhone={quickCustomerPhone}
-            onQuickCustomerNameChange={setQuickCustomerName}
-            onQuickCustomerPhoneChange={setQuickCustomerPhone}
-            isDealerMode={isDealerMode}
-            dealer={selectedDealer}
-            dealerSummary={dealerSummary}
-            cartDiscount={cartDiscount}
-            onUpdateCartDiscount={setCartDiscount}
-            onCheckout={handleCheckout}
-            onClearCart={clearCart}
-          />
+          <POSCart {...posCartProps} />
         </div>
       </div>
 
@@ -1806,20 +1833,57 @@ const POS = () => {
         canOverrideCredit={canOverrideCredit}
       />
 
-      {/* Mobile checkout bar — sticky in flex column (not fixed; avoids dialog/viewport clipping) */}
+      {/* Tablet/mobile cart sheet — full cart controls (qty, price, discount) */}
+      <Sheet open={cartSheetOpen} onOpenChange={setCartSheetOpen}>
+        <SheetContent
+          side="bottom"
+          className="h-[min(92dvh,760px)] p-0 flex flex-col rounded-t-xl border-t border-border"
+        >
+          <SheetHeader className="px-4 pt-4 pb-2 border-b border-border shrink-0 text-left">
+            <SheetTitle className="flex items-center gap-2">
+              Cart
+              {cartTotals.itemCount > 0 && (
+                <Badge variant="secondary">
+                  {cartTotals.itemCount} item{cartTotals.itemCount !== 1 ? 's' : ''}
+                </Badge>
+              )}
+            </SheetTitle>
+            <p className="text-sm text-muted-foreground font-normal">
+              Adjust quantities, prices, and discounts before checkout
+            </p>
+          </SheetHeader>
+          <div className="flex-1 min-h-0 overflow-hidden px-4 pb-4">
+            <POSCart
+              {...posCartProps}
+              embedded
+              showTitle={false}
+            />
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Tablet/mobile checkout bar — tap summary to open cart sheet */}
       <div
         className="lg:hidden shrink-0 z-20 border-t border-border bg-background px-4 pt-3 -ml-3 sm:-ml-4 md:ml-0 pr-4"
         style={mobileCheckoutBarPaddingBottom ? { paddingBottom: mobileCheckoutBarPaddingBottom } : undefined}
       >
         <div className="flex items-center justify-between gap-3 max-w-full">
-          <div className="flex flex-col min-w-0">
-            <span className="text-xs text-muted-foreground">
-              {cartTotals.itemCount} item{cartTotals.itemCount !== 1 ? 's' : ''}
-            </span>
-            <span className="text-lg font-semibold text-green-700 truncate">
-              {formatAmount(cartTotals.total)}
-            </span>
-          </div>
+          <button
+            type="button"
+            className="flex items-center gap-2 min-w-0 text-left rounded-lg border border-transparent hover:border-border hover:bg-muted/60 active:bg-muted px-2 py-1.5 -ml-2 min-h-[44px] transition-colors"
+            onClick={() => setCartSheetOpen(true)}
+            aria-label="Open cart to edit items"
+          >
+            <div className="flex flex-col min-w-0">
+              <span className="text-xs text-muted-foreground">
+                {cartTotals.itemCount} item{cartTotals.itemCount !== 1 ? 's' : ''} · Tap to edit
+              </span>
+              <span className="text-lg font-semibold text-green-700 truncate">
+                {formatAmount(cartTotals.total)}
+              </span>
+            </div>
+            <ChevronUp className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
+          </button>
           <div className="flex items-center gap-2 shrink-0">
             <Button
               variant="outline"

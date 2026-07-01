@@ -9,7 +9,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useNavigate } from 'react-router-dom';
-import { Search, Camera, X, Package, AlertCircle, Loader2, List, LayoutGrid, Plus, Circle } from 'lucide-react';
+import { Search, Camera, X, Package, AlertCircle, Loader2, List, LayoutGrid, Plus, Minus, Circle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -39,9 +39,64 @@ import { resolveImageUrl } from '../../utils/fileUtils';
 import api from '../../services/api';
 
 /**
+ * Inline +/- stepper for products already in cart (touch-friendly on tablet/mobile).
+ */
+const CartQuantityStepper = memo(function CartQuantityStepper({
+  quantity,
+  onAdjustQuantity,
+  compact = false,
+}) {
+  const buttonClass = compact
+    ? 'h-10 w-10 min-h-[40px] min-w-[40px]'
+    : 'h-11 w-11 min-h-[44px] min-w-[44px]';
+
+  return (
+    <div
+      className="flex items-center gap-0.5 rounded-full border border-[#166534] bg-[#166534] text-white font-semibold p-0.5"
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+      role="group"
+      aria-label={`Quantity ${quantity}`}
+    >
+      <button
+        type="button"
+        className={`${buttonClass} flex items-center justify-center rounded-full bg-[#14532d] hover:bg-[#134e28] transition-colors`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onAdjustQuantity(-1);
+        }}
+        aria-label="Decrease quantity"
+      >
+        <Minus className="h-4 w-4" />
+      </button>
+      <span className={`text-center font-semibold ${compact ? 'min-w-[1.5rem] text-sm px-0.5' : 'min-w-[1.75rem] text-sm px-1'}`}>
+        {quantity}
+      </span>
+      <button
+        type="button"
+        className={`${buttonClass} flex items-center justify-center rounded-full bg-white text-[#166534] hover:bg-green-50 transition-colors`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onAdjustQuantity(1);
+        }}
+        aria-label="Increase quantity"
+      >
+        <Plus className="h-4 w-4" />
+      </button>
+    </div>
+  );
+});
+
+/**
  * Product search result item
  */
-const ProductItem = memo(function ProductItem({ product, onSelect, quantityInCart = 0 }) {
+const ProductItem = memo(function ProductItem({
+  product,
+  onSelect,
+  quantityInCart = 0,
+  onAdjustQuantity,
+  showQuantityControls = false,
+}) {
   const trackStock = product.trackStock !== false;
   const qty = Number(product.quantityOnHand);
   const reorderLevel = Number(product.reorderLevel);
@@ -78,7 +133,7 @@ const ProductItem = memo(function ProductItem({ product, onSelect, quantityInCar
             onError={(e) => { e.currentTarget.style.display = 'none'; }}
           />
         )}
-        {inCart && (
+        {inCart && !showQuantityControls && (
           <span className="absolute -top-1 -right-1 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-brand text-white font-medium">
             <Plus className="h-4 w-4" />
           </span>
@@ -101,12 +156,18 @@ const ProductItem = memo(function ProductItem({ product, onSelect, quantityInCar
 
       {/* Stock and price */}
       <div className="text-right flex-shrink-0 flex flex-col items-end gap-1">
-        {inCart && (
+        {inCart && showQuantityControls && onAdjustQuantity ? (
+          <CartQuantityStepper
+            quantity={quantityInCart}
+            onAdjustQuantity={onAdjustQuantity}
+            compact
+          />
+        ) : inCart ? (
           <Badge className="text-sm py-1.5 px-3 bg-brand text-white border-0 gap-1.5 min-h-[32px]">
             <Plus className="h-4 w-4" />
             {quantityInCart}
           </Badge>
-        )}
+        ) : null}
         <p className="font-semibold text-green-700">
           {formatAmount(product.sellingPrice)}
         </p>
@@ -136,7 +197,13 @@ const ProductItem = memo(function ProductItem({ product, onSelect, quantityInCar
 /**
  * Product card for grid view
  */
-const ProductCard = memo(function ProductCard({ product, onSelect, quantityInCart = 0, onAdjustQuantity, isMobile }) {
+const ProductCard = memo(function ProductCard({
+  product,
+  onSelect,
+  quantityInCart = 0,
+  onAdjustQuantity,
+  showQuantityControls = false,
+}) {
   const trackStock = product.trackStock !== false;
   const qty = Number(product.quantityOnHand);
   const reorderLevel = Number(product.reorderLevel);
@@ -162,30 +229,11 @@ const ProductCard = memo(function ProductCard({ product, onSelect, quantityInCar
         >
       {inCart && (
         <div className="absolute top-2 right-2 z-20">
-          {isMobile && onAdjustQuantity ? (
-            <div className="flex items-center gap-1 rounded-full bg-brand text-white text-xs font-semibold px-1.5 py-0.5">
-              <button
-                type="button"
-                className="h-6 w-6 flex items-center justify-center rounded-full bg-brand-dark"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onAdjustQuantity(-1);
-                }}
-              >
-                -
-              </button>
-              <span className="min-w-[1.75rem] text-center">{quantityInCart}</span>
-              <button
-                type="button"
-                className="h-6 w-6 flex items-center justify-center rounded-full bg-white text-brand"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onAdjustQuantity(1);
-                }}
-              >
-                <Plus className="h-3 w-3" />
-              </button>
-            </div>
+          {showQuantityControls && onAdjustQuantity ? (
+            <CartQuantityStepper
+              quantity={quantityInCart}
+              onAdjustQuantity={onAdjustQuantity}
+            />
           ) : (
             <div className="flex h-9 min-w-[36px] items-center justify-center gap-1 rounded-full bg-brand px-2.5 text-white text-sm font-semibold">
               <Plus className="h-4 w-4" />
@@ -1129,7 +1177,14 @@ const POS_RESULTS_VIRT_MIN = 32;
 const POS_LIST_ROW_EST = 92;
 const POS_GRID_ROW_EST = 236;
 
-function POSVirtualProductList({ scrollRef, results, onSelect, cartQuantityByProductId }) {
+function POSVirtualProductList({
+  scrollRef,
+  results,
+  onSelect,
+  cartQuantityByProductId,
+  onAdjustProductQuantity,
+  showQuantityControls,
+}) {
   const virtualizer = useVirtualizer({
     count: results.length,
     getScrollElement: () => scrollRef.current,
@@ -1158,6 +1213,12 @@ function POSVirtualProductList({ scrollRef, results, onSelect, cartQuantityByPro
               product={product}
               onSelect={onSelect}
               quantityInCart={cartQuantityByProductId[product.id] || 0}
+              showQuantityControls={showQuantityControls}
+              onAdjustQuantity={
+                onAdjustProductQuantity
+                  ? (delta) => onAdjustProductQuantity(product.id, delta)
+                  : undefined
+              }
             />
           </div>
         );
@@ -1173,7 +1234,7 @@ function POSVirtualProductGrid({
   onSelect,
   cartQuantityByProductId,
   onAdjustProductQuantity,
-  isMobile,
+  showQuantityControls,
 }) {
   const rowCount = Math.ceil(results.length / columnCount);
   const virtualizer = useVirtualizer({
@@ -1214,12 +1275,12 @@ function POSVirtualProductGrid({
                   product={product}
                   onSelect={onSelect}
                   quantityInCart={cartQuantityByProductId[product.id] || 0}
+                  showQuantityControls={showQuantityControls}
                   onAdjustQuantity={
                     onAdjustProductQuantity
                       ? (delta) => onAdjustProductQuantity(product.id, delta)
                       : undefined
                   }
-                  isMobile={isMobile}
                 />
               ))}
             </div>
@@ -1259,7 +1320,8 @@ const POSProductSearch = ({
   onAddCustomItem,
 }) => {
   const navigate = useNavigate();
-  const { isMobile } = useResponsive();
+  const { isMobile, isDesktop } = useResponsive();
+  const showQuantityControls = !isDesktop;
   const [searchQuery, setSearchQuery] = useState('');
   const [results, setResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -1513,6 +1575,8 @@ const POSProductSearch = ({
                     results={results}
                     onSelect={handleSelectProduct}
                     cartQuantityByProductId={cartQuantityByProductId}
+                    onAdjustProductQuantity={onAdjustProductQuantity}
+                    showQuantityControls={showQuantityControls}
                   />
                 );
               }
@@ -1525,7 +1589,7 @@ const POSProductSearch = ({
                     onSelect={handleSelectProduct}
                     cartQuantityByProductId={cartQuantityByProductId}
                     onAdjustProductQuantity={onAdjustProductQuantity}
-                    isMobile={isMobile}
+                    showQuantityControls={showQuantityControls}
                   />
                 );
               }
@@ -1537,6 +1601,12 @@ const POSProductSearch = ({
                       product={product}
                       onSelect={handleSelectProduct}
                       quantityInCart={cartQuantityByProductId[product.id] || 0}
+                      showQuantityControls={showQuantityControls}
+                      onAdjustQuantity={
+                        onAdjustProductQuantity
+                          ? (delta) => onAdjustProductQuantity(product.id, delta)
+                          : undefined
+                      }
                     />
                   ))}
                 </div>
@@ -1548,12 +1618,12 @@ const POSProductSearch = ({
                       product={product}
                       onSelect={handleSelectProduct}
                       quantityInCart={cartQuantityByProductId[product.id] || 0}
+                      showQuantityControls={showQuantityControls}
                       onAdjustQuantity={
                         onAdjustProductQuantity
                           ? (delta) => onAdjustProductQuantity(product.id, delta)
                           : undefined
                       }
-                      isMobile={isMobile}
                     />
                   ))}
                 </div>

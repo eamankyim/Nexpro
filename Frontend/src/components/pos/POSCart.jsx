@@ -88,8 +88,8 @@ const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount, onEditPric
             <Button
               variant="outline"
               size="icon"
-              className="h-10 w-10 shrink-0"
-              onClick={() => onUpdateQuantity(item.id, Math.max(1, quantity - 1))}
+              className="h-11 w-11 min-h-[44px] min-w-[44px] shrink-0"
+              onClick={() => onUpdateQuantity(item.id, quantity - 1)}
             >
               <Minus className="h-4 w-4" />
             </Button>
@@ -102,7 +102,7 @@ const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount, onEditPric
             <Button
               variant="outline"
               size="icon"
-              className="h-10 w-10 shrink-0"
+              className="h-11 w-11 min-h-[44px] min-w-[44px] shrink-0"
               onClick={() => onUpdateQuantity(item.id, quantity + 1)}
             >
               <Plus className="h-4 w-4" />
@@ -123,7 +123,7 @@ const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount, onEditPric
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 text-muted-foreground hover:text-green-700"
+                className="h-10 w-10 min-h-[44px] min-w-[44px] text-muted-foreground hover:text-green-700"
                 onClick={() => onEditPrice(item)}
               >
                 <Pencil className="h-4 w-4" />
@@ -136,7 +136,7 @@ const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount, onEditPric
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 text-muted-foreground hover:text-blue-600"
+                className="h-10 w-10 min-h-[44px] min-w-[44px] text-muted-foreground hover:text-blue-600"
                 onClick={() => onEditDiscount(item)}
               >
                 <Percent className="h-4 w-4" />
@@ -149,7 +149,7 @@ const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount, onEditPric
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 text-muted-foreground hover:text-red-600"
+                className="h-10 w-10 min-h-[44px] min-w-[44px] text-muted-foreground hover:text-red-600"
                 onClick={() => onRemove(item.id)}
               >
                 <Trash2 className="h-4 w-4" />
@@ -188,6 +188,8 @@ const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount, onEditPric
  * @param {boolean} [props.isDealerMode] - Dealer wholesale mode (hides retail customer UI)
  * @param {Object} [props.dealer] - Selected dealer account
  * @param {Object} [props.dealerSummary] - Dealer balance/credit summary
+ * @param {boolean} [props.embedded] - Fill parent height (e.g. bottom sheet) without outer card chrome
+ * @param {boolean} [props.showTitle] - Show cart title row (default true)
  */
 const POSCart = ({
   items = [],
@@ -212,6 +214,8 @@ const POSCart = ({
   isDealerMode = false,
   dealer = null,
   dealerSummary = null,
+  embedded = false,
+  showTitle = true,
 }) => {
   const [discountDialogOpen, setDiscountDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
@@ -313,34 +317,36 @@ const POSCart = ({
   const isEmpty = items.length === 0;
 
   return (
-    <Card className="min-h-full flex flex-col border border-border">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2">
-            <ShoppingCart className="h-5 w-5" />
-            Cart
-            {totals.itemCount > 0 && (
-              <Badge variant="secondary" className="ml-2">
-                {totals.itemCount} item{totals.itemCount !== 1 ? 's' : ''}
-              </Badge>
+    <Card className={embedded ? 'h-full min-h-0 flex flex-col border-0 bg-transparent' : 'min-h-full flex flex-col border border-border'}>
+      <CardHeader className={embedded ? 'px-0 pb-3' : 'pb-3'}>
+        {showTitle && (
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <ShoppingCart className="h-5 w-5" />
+              Cart
+              {totals.itemCount > 0 && (
+                <Badge variant="secondary" className="ml-2">
+                  {totals.itemCount} item{totals.itemCount !== 1 ? 's' : ''}
+                </Badge>
+              )}
+            </CardTitle>
+            {!isEmpty && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-red-600 hover:text-red-700 hover:bg-red-50 min-h-[44px]"
+                    onClick={onClearCart}
+                  >
+                    Clear All
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Remove all items from cart</TooltipContent>
+              </Tooltip>
             )}
-          </CardTitle>
-          {!isEmpty && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                  onClick={onClearCart}
-                >
-                  Clear All
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Remove all items from cart</TooltipContent>
-            </Tooltip>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Customer / dealer selection */}
         <div className="mt-3">
@@ -528,7 +534,7 @@ const POSCart = ({
         </div>
       </CardHeader>
 
-      <CardContent className="flex-1 flex flex-col p-0 overflow-hidden">
+      <CardContent className={`flex-1 flex flex-col overflow-hidden ${embedded ? 'p-0' : 'p-0'}`}>
         {isEmpty ? (
           <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-6">
             <ShoppingCart className="h-16 w-16 mb-4 opacity-50" />

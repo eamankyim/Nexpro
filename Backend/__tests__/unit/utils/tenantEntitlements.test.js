@@ -132,4 +132,64 @@ describe('tenantEntitlements', () => {
     expect(entitlements.effectiveFeatureFlags.orders).toBe(false);
     expect(entitlements.enabledFeatures).not.toContain('orders');
   });
+
+  it('enables dealers account for professional shop tenants', async () => {
+    SubscriptionPlan.findOne.mockResolvedValue(null);
+
+    const entitlements = await getTenantEffectiveEntitlements({
+      id: 'tenant-shop-pro',
+      plan: 'professional',
+      businessType: 'shop',
+      metadata: {},
+    });
+
+    expect(entitlements.baseFeatureFlags.dealersAccount).toBe(true);
+    expect(entitlements.effectiveFeatureFlags.dealersAccount).toBe(true);
+    expect(entitlements.enabledFeatures).toContain('dealersAccount');
+  });
+
+  it('enables dealers account for professional pharmacy tenants', async () => {
+    SubscriptionPlan.findOne.mockResolvedValue(null);
+
+    const entitlements = await getTenantEffectiveEntitlements({
+      id: 'tenant-pharmacy-pro',
+      plan: 'professional',
+      businessType: 'pharmacy',
+      metadata: {},
+    });
+
+    expect(entitlements.baseFeatureFlags.dealersAccount).toBe(true);
+    expect(entitlements.effectiveFeatureFlags.dealersAccount).toBe(true);
+    expect(entitlements.enabledFeatures).toContain('dealersAccount');
+  });
+
+  it('strips dealers account for studio tenants even on professional plan', async () => {
+    SubscriptionPlan.findOne.mockResolvedValue(null);
+
+    const entitlements = await getTenantEffectiveEntitlements({
+      id: 'tenant-studio-pro',
+      plan: 'professional',
+      businessType: 'studio',
+      metadata: {},
+    });
+
+    expect(entitlements.baseFeatureFlags.dealersAccount).toBe(true);
+    expect(entitlements.effectiveFeatureFlags.dealersAccount).toBe(false);
+    expect(entitlements.enabledFeatures).not.toContain('dealersAccount');
+  });
+
+  it('does not include dealers account on starter plan', async () => {
+    SubscriptionPlan.findOne.mockResolvedValue(null);
+
+    const entitlements = await getTenantEffectiveEntitlements({
+      id: 'tenant-shop-starter',
+      plan: 'starter',
+      businessType: 'shop',
+      metadata: {},
+    });
+
+    expect(entitlements.baseFeatureFlags.dealersAccount).toBe(false);
+    expect(entitlements.effectiveFeatureFlags.dealersAccount).toBe(false);
+    expect(entitlements.enabledFeatures).not.toContain('dealersAccount');
+  });
 });

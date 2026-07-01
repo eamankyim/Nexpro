@@ -492,6 +492,7 @@ const PLAN_FEATURE_KEYS = {
     'products',
     'invoices',
     'expenses',
+    'dealersAccount',
     'studioLocationsModule',
     'shopsModule',
     'pharmacyOps',

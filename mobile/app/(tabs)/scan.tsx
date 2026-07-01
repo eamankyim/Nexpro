@@ -59,17 +59,20 @@ export default function ScanScreen() {
   const queryClient = useQueryClient();
   const { activeTenant, activeTenantId, hasFeature } = useAuth();
   const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
-  const { items: cartItems, getItemCount, addItem, removeItem } = useCart();
+  const { items: cartItems, getItemCount, addItem, updateQuantity } = useCart();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const cartItemCount = getItemCount();
-  const selectedProductIds = useMemo(
-    () => new Set(cartItems.map((item) => item.productId)),
-    [cartItems]
-  );
   const selectedCartItemByProductId = useMemo(() => {
     const map = new Map<string, string>();
     cartItems.forEach((item) => {
       map.set(item.productId, item.id);
+    });
+    return map;
+  }, [cartItems]);
+  const cartQuantityByProductId = useMemo(() => {
+    const map = new Map<string, number>();
+    cartItems.forEach((item) => {
+      map.set(item.productId, (map.get(item.productId) || 0) + item.quantity);
     });
     return map;
   }, [cartItems]);
@@ -347,16 +350,14 @@ export default function ScanScreen() {
     [addItem]
   );
 
-  const handleProductToggle = useCallback(
-    (selectedProduct: { id: string }) => {
-      const cartItemId = selectedCartItemByProductId.get(selectedProduct.id);
-      if (cartItemId) {
-        removeItem(cartItemId);
-        return;
-      }
-      handleProductSelect(selectedProduct);
+  const handleAdjustProductQuantity = useCallback(
+    (productId: string, delta: number) => {
+      const cartItemId = selectedCartItemByProductId.get(productId);
+      if (!cartItemId) return;
+      const currentQty = cartQuantityByProductId.get(productId) || 0;
+      updateQuantity(cartItemId, currentQty + delta);
     },
-    [handleProductSelect, removeItem, selectedCartItemByProductId]
+    [selectedCartItemByProductId, cartQuantityByProductId, updateQuantity]
   );
 
   const handleOpenProducts = useCallback(() => {
@@ -760,7 +761,8 @@ export default function ScanScreen() {
                 scrollEnabled={false}
                 columnWrapperStyle={styles.productRow}
                 renderItem={({ item: p }) => {
-                  const isSelected = selectedProductIds.has(p.id);
+                  const quantityInCart = cartQuantityByProductId.get(p.id) || 0;
+                  const isSelected = quantityInCart > 0;
                   const isOutOfStock = isProductOutOfStock(p);
 
                   return (
@@ -781,8 +783,8 @@ export default function ScanScreen() {
                       ]}
                     >
                       {isSelected ? (
-                        <View style={[styles.selectedBadge, { backgroundColor: colors.tint }]}>
-                          <AppIcon name="check" size={12} color="#fff" />
+                        <View style={[styles.quantityBadge, { backgroundColor: colors.tint }]}>
+                          <Text style={styles.quantityBadgeText}>{quantityInCart}</Text>
                         </View>
                       ) : null}
                       {/* Product Image */}
@@ -821,24 +823,64 @@ export default function ScanScreen() {
                           </Text>
                         ) : null}
                       </View>
-                      {/* Add to cart button */}
-                      <Pressable
-                        onPress={(e) => {
-                          e.stopPropagation();
-                          if (isOutOfStock && !isSelected) {
-                            Alert.alert('Out of stock', getOutOfStockMessage(p.name));
-                            return;
-                          }
-                          handleProductToggle(p);
-                        }}
-                        disabled={isOutOfStock && !isSelected}
-                        style={[
-                          styles.addToCartBtn,
-                          { backgroundColor: isOutOfStock && !isSelected ? mutedColor : colors.tint },
-                        ]}
-                      >
-                        <AppIcon name={isSelected ? 'check' : 'plus'} size={16} color="#fff" />
-                      </Pressable>
+                      {/* Add to cart / quantity controls */}
+                      {isSelected ? (
+                        <View style={styles.cartQuantityControls}>
+                          <Pressable
+                            onPress={(e) => {
+                              e.stopPropagation();
+                              handleAdjustProductQuantity(p.id, -1);
+                            }}
+                            style={[styles.cartQuantityBtn, { borderColor, backgroundColor: '#14532d' }]}
+                            accessibilityLabel="Decrease quantity"
+                          >
+                            <AppIcon name="minus" size={16} color="#fff" />
+                          </Pressable>
+                          <Text style={[styles.cartQuantityValue, { color: textColor }]}>
+                            {quantityInCart}
+                          </Text>
+                          <Pressable
+                            onPress={(e) => {
+                              e.stopPropagation();
+                              if (isOutOfStock) {
+                                Alert.alert('Out of stock', getOutOfStockMessage(p.name));
+                                return;
+                              }
+                              handleAdjustProductQuantity(p.id, 1);
+                            }}
+                            disabled={isOutOfStock}
+                            style={[
+                              styles.cartQuantityBtn,
+                              {
+                                borderColor: colors.tint,
+                                backgroundColor: isOutOfStock ? mutedColor : colors.tint,
+                              },
+                            ]}
+                            accessibilityLabel="Increase quantity"
+                          >
+                            <AppIcon name="plus" size={16} color="#fff" />
+                          </Pressable>
+                        </View>
+                      ) : (
+                        <Pressable
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            if (isOutOfStock) {
+                              Alert.alert('Out of stock', getOutOfStockMessage(p.name));
+                              return;
+                            }
+                            handleProductSelect(p);
+                          }}
+                          disabled={isOutOfStock}
+                          style={[
+                            styles.addToCartBtn,
+                            { backgroundColor: isOutOfStock ? mutedColor : colors.tint },
+                          ]}
+                          accessibilityLabel="Add to cart"
+                        >
+                          <AppIcon name="plus" size={16} color="#fff" />
+                        </Pressable>
+                      )}
                     </Pressable>
                   );
                 }}
@@ -1072,6 +1114,25 @@ const styles = StyleSheet.create({
     borderColor: '#fff',
     zIndex: 2,
   },
+  quantityBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    minWidth: 28,
+    height: 28,
+    paddingHorizontal: 8,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+    zIndex: 2,
+  },
+  quantityBadgeText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   productImageContainer: {
     width: '100%',
     aspectRatio: 1,
@@ -1100,13 +1161,37 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 8,
     right: 8,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
     borderColor: '#fff',
+  },
+  cartQuantityControls: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    left: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  cartQuantityBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cartQuantityValue: {
+    minWidth: 28,
+    textAlign: 'center',
+    fontSize: 16,
+    fontWeight: '700',
   },
   productResult: {
     marginTop: 20,
