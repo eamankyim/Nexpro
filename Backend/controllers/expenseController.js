@@ -346,6 +346,17 @@ exports.removeCustomExpenseCategory = async (req, res, next) => {
         message: 'Category not in custom list'
       });
     }
+
+    const expenseCount = await Expense.count({
+      where: applyTenantFilter(tenant.id, { category: name }),
+    });
+    if (expenseCount > 0) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot delete: ${expenseCount} expense(s) use this category. Reassign those expenses first.`,
+      });
+    }
+
     custom.splice(idx, 1);
     metadata.customExpenseCategories = custom;
     tenant.metadata = metadata;

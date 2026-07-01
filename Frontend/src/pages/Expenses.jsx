@@ -196,6 +196,7 @@ const Expenses = () => {
   const [manageCategoriesOpen, setManageCategoriesOpen] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
   const [removingCategoryName, setRemovingCategoryName] = useState(null);
+  const [categoryToDelete, setCategoryToDelete] = useState(null);
 
   const form = useForm({
     resolver: zodResolver(multipleMode ? multipleExpenseSchema : expenseSchema),
@@ -301,8 +302,15 @@ const Expenses = () => {
   };
 
   const handleRemoveCustomCategory = (name) => {
-    setRemovingCategoryName(name);
-    removeCategoryMutation.mutate(name);
+    setCategoryToDelete(name);
+  };
+
+  const confirmRemoveCustomCategory = () => {
+    if (!categoryToDelete) return;
+    setRemovingCategoryName(categoryToDelete);
+    removeCategoryMutation.mutate(categoryToDelete, {
+      onSettled: () => setCategoryToDelete(null),
+    });
   };
 
   const expenseQueryParams = useMemo(() => {
@@ -1243,6 +1251,27 @@ const Expenses = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!categoryToDelete} onOpenChange={(open) => !open && setCategoryToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete custom category?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Remove &quot;{categoryToDelete}&quot; from your custom categories. Default categories cannot be deleted. Categories used by existing expenses cannot be removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removingCategoryName !== null}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmRemoveCustomCategory}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              loading={removingCategoryName !== null}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Add/Edit Dialog */}
       <MobileFormDialog
