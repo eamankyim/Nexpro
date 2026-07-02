@@ -1,7 +1,8 @@
 const { Op } = require('sequelize');
-const { AccountBalance, Account } = require('../models');
+const { AccountBalance, Account, JournalEntry, JournalEntryLine } = require('../models');
 const { applyTenantFilter } = require('../utils/tenantUtils');
 const { getAccountCodes } = require('../config/accountingAccountCodes');
+const { parseReportDateRange } = require('../utils/reportDateFilter');
 
 const roundMoney = (value) => Math.round((Number(value) || 0) * 100) / 100;
 const roundPercent = (value) => Math.round((Number(value) || 0) * 100) / 100;
@@ -267,25 +268,85 @@ async function getFinancialPositionFromAccounting(tenantId, asAtDate) {
   };
 }
 
+const emptyCashFlowShape = () => ({
+  operating: {
+    cashReceivedFromCustomers: 0,
+    cashPaidToSuppliersAndExpenses: 0,
+    netCashFromOperatingActivities: 0
+  },
+  investing: { netCashUsedInInvestingActivities: 0 },
+  financing: { netCashFromFinancingActivities: 0 },
+  netChangeInCash: 0
+});
+
 /**
  * Get cash flow (operating) from accounting for a date range.
+ * Uses posted journal activity on cash/bank accounts (actual cash movement),
+ * not income/expense P&L balances (which include non-cash items like COGS/inventory).
  * Same response shape as reportController.getCashFlowReport (operating section).
  */
 async function getCashFlowFromAccounting(tenantId, startDate, endDate) {
-  const data = await getIncomeExpenditureFromAccounting(tenantId, startDate, endDate);
-  const operatingIn = data.income.total;
-  const operatingOut = data.expenditure.total;
+  const dateRange = parseReportDateRange(startDate, endDate);
+  if (!dateRange) {
+    return emptyCashFlowShape();
+  }
+
+  const codes = await getAccountCodes(tenantId);
+  const cashCodes = [...new Set([codes.cash, codes.undeposited].filter(Boolean))];
+  if (cashCodes.length === 0) {
+    return emptyCashFlowShape();
+  }
+
+  const cashAccounts = await Account.findAll({
+    where: applyTenantFilter(tenantId, {
+      code: { [Op.in]: cashCodes },
+      isActive: true
+    }),
+    attributes: ['id'],
+    raw: true
+  });
+
+  if (cashAccounts.length === 0) {
+    return emptyCashFlowShape();
+  }
+
+  const accountIds = cashAccounts.map((account) => account.id);
+  const lines = await JournalEntryLine.findAll({
+    attributes: ['debit', 'credit'],
+    where: applyTenantFilter(tenantId, { accountId: { [Op.in]: accountIds } }),
+    include: [
+      {
+        model: JournalEntry,
+        as: 'journalEntry',
+        attributes: [],
+        required: true,
+        where: {
+          ...applyTenantFilter(tenantId, {}),
+          status: 'posted',
+          entryDate: dateRange
+        }
+      }
+    ]
+  });
+
+  let operatingIn = 0;
+  let operatingOut = 0;
+  for (const line of lines) {
+    operatingIn += parseFloat(line.debit || 0);
+    operatingOut += parseFloat(line.credit || 0);
+  }
+
   const netCash = operatingIn - operatingOut;
 
   return {
     operating: {
-      cashReceivedFromCustomers: operatingIn,
-      cashPaidToSuppliersAndExpenses: operatingOut,
-      netCashFromOperatingActivities: Math.round(netCash * 100) / 100
+      cashReceivedFromCustomers: roundMoney(operatingIn),
+      cashPaidToSuppliersAndExpenses: roundMoney(operatingOut),
+      netCashFromOperatingActivities: roundMoney(netCash)
     },
     investing: { netCashUsedInInvestingActivities: 0 },
     financing: { netCashFromFinancingActivities: 0 },
-    netChangeInCash: Math.round(netCash * 100) / 100
+    netChangeInCash: roundMoney(netCash)
   };
 }
 

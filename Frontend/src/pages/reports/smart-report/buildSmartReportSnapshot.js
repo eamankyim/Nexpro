@@ -149,7 +149,7 @@ export function buildSmartReportSnapshot({
     },
     cashFlow: {
       label: 'Cash flow',
-      subLabel: 'Cash flow report for the selected period',
+      subLabel: 'Cash collected from invoices less approved expenses paid in the period',
       basis: 'cash_flow_report',
     },
   };

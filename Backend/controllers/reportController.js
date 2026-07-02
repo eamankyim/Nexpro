@@ -1214,12 +1214,7 @@ exports.getFinancialPositionReport = async (req, res, next) => {
 // @access  Private
 exports.getCashFlowReport = async (req, res, next) => {
   try {
-    const { startDate, endDate } = req.query;
-    if (startDate && endDate && (await accountingReportService.hasAccountingData(req.tenantId))) {
-      const data = await accountingReportService.getCashFlowFromAccounting(req.tenantId, startDate, endDate);
-      return res.status(200).json({ success: true, data, source: 'accounting' });
-    }
-
+    const { startDate, endDate, basis } = req.query;
     const dateFilter = resolveDateFilterFromQuery(req.query);
 
     const revWhere = buildCollectedRevenueWhere(req, dateFilter);
@@ -1236,26 +1231,42 @@ exports.getCashFlowReport = async (req, res, next) => {
       Expense.sum('amount', { where: expenseWhere }) || 0
     ]);
 
-    const operatingIn = parseFloat(cashFromCustomers);
-    const operatingOut = parseFloat(cashPaidExpenses);
+    const operatingIn = parseFloat(cashFromCustomers || 0);
+    const operatingOut = parseFloat(cashPaidExpenses || 0);
     const netCashFromOperating = operatingIn - operatingOut;
+
+    const operationalData = {
+      operating: {
+        cashReceivedFromCustomers: operatingIn,
+        cashPaidToSuppliersAndExpenses: operatingOut,
+        netCashFromOperatingActivities: netCashFromOperating
+      },
+      investing: {
+        netCashUsedInInvestingActivities: 0
+      },
+      financing: {
+        netCashFromFinancingActivities: 0
+      },
+      netChangeInCash: netCashFromOperating
+    };
+
+    // Default to operational cash (invoice/sale collections + approved expenses).
+    // Accounting auto-switch previously used P&L account balances, which mis-stated
+    // cash when revenue was recognized on invoice date and COGS hit expense accounts.
+    if (
+      basis === 'accounting'
+      && startDate
+      && endDate
+      && (await accountingReportService.hasAccountingData(req.tenantId))
+    ) {
+      const data = await accountingReportService.getCashFlowFromAccounting(req.tenantId, startDate, endDate);
+      return res.status(200).json({ success: true, data, source: 'accounting' });
+    }
 
     res.status(200).json({
       success: true,
-      data: {
-        operating: {
-          cashReceivedFromCustomers: operatingIn,
-          cashPaidToSuppliersAndExpenses: operatingOut,
-          netCashFromOperatingActivities: netCashFromOperating
-        },
-        investing: {
-          netCashUsedInInvestingActivities: 0
-        },
-        financing: {
-          netCashFromFinancingActivities: 0
-        },
-        netChangeInCash: netCashFromOperating
-      }
+      data: operationalData,
+      source: 'operational'
     });
   } catch (error) {
     logReportError('Error in getCashFlowReport:', error);

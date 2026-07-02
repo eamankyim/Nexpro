@@ -3,7 +3,13 @@ jest.mock('../../../models', () => ({
     count: jest.fn(),
     findAll: jest.fn()
   },
-  Account: {}
+  Account: {
+    findAll: jest.fn()
+  },
+  JournalEntry: {},
+  JournalEntryLine: {
+    findAll: jest.fn()
+  }
 }));
 
 jest.mock('../../../utils/tenantUtils', () => ({
@@ -14,15 +20,21 @@ jest.mock('../../../config/accountingAccountCodes', () => ({
   getAccountCodes: jest.fn()
 }));
 
-const { AccountBalance } = require('../../../models');
+const { Account, JournalEntryLine } = require('../../../models');
+const { getAccountCodes } = require('../../../config/accountingAccountCodes');
 const accountingReportService = require('../../../services/accountingReportService');
 
 describe('accountingReportService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    getAccountCodes.mockResolvedValue({
+      cash: '1000',
+      undeposited: '1200'
+    });
   });
 
   it('separates COGS, operating expenses, gross profit, and net profit', async () => {
+    const { AccountBalance } = require('../../../models');
     AccountBalance.findAll.mockResolvedValue([
       { debit: 0, credit: 1000, account: { type: 'revenue', category: 'Sales' } },
       { debit: 400, credit: 0, account: { type: 'cogs', category: 'Inventory COGS' } },
@@ -45,6 +57,29 @@ describe('accountingReportService', () => {
       grossProfitMargin: 60,
       netProfitMargin: 45,
       profitMargin: 45
+    });
+  });
+
+  it('derives cash flow from cash account journal debits and credits', async () => {
+    Account.findAll.mockResolvedValue([{ id: 'cash-account-id' }]);
+    JournalEntryLine.findAll.mockResolvedValue([
+      { debit: 8458, credit: 0 },
+      { debit: 0, credit: 3999 }
+    ]);
+
+    const result = await accountingReportService.getCashFlowFromAccounting(
+      'tenant-1',
+      '2026-06-01',
+      '2026-06-30'
+    );
+
+    expect(result).toMatchObject({
+      operating: {
+        cashReceivedFromCustomers: 8458,
+        cashPaidToSuppliersAndExpenses: 3999,
+        netCashFromOperatingActivities: 4459
+      },
+      netChangeInCash: 4459
     });
   });
 });
