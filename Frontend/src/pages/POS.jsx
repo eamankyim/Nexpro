@@ -98,6 +98,10 @@ const getProductCode = (product) => {
 
 const isProductOutOfStock = (product) => {
   if (!product || product.trackStock === false) return false;
+  const variants = getActiveVariants(product);
+  if (variants.length > 0) {
+    return variants.every((variant) => isVariantOutOfStock(product, variant));
+  }
   const qty = Number(product.quantityOnHand);
   return Number.isFinite(qty) && qty <= 0;
 };

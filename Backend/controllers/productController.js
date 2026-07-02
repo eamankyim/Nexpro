@@ -16,6 +16,10 @@ const {
   userCanAccessShopId,
 } = require('../utils/shopUtils');
 const { resolveCatalogProductCode } = require('../utils/documentLineItemUtils');
+const {
+  applyEffectiveProductQuantity,
+  syncParentQuantityFromVariants,
+} = require('../utils/productStockUtils');
 
 const PRODUCT_STAFF_SENSITIVE_FIELDS = [
   'costPrice',
@@ -62,7 +66,7 @@ const stripSensitiveProductFields = (record, req) => {
     });
   }
 
-  return product;
+  return applyEffectiveProductQuantity(product);
 };
 
 const stripSensitiveProductListFields = (records, req) => {
@@ -345,6 +349,12 @@ exports.getProducts = async (req, res, next) => {
         exclude: ['metadata'],
         include: [
           [Product.sequelize.literal(`"Product"."metadata"->>'productCode'`), 'productCode'],
+          [Product.sequelize.literal(`(
+            SELECT COALESCE(SUM(pv."quantityOnHand"), 0)
+            FROM product_variants pv
+            WHERE pv."productId" = "Product"."id"
+              AND pv."isActive" = true
+          )`), 'totalVariantStock'],
         ],
       },
       include: [
@@ -1200,6 +1210,7 @@ exports.createProductVariant = async (req, res, next) => {
     if (!product.hasVariants) {
       await product.update({ hasVariants: true });
     }
+    await syncParentQuantityFromVariants(product.id);
 
     res.status(201).json({
       success: true,
@@ -1237,6 +1248,7 @@ exports.updateProductVariant = async (req, res, next) => {
     const payload = sanitizePayload(req.body);
     stripStaffProductWritePayload(payload, req);
     await variant.update(payload);
+    await syncParentQuantityFromVariants(variant.productId);
 
     res.status(200).json({
       success: true,
@@ -1293,6 +1305,8 @@ exports.deleteProductVariant = async (req, res, next) => {
         { hasVariants: false },
         { where: { id: productId } }
       );
+    } else {
+      await syncParentQuantityFromVariants(productId);
     }
 
     invalidateProductListCache(req.tenantId);

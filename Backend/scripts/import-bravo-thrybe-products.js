@@ -33,6 +33,7 @@ const {
   Product,
   ProductVariant,
 } = require('../models');
+const { syncParentQuantityFromVariants } = require('../utils/productStockUtils');
 
 const SCRIPT_NAME = 'scripts/import-bravo-thrybe-products.js';
 const DEFAULT_PRICE = 100;
@@ -472,6 +473,14 @@ async function main() {
 
       if (existingVariant) updatedVariants += 1;
       else createdVariants += 1;
+    }
+
+    for (const parentPlan of parentProducts) {
+      if (!parentPlan.hasVariants) continue;
+      const parentId = parentIdByName.get(normalizedKey(parentPlan.name));
+      if (parentId) {
+        await syncParentQuantityFromVariants(parentId, transaction);
+      }
     }
 
     await transaction.commit();

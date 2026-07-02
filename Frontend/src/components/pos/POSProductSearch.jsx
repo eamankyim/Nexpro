@@ -34,6 +34,7 @@ import { useDebounce } from '../../hooks/useDebounce';
 import { useResponsive } from '../../hooks/useResponsive';
 import { DEBOUNCE_DELAYS } from '../../constants';
 import { formatAmount } from '../../utils/formatNumber';
+import { getProductStockQuantity } from '../../utils/productStock';
 import { parseProductQRPayload } from '../../utils/productQR';
 import { resolveImageUrl } from '../../utils/fileUtils';
 import api from '../../services/api';
@@ -98,9 +99,8 @@ const ProductItem = memo(function ProductItem({
   showQuantityControls = false,
 }) {
   const trackStock = product.trackStock !== false;
-  const qty = Number(product.quantityOnHand);
+  const quantityOnHand = getProductStockQuantity(product);
   const reorderLevel = Number(product.reorderLevel);
-  const quantityOnHand = Number.isFinite(qty) ? qty : 0;
   const reorder = Number.isFinite(reorderLevel) ? reorderLevel : 5;
   const isLowStock = trackStock && quantityOnHand <= reorder;
   const isOutOfStock = trackStock && quantityOnHand <= 0;
@@ -205,9 +205,8 @@ const ProductCard = memo(function ProductCard({
   showQuantityControls = false,
 }) {
   const trackStock = product.trackStock !== false;
-  const qty = Number(product.quantityOnHand);
+  const quantityOnHand = getProductStockQuantity(product);
   const reorderLevel = Number(product.reorderLevel);
-  const quantityOnHand = Number.isFinite(qty) ? qty : 0;
   const reorder = Number.isFinite(reorderLevel) ? reorderLevel : 5;
   const isLowStock = trackStock && quantityOnHand <= reorder;
   const isOutOfStock = trackStock && quantityOnHand <= 0;

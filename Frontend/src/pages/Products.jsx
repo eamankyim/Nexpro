@@ -171,6 +171,7 @@ import {
 } from '../constants';
 import { numberInputValue, handleNumberChange } from '../utils/formUtils';
 import { formatAmount, formatInteger } from '../utils/formatNumber';
+import { getProductStockQuantity } from '../utils/productStock';
 // =============================================
 // HELPER FUNCTIONS
 // =============================================
@@ -1925,10 +1926,11 @@ const Products = () => {
         if (record.trackStock === false) {
           return <Badge variant="outline" className="text-muted-foreground">Made to order</Badge>;
         }
-        const statusKey = getStockStatus(record.quantityOnHand, record.reorderLevel);
+        const stockQty = getProductStockQuantity(record);
+        const statusKey = getStockStatus(stockQty, record.reorderLevel);
         return (
           <div className="flex items-center gap-2">
-            <span>{formatInteger(record.quantityOnHand || 0)} {record.unit}</span>
+            <span>{formatInteger(stockQty)} {record.unit}</span>
             <StatusChip status={statusKey} size="small" />
           </div>
         );
@@ -4064,9 +4066,9 @@ const Products = () => {
                   <>
                     <DescriptionItem label="Quantity on Hand">
                       <div className="flex items-center gap-2">
-                        <span>{formatInteger(selectedProduct.quantityOnHand || 0)} {selectedProduct.unit}</span>
+                        <span>{formatInteger(getProductStockQuantity(selectedProduct))} {selectedProduct.unit}</span>
                         <StatusChip
-                          status={getStockStatus(selectedProduct.quantityOnHand, selectedProduct.reorderLevel)}
+                          status={getStockStatus(getProductStockQuantity(selectedProduct), selectedProduct.reorderLevel)}
                           size="small"
                         />
                       </div>
@@ -4079,7 +4081,7 @@ const Products = () => {
                     </DescriptionItem>
                     {canViewProductSensitiveFields && (
                       <DescriptionItem label="Stock Value">
-                        {valueFormatter(parseFloat(selectedProduct.sellingPrice || 0) * parseFloat(selectedProduct.quantityOnHand || 0))}
+                        {valueFormatter(parseFloat(selectedProduct.sellingPrice || 0) * getProductStockQuantity(selectedProduct))}
                       </DescriptionItem>
                     )}
                   </>
