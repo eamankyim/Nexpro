@@ -68,31 +68,47 @@ Examples:
 `;
 
 /**
- * Variant matrix for t-shirt parents.
- * Update this constant if the confirmed matrix changes.
+ * Variant matrix for t-shirt parents (from BRAVO THRYBE daily sales sheet).
+ * Each parent defines its own sizes and colors.
  */
 const T_SHIRT_MATRIX = {
-  sizes: ['S', 'M', 'L', 'XL', '2XL'],
   parents: [
     {
       name: 'Bravo Thrybe T-Shirt — 350 GSM',
       skuPrefix: 'BT-TS-350',
-      colors: ['Black', 'White', 'Brown'],
+      sizes: ['Medium', 'Large', 'Extra Large', '2X Large', '3X Large', '4X Large'],
+      colors: [
+        'Black',
+        'White',
+        'Cream',
+        'Dark Brown',
+        'Khaki Brown',
+        'Pink',
+        'Light Blue',
+        'Red',
+        'Violet (Purple)',
+        'Ash (Grey)',
+        'Light Green',
+        'Green',
+      ],
     },
     {
       name: 'Bravo Thrybe T-Shirt — 320 GSM',
       skuPrefix: 'BT-TS-320',
-      colors: ['Black', 'White', 'Brown'],
+      sizes: ['Medium', 'Large', 'Extra Large', '2X Large'],
+      colors: ['Black', 'White', 'Cream', 'Brown', 'Grey', 'Pink'],
     },
     {
       name: 'Bravo Thrybe T-Shirt — 230 GSM',
       skuPrefix: 'BT-TS-230',
-      colors: ['Black', 'White', 'Brown'],
+      sizes: ['Large', 'Extra Large', '2X Large', '3X Large', '4X Large'],
+      colors: ['Black', 'White', 'Cream', 'Blue', 'Green', 'Khaki', 'Pink', 'Wine'],
     },
     {
       name: 'Bravo Thrybe Acid Wash T-Shirt',
       skuPrefix: 'BT-TS-AW',
-      colors: ['Black', 'Charcoal', 'Brown'],
+      sizes: ['Medium', 'Large', 'Extra Large', '2X Large'],
+      colors: ['Pink', 'Blue', 'Black', 'Grey', 'Brown', 'Army Green'],
     },
   ],
 };
@@ -184,7 +200,7 @@ function buildImportPlan() {
 
   const variants = [];
   for (const parent of T_SHIRT_MATRIX.parents) {
-    for (const size of T_SHIRT_MATRIX.sizes) {
+    for (const size of parent.sizes) {
       for (const color of parent.colors) {
         const sku = `${parent.skuPrefix}-${slugifyToken(size)}-${slugifyToken(color)}`;
         variants.push({
