@@ -120,7 +120,7 @@ const Equipment = () => {
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
   const { activeStudioLocationId, scopeReady } = useWorkspaceScope();
-  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { isMobile } = useResponsive();
 
@@ -574,14 +574,26 @@ const Equipment = () => {
     ];
   }, [viewingItem]);
 
-  const hasActiveFilters = filters.categoryId !== 'all' || filters.status !== 'all';
+  const handleClearFilters = useCallback(() => {
+    setFilters({ categoryId: 'all', status: 'all' });
+    setSearchValue('');
+    setPagination((prev) => ({ ...prev, current: 1 }));
+  }, [setSearchValue]);
+
+  const hasActiveFilters = filters.categoryId !== 'all' || filters.status !== 'all' || !!debouncedSearch.trim();
 
   const equipmentEmptyState = useMemo(
-    () =>
-      getEmptyStateProps(EMPTY_STATES.EQUIPMENT, {
+    () => {
+      if (hasActiveFilters) {
+        return getEmptyStateProps(EMPTY_STATES.EQUIPMENT_FILTERED, {
+          primary: handleClearFilters,
+        });
+      }
+      return getEmptyStateProps(EMPTY_STATES.EQUIPMENT, {
         primary: () => openItemModal(),
-      }),
-    [openItemModal]
+      });
+    },
+    [hasActiveFilters, handleClearFilters, openItemModal]
   );
 
   return (
@@ -707,10 +719,7 @@ const Equipment = () => {
             {hasActiveFilters && (
               <Button
                 variant="outline"
-                onClick={() => {
-                  setFilters({ categoryId: 'all', status: 'all' });
-                  setPagination((prev) => ({ ...prev, current: 1 }));
-                }}
+                onClick={handleClearFilters}
                 className="w-full"
               >
                 Clear Filters

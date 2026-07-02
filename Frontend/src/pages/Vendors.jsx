@@ -116,7 +116,7 @@ const Vendors = () => {
   const { isManager, activeTenantId } = useAuth();
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
-  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { isMobile } = useResponsive();
   const queryClient = useQueryClient();
@@ -537,10 +537,11 @@ const Vendors = () => {
       category: 'all',
       isActive: 'all'
     });
+    setSearchValue('');
     setPagination({ ...pagination, current: 1 });
   };
 
-  const hasActiveFilters = filters.category !== 'all' || filters.isActive !== 'all';
+  const hasActiveFilters = filters.category !== 'all' || filters.isActive !== 'all' || !!debouncedSearch.trim();
 
   // Merge API categories with existing vendor categories (for filter dropdown)
   const uniqueCategories = useMemo(() => {
@@ -557,11 +558,17 @@ const Vendors = () => {
   }, [form]);
 
   const vendorsEmptyState = useMemo(
-    () =>
-      getEmptyStateProps(EMPTY_STATES.VENDORS, {
+    () => {
+      if (hasActiveFilters) {
+        return getEmptyStateProps(EMPTY_STATES.VENDORS_FILTERED, {
+          primary: handleClearFilters,
+        });
+      }
+      return getEmptyStateProps(EMPTY_STATES.VENDORS, {
         primary: openAddVendor,
-      }),
-    [openAddVendor]
+      });
+    },
+    [hasActiveFilters, handleClearFilters, openAddVendor]
   );
 
   return (

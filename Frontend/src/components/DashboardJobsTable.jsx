@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState, getEmptyStateProps } from '@/components/ui/empty-state';
 import { EMPTY_STATES } from '../constants/microcopy';
+import { getSearchNoResultsEmptyStateProps } from '../utils/searchEmptyState';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import TableSkeleton from './TableSkeleton';
 import { useResponsive } from '../hooks/useResponsive';
@@ -29,6 +30,9 @@ import dayjs from 'dayjs';
  * @param {Function} onOpenPOS - Callback to open point of sale (shown when no sales but products exist)
  * @param {boolean} hasProducts - Whether the tenant has any products (to show appropriate empty message)
  * @param {boolean} productsLoading - Whether product availability is still loading
+ * @param {boolean} isSearchFiltered - Whether header search is active with no matches
+ * @param {string} searchQuery - Active header search query (for empty state copy)
+ * @param {Function} onClearSearch - Clears header search
  */
 const DashboardJobsTable = memo(({
   jobs = [],
@@ -40,7 +44,10 @@ const DashboardJobsTable = memo(({
   onAddProduct,
   onOpenPOS,
   hasProducts = true,
-  productsLoading = false
+  productsLoading = false,
+  isSearchFiltered = false,
+  searchQuery = '',
+  onClearSearch,
 }) => {
   const { isMobile } = useResponsive();
   const [pagination, setPagination] = useState({ current: 1, pageSize });
@@ -73,7 +80,13 @@ const DashboardJobsTable = memo(({
           </div>
         ) : paginatedJobs.length === 0 ? (
           <div className="flex items-center justify-center p-6 sm:p-8 w-full">
-            {isSalesTable && !hasProducts && !productsLoading && onAddProduct ? (
+            {isSearchFiltered && onClearSearch ? (
+              <EmptyState
+                {...getSearchNoResultsEmptyStateProps(searchQuery, onClearSearch)}
+                size="sm"
+                className="w-full max-w-md py-6"
+              />
+            ) : isSalesTable && !hasProducts && !productsLoading && onAddProduct ? (
               <EmptyState
                 {...getEmptyStateProps(EMPTY_STATES.SALES_NO_PRODUCTS, {
                   primary: onAddProduct,

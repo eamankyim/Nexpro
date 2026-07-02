@@ -113,7 +113,7 @@ const customerSchema = z.object({
 const Customers = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearchText = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { isMobile } = useResponsive();
   const [modalVisible, setModalVisible] = useState(false);
@@ -672,6 +672,7 @@ const Customers = () => {
       howDidYouHear: 'all',
       customerType: 'all',
     });
+    setSearchValue('');
     setPagination({ ...pagination, current: 1 });
   };
 

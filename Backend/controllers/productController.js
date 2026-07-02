@@ -1245,10 +1245,20 @@ exports.updateProductVariant = async (req, res, next) => {
       });
     }
 
+    try {
+      assertShopRecordAccess(req, variant.product);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
+    }
+
     const payload = sanitizePayload(req.body);
     stripStaffProductWritePayload(payload, req);
     await variant.update(payload);
     await syncParentQuantityFromVariants(variant.productId);
+    invalidateProductListCache(req.tenantId);
 
     res.status(200).json({
       success: true,

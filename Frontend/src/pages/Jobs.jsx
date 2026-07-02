@@ -241,7 +241,7 @@ const Jobs = () => {
   } = useWorkspaceScope();
   const { isMobile } = useResponsive();
   const queryClient = useQueryClient();
-  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { formatAmount } = useCurrency();
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
@@ -1870,8 +1870,9 @@ useEffect(() => {
       customerId: 'all',
       dueDate: 'all'
     });
+    setSearchValue('');
     setPagination((prev) => ({ ...prev, current: 1 }));
-  }, []);
+  }, [setSearchValue]);
 
   const hasActiveFilters =
     filters.status !== 'all' ||

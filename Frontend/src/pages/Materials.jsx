@@ -170,7 +170,7 @@ const Materials = () => {
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
   const { activeStudioLocationId, scopeReady } = useWorkspaceScope();
-  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { isMobile } = useResponsive();
   const businessType = activeTenant?.businessType || 'printing_press';
@@ -768,10 +768,11 @@ const Materials = () => {
       lowStock: false,
       outOfStock: false
     });
+    setSearchValue('');
     setPagination({ ...pagination, current: 1 });
   };
 
-  const hasActiveFilters = filters.categoryId !== 'all' || filters.status !== 'all' || filters.lowStock || filters.outOfStock;
+  const hasActiveFilters = filters.categoryId !== 'all' || filters.status !== 'all' || filters.lowStock || filters.outOfStock || !!debouncedSearch.trim();
 
   const summaryCards = [
     {
@@ -905,11 +906,17 @@ const Materials = () => {
   }, [viewingItem]);
 
   const materialsEmptyState = useMemo(
-    () =>
-      getEmptyStateProps(EMPTY_STATES.MATERIALS, {
+    () => {
+      if (hasActiveFilters) {
+        return getEmptyStateProps(EMPTY_STATES.MATERIALS_FILTERED, {
+          primary: handleClearFilters,
+        });
+      }
+      return getEmptyStateProps(EMPTY_STATES.MATERIALS, {
         primary: () => openItemModal(),
-      }),
-    [openItemModal]
+      });
+    },
+    [hasActiveFilters, handleClearFilters, openItemModal]
   );
 
   return (

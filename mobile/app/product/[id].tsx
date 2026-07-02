@@ -222,8 +222,12 @@ export default function ProductDetailScreen() {
         name: variantName,
         sku: variantEditForm.sku.trim() || undefined,
         barcode: variantEditForm.barcode.trim() || undefined,
-        sellingPrice: parseFloat(variantEditForm.sellingPrice),
-        costPrice: variantEditForm.costPrice ? parseFloat(variantEditForm.costPrice) : undefined,
+        sellingPrice: variantEditForm.sellingPrice.trim()
+          ? parseFloat(variantEditForm.sellingPrice)
+          : undefined,
+        costPrice: variantEditForm.costPrice.trim()
+          ? parseFloat(variantEditForm.costPrice)
+          : undefined,
         quantityOnHand: variantEditForm.quantityOnHand ? parseFloat(variantEditForm.quantityOnHand) : 0,
         attributes,
       });

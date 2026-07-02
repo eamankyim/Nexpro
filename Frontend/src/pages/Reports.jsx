@@ -78,6 +78,8 @@ import { getPreviousPeriod } from '../utils/periodComparison';
 import { calculateDateRange, getGroupByForFilter } from '../utils/dateRangePresets';
 import { formatPeriodLabel } from '../utils/formatPeriodLabel';
 import { cn } from '@/lib/utils';
+import { EmptyState } from '@/components/ui/empty-state';
+import { getSearchNoResultsEmptyStateProps } from '../utils/searchEmptyState';
 import { formatAmount, formatDecimal, formatInteger } from '../utils/formatNumber';
 import dayjs from 'dayjs';
 import { RechartsModuleProvider, useRechartsModule } from '@/components/charts/RechartsModuleContext';
@@ -251,7 +253,7 @@ function normalizeSavedReports(reports) {
 function ReportsInner() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
   const { activeTenant, user } = useAuth();
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
@@ -2854,6 +2856,17 @@ function ReportsInner() {
                   Create Your First Report
                 </ShadcnButton>
               </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {savedReports.length > 0 && filteredReports.length === 0 && searchValue.trim() && !aiLoading && (
+          <Card>
+            <CardContent className={isMobile ? 'p-4' : 'p-8'}>
+              <EmptyState
+                {...getSearchNoResultsEmptyStateProps(searchValue, () => setSearchValue(''))}
+                size="sm"
+              />
             </CardContent>
           </Card>
         )}

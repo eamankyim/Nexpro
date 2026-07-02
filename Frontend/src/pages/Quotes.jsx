@@ -379,7 +379,7 @@ const QuoteProductPicker = forwardRef(({
 QuoteProductPicker.displayName = 'QuoteProductPicker';
 
 const Quotes = () => {
-  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { activeTenantId, activeTenant, isAdmin } = useAuth();
   const shopContext = useShopOptional();
@@ -1187,10 +1187,11 @@ const Quotes = () => {
       status: 'all',
       customerId: 'all'
     });
+    setSearchValue('');
     setPagination({ ...pagination, current: 1 });
   };
 
-  const hasActiveFilters = filters.status !== 'all' || filters.customerId !== 'all';
+  const hasActiveFilters = filters.status !== 'all' || filters.customerId !== 'all' || !!debouncedSearch.trim();
 
   const drawerFields = useMemo(() => viewingQuote ? [
     { label: 'Quote Number', value: viewingQuote.quoteNumber },
@@ -1256,11 +1257,17 @@ const Quotes = () => {
   }, [viewingQuote, quoteActivities]);
 
   const quotesEmptyState = useMemo(
-    () =>
-      getEmptyStateProps(EMPTY_STATES.QUOTES, {
+    () => {
+      if (hasActiveFilters) {
+        return getEmptyStateProps(EMPTY_STATES.QUOTES_FILTERED, {
+          primary: handleClearFilters,
+        });
+      }
+      return getEmptyStateProps(EMPTY_STATES.QUOTES, {
         primary: handleAddQuote,
-      }),
-    [handleAddQuote]
+      });
+    },
+    [hasActiveFilters, handleClearFilters, handleAddQuote]
   );
 
   return (

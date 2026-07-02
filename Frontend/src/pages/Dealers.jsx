@@ -84,7 +84,7 @@ const paymentSchema = z.object({
 
 const Dealers = () => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearchText = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const navigate = useNavigate();
   const { activeTenantId, isManager, isAdmin, hasFeature } = useAuth();
@@ -332,12 +332,33 @@ const Dealers = () => {
     setDrawerVisible(true);
   };
 
+  const handleClearFilters = useCallback(() => {
+    setFilters({ isActive: 'all' });
+    setSearchValue('');
+    setPagination((prev) => ({ ...prev, current: 1 }));
+  }, [setSearchValue]);
+
+  const hasActiveFilters = filters.isActive !== 'all' || !!debouncedSearchText.trim();
+
   const dealersEmptyState = useMemo(
-    () => getEmptyStateProps(
-      { title: 'No dealers yet', description: 'Add your first dealer account to track wholesale balances.', primaryAction: 'Add dealer' },
-      { primary: openCreate }
-    ),
-    []
+    () => {
+      if (hasActiveFilters) {
+        return getEmptyStateProps(
+          {
+            icon: 'Users',
+            title: 'No matching dealers',
+            description: 'Try adjusting your filters or search terms.',
+            primaryAction: 'Clear Filters',
+          },
+          { primary: handleClearFilters }
+        );
+      }
+      return getEmptyStateProps(
+        { title: 'No dealers yet', description: 'Add your first dealer account to track wholesale balances.', primaryAction: 'Add dealer' },
+        { primary: openCreate }
+      );
+    },
+    [hasActiveFilters, handleClearFilters, openCreate]
   );
 
   const stats = statsResponse?.data || statsResponse || {};

@@ -1552,6 +1552,7 @@ const Products = () => {
     if (variant) {
       // Editing existing variant
       variantForm.reset({
+        name: variant.name || '',
         sku: variant.sku || '',
         barcode: variant.barcode || '',
         costPrice: variant.costPrice ?? selectedProduct?.costPrice ?? 0,
@@ -4194,7 +4195,7 @@ const Products = () => {
                         <div className="flex items-center gap-2 shrink-0">
                           <div className="text-right">
                             <p className="font-medium text-foreground">
-                              {valueFormatter(variant.sellingPrice || selectedProduct.sellingPrice)}
+                              {valueFormatter(variant.sellingPrice ?? selectedProduct.sellingPrice)}
                             </p>
                             <p className="text-xs text-muted-foreground">
                               Stock: {variant.quantityOnHand}

@@ -61,13 +61,16 @@ import { useOnlineStoreOrderAttention } from '../hooks/useOnlineStoreOrderAttent
 import settingsService from '../services/settingsService';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
+import { useSmartSearch } from '../context/SmartSearchContext';
 import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
-import { CURRENCY, QUERY_CACHE, STUDIO_LIKE_TYPES } from '../constants';
+import { useDebounce } from '../hooks/useDebounce';
+import { CURRENCY, QUERY_CACHE, STUDIO_LIKE_TYPES, DEBOUNCE_DELAYS, SEARCH_PLACEHOLDERS } from '../constants';
 import { isPlaceholderBusinessName } from '../constants/tenantPlaceholders';
 import { formatAmount } from '../utils/formatNumber';
 import { queryKeys } from '../utils/queryKeys';
 import { useScopedWorkspaceName } from '../hooks/useScopedWorkspaceName';
 import { useDismissibleDashboardBanner } from '../hooks/useDismissibleDashboardBanner';
+import { matchesSearchQuery } from '../utils/searchEmptyState';
 import dayjs from 'dayjs';
 import weekOfYear from 'dayjs/plugin/weekOfYear';
 import isoWeek from 'dayjs/plugin/isoWeek';
@@ -351,6 +354,8 @@ const Dashboard = () => {
     activeStudioLocationId,
     scopeReady,
   } = useWorkspaceScope();
+  const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
+  const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const [isRefetching, setIsRefetching] = useState(false);
   const { isMobile } = useResponsive();
   const initialMonthRange = useMemo(() => [dayjs().startOf('month'), dayjs().endOf('month')], []);
@@ -635,14 +640,20 @@ const Dashboard = () => {
     }
     return displayData?.recentJobs || [];
   }, [displayData, activeTenant?.businessType]);
-  const totalJobs = useMemo(() => recentJobs.length, [recentJobs]);
-  const totalPages = useMemo(() => Math.ceil(totalJobs / jobsPagination.pageSize), [totalJobs, jobsPagination.pageSize]);
-  const startIndex = useMemo(() => (jobsPagination.current - 1) * jobsPagination.pageSize + 1, [jobsPagination.current, jobsPagination.pageSize]);
-  const endIndex = useMemo(() => Math.min(jobsPagination.current * jobsPagination.pageSize, totalJobs), [jobsPagination.current, jobsPagination.pageSize, totalJobs]);
-  const paginatedJobs = useMemo(() => recentJobs.slice(
-    (jobsPagination.current - 1) * jobsPagination.pageSize,
-    jobsPagination.current * jobsPagination.pageSize
-  ), [recentJobs, jobsPagination.current, jobsPagination.pageSize]);
+  const filteredRecentJobs = useMemo(() => {
+    const query = debouncedSearch.trim();
+    if (!query) return recentJobs;
+
+    return recentJobs.filter((job) => matchesSearchQuery(query, [
+      job.title,
+      job.jobNumber,
+      job.customer?.name,
+      job.customer?.customerName,
+      job.customerName,
+      job.paymentMethod,
+    ]));
+  }, [recentJobs, debouncedSearch]);
+  const isDashboardSearchActive = debouncedSearch.trim().length > 0;
   const isFiltered = useMemo(() => Boolean(dateRange && dateRange[0] && dateRange[1]), [dateRange]);
   const periodLabel = useMemo(
     () => formatPeriodLabel(overviewParams.filterType || activeFilter, dateRange),
@@ -678,6 +689,18 @@ const Dashboard = () => {
   );
   const isStaff = tenantRole === 'staff';
   const canViewProfitMetrics = !isStaff;
+
+  useEffect(() => {
+    setPageSearchConfig({
+      scope: 'dashboard',
+      placeholder: isShop || isPharmacy ? SEARCH_PLACEHOLDERS.SALES : SEARCH_PLACEHOLDERS.JOBS,
+    });
+    return () => setPageSearchConfig(null);
+  }, [setPageSearchConfig, isShop, isPharmacy]);
+
+  const handleClearDashboardSearch = useCallback(() => {
+    setSearchValue('');
+  }, [setSearchValue]);
 
   const {
     pendingOrderCount,
@@ -1374,7 +1397,8 @@ const Dashboard = () => {
       <div className="mt-8">
         <div className="min-w-0" data-tour="recent-activity">
           <DashboardJobsTable
-            jobs={recentJobs}
+            key={debouncedSearch || 'all'}
+            jobs={filteredRecentJobs}
             loading={loading}
             title={isShop || isPharmacy ? "Recent Sales" : "Jobs In Progress"}
             getDueDateStatus={getDueDateStatus}
@@ -1384,6 +1408,9 @@ const Dashboard = () => {
             productsLoading={staffProductsLoading}
             onAddProduct={(isShop || isPharmacy) ? () => navigate('/products?add=1') : undefined}
             onOpenPOS={(isShop || isPharmacy) ? () => navigate('/pos') : undefined}
+            isSearchFiltered={isDashboardSearchActive && filteredRecentJobs.length === 0}
+            searchQuery={debouncedSearch}
+            onClearSearch={handleClearDashboardSearch}
           />
         </div>
       </div>

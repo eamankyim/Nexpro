@@ -18,10 +18,12 @@ import { showError, showSuccess } from '../utils/toast';
 import WelcomeSection from '../components/WelcomeSection';
 import StatusChip from '../components/StatusChip';
 import { DEBOUNCE_DELAYS, PRIORITY_CHIP_CLASSES, SEARCH_PLACEHOLDERS, STATUS_CHIP_CLASSES, STATUS_CHIP_DEFAULT_CLASS, STUDIO_LIKE_TYPES } from '../constants';
+import { getSearchNoResultsEmptyStateProps } from '../utils/searchEmptyState';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { EmptyState } from '@/components/ui/empty-state';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
@@ -126,7 +128,7 @@ const initialForm = {
 
 const Tasks = () => {
   const { user, activeTenant } = useAuth();
-  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
   const { activeShopId, activeStudioLocationId, isShopWorkspace, isStudioWorkspace, scopeReady } = useWorkspaceScope();
   const shopContext = useShopOptional();
   const studioLocationContext = useStudioLocationOptional();
@@ -728,8 +730,16 @@ const Tasks = () => {
           </Card>
         ) : filteredTasks.length === 0 ? (
           <Card>
-            <CardContent className="pt-3 sm:pt-6 px-2.5 sm:px-6 text-sm text-muted-foreground">
-              No tasks match your filters.
+            <CardContent className="pt-3 sm:pt-6 px-2.5 sm:px-6">
+              {debouncedSearchValue.trim() ? (
+                <EmptyState
+                  {...getSearchNoResultsEmptyStateProps(debouncedSearchValue, () => setSearchValue(''))}
+                  size="sm"
+                  className="py-4"
+                />
+              ) : (
+                <p className="text-sm text-muted-foreground">No tasks match your filters.</p>
+              )}
             </CardContent>
           </Card>
         ) : viewMode === 'list' ? (

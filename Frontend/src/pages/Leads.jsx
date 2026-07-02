@@ -155,7 +155,7 @@ const Leads = () => {
   const studioLocationCtx = useStudioLocationOptional();
   const activeStudioLocationId = studioLocationCtx?.activeStudioLocationId ?? null;
   const { scopeReady } = useWorkspaceScope();
-  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { isMobile } = useResponsive();
   const businessType = activeTenant?.businessType || 'printing_press';
@@ -928,12 +928,38 @@ const Leads = () => {
   const statusOptions = ['all', 'new', 'contacted', 'qualified', 'converted', 'lost'];
   const priorityOptions = ['all', 'low', 'medium', 'high'];
 
+  const handleClearFilters = useCallback(() => {
+    setPagination((prev) => ({ ...prev, current: 1 }));
+    setSearchValue('');
+    setFilters({
+      status: 'all',
+      priority: 'all',
+      source: 'all',
+      assignedTo: 'all',
+      isActive: 'all'
+    });
+  }, [setSearchValue]);
+
+  const hasActiveFilters =
+    filters.status !== 'all' ||
+    filters.priority !== 'all' ||
+    filters.source !== 'all' ||
+    filters.assignedTo !== 'all' ||
+    filters.isActive !== 'all' ||
+    !!debouncedSearch.trim();
+
   const leadsEmptyState = useMemo(
-    () =>
-      getEmptyStateProps(EMPTY_STATES.LEADS, {
+    () => {
+      if (hasActiveFilters) {
+        return getEmptyStateProps(EMPTY_STATES.LEADS_FILTERED, {
+          primary: handleClearFilters,
+        });
+      }
+      return getEmptyStateProps(EMPTY_STATES.LEADS, {
         primary: () => openLeadModal(),
-      }),
-    [openLeadModal]
+      });
+    },
+    [hasActiveFilters, handleClearFilters, openLeadModal]
   );
 
   return (
@@ -1278,14 +1304,7 @@ const Leads = () => {
                 variant="outline"
                 className="flex-1"
                 onClick={() => {
-                  setPagination((prev) => ({ ...prev, current: 1 }));
-                  setFilters({
-                    status: 'all',
-                    priority: 'all',
-                    source: 'all',
-                    assignedTo: 'all',
-                    isActive: 'all'
-                  });
+                  handleClearFilters();
                 }}
               >
                 Reset all
