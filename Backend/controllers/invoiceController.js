@@ -21,7 +21,7 @@ const {
 const { Op } = require('sequelize');
 const { getPagination } = require('../utils/paginationUtils');
 const { createInvoicePaymentJournal, createInvoiceRevenueJournal } = require('../services/invoiceAccountingService');
-const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const { applyTenantFilter, sanitizePayload, findTenantWithOptionalColumns } = require('../utils/tenantUtils');
 const { resolvePaymentNotesFromBody } = require('../utils/paymentNoteUtils');
 const {
   applyStudioLocationFilter,
@@ -2661,7 +2661,7 @@ exports.initializePaystackForInvoice = async (req, res, next) => {
     const payableAmount = shouldApplyCustomerCharge ? balance + chargeAmount : balance;
     const amountPesewas = Math.round(payableAmount * 100);
 
-    const tenant = await Tenant.findByPk(invoice.tenantId);
+    const tenant = await findTenantWithOptionalColumns(invoice.tenantId);
     const subaccount = tenant?.paystackSubaccountCode || null;
 
     const makeReference = () => `INV-${invoice.id}-${Date.now()}`.slice(0, 50);
@@ -3003,7 +3003,7 @@ exports.paystackMobileMoneyForInvoice = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'No balance due on this invoice' });
     }
 
-    const tenant = await Tenant.findByPk(invoice.tenantId);
+    const tenant = await findTenantWithOptionalColumns(invoice.tenantId);
     const customerEmail =
       invoice.customer?.email ||
       req.user?.email ||

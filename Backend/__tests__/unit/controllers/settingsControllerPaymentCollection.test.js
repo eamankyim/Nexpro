@@ -25,6 +25,7 @@ jest.mock('../../../middleware/upload', () => ({
 
 jest.mock('../../../utils/tenantUtils', () => ({
   sanitizePayload: jest.fn((body = {}) => ({ ...body })),
+  findTenantWithOptionalColumns: jest.fn(),
 }));
 
 jest.mock('../../../utils/taxConfig', () => ({
@@ -67,6 +68,20 @@ jest.mock('../../../services/emailService', () => ({
   sendPlatformMessage: jest.fn().mockResolvedValue({ success: true }),
 }));
 
+jest.mock('../../../services/tenantMomoCollectionService', () => ({
+  getMtnCollectionPublicSummary: jest.fn(() => ({
+    configured: false,
+    environment: '',
+    collectionApiUrl: '',
+    callbackUrl: '',
+    subscriptionKeyMasked: '',
+    apiUserMasked: '',
+    encryptionConfigured: false,
+    platformFallbackAvailable: false,
+    activeSource: 'none',
+  })),
+}));
+
 jest.mock('../../../services/emailTemplates', () => ({
   emailOtpCode: jest.fn(() => ({ subject: 'OTP', html: '<p>OTP</p>', text: 'OTP' })),
   paystackBankLinkedEmail: jest.fn(() => ({ subject: 'Linked', html: '<p>Linked</p>', text: 'Linked' })),
@@ -76,6 +91,7 @@ jest.mock('../../../services/emailTemplates', () => ({
 const { Setting, User, Tenant } = require('../../../models');
 const emailService = require('../../../services/emailService');
 const paystackService = require('../../../services/paystackService');
+const { findTenantWithOptionalColumns } = require('../../../utils/tenantUtils');
 const settingsController = require('../../../controllers/settingsController');
 
 describe('settingsController payment collection verification', () => {
@@ -152,7 +168,7 @@ describe('settingsController payment collection verification', () => {
         message: 'Verification code (OTP) is required',
       })
     );
-    expect(Tenant.findByPk).not.toHaveBeenCalled();
+    expect(findTenantWithOptionalColumns).not.toHaveBeenCalled();
     expect(googleUser.comparePassword).not.toHaveBeenCalled();
   });
 
@@ -163,7 +179,7 @@ describe('settingsController payment collection verification', () => {
       paystackSubaccountCode: null,
       save: jest.fn().mockResolvedValue(undefined),
     };
-    Tenant.findByPk.mockResolvedValue(tenant);
+    findTenantWithOptionalColumns.mockResolvedValue(tenant);
     Setting.findOne.mockResolvedValue({
       value: {
         otp: '123456',
@@ -200,7 +216,7 @@ describe('settingsController payment collection verification', () => {
       paystackSubaccountCode: null,
       save: jest.fn().mockResolvedValue(undefined),
     };
-    Tenant.findByPk.mockResolvedValue(tenant);
+    findTenantWithOptionalColumns.mockResolvedValue(tenant);
     Setting.findOne.mockResolvedValue({
       value: { otp: '123456', expiresAt: Date.now() + 60_000 },
       destroy: jest.fn().mockResolvedValue(undefined),
@@ -286,5 +302,39 @@ describe('settingsController payment collection verification', () => {
       })
     );
     expect(storedOtp.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports payment collection as configured when paystack subaccount is linked', async () => {
+    findTenantWithOptionalColumns.mockResolvedValue({
+      id: 'tenant-1',
+      paystackSubaccountCode: 'ACCT_linked123',
+      metadata: {
+        paymentCollection: {
+          settlementType: 'bank',
+          business_name: 'Test Shop',
+          bank_code: '044',
+          account_number: '0123456789',
+        },
+      },
+    });
+
+    const req = { tenantId: 'tenant-1' };
+    const res = mockRes();
+
+    await settingsController.getPaymentCollectionSettings(req, res, jest.fn());
+
+    expect(findTenantWithOptionalColumns).toHaveBeenCalledWith('tenant-1');
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: true,
+        data: expect.objectContaining({
+          configured: true,
+          hasSubaccount: true,
+          settlement_type: 'bank',
+          account_number_masked: '****6789',
+        }),
+      })
+    );
   });
 });

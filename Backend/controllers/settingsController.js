@@ -2310,7 +2310,8 @@ exports.getPaymentCollectionBanks = async (req, res, next) => {
 // @access  Private
 exports.getPaymentCollectionSettings = async (req, res, next) => {
   try {
-    const tenant = req.tenant || await Tenant.findByPk(req.tenantId);
+    const { findTenantWithOptionalColumns } = require('../utils/tenantUtils');
+    const tenant = await findTenantWithOptionalColumns(req.tenantId);
     if (!tenant) {
       return res.status(404).json({ success: false, message: 'Tenant not found' });
     }
@@ -2320,15 +2321,14 @@ exports.getPaymentCollectionSettings = async (req, res, next) => {
     const explicitMomo = pc.settlementType === 'momo' || pc.settlement_type === 'momo';
     const hasMomoMeta = Boolean(momoPhone || explicitMomo);
     const hasBankMeta = Boolean(pc.bank_code && accountNumber);
+    const subaccountLinked = Boolean(tenant.paystackSubaccountCode);
     let settlementType = null;
-    if (tenant.paystackSubaccountCode) {
+    if (subaccountLinked || hasBankMeta || hasMomoMeta) {
       settlementType = explicitMomo || (hasMomoMeta && !hasBankMeta) ? 'momo' : 'bank';
-    } else if (hasMomoMeta) {
-      settlementType = 'momo';
     }
-    const configured = Boolean(tenant.paystackSubaccountCode) || hasMomoMeta;
+    const configured = subaccountLinked || hasMomoMeta || hasBankMeta;
     if (process.env.NODE_ENV !== 'production') {
-      console.log('[Payment Collection] GET: tenantId=', req.tenantId, 'pcKeys=', Object.keys(pc), 'settlementType=', settlementType, 'configured=', configured, 'hasSubaccount=', Boolean(tenant.paystackSubaccountCode));
+      console.log('[Payment Collection] GET: tenantId=', req.tenantId, 'pcKeys=', Object.keys(pc), 'settlementType=', settlementType, 'configured=', configured, 'hasSubaccount=', subaccountLinked || hasBankMeta);
     }
     const { getMtnCollectionPublicSummary } = require('../services/tenantMomoCollectionService');
     let mtn_collection = {
@@ -2353,7 +2353,7 @@ exports.getPaymentCollectionSettings = async (req, res, next) => {
       bank_name: pc.bank_name || '',
       account_number_masked: accountNumber ? `****${accountNumber.slice(-4)}` : '',
       primary_contact_email: pc.primary_contact_email || '',
-      hasSubaccount: Boolean(tenant.paystackSubaccountCode),
+      hasSubaccount: subaccountLinked || hasBankMeta,
       settlement_type: settlementType,
       momo_phone_masked: momoPhone ? `****${momoPhone.slice(-4)}` : '',
       momo_provider: pc.momoProvider || '',
@@ -2559,7 +2559,8 @@ exports.updatePaymentCollectionSettings = async (req, res, next) => {
       console.log('[Payment Collection] PUT: OTP verified for Google user userId=', req.user?.id);
     }
 
-    const tenant = await Tenant.findByPk(req.tenantId);
+    const { findTenantWithOptionalColumns } = require('../utils/tenantUtils');
+    const tenant = await findTenantWithOptionalColumns(req.tenantId);
     if (!tenant) {
       return res.status(404).json({ success: false, message: 'Tenant not found' });
     }

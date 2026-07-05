@@ -455,7 +455,8 @@ exports.handlePaystackWebhook = async (req, res) => {
           const nextStatus = newAmountPaid >= saleTotal ? 'completed' : 'partially_paid';
           const channel = String(tx.channel || tx.authorization?.channel || '').toLowerCase();
           const nextPaymentMethod = channel.includes('mobile') || sale.paymentMethod === 'mobile_money' ? 'mobile_money' : 'card';
-          const tenant = await Tenant.findByPk(metadata.tenant_id);
+          const { findTenantWithOptionalColumns } = require('../utils/tenantUtils');
+          const tenant = await findTenantWithOptionalColumns(metadata.tenant_id);
           const pc = tenant?.metadata?.paymentCollection || {};
           const isMoMo = pc.settlementType === 'momo' && pc.momoPhone;
           const useLegacyMomoTransfer = isMoMo && !tenant?.paystackSubaccountCode;

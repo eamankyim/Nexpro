@@ -3,7 +3,7 @@
  * Shared by Paystack webhooks and GET /api/sales/:id/check-paystack-charge (return/poll fallback).
  */
 
-const { Tenant } = require('../models');
+const { findTenantWithOptionalColumns } = require('../utils/tenantUtils');
 const paystackService = require('./paystackService');
 
 /**
@@ -57,7 +57,7 @@ async function applyPaystackChargeToSaleFromTx(sale, reference, tx) {
   const nextPaymentMethod =
     channel.includes('mobile') || sale.paymentMethod === 'mobile_money' ? 'mobile_money' : 'card';
 
-  const tenant = await Tenant.findByPk(sale.tenantId);
+  const tenant = await findTenantWithOptionalColumns(sale.tenantId);
   const pc = tenant?.metadata?.paymentCollection || {};
   const isMoMo = pc.settlementType === 'momo' && pc.momoPhone;
   const useLegacyMomoTransfer = isMoMo && !tenant?.paystackSubaccountCode;

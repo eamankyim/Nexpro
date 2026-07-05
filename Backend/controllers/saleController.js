@@ -6,7 +6,7 @@ const { checkCreditLimit } = require('../services/dealerBalanceService');
 const { recordSaleCharge } = require('../services/dealerLedgerService');
 const { createSaleCogsJournal, createSaleRevenueJournal } = require('../services/saleAccountingService');
 const { Op } = require('sequelize');
-const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const { applyTenantFilter, sanitizePayload, findTenantWithOptionalColumns } = require('../utils/tenantUtils');
 const { resolvePaymentNotesFromBody } = require('../utils/paymentNoteUtils');
 const { parseDeliveryStatusInput } = require('../utils/deliveryStatus');
 const { getPagination } = require('../utils/paginationUtils');
@@ -2927,7 +2927,7 @@ exports.initializePaystackForSale = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Sale is already fully paid' });
     }
 
-    const tenant = await Tenant.findByPk(sale.tenantId);
+    const tenant = await findTenantWithOptionalColumns(sale.tenantId);
     const customerEmail =
       (email && String(email).trim() ? String(email).trim() : null) ||
       sale.customer?.email ||
@@ -3080,7 +3080,7 @@ exports.paystackMobileMoneyForSale = async (req, res, next) => {
       });
     }
 
-    const tenant = await Tenant.findByPk(sale.tenantId);
+    const tenant = await findTenantWithOptionalColumns(sale.tenantId);
 
     const customerEmail =
       (sale.customer && sale.customer.email) ||
