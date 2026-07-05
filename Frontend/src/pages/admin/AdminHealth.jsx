@@ -4,6 +4,7 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 import adminService from '../../services/adminService';
 import { usePlatformAdminPermissions } from '../../context/PlatformAdminPermissionsContext';
 import StatusChip from '../../components/StatusChip';
+import PlanBadge from '../../components/PlanBadge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -228,7 +229,7 @@ const AdminHealth = () => {
                     <TimelineContent>
                       <TimelineTitle className="flex items-center gap-2">
                         {tenant.name}
-                        <Badge variant="secondary">{tenant.plan}</Badge>
+                        <PlanBadge plan={tenant.plan} />
                       </TimelineTitle>
                       <TimelineDescription>
                         {tenant.status} • {dayjs(tenant.createdAt).fromNow()}

@@ -3,11 +3,11 @@ import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import adminService from '../../services/adminService';
 import StatusChip from '../../components/StatusChip';
+import PlanBadge from '../../components/PlanBadge';
 import { usePlatformAdminPermissions } from '../../context/PlatformAdminPermissionsContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Empty } from '@/components/ui/empty';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Badge } from '@/components/ui/badge';
 import DashboardStatsCard from '../../components/DashboardStatsCard';
 import { Building2, Users, TrendingUp, UserCheck } from 'lucide-react';
 
@@ -152,7 +152,7 @@ const AdminOverview = () => {
                               , created {dayjs(item.createdAt).format('MMM D, YYYY')}
                             </p>
                           </div>
-                          <Badge variant="secondary">{item.plan}</Badge>
+                          <PlanBadge plan={item.plan} />
                         </li>
                       ))}
                     </ul>

@@ -10,6 +10,7 @@ import { useResponsive } from '../../hooks/useResponsive';
 import adminService from '../../services/adminService';
 import { ENTERPRISE_TIER_OPTIONS } from '../../constants/enterpriseTiers';
 import StatusChip from '../../components/StatusChip';
+import PlanBadge from '../../components/PlanBadge';
 import { useSmartSearch } from '../../context/SmartSearchContext';
 import { usePlatformAdminPermissions } from '../../context/PlatformAdminPermissionsContext';
 import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../../constants';
@@ -117,20 +118,6 @@ const formatPlanLabel = (name = '') =>
     .replace(/\(\s*\)/g, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
-
-const getPlanVariant = (plan) => {
-  const normalizedPlan = normalizePlanId(plan);
-  switch (normalizedPlan) {
-    case 'professional':
-      return 'default';
-    case 'starter':
-      return 'secondary';
-    case 'trial':
-      return 'outline';
-    default:
-      return 'outline';
-  }
-};
 
 const AdminTenants = () => {
   const navigate = useNavigate();
@@ -738,7 +725,7 @@ const AdminTenants = () => {
       </div>
     )},
     { key: 'plan', label: 'Plan', render: (_, record) => (
-      <Badge variant={getPlanVariant(record.plan)}>{record.plan}</Badge>
+      <PlanBadge plan={record.plan} />
     )},
     { key: 'status', label: 'Status', mobileDashboardPlacement: 'headerEnd', render: (_, record) => <StatusChip status={record.status} /> },
     { key: 'primaryUserEmail', label: 'User email', render: (_, record) => (
@@ -1317,7 +1304,7 @@ const AdminTenants = () => {
                   <DescriptionItem label="Name">{selectedTenant.name}</DescriptionItem>
                   <DescriptionItem label="Slug">{selectedTenant.slug}</DescriptionItem>
                   <DescriptionItem label="Plan">
-                    <Badge variant={getPlanVariant(selectedTenant.plan)}>{selectedTenant.plan}</Badge>
+                    <PlanBadge plan={selectedTenant.plan} />
                   </DescriptionItem>
                   <DescriptionItem label="Status">
                     <StatusChip status={selectedTenant.status} />

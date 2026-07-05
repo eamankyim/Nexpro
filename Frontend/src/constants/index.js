@@ -378,6 +378,17 @@ export const ROLE_CHIP_CLASSES = {
   staff: CHIP_GRAY,
 };
 
+/** Default chip class when subscription plan is unknown */
+export const PLAN_CHIP_DEFAULT_CLASS = CHIP_GRAY;
+
+/** Subscription plan → Tailwind classes for PlanBadge (admin). */
+export const PLAN_CHIP_CLASSES = {
+  trial: CHIP_ORANGE,
+  starter: CHIP_GRAY,
+  professional: CHIP_GREEN,
+  enterprise: CHIP_BLUE,
+};
+
 // Payment Methods
 export const PAYMENT_METHODS = {
   CASH: 'cash',

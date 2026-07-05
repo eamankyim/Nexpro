@@ -7,6 +7,7 @@ import { usePlatformAdminPermissions } from '../../context/PlatformAdminPermissi
 import { ENTERPRISE_TIER_OPTIONS, getEnterpriseTier } from '../../constants/enterpriseTiers';
 import { handleApiError, showSuccess } from '../../utils/toast';
 import StatusChip from '../../components/StatusChip';
+import PlanBadge from '../../components/PlanBadge';
 import DashboardStatsCard from '../../components/DashboardStatsCard';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -386,9 +387,7 @@ const AdminBilling = () => {
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-gray-100">
-                      <Badge variant={normalizePlanId(tenant.plan) === 'professional' ? 'default' : 'secondary'}>
-                        {getPlanLabel(tenant.plan)}
-                      </Badge>
+                      <PlanBadge plan={tenant.plan} />
                       <StatusChip status={tenant.status} />
                       <span className="text-xs text-muted-foreground">
                         {getTenantBillingMethodLabel(tenant)}
@@ -438,9 +437,7 @@ const AdminBilling = () => {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={normalizePlanId(tenant.plan) === 'professional' ? 'default' : 'secondary'}>
-                            {getPlanLabel(tenant.plan)}
-                          </Badge>
+                          <PlanBadge plan={tenant.plan} />
                         </TableCell>
                         <TableCell>
                           <StatusChip status={tenant.status} />
@@ -485,9 +482,7 @@ const AdminBilling = () => {
                         <p className="text-xs text-muted-foreground">{viewingTenant.slug}</p>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <Badge variant={normalizePlanId(viewingTenant.plan) === 'professional' ? 'default' : 'secondary'}>
-                          {getPlanLabel(viewingTenant.plan)}
-                        </Badge>
+                        <PlanBadge plan={viewingTenant.plan} />
                         <StatusChip status={billingStatus} />
                       </div>
                       <div>
