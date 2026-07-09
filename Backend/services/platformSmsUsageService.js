@@ -3,6 +3,12 @@ const { getSavedPlatformSmsConfig, parseMonthlyLimit } = require('./platformSmsS
 
 const ACCRA_TIMEZONE = 'Africa/Accra';
 
+const isMissingUsageTableError = (error) => {
+  const code = error?.parent?.code || error?.original?.code;
+  const message = String(error?.message || error?.parent?.message || '');
+  return code === '42P01' || /relation ["']?tenant_platform_sms_usage["']? does not exist/i.test(message);
+};
+
 /**
  * Current YYYY-MM in Africa/Accra (month resets at Accra local midnight).
  * @returns {string}
@@ -17,6 +23,23 @@ function getCurrentYearMonth() {
   const year = parts.find((p) => p.type === 'year')?.value;
   const month = parts.find((p) => p.type === 'month')?.value;
   return `${year}-${month}`;
+}
+
+/**
+ * First moment of the next calendar month in Africa/Accra (UTC+0).
+ * @returns {string} ISO 8601 timestamp
+ */
+function getNextResetAt() {
+  const yearMonth = getCurrentYearMonth();
+  const [year, month] = yearMonth.split('-').map((value) => parseInt(value, 10));
+  let nextYear = year;
+  let nextMonth = month + 1;
+  if (nextMonth > 12) {
+    nextMonth = 1;
+    nextYear += 1;
+  }
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${nextYear}-${pad(nextMonth)}-01T00:00:00.000Z`;
 }
 
 async function getMonthlyLimit() {
@@ -38,20 +61,30 @@ async function getTenantUsageSummary(tenantId) {
   const yearMonth = getCurrentYearMonth();
   const monthlyLimit = await getMonthlyLimit();
 
-  const [rows] = await sequelize.query(
-    `
-      SELECT sent_count AS "sentCount"
-      FROM tenant_platform_sms_usage
-      WHERE tenant_id = :tenantId AND year_month = :yearMonth
-      LIMIT 1
-    `,
-    { replacements: { tenantId, yearMonth } }
-  );
-
-  const sentCount = parseInt(rows?.[0]?.sentCount, 10) || 0;
+  let sentCount = 0;
+  try {
+    const [rows] = await sequelize.query(
+      `
+        SELECT sent_count AS "sentCount"
+        FROM tenant_platform_sms_usage
+        WHERE tenant_id = :tenantId AND year_month = :yearMonth
+        LIMIT 1
+      `,
+      { replacements: { tenantId, yearMonth } }
+    );
+    sentCount = parseInt(rows?.[0]?.sentCount, 10) || 0;
+  } catch (error) {
+    if (!isMissingUsageTableError(error)) throw error;
+  }
   const remaining = Math.max(0, monthlyLimit - sentCount);
 
-  return { yearMonth, sentCount, monthlyLimit, remaining };
+  return {
+    yearMonth,
+    sentCount,
+    monthlyLimit,
+    remaining,
+    resetsAt: getNextResetAt(),
+  };
 }
 
 /**
@@ -104,6 +137,7 @@ async function incrementPlatformSmsUsage(tenantId, count = 1) {
 module.exports = {
   ACCRA_TIMEZONE,
   getCurrentYearMonth,
+  getNextResetAt,
   getMonthlyLimit,
   getTenantUsageSummary,
   checkPlatformSmsLimit,

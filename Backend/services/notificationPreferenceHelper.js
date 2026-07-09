@@ -15,6 +15,22 @@ const NOTIFICATION_PREFERENCE_CATEGORIES = [
 
 const DEFAULT_CATEGORY_PREFS = { in_app: true, email: false, push: true };
 
+/** Categories/channels that cannot be turned off (invitation + account messages). */
+const LOCKED_NOTIFICATION_CHANNELS = {
+  user: { in_app: 'not_applicable', email: 'always_on' },
+};
+
+const applyLockedNotificationChannels = (categories) => {
+  const userRow = categories.user;
+  if (userRow && typeof userRow === 'object') {
+    categories.user = {
+      ...userRow,
+      email: true,
+    };
+  }
+  return categories;
+};
+
 /**
  * @returns {{ categories: Record<string, { in_app: boolean, email: boolean }> }}
  */
@@ -46,6 +62,7 @@ function mergeNotificationPreferences(stored) {
       };
     }
   }
+  applyLockedNotificationChannels(out.categories);
   return out;
 }
 
@@ -67,6 +84,9 @@ function normalizeNotificationCategory(type) {
 function isNotificationChannelEnabled(mergedPrefs, category, channel) {
   const cat = normalizeNotificationCategory(category);
   if (!cat) return true;
+  const locked = LOCKED_NOTIFICATION_CHANNELS[cat]?.[channel];
+  if (locked === 'always_on') return true;
+  if (locked === 'not_applicable') return false;
   const prefs = mergedPrefs || buildDefaultPreferences();
   const c = prefs.categories[cat];
   if (!c) return channel === 'in_app';
@@ -99,6 +119,7 @@ async function getPreferencesForUsers(userIds) {
 
 module.exports = {
   NOTIFICATION_PREFERENCE_CATEGORIES,
+  LOCKED_NOTIFICATION_CHANNELS,
   buildDefaultPreferences,
   mergeNotificationPreferences,
   normalizeNotificationCategory,

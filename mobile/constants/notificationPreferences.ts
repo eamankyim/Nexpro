@@ -23,6 +23,14 @@ export const NOTIFICATION_PREFERENCE_CATEGORY_LABELS: Record<string, string> = {
   user: 'Team & invitations',
 };
 
+/** Channels that cannot be toggled off (sync with Backend/services/notificationPreferenceHelper.js). */
+export const NOTIFICATION_PREFERENCE_LOCKED_CHANNELS: Record<
+  string,
+  Partial<Record<'in_app' | 'email', 'not_applicable' | 'always_on'>>
+> = {
+  user: { in_app: 'not_applicable', email: 'always_on' },
+};
+
 export type NotificationCategoryPrefs = { in_app?: boolean; email?: boolean };
 
 export type NotificationPrefsDraft = {
@@ -55,6 +63,9 @@ export function normalizeNotificationPreferences(
         email: row.email === true,
       };
     }
+  }
+  if (categories.user) {
+    categories.user.email = true;
   }
   return { categories };
 }

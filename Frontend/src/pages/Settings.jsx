@@ -9,7 +9,7 @@ import settingsService from '../services/settingsService';
 import whatsappService from '../services/whatsappService';
 import smsService from '../services/smsService';
 import emailService from '../services/emailService';
-import { Camera, User, Mail, UserCog, Loader2, Eye, EyeOff, Trash2, Moon, Lightbulb, ExternalLink, HelpCircle, CreditCard, ChevronDown, ChevronLeft, Bell, CalendarDays, Send, Lock } from 'lucide-react';
+import { Camera, User, Mail, UserCog, Loader2, Eye, EyeOff, Trash2, Moon, Lightbulb, ExternalLink, HelpCircle, CreditCard, ChevronDown, ChevronLeft, Bell, CalendarDays, Send, Lock, Info } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useResponsive } from '../hooks/useResponsive';
@@ -56,6 +56,7 @@ import {
   CURRENCIES,
   NOTIFICATION_PREFERENCE_CATEGORY_ORDER,
   NOTIFICATION_PREFERENCE_CATEGORY_LABELS,
+  NOTIFICATION_PREFERENCE_LOCKED_CHANNELS,
   STUDIO_LIKE_TYPES,
   QUERY_CACHE,
 } from '../constants';
@@ -1164,6 +1165,8 @@ const Settings = () => {
   });
 
   const setNotifChannel = useCallback((categoryKey, channel, value) => {
+    const lock = NOTIFICATION_PREFERENCE_LOCKED_CHANNELS[categoryKey]?.[channel];
+    if (lock) return;
     setNotificationPrefsDraft((prev) => {
       if (!prev?.categories?.[categoryKey]) return prev;
       return {
@@ -2164,6 +2167,7 @@ const Settings = () => {
               const row = notificationPrefsDraft.categories[key];
               if (!row) return null;
               const label = NOTIFICATION_PREFERENCE_CATEGORY_LABELS[key] || key;
+              const lockedChannels = NOTIFICATION_PREFERENCE_LOCKED_CHANNELS[key] || {};
               return (
                 <div
                   key={key}
@@ -2177,18 +2181,38 @@ const Settings = () => {
                       </p>
                     )}
                   </div>
-                  <div className="flex justify-center w-[72px] md:w-24">
-                    <Switch
-                      checked={row.in_app !== false}
-                      onCheckedChange={(v) => setNotifChannel(key, 'in_app', v)}
-                    />
-                  </div>
-                  <div className="flex justify-center w-[72px] md:w-24">
-                    <Switch
-                      checked={row.email === true}
-                      onCheckedChange={(v) => setNotifChannel(key, 'email', v)}
-                    />
-                  </div>
+                  {(['in_app', 'email']).map((channel) => {
+                    const lock = lockedChannels[channel];
+                    if (lock === 'not_applicable') {
+                      return (
+                        <div
+                          key={channel}
+                          className="flex justify-center w-[72px] md:w-24 text-xs text-muted-foreground"
+                        >
+                          —
+                        </div>
+                      );
+                    }
+                    const checked = lock === 'always_on' ? true : channel === 'email' ? row.email === true : row.in_app !== false;
+                    return (
+                      <div key={channel} className="flex justify-center w-[72px] md:w-24">
+                        <div className="flex flex-col items-center gap-1">
+                          <Switch
+                            checked={checked}
+                            disabled={!!lock || updateNotificationPrefsMutation.isPending}
+                            onCheckedChange={(v) => setNotifChannel(key, channel, v)}
+                            aria-label={`${label} ${channel}`}
+                          />
+                          {lock === 'always_on' ? (
+                            <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                              <Lock className="h-3 w-3" aria-hidden />
+                              Always on
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}
@@ -3898,6 +3922,14 @@ const Settings = () => {
     </ShadcnCard>
   );
 
+  const smsPlatformInfo = smsData?.data?.platformSms;
+  const smsMode = smsData?.data?.smsMode;
+  const ownSmsToggleOn = smsForm.watch('enabled');
+  const ownSmsActive = smsMode === 'own';
+  const switchingToOwnSms = ownSmsToggleOn && !ownSmsActive;
+  const platformSmsActive = Boolean(smsPlatformInfo) && smsMode === 'platform' && !switchingToOwnSms;
+  const noSmsAvailable = smsMode === 'none' && !smsPlatformInfo;
+
   const smsTab = canManageOrganization ? (
     <ShadcnCard className="border-0 shadow-none bg-transparent md:border md:bg-card">
       <CardHeader className="p-0 md:p-6 pb-0 md:pb-6">
@@ -3910,25 +3942,66 @@ const Settings = () => {
           </div>
         ) : (
           <>
-            <Alert className="mb-3 md:mb-6 py-2 px-3 md:py-4 md:px-4">
+            <Alert className="mb-3 md:mb-4 py-2 px-3 md:py-4 md:px-4">
               <AlertTitle className="text-sm md:text-base">SMS Integration</AlertTitle>
-              <AlertDescription className="text-xs md:text-sm">
-                Configure your own SMS provider (Termii, Arkesel, Twilio, or Africa&apos;s Talking), or use platform SMS from ABS when available.
-                {smsData?.data?.smsMode === 'platform' && smsData?.data?.platformSms && (
-                  <span className="block mt-2 text-foreground">
-                    Using platform SMS (sender {smsData.data.platformSms.senderId || 'ABS'}).
-                    {' '}
-                    {smsData.data.platformSms.remaining} of {smsData.data.platformSms.monthlyLimit} messages remaining this month.
-                  </span>
-                )}
-                {smsData?.data?.smsMode === 'own' && (
-                  <span className="block mt-2 text-foreground">Using your own SMS provider. Platform monthly limits do not apply.</span>
-                )}
-                {smsData?.data?.smsMode === 'none' && !smsData?.data?.enabled && (
-                  <span className="block mt-2 text-muted-foreground">No SMS configured. Enable your own provider below or ask your admin to enable platform SMS.</span>
-                )}
+              <AlertDescription className="text-xs md:text-sm space-y-2">
+                <p>
+                  <span className="font-medium text-foreground">Default:</span>{' '}
+                  Customer SMS is sent through ABS platform SMS automatically—no setup required.
+                  Messages use sender ID <span className="font-medium">ABS</span>, include your shop name, and count toward a{' '}
+                  {smsPlatformInfo?.monthlyLimit ?? 100} messages/month limit.
+                </p>
+                <p>
+                  <span className="font-medium text-foreground">Optional:</span>{' '}
+                  Connect your own provider below (Termii, Arkesel, Twilio, or Africa&apos;s Talking) to use your sender ID and remove the platform limit.
+                </p>
               </AlertDescription>
             </Alert>
+
+            {platformSmsActive && (
+              <Alert className="mb-3 md:mb-4 border-brand bg-brand-5 py-2 px-3 md:py-4 md:px-4">
+                <Info className="h-4 w-4 text-brand" />
+                <AlertTitle className="text-sm md:text-base text-brand">ABS platform SMS is active</AlertTitle>
+                <AlertDescription className="text-xs md:text-sm text-foreground">
+                  SMS is already working for your workspace—you do not need to enable anything below.
+                  {' '}
+                  {smsPlatformInfo.remaining} of {smsPlatformInfo.monthlyLimit} platform messages remaining this month
+                  (sender {smsPlatformInfo.senderId || 'ABS'}).
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {ownSmsActive && (
+              <Alert className="mb-3 md:mb-4 border-border py-2 px-3 md:py-4 md:px-4">
+                <Info className="h-4 w-4" />
+                <AlertTitle className="text-sm md:text-base">Using your own SMS provider</AlertTitle>
+                <AlertDescription className="text-xs md:text-sm">
+                  Customer SMS is sent through your configured provider with your sender ID. ABS platform SMS and its monthly limit no longer apply.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {switchingToOwnSms && (
+              <Alert className="mb-3 md:mb-4 border-border py-2 px-3 md:py-4 md:px-4">
+                <Info className="h-4 w-4" />
+                <AlertTitle className="text-sm md:text-base">Switching to your own SMS provider</AlertTitle>
+                <AlertDescription className="text-xs md:text-sm">
+                  Once saved and verified, customer SMS will use your provider instead of ABS platform SMS.
+                  Save your settings after the connection test succeeds.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {noSmsAvailable && (
+              <Alert className="mb-3 md:mb-4 py-2 px-3 md:py-4 md:px-4">
+                <AlertTitle className="text-sm md:text-base">No SMS available</AlertTitle>
+                <AlertDescription className="text-xs md:text-sm text-muted-foreground">
+                  Platform SMS is not enabled for your account. Connect your own provider below, or contact ABS support to enable platform SMS.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            <p className="mb-3 md:mb-4 text-xs md:text-sm font-medium text-foreground">Your own SMS provider (optional)</p>
 
             <Form {...smsForm}>
               <form onSubmit={smsForm.handleSubmit(onSMSSubmit)} className="space-y-3 md:space-y-4">
@@ -3938,9 +4011,9 @@ const Settings = () => {
                   render={({ field }) => (
                     <FormItem className="flex flex-row items-center justify-between rounded-lg border p-2 md:p-4">
                       <div className="space-y-0.5">
-                        <FormLabel className="text-base">Enable SMS</FormLabel>
+                        <FormLabel className="text-base">Use my own SMS provider</FormLabel>
                         <FormDescription>
-                          Enable SMS service integration. When turned on, a connection test runs to verify your settings.
+                          Connect Termii, Arkesel, Twilio, or Africa&apos;s Talking with your API credentials. A connection test runs when you turn this on.
                         </FormDescription>
                       </div>
                       <FormControl>
@@ -4625,9 +4698,9 @@ const Settings = () => {
           <>
             {aiSettings.encryptionConfigured === false ? (
               <Alert variant="destructive">
-                <AlertTitle>Server encryption key required</AlertTitle>
+                <AlertTitle>AI key storage unavailable</AlertTitle>
                 <AlertDescription>
-                  Set <code className="text-xs">AI_CREDENTIALS_ENCRYPTION_KEY</code> to a 64-character hex value before saving workspace AI keys.
+                  AI key storage is not configured on this server. Contact your administrator or ABS support.
                 </AlertDescription>
               </Alert>
             ) : null}

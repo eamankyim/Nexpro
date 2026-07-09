@@ -985,3 +985,8 @@ export const NOTIFICATION_PREFERENCE_CATEGORY_LABELS = {
   expense: 'Expenses',
   user: 'Team & invitations',
 };
+
+/** Channels that cannot be toggled off in Settings → Notifications (sync with notificationPreferenceHelper.js). */
+export const NOTIFICATION_PREFERENCE_LOCKED_CHANNELS = {
+  user: { in_app: 'not_applicable', email: 'always_on' },
+};

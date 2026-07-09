@@ -1199,6 +1199,7 @@ exports.getSMSSettings = async (req, res, next) => {
         sentThisMonth: usage.sentCount,
         remaining: usage.remaining,
         yearMonth: usage.yearMonth,
+        resetsAt: usage.resetsAt,
         senderId: platformSettings.arkesel?.senderId || 'ABS',
       };
     }
@@ -1467,7 +1468,40 @@ exports.getEmailSettings = async (req, res, next) => {
     };
 
     const emailService = require('../services/emailService');
-    console.log(`[Email][GET /settings/email] ${emailService.formatTenantEmailAudit(req.tenantId, emailSettings)}`);
+    const { getPlatformEmailSettingsSummary } = require('../services/platformEmailSettingsService');
+
+    const [emailMode, platformAvailable] = await Promise.all([
+      emailService.getEmailMode(req.tenantId),
+      emailService.isPlatformEmailEnabled(),
+    ]);
+
+    let platformEmail = null;
+    if (platformAvailable) {
+      const [platformConfig, platformSettings] = await Promise.all([
+        emailService.resolvePlatformConfig(),
+        getPlatformEmailSettingsSummary(),
+      ]);
+      const fromEmail = platformConfig?.fromEmail
+        || platformSettings.sendgrid?.fromEmail
+        || platformSettings.smtp?.fromEmail
+        || '';
+      const fromName = platformConfig?.fromName
+        || platformSettings.sendgrid?.fromName
+        || platformSettings.smtp?.fromName
+        || process.env.APP_NAME
+        || 'African Business Suite';
+      platformEmail = {
+        available: true,
+        fromEmail,
+        fromName,
+        provider: platformConfig?.provider || platformSettings.provider || 'sendgrid',
+      };
+    }
+
+    safeSettings.emailMode = emailMode;
+    safeSettings.platformEmail = platformEmail;
+
+    console.log(`[Email][GET /settings/email] ${emailService.formatTenantEmailAudit(req.tenantId, emailSettings)} emailMode=${emailMode}`);
 
     res.status(200).json({
       success: true,

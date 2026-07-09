@@ -372,6 +372,45 @@ class EmailService {
     };
   }
 
+  /**
+   * Whether tenant email settings are enabled with valid provider credentials.
+   * @param {Object} [config]
+   * @returns {boolean}
+   */
+  hasValidTenantEmailCredentials(config) {
+    if (!config || config.enabled !== true) return false;
+    return this.validateTenantEmailConfig(config).ok;
+  }
+
+  /**
+   * Whether platform email is configured in admin settings or ENV.
+   * @returns {Promise<boolean>}
+   */
+  async isPlatformEmailEnabled() {
+    const config = await this.resolvePlatformConfig();
+    return config !== null;
+  }
+
+  /**
+   * @param {string} tenantId
+   * @returns {Promise<'own'|'platform'|'none'>}
+   */
+  async getEmailMode(tenantId) {
+    const setting = await Setting.findOne({
+      where: { tenantId, key: 'email' },
+    });
+    if (setting?.value && this.hasValidTenantEmailCredentials(setting.value)) {
+      return 'own';
+    }
+
+    const platformConfig = await this.resolvePlatformConfig();
+    if (platformConfig) {
+      return 'platform';
+    }
+
+    return 'none';
+  }
+
   async resolveTenantEmailConfig(tenantId) {
     const setting = await Setting.findOne({
       where: { tenantId, key: 'email' }

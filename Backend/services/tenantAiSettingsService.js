@@ -75,7 +75,7 @@ async function saveTenantAiApiKey({ tenantId, apiKey, userId }) {
     throw error;
   }
   if (!hasKey(AI_CREDENTIALS_ENCRYPTION_KEY)) {
-    const error = new Error('Server is missing AI_CREDENTIALS_ENCRYPTION_KEY (64 hex chars). Ask your administrator to configure it before saving AI keys.');
+    const error = new Error('AI key storage is not configured on this server. Contact your administrator or ABS support.');
     error.statusCode = 503;
     throw error;
   }

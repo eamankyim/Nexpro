@@ -29,6 +29,7 @@ import {
 import {
   NOTIFICATION_PREFERENCE_CATEGORY_LABELS,
   NOTIFICATION_PREFERENCE_CATEGORY_ORDER,
+  NOTIFICATION_PREFERENCE_LOCKED_CHANNELS,
   normalizeNotificationPreferences,
   type NotificationPrefsDraft,
 } from '@/constants/notificationPreferences';
@@ -101,6 +102,8 @@ export default function SettingsScreen() {
 
   const setNotifChannel = useCallback(
     (categoryKey: string, channel: 'in_app' | 'email', value: boolean) => {
+      const lock = NOTIFICATION_PREFERENCE_LOCKED_CHANNELS[categoryKey]?.[channel];
+      if (lock) return;
       setNotificationPrefsDraft((prev) => {
         if (!prev?.categories?.[categoryKey]) return prev;
         return {
@@ -370,6 +373,7 @@ export default function SettingsScreen() {
                 const row = notificationCategories?.[key];
                 if (!row) return null;
                 const label = NOTIFICATION_PREFERENCE_CATEGORY_LABELS[key] || key;
+                const lockedChannels = NOTIFICATION_PREFERENCE_LOCKED_CHANNELS[key] || {};
                 return (
                   <View key={key} style={[styles.notifRow, { borderBottomColor: borderColor }]}>
                     <View style={styles.notifCategoryCell}>
@@ -380,22 +384,36 @@ export default function SettingsScreen() {
                         </Text>
                       ) : null}
                     </View>
-                    <View style={styles.notifSwitchCell}>
-                      <Switch
-                        value={row.in_app !== false}
-                        onValueChange={(v) => setNotifChannel(key, 'in_app', v)}
-                        trackColor={{ false: borderColor, true: `${brand}88` }}
-                        thumbColor={row.in_app !== false ? brand : '#f4f4f5'}
-                      />
-                    </View>
-                    <View style={styles.notifSwitchCell}>
-                      <Switch
-                        value={row.email === true}
-                        onValueChange={(v) => setNotifChannel(key, 'email', v)}
-                        trackColor={{ false: borderColor, true: `${brand}88` }}
-                        thumbColor={row.email === true ? brand : '#f4f4f5'}
-                      />
-                    </View>
+                    {(['in_app', 'email'] as const).map((channel) => {
+                      const lock = lockedChannels[channel];
+                      if (lock === 'not_applicable') {
+                        return (
+                          <View key={channel} style={styles.notifSwitchCell}>
+                            <Text style={[styles.notifNa, { color: mutedColor }]}>—</Text>
+                          </View>
+                        );
+                      }
+                      const checked =
+                        lock === 'always_on'
+                          ? true
+                          : channel === 'email'
+                            ? row.email === true
+                            : row.in_app !== false;
+                      return (
+                        <View key={channel} style={styles.notifSwitchCell}>
+                          <Switch
+                            value={checked}
+                            disabled={!!lock}
+                            onValueChange={(v) => setNotifChannel(key, channel, v)}
+                            trackColor={{ false: borderColor, true: `${brand}88` }}
+                            thumbColor={checked ? brand : '#f4f4f5'}
+                          />
+                          {lock === 'always_on' ? (
+                            <Text style={[styles.notifLockLabel, { color: mutedColor }]}>Always on</Text>
+                          ) : null}
+                        </View>
+                      );
+                    })}
                   </View>
                 );
               })}
@@ -571,6 +589,8 @@ const styles = StyleSheet.create({
   notifLabel: { fontSize: 14, fontWeight: '600' },
   notifSubLabel: { fontSize: 11, marginTop: 2, lineHeight: 15 },
   notifSwitchCell: { width: 72, alignItems: 'center' },
+  notifNa: { fontSize: 12 },
+  notifLockLabel: { fontSize: 10, marginTop: 4 },
   tenantRow: {
     flexDirection: 'row',
     alignItems: 'center',

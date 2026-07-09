@@ -65,6 +65,16 @@ npm run generate:platform-email-key
 
 Set the printed value as `PLATFORM_EMAIL_CREDENTIALS_ENCRYPTION_KEY`. Keep the same value across deploys and host restarts; changing or removing it means saved platform email credentials cannot be decrypted and must be re-entered.
 
+### Tenant AI Credential Encryption
+
+Workspace Settings > AI lets tenants save their own Anthropic API key. Before that works, set a stable 64-character hex encryption key on the VPS/backend `.env`:
+
+```bash
+openssl rand -hex 32
+```
+
+Set the printed value as `AI_CREDENTIALS_ENCRYPTION_KEY`. Keep the same value across deploys and host restarts; changing or removing it means saved workspace AI keys cannot be decrypted and must be re-entered.
+
 5. Start the server
 ```bash
 # Development

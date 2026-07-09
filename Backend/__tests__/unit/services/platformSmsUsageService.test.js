@@ -43,6 +43,19 @@ describe('platformSmsUsageService', () => {
     expect(result.errorCode).toBe('PLATFORM_SMS_MONTHLY_LIMIT');
   });
 
+  it('returns zero usage when usage table is missing', async () => {
+    sequelize.query.mockRejectedValueOnce(
+      Object.assign(new Error('relation "tenant_platform_sms_usage" does not exist'), {
+        parent: { code: '42P01' },
+      })
+    );
+
+    const summary = await platformSmsUsageService.getTenantUsageSummary('tenant-1');
+
+    expect(summary.sentCount).toBe(0);
+    expect(summary.remaining).toBe(100);
+  });
+
   it('atomically increments usage after successful send', async () => {
     sequelize.query.mockResolvedValueOnce([[{ sentCount: 3 }]]);
 
