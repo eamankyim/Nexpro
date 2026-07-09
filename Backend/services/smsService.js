@@ -8,7 +8,21 @@ const {
 } = require('./platformSmsUsageService');
 
 const ARKESEL_BASE_URL = 'https://sms.arkesel.com';
-const SMS_PROVIDER_TIMEOUT_MS = 10000;
+/** Provider send APIs (e.g. Arkesel) can take 30–40s before responding. */
+const SMS_SEND_TIMEOUT_MS = 45000;
+/** Shorter timeout for balance/credential verification calls. */
+const SMS_CONNECTION_TEST_TIMEOUT_MS = 15000;
+
+/**
+ * Whether an HTTP response indicates the provider accepted the send request.
+ * @param {import('axios').AxiosResponse} response
+ * @returns {boolean}
+ */
+function isProviderAcceptedResponse(response) {
+  const status = response?.status;
+  if (!Number.isFinite(status)) return true;
+  return status >= 200 && status < 300;
+}
 
 /**
  * Normalize provider errors, including axios timeouts.
@@ -19,7 +33,7 @@ function formatSmsProviderError(error) {
   const code = error?.code;
   const message = String(error?.message || '');
   if (code === 'ECONNABORTED' || /timeout/i.test(message)) {
-    return 'SMS provider timed out - check credentials and network connectivity';
+    return 'SMS provider did not respond in time - the message may still be delivered';
   }
   return error?.response?.data?.message
     || error?.response?.data?.Message
@@ -281,8 +295,15 @@ class SMSService {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
-        timeout: SMS_PROVIDER_TIMEOUT_MS,
+        timeout: SMS_SEND_TIMEOUT_MS,
       });
+
+      if (!isProviderAcceptedResponse(response)) {
+        return {
+          success: false,
+          error: `Twilio returned unexpected status ${response.status}`,
+        };
+      }
 
       console.log('[SMS] Message sent successfully via Twilio:', {
         phoneNumber: to.substring(0, 7) + '***',
@@ -299,6 +320,9 @@ class SMSService {
       return {
         success: false,
         error: formatSmsProviderError(error),
+        errorCode: error?.code === 'ECONNABORTED' || /timeout/i.test(error?.message || '')
+          ? 'SMS_PROVIDER_TIMEOUT'
+          : undefined,
       };
     }
   }
@@ -330,8 +354,15 @@ class SMSService {
 
       const response = await axios.post(url, payload, {
         headers: { 'Content-Type': 'application/json' },
-        timeout: SMS_PROVIDER_TIMEOUT_MS,
+        timeout: SMS_SEND_TIMEOUT_MS,
       });
+
+      if (!isProviderAcceptedResponse(response)) {
+        return {
+          success: false,
+          error: `Termii returned unexpected status ${response.status}`,
+        };
+      }
 
       const messageId = response.data?.message_id || response.data?.messageId;
       console.log('[SMS] Message sent successfully via Termii:', {
@@ -349,6 +380,9 @@ class SMSService {
       return {
         success: false,
         error: formatSmsProviderError(error),
+        errorCode: error?.code === 'ECONNABORTED' || /timeout/i.test(error?.message || '')
+          ? 'SMS_PROVIDER_TIMEOUT'
+          : undefined,
       };
     }
   }
@@ -378,9 +412,16 @@ class SMSService {
             'api-key': apiKey,
             'Content-Type': 'application/json',
           },
-          timeout: SMS_PROVIDER_TIMEOUT_MS,
+          timeout: SMS_SEND_TIMEOUT_MS,
         }
       );
+
+      if (!isProviderAcceptedResponse(response)) {
+        return {
+          success: false,
+          error: `Arkesel returned unexpected status ${response.status}`,
+        };
+      }
 
       const messageId = response.data?.data?.[0]?.id
         || response.data?.data?.[0]?.message_id
@@ -401,6 +442,9 @@ class SMSService {
       return {
         success: false,
         error: formatSmsProviderError(error),
+        errorCode: error?.code === 'ECONNABORTED' || /timeout/i.test(error?.message || '')
+          ? 'SMS_PROVIDER_TIMEOUT'
+          : undefined,
       };
     }
   }
@@ -434,9 +478,16 @@ class SMSService {
             'Content-Type': 'application/json',
             Accept: 'application/json',
           },
-          timeout: SMS_PROVIDER_TIMEOUT_MS,
+          timeout: SMS_SEND_TIMEOUT_MS,
         }
       );
+
+      if (!isProviderAcceptedResponse(response)) {
+        return {
+          success: false,
+          error: `Africa's Talking returned unexpected status ${response.status}`,
+        };
+      }
 
       console.log('[SMS] Message sent successfully via Africa\'s Talking:', {
         phoneNumber: to.substring(0, 7) + '***',
@@ -453,6 +504,9 @@ class SMSService {
       return {
         success: false,
         error: formatSmsProviderError(error),
+        errorCode: error?.code === 'ECONNABORTED' || /timeout/i.test(error?.message || '')
+          ? 'SMS_PROVIDER_TIMEOUT'
+          : undefined,
       };
     }
   }
@@ -477,7 +531,7 @@ class SMSService {
           const balanceUrl = `${termiiBaseUrl}/api/get-balance`;
           const termiiResponse = await axios.get(balanceUrl, {
             params: { api_key: config.apiKey },
-            timeout: SMS_PROVIDER_TIMEOUT_MS,
+            timeout: SMS_CONNECTION_TEST_TIMEOUT_MS,
           });
           return {
             success: true,
@@ -497,7 +551,7 @@ class SMSService {
           const balanceUrl = `${ARKESEL_BASE_URL}/api/v2/clients/balance-details`;
           const arkeselResponse = await axios.get(balanceUrl, {
             headers: { 'api-key': config.apiKey },
-            timeout: SMS_PROVIDER_TIMEOUT_MS,
+            timeout: SMS_CONNECTION_TEST_TIMEOUT_MS,
           });
           return {
             success: true,
@@ -516,7 +570,7 @@ class SMSService {
               username: config.accountSid,
               password: config.authToken,
             },
-            timeout: SMS_PROVIDER_TIMEOUT_MS,
+            timeout: SMS_CONNECTION_TEST_TIMEOUT_MS,
           });
           return {
             success: true,
@@ -539,7 +593,7 @@ class SMSService {
               Accept: 'application/json',
             },
             params: { username: config.username },
-            timeout: SMS_PROVIDER_TIMEOUT_MS,
+            timeout: SMS_CONNECTION_TEST_TIMEOUT_MS,
           });
           return {
             success: true,
@@ -567,3 +621,6 @@ module.exports = new SMSService();
 module.exports.hasValidTenantSmsCredentials = hasValidTenantSmsCredentials;
 module.exports.toArkeselRecipient = toArkeselRecipient;
 module.exports.formatSmsProviderError = formatSmsProviderError;
+module.exports.isProviderAcceptedResponse = isProviderAcceptedResponse;
+module.exports.SMS_SEND_TIMEOUT_MS = SMS_SEND_TIMEOUT_MS;
+module.exports.SMS_CONNECTION_TEST_TIMEOUT_MS = SMS_CONNECTION_TEST_TIMEOUT_MS;

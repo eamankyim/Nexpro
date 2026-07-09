@@ -1,8 +1,11 @@
 import { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ChevronRight } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useSettingsOnboardingBanner } from '../../hooks/useSettingsOnboardingBanner';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
 import {
   getSettingsCardHref,
   getVisibleSettingsCards,
@@ -13,7 +16,9 @@ import {
  * Settings hub card grid grouped by You / Business / Channels.
  */
 const SettingsHub = () => {
+  const navigate = useNavigate();
   const { isManager, hasFeature } = useAuth();
+  const { showOnboardingBanner } = useSettingsOnboardingBanner();
 
   const visibleCards = useMemo(
     () => getVisibleSettingsCards({ isManager, hasFeature }),
@@ -30,6 +35,27 @@ const SettingsHub = () => {
           Manage your account, workspace, billing, and communication channels.
         </p>
       </div>
+
+      {showOnboardingBanner && (
+        <Card className="mb-3 md:mb-6 border-0 md:border border-brand bg-green-50">
+          <CardContent className="p-2 md:p-6">
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2 md:gap-4">
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base md:text-lg font-semibold text-foreground mb-0.5 md:mb-1">Complete onboarding</h3>
+                <p className="text-xs md:text-sm text-gray-600">
+                  Finish setting up your business to get the most out of African Business Suite.
+                </p>
+              </div>
+              <Button
+                onClick={() => navigate('/onboarding')}
+                className="shrink-0 bg-brand text-primary-foreground hover:bg-brand-dark border border-brand"
+              >
+                Complete onboarding
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="space-y-6 md:space-y-8">
         {groups.map(({ key, label, cards }) => (

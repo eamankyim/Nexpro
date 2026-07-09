@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import { integerOrEmptySchema } from './formUtils';
 import { API_BASE_URL } from '../services/api';
 
 /**
@@ -13,9 +15,113 @@ export const resolveSettingsFileUrl = (url) => {
   return url;
 };
 
-import { z } from 'zod';
-
 export const SMS_SECTIONS = ['overview', 'provider', 'templates', 'delivery-rules'];
+
+export const DEFAULT_DELIVERY_SETTINGS = {
+  enabled: false,
+  requireSelectionAtCheckout: false,
+  bands: [],
+};
+
+/**
+ * Create a new delivery band draft row.
+ * @param {number} [index]
+ * @returns {Object}
+ */
+export const createDeliveryBand = (index = 0) => ({
+  id: `band_${Date.now()}_${index}`,
+  label: '',
+  minKm: '',
+  maxKm: '',
+  fee: '',
+});
+
+export const organizationSchema = z.object({
+  name: z.string().min(1, 'Enter organization name'),
+  legalName: z.string().optional(),
+  email: z.string().email().optional(),
+  phone: z.string().optional(),
+  website: z.string().url().optional().or(z.literal('')),
+  logoUrl: z.string().optional(),
+  appName: z.string().optional(),
+  primaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional().or(z.literal('')),
+  invoiceFooter: z.string().optional(),
+  paymentDetails: z.string().optional(),
+  paymentDetailsEnabled: z.boolean().optional(),
+  defaultPaymentTerms: z.string().optional(),
+  defaultTermsAndConditions: z.string().optional(),
+  supportEmail: z.string().email().optional().or(z.literal('')),
+  currency: z.string().optional(),
+  address: z.object({
+    line1: z.string().optional(),
+    line2: z.string().optional(),
+    city: z.string().optional(),
+    state: z.string().optional(),
+    postalCode: z.string().optional(),
+    country: z.string().optional(),
+  }).optional(),
+  tax: z.object({
+    vatNumber: z.string().optional(),
+    tin: z.string().optional(),
+    enabled: z.boolean().optional(),
+    defaultRatePercent: z.preprocess(
+      (val) => {
+        if (val === '' || val === undefined || val === null) return 0;
+        const n = typeof val === 'string' ? parseFloat(val.trim()) : Number(val);
+        if (!Number.isFinite(n)) return 0;
+        return Math.min(100, Math.max(0, n));
+      },
+      z.number().min(0).max(100)
+    ),
+    pricesAreTaxInclusive: z.boolean().optional(),
+    displayLabel: z.string().max(80).optional(),
+    otherCharges: z.object({
+      enabled: z.boolean().optional(),
+      label: z.string().max(80).optional(),
+      ratePercent: z.preprocess(
+        (val) => {
+          if (val === '' || val === undefined || val === null) return 0;
+          const n = typeof val === 'string' ? parseFloat(val.trim()) : Number(val);
+          if (!Number.isFinite(n)) return 0;
+          return Math.min(100, Math.max(0, n));
+        },
+        z.number().min(0).max(100)
+      ),
+      customerBears: z.boolean().optional(),
+      appliesTo: z.enum(['online_payments', 'all_payments']).optional(),
+    }).optional(),
+  }).optional(),
+  shopType: z.string().optional(),
+});
+
+/**
+ * Unwrap nested API response payloads.
+ * @param {*} response
+ * @returns {Object}
+ */
+export const unwrapApiPayload = (response) => response?.data?.data ?? response?.data ?? response ?? {};
+
+/**
+ * Format enum-like values for display.
+ * @param {string} value
+ * @returns {string}
+ */
+export const formatLabel = (value) => {
+  if (!value) return 'Not set';
+  return String(value).replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+};
+
+/**
+ * Format minor currency units (e.g. pesewas) as major display string.
+ * @param {number} amount
+ * @param {string} [currency]
+ * @returns {string}
+ */
+export const formatMinorCurrency = (amount, currency = 'GHS') => {
+  const numericAmount = Number(amount);
+  const majorAmount = Number.isFinite(numericAmount) ? numericAmount / 100 : 0;
+  return `${currency || 'GHS'} ${majorAmount.toFixed(2)}`;
+};
 
 export const PAYMENT_COLLECTION_SUBTABS = ['settlements', 'mtn-collection'];
 

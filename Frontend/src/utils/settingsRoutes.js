@@ -47,15 +47,14 @@ export const SETTINGS_HUB_CARDS = [
     title: 'Notifications',
     subtitle: 'In-app and email notification preferences',
     group: 'you',
-    legacyTab: 'notifications',
-    managerOnly: true,
+    migrated: true,
   },
   {
     slug: 'organization',
     title: 'Organization',
     subtitle: 'Business profile, branding, and review links',
     group: 'business',
-    legacyTab: 'workspace',
+    migrated: true,
     managerOnly: true,
   },
   {
@@ -67,11 +66,43 @@ export const SETTINGS_HUB_CARDS = [
     managerOnly: true,
   },
   {
-    slug: 'operations',
-    title: 'Operations',
-    subtitle: 'Workflows, tracking, delivery, and AI settings',
+    slug: 'workflows',
+    title: 'Workflows',
+    subtitle: 'Quote accept → job/sale and auto-send invoice on job creation',
     group: 'business',
-    legacyTab: 'operations',
+    migrated: true,
+    managerOnly: true,
+  },
+  {
+    slug: 'tracking',
+    title: 'Customer tracking',
+    subtitle: 'Public tracking page toggles and shareable link',
+    group: 'business',
+    migrated: true,
+    managerOnly: true,
+  },
+  {
+    slug: 'delivery',
+    title: 'Delivery fees',
+    subtitle: 'Delivery bands, enable delivery, and checkout requirements',
+    group: 'business',
+    migrated: true,
+    managerOnly: true,
+  },
+  {
+    slug: 'inventory',
+    title: 'Inventory',
+    subtitle: 'Auto-create expense from product cost',
+    group: 'business',
+    migrated: true,
+    managerOnly: true,
+  },
+  {
+    slug: 'ai',
+    title: 'AI',
+    subtitle: 'Anthropic API key for assistant and automations',
+    group: 'business',
+    migrated: true,
     managerOnly: true,
   },
   {
@@ -79,7 +110,7 @@ export const SETTINGS_HUB_CARDS = [
     title: 'Billing & plan',
     subtitle: 'Subscription, seats, and ABS plan',
     group: 'business',
-    legacyTab: 'billing',
+    migrated: true,
     managerOnly: true,
   },
   {
@@ -127,6 +158,16 @@ export const SETTINGS_HUB_CARDS = [
 const MIGRATED_TAB_ROUTES = {
   profile: '/settings/profile',
   appearance: '/settings/appearance',
+  notifications: '/settings/notifications',
+  organization: '/settings/organization',
+  workspace: '/settings/organization',
+  workflows: '/settings/workflows',
+  tracking: '/settings/tracking',
+  delivery: '/settings/delivery',
+  inventory: '/settings/inventory',
+  ai: '/settings/ai',
+  billing: '/settings/billing',
+  subscription: '/settings/billing',
   sms: '/settings/sms',
   'invoices-receipts': '/settings/invoices-receipts',
   payments: '/settings/payments',
@@ -137,7 +178,7 @@ const MIGRATED_TAB_ROUTES = {
 };
 
 /**
- * Normalize legacy main tab values (matches Settings.jsx normalizeMainTab).
+ * Normalize legacy main tab values (matches legacy Settings.jsx normalizeMainTab).
  * @param {string} tab
  * @param {boolean} canManageOrganization
  * @returns {string}
@@ -172,6 +213,30 @@ export const legacyTabToRoute = (tab, subtab, smsSection, canManageOrganization 
 
   if (rawTab === 'appearance') return '/settings/appearance';
 
+  if (rawTab === 'notifications' || rawTab === 'messaging') {
+    if (rawTab === 'messaging') {
+      if (subtab === 'whatsapp') return '/settings/whatsapp';
+      if (subtab === 'email') return '/settings/email';
+      if (subtab === 'sms') {
+        const section = smsSection && smsSection !== 'overview' ? smsSection : null;
+        return section ? `/settings/sms?section=${encodeURIComponent(section)}` : '/settings/sms';
+      }
+    }
+    return '/settings/notifications';
+  }
+
+  if (rawTab === 'workspace' || rawTab === 'organization') {
+    return '/settings/organization';
+  }
+
+  if (rawTab === 'operations' || rawTab === 'configurations') {
+    return '/settings/workflows';
+  }
+
+  if (rawTab === 'billing' || rawTab === 'subscription') {
+    return '/settings/billing';
+  }
+
   if (rawTab === 'invoices-receipts' || rawTab === 'invoices' || rawTab === 'receipts') {
     return '/settings/invoices-receipts';
   }
@@ -187,16 +252,6 @@ export const legacyTabToRoute = (tab, subtab, smsSection, canManageOrganization 
 
   if (rawTab === 'delivery-rules') {
     return '/settings/delivery-rules';
-  }
-
-  if (rawTab === 'messaging') {
-    if (subtab === 'whatsapp') return '/settings/whatsapp';
-    if (subtab === 'email') return '/settings/email';
-    if (subtab === 'sms') {
-      const section = smsSection && smsSection !== 'overview' ? smsSection : null;
-      return section ? `/settings/sms?section=${encodeURIComponent(section)}` : '/settings/sms';
-    }
-    return '/settings?tab=notifications';
   }
 
   if (rawTab === 'sms') {
@@ -216,7 +271,7 @@ export const legacyTabToRoute = (tab, subtab, smsSection, canManageOrganization 
     return MIGRATED_TAB_ROUTES[rawTab];
   }
 
-  return null;
+  return '/settings';
 };
 
 /**

@@ -16,12 +16,12 @@ jest.mock('../../../services/platformSmsUsageService', () => ({
 const { formatSmsProviderError } = require('../../../services/smsService');
 
 describe('smsService.formatSmsProviderError', () => {
-  it('maps axios timeouts to a credential-focused message', () => {
-    const error = new Error('timeout of 10000ms exceeded');
+  it('maps axios timeouts to a delivery-aware message', () => {
+    const error = new Error('timeout of 45000ms exceeded');
     error.code = 'ECONNABORTED';
 
     expect(formatSmsProviderError(error)).toBe(
-      'SMS provider timed out - check credentials and network connectivity'
+      'SMS provider did not respond in time - the message may still be delivered'
     );
   });
 

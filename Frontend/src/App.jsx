@@ -68,6 +68,14 @@ const SettingsPaymentsPage = lazy(() => import('./pages/settings/SettingsPayment
 const SettingsWhatsAppPage = lazy(() => import('./pages/settings/SettingsWhatsAppPage'));
 const SettingsEmailPage = lazy(() => import('./pages/settings/SettingsEmailPage'));
 const SettingsDeliveryRulesPage = lazy(() => import('./pages/settings/SettingsDeliveryRulesPage'));
+const SettingsNotificationsPage = lazy(() => import('./pages/settings/SettingsNotificationsPage'));
+const SettingsOrganizationPage = lazy(() => import('./pages/settings/SettingsOrganizationPage'));
+const SettingsWorkflowsPage = lazy(() => import('./pages/settings/SettingsWorkflowsPage'));
+const SettingsTrackingPage = lazy(() => import('./pages/settings/SettingsTrackingPage'));
+const SettingsDeliveryPage = lazy(() => import('./pages/settings/SettingsDeliveryPage'));
+const SettingsInventoryPage = lazy(() => import('./pages/settings/SettingsInventoryPage'));
+const SettingsAiPage = lazy(() => import('./pages/settings/SettingsAiPage'));
+const SettingsBillingPage = lazy(() => import('./pages/settings/SettingsBillingPage'));
 const Plans = lazy(() => import('./pages/Plans'));
 const Employees = lazy(() => import('./pages/Employees'));
 const Payroll = lazy(() => import('./pages/Payroll'));
@@ -346,6 +354,14 @@ function AppContent() {
               <Route index element={<SettingsIndex />} />
               <Route path="profile" element={<SettingsProfilePage />} />
               <Route path="appearance" element={<SettingsAppearancePage />} />
+              <Route path="notifications" element={<SettingsNotificationsPage />} />
+              <Route path="organization" element={<RequireWorkspaceManager><SettingsOrganizationPage /></RequireWorkspaceManager>} />
+              <Route path="workflows" element={<RequireWorkspaceManager><SettingsWorkflowsPage /></RequireWorkspaceManager>} />
+              <Route path="tracking" element={<RequireWorkspaceManager><SettingsTrackingPage /></RequireWorkspaceManager>} />
+              <Route path="delivery" element={<RequireWorkspaceManager><SettingsDeliveryPage /></RequireWorkspaceManager>} />
+              <Route path="inventory" element={<RequireWorkspaceManager><SettingsInventoryPage /></RequireWorkspaceManager>} />
+              <Route path="ai" element={<RequireWorkspaceManager><SettingsAiPage /></RequireWorkspaceManager>} />
+              <Route path="billing" element={<RequireWorkspaceManager><SettingsBillingPage /></RequireWorkspaceManager>} />
               <Route path="sms" element={<RequireWorkspaceManager><SettingsSmsPage /></RequireWorkspaceManager>} />
               <Route path="invoices-receipts" element={<RequireWorkspaceManager><SettingsInvoicesReceiptsPage /></RequireWorkspaceManager>} />
               <Route path="payments" element={<RequireWorkspaceManager><SettingsPaymentsPage /></RequireWorkspaceManager>} />

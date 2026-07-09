@@ -491,7 +491,13 @@ async function executeRule({
             ? applyTemplateValues([rawBody], triggerContext)[0]
             : rawBody;
           const response = await smsService.sendMessage(tenantId, triggerContext.phone, message, action.fromNumber || null);
-          results.push({ type: 'send_sms', success: !!response?.success, error: response?.error || null });
+          results.push({
+            type: 'send_sms',
+            success: !!response?.success,
+            messageId: response?.messageId || null,
+            error: response?.error || null,
+            errorCode: response?.errorCode || null,
+          });
         } catch (error) {
           results.push({ type: 'send_sms', success: false, error: error?.message || 'send_failed' });
         }
