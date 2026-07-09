@@ -20,6 +20,7 @@ const { computeDocumentTax } = require('../utils/taxCalculation');
 const { getTenantLogoUrl } = require('../utils/tenantLogo');
 const { resolveDeliveryForSale } = require('../services/deliverySettingsService');
 const { notifyOrderCreatedForCustomer } = require('../services/orderCustomerNotificationService');
+const { runReviewRequestAutomations, runSaleCompletedAutomations, runLowProfitMarginAutomations, runStockChangeAutomations } = require('../services/automationEngineService');
 const { getTenantShopType } = require('../config/businessTypes');
 const {
   applyShopFilter,
@@ -887,6 +888,14 @@ const runPostSaleAutomation = async ({ sale, items, tenantId, userId, isRestaura
           } else if (product.quantityOnHand <= (product.reorderLevel || 10)) {
             emitInventoryAlert(tenantId, product, 'low_stock');
           }
+          runStockChangeAutomations({
+            tenantId,
+            product,
+            stockEvent: 'auto',
+            actorUserId: userId || null,
+          }).catch((err) =>
+            console.error('[CreateSale] stock change automations failed:', err?.message || err)
+          );
         }
       }
     } catch (wsError) {
@@ -900,6 +909,57 @@ const runPostSaleAutomation = async ({ sale, items, tenantId, userId, isRestaura
         console.error('[CreateSale] Auto-send receipt failed:', err?.message || err)
       );
       mark('auto-receipt:end');
+
+      if (createdSale.customerId && !isDealerSale(createdSale)) {
+        mark('review-request:start');
+        await runReviewRequestAutomations({
+          tenantId,
+          sourceType: 'sale',
+          source: createdSale,
+          customer: createdSale.customer || null,
+          actorUserId: userId || null,
+        }).catch((err) =>
+          console.error('[CreateSale] review_request automations failed:', err?.message || err)
+        );
+        mark('review-request:end');
+      }
+
+      if (createdSale.customer) {
+        mark('sale-completed:start');
+        await runSaleCompletedAutomations({
+          tenantId,
+          sale: createdSale,
+          customer: createdSale.customer || null,
+          actorUserId: userId || null,
+        }).catch((err) =>
+          console.error('[CreateSale] sale_completed automations failed:', err?.message || err)
+        );
+        mark('sale-completed:end');
+      }
+
+      mark('low-profit-margin:start');
+      const saleItemsForMargin = await SaleItem.findAll({
+        where: { saleId: createdSale.id },
+        attributes: ['id', 'productId', 'quantity', 'total', 'metadata'],
+      });
+      const marginProductIds = [...new Set(saleItemsForMargin.map((item) => item.productId).filter(Boolean))];
+      const marginProducts = marginProductIds.length
+        ? await Product.findAll({
+          where: { id: { [Op.in]: marginProductIds }, tenantId },
+          attributes: ['id', 'costPrice'],
+        })
+        : [];
+      await runLowProfitMarginAutomations({
+        tenantId,
+        sale: createdSale,
+        saleItems: saleItemsForMargin,
+        productsById: new Map(marginProducts.map((product) => [product.id, product])),
+        customer: createdSale.customer || null,
+        actorUserId: userId || null,
+      }).catch((err) =>
+        console.error('[CreateSale] low_profit_margin automations failed:', err?.message || err)
+      );
+      mark('low-profit-margin:end');
     }
   } catch (error) {
     console.error('[CreateSale] Post-sale automation failed:', error?.message || error);
@@ -1835,6 +1895,18 @@ exports.updateSale = async (req, res, next) => {
         saleItemDetailInclude
       ]
     });
+
+    if (updateData.status === 'completed' && previousStatus !== 'completed' && updatedSale?.customerId && !isDealerSale(updatedSale)) {
+      await runReviewRequestAutomations({
+        tenantId: req.tenantId,
+        sourceType: 'sale',
+        source: updatedSale,
+        customer: updatedSale.customer || null,
+        actorUserId: req.user?.id || null,
+      }).catch((err) =>
+        console.error('[UpdateSale] review_request automations failed:', err?.message || err)
+      );
+    }
 
     invalidateSaleMutationCaches(req.tenantId);
     res.status(200).json({

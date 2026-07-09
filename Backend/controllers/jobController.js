@@ -21,6 +21,7 @@ const { getMaterialTypesForStudioType } = require('../config/studioTypes');
 const { buildCustomerFacingJobTitle } = require('../utils/jobCustomerMessageText');
 const { getTaxConfigForTenant } = require('../utils/taxConfig');
 const { convertLineItemsFromTaxInclusive } = require('../utils/taxCalculation');
+const { runReviewRequestAutomations, runJobCompletedAutomations } = require('../services/automationEngineService');
 
 const jobWhere = (req, extra = {}) =>
   applyStudioLocationFilter(req, applyTenantFilter(req.tenantId, extra));
@@ -1355,6 +1356,29 @@ exports.updateJob = async (req, res, next) => {
           tenantId: req.tenantId,
           job: updatedJob,
           eventType: 'completed'
+        });
+        setImmediate(async () => {
+          try {
+            await runJobCompletedAutomations({
+              tenantId: req.tenantId,
+              job: updatedJob,
+              customer: updatedJob.customer || null,
+              actorUserId: req.user?.id || null,
+            });
+          } catch (error) {
+            console.error('[Job] job_completed automations failed:', error?.message || error);
+          }
+          try {
+            await runReviewRequestAutomations({
+              tenantId: req.tenantId,
+              sourceType: 'job',
+              source: updatedJob,
+              customer: updatedJob.customer || null,
+              actorUserId: req.user?.id || null,
+            });
+          } catch (error) {
+            console.error('[Job] review_request automations failed:', error?.message || error);
+          }
         });
       }
     }

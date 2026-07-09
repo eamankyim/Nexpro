@@ -68,6 +68,8 @@ import {
 } from '../utils/automationForm';
 import { handleApiError, showError, showSuccess } from '../utils/toast';
 import AutomationTestRecipientDialog from '../components/automations/AutomationTestRecipientDialog';
+import MessagePreview from '../components/automations/MessagePreview';
+import { useScopedWorkspaceName } from '../hooks/useScopedWorkspaceName';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -286,6 +288,34 @@ const triggerMetaByType = {
     color: 'text-slate-700',
     bg: 'bg-slate-100',
   },
+  payment_received: {
+    title: 'Payment received',
+    description: () => 'When a payment is recorded',
+    Icon: DollarSign,
+    color: 'text-emerald-700',
+    bg: 'bg-emerald-50',
+  },
+  review_request: {
+    title: 'Review request',
+    description: () => 'After job, sale, or paid invoice',
+    Icon: Star,
+    color: 'text-amber-700',
+    bg: 'bg-amber-50',
+  },
+  job_completed: {
+    title: 'Job completed',
+    description: () => 'When a job is marked complete',
+    Icon: CheckCircle2,
+    color: 'text-green-700',
+    bg: 'bg-green-50',
+  },
+  daily_sales_summary: {
+    title: 'Daily sales summary',
+    description: (config = {}) => (config.summaryPeriod === 'today' ? "Today's sales" : "Yesterday's sales"),
+    Icon: ClipboardList,
+    color: 'text-blue-700',
+    bg: 'bg-blue-50',
+  },
 };
 
 const actionMetaByType = {
@@ -359,44 +389,25 @@ const TRIGGER_CARD_DETAILS = {
     bg: 'bg-pink-50',
     color: 'text-pink-700',
   },
-};
-
-const EXTRA_TRIGGER_CARDS = [
-  {
-    value: 'payment_received',
+  payment_received: {
     category: 'Finance',
     title: 'Payment received',
-    description: 'When a payment is recorded',
+    description: 'When a payment is recorded on an invoice',
     tag: 'Popular',
     Icon: DollarSign,
-    bg: 'bg-violet-50',
-    color: 'text-violet-700',
-    disabled: true,
+    bg: 'bg-emerald-50',
+    color: 'text-emerald-700',
   },
-  {
-    value: 'new_lead',
+  review_request: {
     category: 'Sales & CRM',
-    title: 'New lead',
-    description: 'When a new lead is created',
-    tag: 'New',
-    Icon: Mail,
-    bg: 'bg-pink-50',
-    color: 'text-pink-700',
-    disabled: true,
-  },
-  {
-    value: 'high_value_invoice',
-    category: 'Finance',
-    title: 'High value invoice',
-    description: 'When invoice is above a set amount',
-    tag: 'New',
-    Icon: DollarSign,
+    title: 'Review request',
+    description: 'After a job, sale, or standalone paid invoice',
+    tag: 'Popular',
+    Icon: Star,
     bg: 'bg-amber-50',
     color: 'text-amber-700',
-    disabled: true,
   },
-  {
-    value: 'job_completed',
+  job_completed: {
     category: 'General',
     title: 'Job completed',
     description: 'When a job or service is completed',
@@ -404,9 +415,127 @@ const EXTRA_TRIGGER_CARDS = [
     Icon: CheckCircle2,
     bg: 'bg-green-50',
     color: 'text-green-700',
-    disabled: true,
   },
-];
+  daily_sales_summary: {
+    category: 'Finance',
+    title: 'Daily sales summary',
+    description: 'Scheduled daily recap of sales activity',
+    tag: 'New',
+    Icon: ClipboardList,
+    bg: 'bg-blue-50',
+    color: 'text-blue-700',
+  },
+  new_lead: {
+    category: 'Sales & CRM',
+    title: 'New lead',
+    description: 'When a new lead is created',
+    tag: 'New',
+    Icon: Mail,
+    bg: 'bg-pink-50',
+    color: 'text-pink-700',
+  },
+  high_value_invoice: {
+    category: 'Finance',
+    title: 'High value invoice',
+    description: 'When invoice is above a set amount',
+    tag: 'New',
+    Icon: DollarSign,
+    bg: 'bg-amber-50',
+    color: 'text-amber-700',
+  },
+  customer_created: {
+    category: 'Sales & CRM',
+    title: 'New customer',
+    description: 'When a new customer is added',
+    tag: 'New',
+    Icon: Users,
+    bg: 'bg-violet-50',
+    color: 'text-violet-700',
+  },
+  lead_no_contact_days: {
+    category: 'Sales & CRM',
+    title: 'Lead no contact',
+    description: 'When a lead has had no contact',
+    tag: 'New',
+    Icon: Mail,
+    bg: 'bg-pink-50',
+    color: 'text-pink-700',
+  },
+  invoice_sent: {
+    category: 'Finance',
+    title: 'Invoice sent',
+    description: 'When an invoice is sent to a customer',
+    tag: 'New',
+    Icon: FileText,
+    bg: 'bg-emerald-50',
+    color: 'text-emerald-700',
+  },
+  sale_completed: {
+    category: 'Finance',
+    title: 'Sale completed',
+    description: 'Sale receipt / order confirmation',
+    tag: 'New',
+    Icon: DollarSign,
+    bg: 'bg-emerald-50',
+    color: 'text-emerald-700',
+  },
+  low_stock_on_change: {
+    category: 'Inventory',
+    title: 'Low stock (real-time)',
+    description: 'When stock drops to reorder level',
+    tag: 'New',
+    Icon: Package,
+    bg: 'bg-orange-50',
+    color: 'text-orange-700',
+  },
+  out_of_stock_detected: {
+    category: 'Inventory',
+    title: 'Out of stock (real-time)',
+    description: 'When a product goes out of stock',
+    tag: 'New',
+    Icon: Package,
+    bg: 'bg-red-50',
+    color: 'text-red-700',
+  },
+  quote_sent: {
+    category: 'Sales & CRM',
+    title: 'Quote sent',
+    description: 'When a quote is emailed to a customer',
+    tag: 'New',
+    Icon: ClipboardList,
+    bg: 'bg-blue-50',
+    color: 'text-blue-700',
+  },
+  job_due_in_hours: {
+    category: 'General',
+    title: 'Job due soon',
+    description: 'Customer reminder before job due date',
+    tag: 'New',
+    Icon: Clock3,
+    bg: 'bg-green-50',
+    color: 'text-green-700',
+  },
+  prescription_refill_due: {
+    category: 'General',
+    title: 'Prescription refill',
+    description: 'Pharmacy refill reminder',
+    tag: 'New',
+    Icon: Gift,
+    bg: 'bg-violet-50',
+    color: 'text-violet-700',
+  },
+  low_profit_margin: {
+    category: 'Finance',
+    title: 'Low profit margin',
+    description: 'When a sale margin is too low',
+    tag: 'New',
+    Icon: AlertTriangle,
+    bg: 'bg-red-50',
+    color: 'text-red-700',
+  },
+};
+
+const EXTRA_TRIGGER_CARDS = [];
 
 const CONDITION_OPERATOR_OPTIONS = [
   { value: 'greater_than', label: 'Greater than' },
@@ -440,7 +569,9 @@ const BIRTHDAY_MATCH_OPTIONS = [
   { value: 'this_month', label: 'Birthday is this month' },
 ];
 
-const INVOICE_TRIGGER_TYPES = ['invoice_due_in_days', 'invoice_overdue'];
+const INVOICE_TRIGGER_TYPES = ['invoice_due_in_days', 'invoice_overdue', 'payment_received'];
+const REVIEW_TRIGGER_TYPES = ['review_request'];
+const JOB_TRIGGER_TYPES = ['job_completed'];
 const CUSTOMER_TRIGGER_TYPES = ['customer_inactive_days', 'customer_birthday'];
 const PRODUCT_TRIGGER_TYPES = ['low_stock_detected'];
 
@@ -462,11 +593,11 @@ const CONDITION_GROUPS = [
     label: 'Customer',
     Icon: Users,
     rows: [
-      { key: 'customerHasPhone', label: 'Customer has phone', control: 'yesNo', valueKey: 'customerHasPhone', triggerTypes: [...INVOICE_TRIGGER_TYPES, ...CUSTOMER_TRIGGER_TYPES, 'quote_no_response'] },
-      { key: 'customerHasEmail', label: 'Customer has email', control: 'yesNo', valueKey: 'customerHasEmail', triggerTypes: [...INVOICE_TRIGGER_TYPES, ...CUSTOMER_TRIGGER_TYPES, 'quote_no_response'] },
-      { key: 'whatsappConsent', label: 'WhatsApp consent', control: 'yesNo', valueKey: 'whatsappConsent', triggerTypes: [...INVOICE_TRIGGER_TYPES, ...CUSTOMER_TRIGGER_TYPES, 'quote_no_response'] },
-      { key: 'smsConsent', label: 'SMS consent', control: 'yesNo', valueKey: 'smsConsent', triggerTypes: [...INVOICE_TRIGGER_TYPES, ...CUSTOMER_TRIGGER_TYPES, 'quote_no_response'] },
-      { key: 'marketingConsent', label: 'Marketing consent', control: 'yesNo', valueKey: 'marketingConsent', triggerTypes: [...INVOICE_TRIGGER_TYPES, ...CUSTOMER_TRIGGER_TYPES, 'quote_no_response'] },
+      { key: 'customerHasPhone', label: 'Customer has phone', control: 'yesNo', valueKey: 'customerHasPhone', triggerTypes: [...INVOICE_TRIGGER_TYPES, ...CUSTOMER_TRIGGER_TYPES, ...REVIEW_TRIGGER_TYPES, ...JOB_TRIGGER_TYPES, 'quote_no_response'] },
+      { key: 'customerHasEmail', label: 'Customer has email', control: 'yesNo', valueKey: 'customerHasEmail', triggerTypes: [...INVOICE_TRIGGER_TYPES, ...CUSTOMER_TRIGGER_TYPES, ...REVIEW_TRIGGER_TYPES, ...JOB_TRIGGER_TYPES, 'quote_no_response'] },
+      { key: 'whatsappConsent', label: 'WhatsApp consent', control: 'yesNo', valueKey: 'whatsappConsent', triggerTypes: [...INVOICE_TRIGGER_TYPES, ...CUSTOMER_TRIGGER_TYPES, ...REVIEW_TRIGGER_TYPES, ...JOB_TRIGGER_TYPES, 'quote_no_response'] },
+      { key: 'smsConsent', label: 'SMS consent', control: 'yesNo', valueKey: 'smsConsent', triggerTypes: [...INVOICE_TRIGGER_TYPES, ...CUSTOMER_TRIGGER_TYPES, ...REVIEW_TRIGGER_TYPES, ...JOB_TRIGGER_TYPES, 'quote_no_response'] },
+      { key: 'marketingConsent', label: 'Marketing consent', control: 'yesNo', valueKey: 'marketingConsent', triggerTypes: [...INVOICE_TRIGGER_TYPES, ...CUSTOMER_TRIGGER_TYPES, ...REVIEW_TRIGGER_TYPES, ...JOB_TRIGGER_TYPES, 'quote_no_response'] },
       { key: 'lastPurchaseOlderThanDays', label: 'Last purchase older than', control: 'number', valueKey: 'lastPurchaseOlderThanDays', suffix: 'days', triggerTypes: CUSTOMER_TRIGGER_TYPES },
       { key: 'totalSpend', label: 'Total spend', control: 'numberComparison', operatorKey: 'totalSpendOperator', valueKey: 'totalSpendValue', placeholder: 'GHC 0.00', triggerTypes: CUSTOMER_TRIGGER_TYPES },
       { key: 'birthdayMatch', label: 'Birthday', control: 'select', valueKey: 'birthdayMatch', options: BIRTHDAY_MATCH_OPTIONS, triggerTypes: CUSTOMER_TRIGGER_TYPES },
@@ -478,8 +609,8 @@ const CONDITION_GROUPS = [
     Icon: DollarSign,
     rows: [
       { key: 'paymentStatus', label: 'Invoice payment status', control: 'select', valueKey: 'paymentStatus', options: PAYMENT_STATUS_OPTIONS, triggerTypes: INVOICE_TRIGGER_TYPES },
+      { key: 'invoiceAmount', label: 'Payment amount', control: 'numberComparison', operatorKey: 'invoiceAmountOperator', valueKey: 'invoiceAmountValue', placeholder: 'GHC 0.00', triggerTypes: ['payment_received'] },
     ],
-    emptyMessage: 'Payment event filters will be available when payment-received triggers are wired into automations.',
   },
   {
     key: 'date',
@@ -994,6 +1125,116 @@ const TEMPLATE_METADATA = {
     difficulty: 'advanced',
     usage: 142,
   },
+  new_lead_notification: {
+    category: 'sales_crm',
+    title: 'New lead notification',
+    description: 'Notify the team when a new lead is created.',
+    Icon: Mail,
+    accent: 'pink',
+    channels: ['email', 'task'],
+    difficulty: 'easy',
+    usage: 198,
+  },
+  high_value_invoice_alert: {
+    category: 'finance_payments',
+    title: 'High value invoice alert',
+    description: 'Internal alert when an invoice exceeds a threshold.',
+    Icon: DollarSign,
+    accent: 'amber',
+    channels: ['task'],
+    difficulty: 'medium',
+    usage: 156,
+  },
+  customer_created_welcome: {
+    category: 'sales_crm',
+    title: 'New customer welcome',
+    description: 'Welcome new customers by email or SMS.',
+    Icon: Users,
+    accent: 'purple',
+    channels: ['email', 'sms'],
+    difficulty: 'easy',
+    usage: 221,
+  },
+  lead_no_contact_follow_up: {
+    category: 'sales_crm',
+    title: 'Lead follow-up',
+    description: 'Follow up when a lead has had no contact.',
+    Icon: Mail,
+    accent: 'pink',
+    channels: ['email', 'task'],
+    difficulty: 'medium',
+    usage: 134,
+  },
+  invoice_sent_notification: {
+    category: 'finance_payments',
+    title: 'Invoice sent',
+    description: 'Notify customers when an invoice is sent.',
+    Icon: FileText,
+    accent: 'green',
+    channels: ['whatsapp', 'email'],
+    difficulty: 'medium',
+    usage: 312,
+  },
+  sale_completed_receipt: {
+    category: 'finance_payments',
+    title: 'Sale receipt',
+    description: 'Order confirmation when a sale is completed.',
+    Icon: DollarSign,
+    accent: 'green',
+    channels: ['whatsapp', 'email'],
+    difficulty: 'medium',
+    usage: 287,
+  },
+  low_stock_on_change: {
+    category: 'operations',
+    title: 'Low stock (real-time)',
+    description: 'Alert when stock drops after a sale or adjustment.',
+    Icon: Package,
+    accent: 'amber',
+    channels: ['task'],
+    difficulty: 'medium',
+    usage: 176,
+  },
+  out_of_stock_alert: {
+    category: 'operations',
+    title: 'Out of stock (real-time)',
+    description: 'Alert when a product goes out of stock.',
+    Icon: Package,
+    accent: 'red',
+    channels: ['task', 'whatsapp'],
+    difficulty: 'medium',
+    usage: 163,
+  },
+  quote_sent_notification: {
+    category: 'sales_crm',
+    title: 'Quote sent',
+    description: 'Notify customers when a quote is sent.',
+    Icon: ClipboardList,
+    accent: 'blue',
+    channels: ['whatsapp', 'email'],
+    difficulty: 'medium',
+    usage: 245,
+  },
+  job_due_reminder: {
+    category: 'operations',
+    title: 'Job due soon',
+    description: 'Remind customers before a job is due.',
+    Icon: Clock3,
+    accent: 'green',
+    channels: ['email', 'sms'],
+    difficulty: 'medium',
+    usage: 118,
+  },
+  prescription_refill_reminder: {
+    category: 'operations',
+    title: 'Prescription refill due',
+    description: 'Pharmacy refill reminders for customers.',
+    Icon: Gift,
+    accent: 'purple',
+    channels: ['sms', 'email'],
+    difficulty: 'advanced',
+    usage: 89,
+  },
 };
 
 const TEMPLATE_ACCENT_CLASSES = {
@@ -1422,6 +1663,48 @@ function AutomationTriggerFields({ triggerType, value, onPatch }) {
           Runs for active customers whose date of birth matches today.
         </p>
       );
+    case 'payment_received':
+      return (
+        <p className="text-xs text-muted-foreground">
+          Runs immediately when a payment is recorded on an invoice (partial or full).
+        </p>
+      );
+    case 'review_request':
+      return (
+        <p className="text-xs text-muted-foreground">
+          Runs when a job is marked complete, a sale is completed with a customer, or a standalone invoice is fully paid.
+          Use the cooldown condition to avoid sending too often to the same customer.
+        </p>
+      );
+    case 'job_completed':
+      return (
+        <p className="text-xs text-muted-foreground">
+          Runs when a job is marked complete. Sends a customer notification (separate from review requests).
+        </p>
+      );
+    case 'daily_sales_summary':
+      return (
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label>Sales period</Label>
+            <Select
+              value={tf.summaryPeriod === 'today' ? 'today' : 'yesterday'}
+              onValueChange={(v) => onPatch({ summaryPeriod: v })}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="yesterday">Yesterday&apos;s sales</SelectItem>
+                <SelectItem value="today">Today&apos;s sales (so far)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Runs on the automation scheduler (default every 15 minutes). Use earliest run time in conditions to send at a specific hour.
+          </p>
+        </div>
+      );
     default:
       return null;
   }
@@ -1626,6 +1909,12 @@ function getTriggerPreview(builder) {
   if (builder.triggerType === 'invoice_due_in_days') {
     return `An invoice is due in ${payload.triggerConfig.daysBeforeDue || 0} days at 09:00 AM (GMT+00:00) Accra`;
   }
+  if (builder.triggerType === 'payment_received') {
+    return 'A payment is recorded on an invoice';
+  }
+  if (builder.triggerType === 'review_request') {
+    return 'A job is completed, a sale is completed, or a standalone invoice is fully paid';
+  }
   return `${trigger} matches the configured trigger settings.`;
 }
 
@@ -1682,6 +1971,8 @@ function AutomationCreationModal({
   isPreparingTest,
   editingRuleId,
   testMutation,
+  businessName,
+  tenantSlug,
 }) {
   const stepIndex = AUTOMATION_CREATION_STEPS.findIndex((item) => item.key === step);
   const currentStepIndex = stepIndex < 0 ? 0 : stepIndex;
@@ -2238,6 +2529,17 @@ function AutomationCreationModal({
                         );
                       })}
                     </div>
+                    <MessagePreview builder={builder} businessName={businessName} tenantSlug={tenantSlug} />
+                    {builder.triggerType === 'review_request' && !tenantSlug?.trim() && (
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                        <p className="font-semibold">Review link not configured</p>
+                        <p className="mt-1 text-amber-800">
+                          Save your workspace organization settings so your public review URL is available at{' '}
+                          <span className="font-mono text-xs">/review/your-slug</span>. Messages using{' '}
+                          <span className="font-mono text-xs">{'{{reviewLink}}'}</span> will be empty until then.
+                        </p>
+                      </div>
+                    )}
                     <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
                       <p className="text-sm font-semibold text-slate-950">Rule preview</p>
                       <p className="mt-2 text-sm text-slate-600">{ruleSummaryFromParts(builder, conditionLines)}</p>
@@ -2621,7 +2923,7 @@ function AutomationRuleDetailsDrawer({
 }
 
 export default function Automations() {
-  const { activeTenantId } = useAuth();
+  const { activeTenantId, activeTenant } = useAuth();
   const queryClient = useQueryClient();
   const [builder, setBuilder] = useState(createInitialBuilder);
   const [builderModalOpen, setBuilderModalOpen] = useState(false);
@@ -2749,6 +3051,8 @@ export default function Automations() {
   const overview = overviewQuery.data?.data || null;
   const serverLogs = logsApiQuery.data?.data || null;
   const organization = organizationQuery.data?.data ?? organizationQuery.data ?? {};
+  const businessName = useScopedWorkspaceName(organization?.name);
+  const tenantSlug = activeTenant?.slug || '';
   const suggestions = suggestionsQuery.data?.data || [];
   const whatsAppEvents = whatsAppEventsQuery.data?.data || [];
 
@@ -4023,6 +4327,8 @@ export default function Automations() {
         isPreparingTest={isPreparingTest}
         editingRuleId={editingRuleId}
         testMutation={testMutation}
+        businessName={businessName}
+        tenantSlug={tenantSlug}
       />
       <AutomationRuleDetailsDrawer
         open={Boolean(viewingRuleId)}

@@ -16,6 +16,7 @@ const {
 } = require('../utils/shopUtils');
 const activityLogger = require('../services/activityLogger');
 const { getTaxConfigForTenant } = require('../utils/taxConfig');
+const { runQuoteSentAutomations } = require('../services/automationEngineService');
 const { computeQuoteTaxSummary, computeDocumentTax } = require('../utils/taxCalculation');
 const {
   resolveDocumentOrganization,
@@ -478,6 +479,15 @@ exports.createQuote = async (req, res, next) => {
       if (quoteSentViaAnyChannel) {
         await Quote.update({ status: 'sent' }, { where: applyTenantFilter(req.tenantId, { id: quote.id }) });
         fullQuote.status = 'sent';
+        runQuoteSentAutomations({
+          tenantId: req.tenantId,
+          quote: fullQuote,
+          customer: fullQuote.customer || null,
+          quoteLink,
+          actorUserId: req.user?.id || null,
+        }).catch((error) =>
+          console.error('[Quote] quote_sent automations failed:', error?.message || error)
+        );
       }
     }
 

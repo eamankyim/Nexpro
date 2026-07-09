@@ -1,5 +1,21 @@
 const { Op, col, fn, where: sequelizeWhere } = require('sequelize');
-const { AutomationRule, AutomationRun, Customer, Invoice, Product, Quote, Sale, Tenant, UserTask } = require('../models');
+const {
+  AutomationRule,
+  AutomationRun,
+  Customer,
+  Invoice,
+  Job,
+  Lead,
+  Prescription,
+  PrescriptionItem,
+  Product,
+  Quote,
+  Sale,
+  SaleItem,
+  Tenant,
+  UserTask,
+} = require('../models');
+const { loadTenantOrganization } = require('../utils/documentOrganizationUtils');
 const emailService = require('./emailService');
 const smsService = require('./smsService');
 const whatsappService = require('./whatsappService');
@@ -94,40 +110,303 @@ function getTemplates() {
       name: 'Payment received thank-you',
       description: 'Thank customers after a payment is recorded.',
       triggerType: 'payment_received',
-      disabled: true,
-      unavailableReason: 'Payment-received automation triggers are not wired into the engine yet.'
+      triggerConfig: {},
+      actionConfig: {
+        actions: [{
+          type: 'send_whatsapp',
+          templateName: 'payment_received',
+          language: 'en',
+          parameters: ['{{customerName}}', '{{invoiceNumber}}', '{{amount}}', '{{businessName}}']
+        }, {
+          type: 'send_email_platform',
+          subject: 'Payment received — thank you',
+          body: 'Hi {{customerName}},\n\nThank you! We have received your payment of {{amount}} for invoice {{invoiceNumber}}.\n\nRemaining balance: {{balance}}\n\n{{businessName}}'
+        }]
+      },
+      reviewNote: 'Requires the payment_received WhatsApp template to be approved in Meta.'
     },
     {
       key: 'job_completed_notification',
       name: 'Job completed notification',
       description: 'Notify customers when a job is completed.',
       triggerType: 'job_completed',
-      disabled: true,
-      unavailableReason: 'Job-completed automation triggers are not wired into the automation engine yet.'
+      triggerConfig: {},
+      actionConfig: {
+        actions: [{
+          type: 'send_whatsapp',
+          templateName: 'job_completed',
+          language: 'en',
+          parameters: ['{{customerName}}', '{{jobNumber}}', '{{businessName}}']
+        }, {
+          type: 'send_email_platform',
+          subject: 'Your job {{jobNumber}} is complete',
+          body: 'Hi {{customerName}},\n\nGood news! Your job {{jobNumber}} has been completed.\n\n{{trackingLinkLine}}\n\nThank you,\n{{businessName}}'
+        }]
+      },
+      reviewNote: 'Requires the job_completed WhatsApp template to be approved in Meta.'
     },
     {
       key: 'daily_sales_summary',
       name: 'Daily sales summary',
       description: 'Send the team a daily sales recap.',
       triggerType: 'daily_sales_summary',
-      disabled: true,
-      unavailableReason: 'Daily scheduled summary triggers are not supported by automation rules yet.'
+      triggerConfig: { summaryPeriod: 'yesterday' },
+      conditionConfig: { runAfterTime: '06:00' },
+      scheduleConfig: { cooldownHours: 20 },
+      actionConfig: {
+        actions: [{
+          type: 'send_email_platform',
+          subject: 'Daily sales summary — {{date}}',
+          body: 'Daily sales recap for {{date}} ({{periodLabel}}):\n\nTotal sales: {{totalSalesFormatted}}\nTransactions: {{transactionCount}}\nTop products: {{topProducts}}\n\n— {{businessName}}'
+        }, {
+          type: 'create_task',
+          title: 'Review daily sales — {{date}}',
+          priority: 'medium',
+          description: '{{totalSalesFormatted}} from {{transactionCount}} transactions. Top: {{topProducts}}.',
+          link: '/sales'
+        }]
+      }
     },
     {
       key: 'review_request',
       name: 'Review request',
-      description: 'Ask customers for a review after work is complete.',
+      description: 'Ask customers for a review after a job, sale, or paid invoice.',
       triggerType: 'review_request',
-      disabled: true,
-      unavailableReason: 'Review-request triggers need a completion or payment event before they can run.'
+      triggerConfig: {},
+      scheduleConfig: { cooldownHours: 168 },
+      actionConfig: {
+        actions: [{
+          type: 'send_whatsapp',
+          templateName: 'review_request',
+          language: 'en',
+          parameters: ['{{customerName}}', '{{businessName}}', '{{reviewLink}}']
+        }, {
+          type: 'send_email_platform',
+          subject: 'How did we do, {{customerName}}?',
+          body: 'Hi {{customerName}},\n\nThank you for choosing {{businessName}}! We would love to hear about your experience.\n\nLeave a review here: {{reviewLink}}\n\nThank you,\n{{businessName}}'
+        }]
+      },
+      reviewNote: 'Requires a workspace review link (Settings → Organization) and the review_request WhatsApp template approved in Meta.'
     },
     {
       key: 'low_profit_margin_alert',
       name: 'Low profit margin alert',
       description: 'Create an internal alert when a sale margin is too low.',
       triggerType: 'low_profit_margin',
-      disabled: true,
-      unavailableReason: 'Profit-margin trigger evaluation is not supported by the automation engine yet.'
+      triggerConfig: { minMarginPercent: 15 },
+      actionConfig: {
+        actions: [{
+          type: 'create_task',
+          title: 'Low margin sale — {{saleNumber}}',
+          priority: 'high',
+          description: 'Sale {{saleNumber}} margin is {{profitMarginFormatted}} (threshold {{minMarginPercent}}%). Revenue: {{totalAmountFormatted}}.',
+          link: '/sales',
+        }]
+      }
+    },
+    {
+      key: 'new_lead_notification',
+      name: 'New lead notification',
+      description: 'Notify the team when a new lead is created.',
+      triggerType: 'new_lead',
+      triggerConfig: {},
+      actionConfig: {
+        actions: [{
+          type: 'create_task',
+          title: 'Follow up new lead — {{leadName}}',
+          priority: 'medium',
+          description: 'New lead {{leadName}} from {{leadSource}}. Phone: {{phone}}. Email: {{email}}.',
+          link: '/leads',
+        }, {
+          type: 'send_email_platform',
+          subject: 'New lead: {{leadName}}',
+          body: 'A new lead was added:\n\nName: {{leadName}}\nCompany: {{leadCompany}}\nPhone: {{phone}}\nEmail: {{email}}\nSource: {{leadSource}}\n\n— {{businessName}}',
+        }]
+      }
+    },
+    {
+      key: 'high_value_invoice_alert',
+      name: 'High value invoice alert',
+      description: 'Create an internal alert when an invoice exceeds a set amount.',
+      triggerType: 'high_value_invoice',
+      triggerConfig: { minAmount: 1000 },
+      actionConfig: {
+        actions: [{
+          type: 'create_task',
+          title: 'High value invoice — {{invoiceNumber}}',
+          priority: 'high',
+          description: 'Invoice {{invoiceNumber}} for {{customerName}} is {{totalAmountFormatted}}.',
+          link: '/invoices',
+        }]
+      }
+    },
+    {
+      key: 'customer_created_welcome',
+      name: 'New customer welcome',
+      description: 'Welcome new customers by email, SMS, or WhatsApp.',
+      triggerType: 'customer_created',
+      triggerConfig: {},
+      actionConfig: {
+        actions: [{
+          type: 'send_email_platform',
+          subject: 'Welcome to {{businessName}}, {{customerName}}!',
+          body: 'Hi {{customerName}},\n\nWelcome to {{businessName}}! We are glad to have you as a customer.\n\nWarm regards,\n{{businessName}}',
+        }, {
+          type: 'send_sms',
+          body: 'Hi {{customerName}}, welcome to {{businessName}}! We look forward to serving you.',
+        }]
+      }
+    },
+    {
+      key: 'lead_no_contact_follow_up',
+      name: 'Lead follow-up',
+      description: 'Follow up when a lead has had no contact for a set time.',
+      triggerType: 'lead_no_contact_days',
+      triggerConfig: { noContactDays: 3 },
+      actionConfig: {
+        actions: [{
+          type: 'create_task',
+          title: 'Follow up lead — {{leadName}}',
+          priority: 'medium',
+          description: 'Lead {{leadName}} has had no contact for {{noContactDays}} days.',
+          link: '/leads',
+        }, {
+          type: 'send_email_platform',
+          subject: 'Following up on lead {{leadName}}',
+          body: 'Hi team,\n\nLead {{leadName}} ({{leadCompany}}) has had no contact for {{noContactDays}} days. Please follow up.\n\n— {{businessName}}',
+        }]
+      }
+    },
+    {
+      key: 'invoice_sent_notification',
+      name: 'Invoice sent',
+      description: 'Notify the customer when an invoice is sent.',
+      triggerType: 'invoice_sent',
+      triggerConfig: {},
+      actionConfig: {
+        actions: [{
+          type: 'send_whatsapp',
+          templateName: 'invoice_notification',
+          language: 'en',
+          parameters: ['{{customerName}}', '{{invoiceNumber}}', '{{totalAmountFormatted}}', '{{paymentLink}}'],
+        }, {
+          type: 'send_email_platform',
+          subject: 'Invoice {{invoiceNumber}} from {{businessName}}',
+          body: 'Hi {{customerName}},\n\nYour invoice {{invoiceNumber}} for {{totalAmountFormatted}} is ready.\n\nPay online: {{paymentLink}}\n\nThank you,\n{{businessName}}',
+        }]
+      },
+      reviewNote: 'Requires the invoice_notification WhatsApp template to be approved in Meta.'
+    },
+    {
+      key: 'sale_completed_receipt',
+      name: 'Sale receipt',
+      description: 'Send customers an order confirmation when a sale is completed.',
+      triggerType: 'sale_completed',
+      triggerConfig: {},
+      actionConfig: {
+        actions: [{
+          type: 'send_whatsapp',
+          templateName: 'sale_receipt',
+          language: 'en',
+          parameters: ['{{customerName}}', '{{saleNumber}}', '{{totalAmountFormatted}}', '{{businessName}}'],
+        }, {
+          type: 'send_email_platform',
+          subject: 'Your receipt — {{saleNumber}}',
+          body: 'Hi {{customerName}},\n\nThank you for your purchase! Your receipt {{saleNumber}} totals {{totalAmountFormatted}}.\n\n— {{businessName}}',
+        }]
+      },
+      reviewNote: 'Requires the sale_receipt WhatsApp template to be approved in Meta.'
+    },
+    {
+      key: 'low_stock_on_change',
+      name: 'Low stock (real-time)',
+      description: 'Alert when stock drops to reorder level after a sale or adjustment.',
+      triggerType: 'low_stock_on_change',
+      triggerConfig: { thresholdMode: 'reorder_level' },
+      actionConfig: {
+        actions: [{
+          type: 'create_task',
+          title: 'Restock {{productName}}',
+          priority: 'high',
+          description: '{{productName}} is low ({{quantityOnHand}} on hand, reorder at {{reorderLevel}}).',
+          link: '/materials',
+        }]
+      }
+    },
+    {
+      key: 'out_of_stock_alert',
+      name: 'Out of stock (real-time)',
+      description: 'Alert when a product goes out of stock.',
+      triggerType: 'out_of_stock_detected',
+      triggerConfig: {},
+      actionConfig: {
+        actions: [{
+          type: 'create_task',
+          title: 'Out of stock — {{productName}}',
+          priority: 'high',
+          description: '{{productName}} ({{sku}}) is out of stock.',
+          link: '/materials',
+        }, {
+          type: 'send_whatsapp',
+          templateName: 'low_stock_alert',
+          language: 'en',
+          parameters: ['{{productName}}', '{{quantityOnHand}}', '{{reorderLevel}}'],
+        }]
+      }
+    },
+    {
+      key: 'quote_sent_notification',
+      name: 'Quote sent',
+      description: 'Notify the customer when a quote is sent.',
+      triggerType: 'quote_sent',
+      triggerConfig: {},
+      actionConfig: {
+        actions: [{
+          type: 'send_whatsapp',
+          templateName: 'quote_delivery',
+          language: 'en',
+          parameters: ['{{customerName}}', '{{quoteNumber}}', '{{quoteTitle}}', '{{quoteLink}}'],
+        }, {
+          type: 'send_email_platform',
+          subject: 'Your quote {{quoteNumber}} from {{businessName}}',
+          body: 'Hi {{customerName}},\n\nYour quote {{quoteNumber}} ({{totalAmountFormatted}}) is ready.\n\nView it here: {{quoteLink}}\n\n— {{businessName}}',
+        }]
+      },
+      reviewNote: 'Requires the quote_delivery WhatsApp template to be approved in Meta.'
+    },
+    {
+      key: 'job_due_reminder',
+      name: 'Job due soon',
+      description: 'Remind customers when a job is due within a set number of hours.',
+      triggerType: 'job_due_in_hours',
+      triggerConfig: { hoursBeforeDue: 24 },
+      actionConfig: {
+        actions: [{
+          type: 'send_email_platform',
+          subject: 'Reminder: job {{jobNumber}} due soon',
+          body: 'Hi {{customerName}},\n\nThis is a friendly reminder that your job {{jobNumber}} is due on {{dueDate}}.\n\n{{trackingLinkLine}}\n\n— {{businessName}}',
+        }, {
+          type: 'send_sms',
+          body: 'Hi {{customerName}}, job {{jobNumber}} is due on {{dueDate}}. — {{businessName}}',
+        }]
+      }
+    },
+    {
+      key: 'prescription_refill_reminder',
+      name: 'Prescription refill due',
+      description: 'Remind pharmacy customers when a prescription refill is due.',
+      triggerType: 'prescription_refill_due',
+      triggerConfig: { daysBeforeDue: 3 },
+      actionConfig: {
+        actions: [{
+          type: 'send_sms',
+          body: 'Hi {{customerName}}, your prescription {{prescriptionNumber}} refill is due on {{refillDueDate}}. — {{businessName}}',
+        }, {
+          type: 'send_email_platform',
+          subject: 'Prescription refill reminder — {{prescriptionNumber}}',
+          body: 'Hi {{customerName}},\n\nYour prescription {{prescriptionNumber}} refill is due on {{refillDueDate}}.\n\nPlease visit us or call to arrange your refill.\n\n— {{businessName}}',
+        }]
+      }
     }
   ];
 }
@@ -220,12 +499,37 @@ async function enrichTriggerContextWithBusinessName(tenantId, triggerContext) {
   };
 }
 
+function formatAutomationDate(date) {
+  if (!date) return '';
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) return String(date);
+  return parsed.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+const INVOICE_TEMPLATE_FALLBACKS = {
+  dueDate: ['invoice.dueDate'],
+  invoiceNumber: ['invoice.invoiceNumber'],
+  balance: ['invoice.balance'],
+  amount: ['invoice.balance', 'invoice.totalAmount'],
+  totalAmount: ['invoice.totalAmount'],
+};
+
+function getTemplateContextValue(triggerContext, keyPath) {
+  return String(keyPath).split('.').reduce((acc, part) => acc?.[part], triggerContext);
+}
+
 function applyTemplateValues(parameters, triggerContext) {
   if (!Array.isArray(parameters)) return [];
   return parameters.map((param) => {
     if (typeof param === 'string') {
       return param.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_m, key) => {
-        const value = String(key).split('.').reduce((acc, part) => acc?.[part], triggerContext);
+        let value = getTemplateContextValue(triggerContext, key);
+        if ((value == null || value === '') && !String(key).includes('.')) {
+          for (const fallbackPath of INVOICE_TEMPLATE_FALLBACKS[key] || []) {
+            value = getTemplateContextValue(triggerContext, fallbackPath);
+            if (value != null && value !== '') break;
+          }
+        }
         return value == null ? '' : String(value);
       });
     }
@@ -364,6 +668,41 @@ function conditionsAllowRun(rule, triggerContext, now = new Date()) {
   return { allowed: true };
 }
 
+function triggerConfigAllowsRun(rule, triggerContext) {
+  const cfg = rule.triggerConfig || {};
+  const triggerType = rule.triggerType;
+
+  if (triggerType === 'high_value_invoice') {
+    const minAmount = toNumber(cfg.minAmount, 0);
+    const amount = toNumber(triggerContext.totalAmount ?? triggerContext.amount, 0);
+    if (amount < minAmount) return { allowed: false, reason: 'below_min_invoice_threshold' };
+  }
+
+  if (triggerType === 'low_profit_margin') {
+    const minMargin = toNumber(cfg.minMarginPercent, 15);
+    const margin = toNumber(triggerContext.profitMargin, 100);
+    if (margin >= minMargin) return { allowed: false, reason: 'margin_above_threshold' };
+  }
+
+  if (triggerType === 'low_stock_on_change') {
+    const mode = cfg.thresholdMode === 'fixed' ? 'fixed' : 'reorder_level';
+    const quantity = toNumber(triggerContext.quantityOnHand ?? triggerContext.product?.quantityOnHand, 0);
+    if (mode === 'fixed') {
+      const fixedThreshold = toNumber(cfg.fixedThreshold, 0);
+      if (quantity > fixedThreshold) return { allowed: false, reason: 'above_fixed_threshold' };
+    } else if (quantity > toNumber(triggerContext.reorderLevel ?? triggerContext.product?.reorderLevel, 0)) {
+      return { allowed: false, reason: 'above_reorder_level' };
+    }
+  }
+
+  if (triggerType === 'out_of_stock_detected') {
+    const quantity = toNumber(triggerContext.quantityOnHand ?? triggerContext.product?.quantityOnHand, 0);
+    if (quantity > 0) return { allowed: false, reason: 'not_out_of_stock' };
+  }
+
+  return { allowed: true };
+}
+
 async function isDuplicateRun({ tenantId, ruleId, subjectKey }) {
   if (!subjectKey) return false;
   const threshold = new Date(Date.now() - DEDUPE_WINDOW_HOURS * 60 * 60 * 1000);
@@ -436,6 +775,11 @@ async function executeRule({
     const conditionCheck = conditionsAllowRun(rule, triggerContext, startedAt);
     if (!conditionCheck.allowed) {
       return recordSkipped(conditionCheck.reason);
+    }
+
+    const triggerConfigCheck = triggerConfigAllowsRun(rule, triggerContext);
+    if (!triggerConfigCheck.allowed) {
+      return recordSkipped(triggerConfigCheck.reason);
     }
 
     const subjectKey = triggerContext?.subjectKey || null;
@@ -589,6 +933,104 @@ function paymentLinkForInvoice(invoice) {
     : `${frontendUrl}/invoices/${invoice.id}`;
 }
 
+function reviewLinkForTenant(slug) {
+  const normalized = String(slug || '').trim();
+  if (!normalized) return null;
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  return `${frontendUrl}/review/${encodeURIComponent(normalized)}`;
+}
+
+/**
+ * Resolve the tenant public review URL from organization slug.
+ * @param {string} tenantId
+ * @returns {Promise<{ reviewLink: string|null, reviewUrl: string|null, reviewSlug: string|null, hasReviewLink: boolean }>}
+ */
+async function getTenantReviewLink(tenantId) {
+  if (!tenantId) {
+    return { reviewLink: null, reviewUrl: null, reviewSlug: null, hasReviewLink: false };
+  }
+  const tenant = await Tenant.findByPk(tenantId, { attributes: ['slug'] });
+  const reviewSlug = tenant?.slug?.trim() || null;
+  const reviewLink = reviewLinkForTenant(reviewSlug);
+  return {
+    reviewLink,
+    reviewUrl: reviewLink,
+    reviewSlug,
+    hasReviewLink: Boolean(reviewLink),
+  };
+}
+
+/**
+ * Build trigger context when a payment is recorded on an invoice.
+ * @param {object} params
+ * @param {object} params.invoice
+ * @param {object} [params.customer]
+ * @param {object} [params.payment]
+ * @param {number} [params.paymentAmount]
+ * @param {string} [params.paymentMethod]
+ * @returns {object}
+ */
+function buildPaymentReceivedTriggerContext({
+  invoice,
+  customer = null,
+  payment = null,
+  paymentAmount = null,
+  paymentMethod = null,
+}) {
+  const customerObj = customer || invoice?.customer || {};
+  const amountPaid = toNumber(paymentAmount ?? payment?.amount, 0);
+  const balance = toNumber(invoice?.balance, 0);
+  const totalAmount = toNumber(invoice?.totalAmount, balance + amountPaid);
+  const paymentId = payment?.id || null;
+  const resolvedPaymentMethod = paymentMethod || payment?.paymentMethod || null;
+  const formattedAmount = whatsappTemplates.formatCurrency(amountPaid);
+
+  return {
+    subjectKey: `payment_received:${invoice.id}:${paymentId || payment?.paymentNumber || Date.now()}`,
+    invoiceId: invoice.id,
+    invoiceNumber: invoice.invoiceNumber,
+    customerId: customerObj.id || invoice.customerId,
+    customerName: customerObj.name || customerObj.company || 'Customer',
+    email: customerObj.email || null,
+    phone: customerObj.phone || null,
+    amount: amountPaid,
+    amountPaid,
+    paymentAmount: amountPaid,
+    balance,
+    totalAmount,
+    paymentMethod: resolvedPaymentMethod,
+    paymentDate: payment?.paymentDate || null,
+    paymentNumber: payment?.paymentNumber || null,
+    invoiceStatus: invoice.status || null,
+    paymentStatus: paymentStatusForInvoice(invoice),
+    customerHasPhone: Boolean(customerObj.phone),
+    customerHasEmail: Boolean(customerObj.email),
+    whatsappConsent: customerObj.whatsappConsent === true,
+    smsConsent: customerObj.smsConsent === true,
+    marketingConsent: customerObj.marketingConsent === true,
+    customer: {
+      id: customerObj.id || invoice.customerId,
+      name: customerObj.name || null,
+      company: customerObj.company || null,
+      email: customerObj.email || null,
+      phone: customerObj.phone || null,
+      shopId: customerObj.shopId || null,
+      studioLocationId: customerObj.studioLocationId || null,
+      whatsappConsent: customerObj.whatsappConsent === true,
+      smsConsent: customerObj.smsConsent === true,
+      marketingConsent: customerObj.marketingConsent === true,
+    },
+    shopId: invoice.shopId || customerObj.shopId || null,
+    studioLocationId: invoice.studioLocationId || customerObj.studioLocationId || null,
+    invoice: {
+      id: invoice.id,
+      shopId: invoice.shopId || null,
+      studioLocationId: invoice.studioLocationId || null,
+    },
+    message: `Payment of ${formattedAmount} received for invoice ${invoice.invoiceNumber || invoice.id}.`,
+  };
+}
+
 function invoiceContext(invoice, rule, kind, now = new Date(), extras = {}) {
   const customer = invoice.customer || {};
   const paymentLink = paymentLinkForInvoice(invoice);
@@ -611,7 +1053,7 @@ function invoiceContext(invoice, rule, kind, now = new Date(), extras = {}) {
     paymentStatus: paymentStatusForInvoice(invoice),
     overdueDays,
     hasOverdueInvoices: extras.hasOverdueInvoices ?? (overdueDays > 0),
-    dueDate: invoice.dueDate,
+    dueDate: formatAutomationDate(invoice.dueDate),
     paymentLink,
     customerHasPhone: Boolean(customer.phone),
     customerHasEmail: Boolean(customer.email),
@@ -633,7 +1075,11 @@ function invoiceContext(invoice, rule, kind, now = new Date(), extras = {}) {
     invoice: {
       id: invoice.id,
       shopId: invoice.shopId || null,
-      studioLocationId: invoice.studioLocationId || null
+      studioLocationId: invoice.studioLocationId || null,
+      invoiceNumber: invoice.invoiceNumber || null,
+      dueDate: formatAutomationDate(invoice.dueDate),
+      balance,
+      totalAmount: toNumber(invoice.totalAmount, balance),
     },
     message: `Invoice ${invoice.invoiceNumber || invoice.id} has an outstanding balance of ${whatsappTemplates.formatCurrency(balance)}.`
   };
@@ -678,6 +1124,123 @@ async function saleStatsForCustomers(tenantId, customerIds, now = new Date()) {
       totalSpend: toNumber(row.totalSpend, 0)
     }];
   }));
+}
+
+/**
+ * Last activity timestamps across sales, jobs, and invoices for win-back evaluation.
+ * @param {string} tenantId
+ * @param {string[]} customerIds
+ * @returns {Promise<Map<string, Date|null>>}
+ */
+async function lastActivityAtForCustomers(tenantId, customerIds) {
+  const ids = [...new Set((customerIds || []).filter(Boolean))];
+  const activityByCustomer = new Map(ids.map((id) => [id, null]));
+  if (!ids.length) return activityByCustomer;
+
+  const [saleRows, jobRows, invoiceRows] = await Promise.all([
+    Sale.findAll({
+      where: { tenantId, customerId: { [Op.in]: ids } },
+      attributes: ['customerId', [fn('MAX', col('createdAt')), 'lastAt']],
+      group: ['customerId'],
+      raw: true,
+    }),
+    Job.findAll({
+      where: { tenantId, customerId: { [Op.in]: ids } },
+      attributes: ['customerId', [fn('MAX', col('updatedAt')), 'lastAt']],
+      group: ['customerId'],
+      raw: true,
+    }),
+    Invoice.findAll({
+      where: { tenantId, customerId: { [Op.in]: ids } },
+      attributes: ['customerId', [fn('MAX', col('createdAt')), 'lastAt']],
+      group: ['customerId'],
+      raw: true,
+    }),
+  ]);
+
+  const consider = (rows) => {
+    for (const row of rows) {
+      const customerId = row.customerId;
+      const lastAt = row.lastAt ? new Date(row.lastAt) : null;
+      if (!customerId || !lastAt || Number.isNaN(lastAt.getTime())) continue;
+      const existing = activityByCustomer.get(customerId);
+      if (!existing || lastAt > existing) activityByCustomer.set(customerId, lastAt);
+    }
+  };
+
+  consider(saleRows);
+  consider(jobRows);
+  consider(invoiceRows);
+  return activityByCustomer;
+}
+
+function productStockContext(product, subjectPrefix = 'low_stock') {
+  const quantityOnHand = toNumber(product.quantityOnHand, 0);
+  const reorderLevel = toNumber(product.reorderLevel, 0);
+  return {
+    subjectKey: `${subjectPrefix}:${product.id}`,
+    productId: product.id,
+    productName: product.name,
+    sku: product.sku || null,
+    quantityOnHand,
+    reorderLevel,
+    product: {
+      id: product.id,
+      name: product.name,
+      sku: product.sku || null,
+      quantityOnHand,
+      reorderLevel,
+      isActive: product.isActive !== false,
+      shopId: product.shopId || null,
+    },
+    shopId: product.shopId || null,
+    message: `${product.name} stock is ${quantityOnHand} (reorder ${reorderLevel}).`,
+  };
+}
+
+function parseDurationDays(duration) {
+  if (!duration) return null;
+  const match = String(duration).match(/(\d+)\s*day/i);
+  return match ? Number(match[1]) : null;
+}
+
+function getPrescriptionRefillDueDate(prescription, items = []) {
+  const metadata = prescription.metadata && typeof prescription.metadata === 'object' ? prescription.metadata : {};
+  if (metadata.refillDueDate) {
+    const parsed = new Date(metadata.refillDueDate);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  const base = prescription.filledAt || prescription.updatedAt || prescription.prescriptionDate;
+  if (!base) return null;
+  const refillDays = toNumber(
+    metadata.refillDays,
+    parseDurationDays(items[0]?.duration) || 30
+  );
+  return addDays(base, refillDays);
+}
+
+/**
+ * Estimate sale profit margin from line items and catalog cost prices.
+ * @param {object} sale
+ * @param {object[]} [saleItems]
+ * @param {Map<string, object>} [productsById]
+ * @returns {{ revenue: number, cost: number, profit: number, profitMargin: number }}
+ */
+function calculateSaleProfitMargin(sale, saleItems = [], productsById = new Map()) {
+  const revenue = toNumber(sale?.total, 0);
+  let cost = 0;
+  for (const item of saleItems) {
+    const qty = toNumber(item.quantity, 0);
+    const product = item.productId ? productsById.get(item.productId) : null;
+    const unitCost = toNumber(
+      item.metadata?.costPrice ?? product?.costPrice,
+      0
+    );
+    cost += qty * unitCost;
+  }
+  const profit = revenue - cost;
+  const profitMargin = revenue > 0 ? (profit / revenue) * 100 : 0;
+  return { revenue, cost, profit, profitMargin };
 }
 
 function customerContext(customer, rule, subjectKey, message, stats = {}) {
@@ -853,31 +1416,40 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
   if (triggerType === 'customer_inactive_days') {
     const inactiveDays = toNumber(triggerConfig.inactiveDays, 30);
     const cutoff = addDays(now, -inactiveDays);
-    const activeCustomerRows = await Sale.findAll({
-      where: { tenantId, createdAt: { [Op.gte]: cutoff } },
-      attributes: ['customerId'],
-      group: ['customerId'],
-      raw: true
-    });
-    const activeIds = activeCustomerRows.map((row) => row.customerId).filter(Boolean);
     const customers = await Customer.findAll({
       where: {
         tenantId,
         isActive: true,
-        ...(activeIds.length ? { id: { [Op.notIn]: activeIds } } : {}),
-        updatedAt: { [Op.lte]: cutoff }
       },
-      limit: MAX_SUBJECTS_PER_RULE,
+      limit: MAX_SUBJECTS_PER_RULE * 3,
       order: [['updatedAt', 'ASC']]
     });
-    const statsByCustomer = await saleStatsForCustomers(tenantId, customers.map((customer) => customer.id), now);
-    return finalizeTriggerContexts(tenantId, customers.map((customer) => customerContext(
-      customer,
-      rule,
-      `customer_inactive:${customer.id}`,
-      `${customer.name || 'Customer'} has been inactive for ${inactiveDays} days.`,
-      statsByCustomer.get(customer.id) || {}
-    )));
+    const lastActivityByCustomer = await lastActivityAtForCustomers(
+      tenantId,
+      customers.map((customer) => customer.id)
+    );
+    const inactiveCustomers = customers.filter((customer) => {
+      const lastActivity = lastActivityByCustomer.get(customer.id);
+      const reference = lastActivity || customer.updatedAt || customer.createdAt;
+      return reference && new Date(reference) <= cutoff;
+    }).slice(0, MAX_SUBJECTS_PER_RULE);
+    const statsByCustomer = await saleStatsForCustomers(tenantId, inactiveCustomers.map((customer) => customer.id), now);
+    return finalizeTriggerContexts(tenantId, inactiveCustomers.map((customer) => {
+      const lastActivity = lastActivityByCustomer.get(customer.id);
+      const lastPurchaseDaysAgo = lastActivity ? daysBetween(lastActivity, now) : daysBetween(customer.updatedAt || customer.createdAt, now);
+      const stats = {
+        ...(statsByCustomer.get(customer.id) || {}),
+        lastPurchaseAt: lastActivity || statsByCustomer.get(customer.id)?.lastPurchaseAt || null,
+        lastPurchaseDaysAgo,
+      };
+      return customerContext(
+        customer,
+        rule,
+        `customer_inactive:${customer.id}`,
+        `${customer.name || 'Customer'} has been inactive for ${inactiveDays} days.`,
+        stats
+      );
+    }));
   }
 
   if (triggerType === 'customer_birthday') {
@@ -905,7 +1477,898 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
     )));
   }
 
+  if (triggerType === 'daily_sales_summary') {
+    const period = triggerConfig.summaryPeriod === 'today' ? 'today' : 'yesterday';
+    const periodStart = period === 'today' ? startOfDay(now) : startOfDay(addDays(now, -1));
+    const periodEnd = period === 'today' ? endOfDay(now) : endOfDay(addDays(now, -1));
+    const context = await buildDailySalesSummaryContext(tenantId, {
+      periodStart,
+      periodEnd,
+      periodLabel: period,
+      now,
+    });
+    return finalizeTriggerContexts(tenantId, [context]);
+  }
+
+  if (triggerType === 'lead_no_contact_days') {
+    const noContactDays = toNumber(triggerConfig.noContactDays, 3);
+    const cutoff = addDays(now, -noContactDays);
+    const leads = await Lead.findAll({
+      where: {
+        tenantId,
+        isActive: true,
+        status: { [Op.in]: ['new', 'contacted', 'qualified'] },
+        [Op.or]: [
+          { lastContactedAt: { [Op.lte]: cutoff } },
+          { lastContactedAt: null, createdAt: { [Op.lte]: cutoff } },
+        ],
+      },
+      limit: MAX_SUBJECTS_PER_RULE,
+      order: [['updatedAt', 'ASC']],
+    });
+    return finalizeTriggerContexts(tenantId, leads.map((lead) => ({
+      subjectKey: `lead_no_contact:${lead.id}`,
+      leadId: lead.id,
+      leadName: lead.name,
+      leadCompany: lead.company || lead.name,
+      leadSource: lead.source || 'unknown',
+      customerName: lead.name,
+      email: lead.email || null,
+      phone: lead.phone || null,
+      noContactDays,
+      customerHasPhone: Boolean(lead.phone),
+      customerHasEmail: Boolean(lead.email),
+      shopId: lead.shopId || null,
+      studioLocationId: lead.studioLocationId || null,
+      message: `Lead ${lead.name} has had no contact for ${noContactDays} days.`,
+    })));
+  }
+
+  if (triggerType === 'job_due_in_hours') {
+    const hoursBeforeDue = toNumber(triggerConfig.hoursBeforeDue, 24);
+    const windowEnd = new Date(now.getTime() + hoursBeforeDue * 60 * 60 * 1000);
+    const jobs = await Job.findAll({
+      where: {
+        tenantId,
+        dueDate: { [Op.between]: [now, windowEnd] },
+        status: { [Op.notIn]: ['completed', 'cancelled'] },
+        customerId: { [Op.ne]: null },
+      },
+      include: [{ model: Customer, as: 'customer', attributes: ['id', 'name', 'company', 'phone', 'email', 'whatsappConsent', 'smsConsent', 'marketingConsent'] }],
+      limit: MAX_SUBJECTS_PER_RULE,
+      order: [['dueDate', 'ASC']],
+    });
+    return finalizeTriggerContexts(tenantId, jobs.map((job) => {
+      const customer = job.customer || {};
+      const trackingLink = job.viewToken ? trackingLinkForJob(job.id, job.viewToken) : null;
+      return {
+        subjectKey: `job_due:${job.id}:${formatAutomationDate(job.dueDate)}`,
+        jobId: job.id,
+        jobNumber: job.jobNumber || null,
+        jobTitle: job.title || null,
+        dueDate: formatAutomationDate(job.dueDate),
+        hoursBeforeDue,
+        customerId: customer.id || job.customerId,
+        customerName: customer.name || customer.company || 'Customer',
+        email: customer.email || null,
+        phone: customer.phone || null,
+        trackingLink,
+        trackingLinkLine: trackingLink ? `Track your order: ${trackingLink}` : '',
+        customerHasPhone: Boolean(customer.phone),
+        customerHasEmail: Boolean(customer.email),
+        whatsappConsent: customer.whatsappConsent === true,
+        smsConsent: customer.smsConsent === true,
+        marketingConsent: customer.marketingConsent === true,
+        shopId: job.shopId || null,
+        studioLocationId: job.studioLocationId || null,
+        message: `Job ${job.jobNumber || job.id} is due on ${formatAutomationDate(job.dueDate)}.`,
+      };
+    }));
+  }
+
+  if (triggerType === 'prescription_refill_due') {
+    const daysBeforeDue = toNumber(triggerConfig.daysBeforeDue, 3);
+    const windowEnd = endOfDay(addDays(now, daysBeforeDue));
+    const prescriptions = await Prescription.findAll({
+      where: {
+        tenantId,
+        status: { [Op.in]: ['filled', 'partially_filled'] },
+      },
+      include: [
+        { model: Customer, as: 'customer', attributes: ['id', 'name', 'company', 'phone', 'email', 'whatsappConsent', 'smsConsent', 'marketingConsent'] },
+        { model: PrescriptionItem, as: 'items', attributes: ['id', 'duration', 'drugName'] },
+      ],
+      limit: MAX_SUBJECTS_PER_RULE,
+      order: [['filledAt', 'ASC']],
+    });
+    const contexts = [];
+    for (const prescription of prescriptions) {
+      const refillDueDate = getPrescriptionRefillDueDate(prescription, prescription.items || []);
+      if (!refillDueDate) continue;
+      if (refillDueDate < startOfDay(now) || refillDueDate > windowEnd) continue;
+      const customer = prescription.customer || {};
+      contexts.push({
+        subjectKey: `prescription_refill:${prescription.id}:${formatAutomationDate(refillDueDate)}`,
+        prescriptionId: prescription.id,
+        prescriptionNumber: prescription.prescriptionNumber,
+        refillDueDate: formatAutomationDate(refillDueDate),
+        daysBeforeDue,
+        customerId: customer.id || prescription.customerId,
+        customerName: customer.name || customer.company || 'Customer',
+        email: customer.email || null,
+        phone: customer.phone || null,
+        customerHasPhone: Boolean(customer.phone),
+        customerHasEmail: Boolean(customer.email),
+        whatsappConsent: customer.whatsappConsent === true,
+        smsConsent: customer.smsConsent === true,
+        marketingConsent: customer.marketingConsent === true,
+        message: `Prescription ${prescription.prescriptionNumber} refill is due on ${formatAutomationDate(refillDueDate)}.`,
+      });
+    }
+    return finalizeTriggerContexts(tenantId, contexts);
+  }
+
   return [];
+}
+
+/**
+ * Execute enabled automation rules for an event-driven trigger.
+ * @param {object} params
+ * @param {string} params.tenantId
+ * @param {string} params.triggerType
+ * @param {object} params.triggerContext
+ * @param {string|null} [params.actorUserId]
+ * @param {object} [params.options]
+ * @returns {Promise<{ rulesChecked: number, executed: number, skipped: number, failed: number }>}
+ */
+async function executeMatchingRules({
+  tenantId,
+  triggerType,
+  triggerContext = {},
+  actorUserId = null,
+  options = {},
+}) {
+  const rules = await AutomationRule.findAll({
+    where: { tenantId, enabled: true, triggerType },
+    order: [['updatedAt', 'ASC']],
+  });
+  const enrichedContext = await enrichTriggerContextWithBusinessName(tenantId, {
+    ...triggerContext,
+    triggerType,
+    scheduler: false,
+  });
+  const summary = { rulesChecked: rules.length, executed: 0, skipped: 0, failed: 0 };
+
+  for (const rule of rules) {
+    const result = await executeRule({
+      rule,
+      tenantId,
+      triggerContext: enrichedContext,
+      actorUserId,
+      options,
+    });
+    if (result.skipped) summary.skipped += 1;
+    else if (result.success) summary.executed += 1;
+    else summary.failed += 1;
+  }
+
+  return summary;
+}
+
+/**
+ * Run payment-received automations after an invoice payment is recorded.
+ * @param {object} params
+ * @returns {Promise<object>}
+ */
+async function runPaymentReceivedAutomations({
+  tenantId,
+  invoice,
+  customer = null,
+  payment = null,
+  paymentAmount = null,
+  paymentMethod = null,
+  actorUserId = null,
+}) {
+  if (!tenantId || !invoice || toNumber(paymentAmount ?? payment?.amount, 0) <= 0) {
+    return { skipped: true, reason: 'missing_payment' };
+  }
+
+  const triggerContext = buildPaymentReceivedTriggerContext({
+    invoice,
+    customer: customer || invoice.customer || null,
+    payment,
+    paymentAmount,
+    paymentMethod,
+  });
+
+  return executeMatchingRules({
+    tenantId,
+    triggerType: 'payment_received',
+    triggerContext,
+    actorUserId,
+  });
+}
+
+/**
+ * Build trigger context when a review request should be sent after service or sale completion.
+ * @param {object} params
+ * @param {'job'|'sale'|'invoice'} params.sourceType
+ * @param {object} params.source
+ * @param {object} [params.customer]
+ * @param {string|null} [params.reviewLink]
+ * @param {string|null} [params.reviewSlug]
+ * @returns {object}
+ */
+function buildReviewRequestTriggerContext({
+  sourceType,
+  source,
+  customer = null,
+  reviewLink = null,
+  reviewSlug = null,
+}) {
+  const customerObj = customer || source?.customer || {};
+  const customerId = customerObj.id || source?.customerId || null;
+  const resolvedReviewLink = reviewLink || '';
+  let sourceId = source?.id || null;
+  let sourceNumber = null;
+  let jobNumber = null;
+  let saleNumber = null;
+  let invoiceNumber = null;
+
+  if (sourceType === 'job') {
+    jobNumber = source?.jobNumber || null;
+    sourceNumber = jobNumber;
+  } else if (sourceType === 'sale') {
+    saleNumber = source?.saleNumber || null;
+    sourceNumber = saleNumber;
+  } else if (sourceType === 'invoice') {
+    invoiceNumber = source?.invoiceNumber || null;
+    sourceNumber = invoiceNumber;
+  }
+
+  const subjectKey = customerId
+    ? `review_request:customer:${customerId}:${sourceType}:${sourceId}`
+    : `review_request:${sourceType}:${sourceId}`;
+
+  return {
+    subjectKey,
+    sourceType,
+    sourceId,
+    sourceNumber,
+    jobId: sourceType === 'job' ? sourceId : source?.jobId || null,
+    jobNumber,
+    saleId: sourceType === 'sale' ? sourceId : source?.saleId || null,
+    saleNumber,
+    invoiceId: sourceType === 'invoice' ? sourceId : source?.invoiceId || null,
+    invoiceNumber,
+    customerId,
+    customerName: customerObj.name || customerObj.company || 'Customer',
+    email: customerObj.email || null,
+    phone: customerObj.phone || null,
+    reviewLink: resolvedReviewLink,
+    reviewUrl: resolvedReviewLink,
+    reviewSlug: reviewSlug || null,
+    hasReviewLink: Boolean(resolvedReviewLink),
+    amount: toNumber(source?.total ?? source?.totalAmount, 0),
+    totalAmount: toNumber(source?.total ?? source?.totalAmount, 0),
+    customerHasPhone: Boolean(customerObj.phone),
+    customerHasEmail: Boolean(customerObj.email),
+    whatsappConsent: customerObj.whatsappConsent === true,
+    smsConsent: customerObj.smsConsent === true,
+    marketingConsent: customerObj.marketingConsent === true,
+    customer: {
+      id: customerId,
+      name: customerObj.name || null,
+      company: customerObj.company || null,
+      email: customerObj.email || null,
+      phone: customerObj.phone || null,
+      shopId: customerObj.shopId || null,
+      studioLocationId: customerObj.studioLocationId || null,
+      whatsappConsent: customerObj.whatsappConsent === true,
+      smsConsent: customerObj.smsConsent === true,
+      marketingConsent: customerObj.marketingConsent === true,
+    },
+    shopId: source?.shopId || customerObj.shopId || null,
+    studioLocationId: source?.studioLocationId || customerObj.studioLocationId || null,
+    message: resolvedReviewLink
+      ? `We would love your feedback! Leave a review: ${resolvedReviewLink}`
+      : 'We would love your feedback! Leave us a review when you have a moment.',
+  };
+}
+
+/**
+ * Run review-request automations after a qualifying completion or payment event.
+ * @param {object} params
+ * @param {string} params.tenantId
+ * @param {'job'|'sale'|'invoice'} params.sourceType
+ * @param {object} params.source
+ * @param {object} [params.customer]
+ * @param {string|null} [params.actorUserId]
+ * @returns {Promise<object>}
+ */
+async function runReviewRequestAutomations({
+  tenantId,
+  sourceType,
+  source,
+  customer = null,
+  actorUserId = null,
+}) {
+  if (!tenantId || !source?.id || !sourceType) {
+    return { skipped: true, reason: 'missing_source' };
+  }
+
+  const customerObj = customer || source.customer || null;
+  const customerId = customerObj?.id || source.customerId || null;
+  if (!customerId) {
+    return { skipped: true, reason: 'missing_customer' };
+  }
+
+  const reviewMeta = await getTenantReviewLink(tenantId);
+  const triggerContext = buildReviewRequestTriggerContext({
+    sourceType,
+    source,
+    customer: customerObj,
+    reviewLink: reviewMeta.reviewLink,
+    reviewSlug: reviewMeta.reviewSlug,
+  });
+
+  const summary = await executeMatchingRules({
+    tenantId,
+    triggerType: 'review_request',
+    triggerContext,
+    actorUserId,
+  });
+
+  return { ...summary, hasReviewLink: reviewMeta.hasReviewLink };
+}
+
+function trackingLinkForJob(jobId, viewToken) {
+  if (!viewToken) return null;
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  return `${frontendUrl}/track-job/${viewToken}`;
+}
+
+/**
+ * Build trigger context when a job is marked completed.
+ * @param {object} params
+ * @param {object} params.job
+ * @param {object} [params.customer]
+ * @param {string|null} [params.trackingLink]
+ * @param {string|null} [params.jobTitle]
+ * @returns {object}
+ */
+function buildJobCompletedTriggerContext({
+  job,
+  customer = null,
+  trackingLink = null,
+  jobTitle = null,
+}) {
+  const customerObj = customer || job?.customer || {};
+  const resolvedJobTitle = jobTitle || job?.title || job?.description || null;
+  const resolvedTrackingLink = trackingLink || null;
+  const trackingLinkLine = resolvedTrackingLink
+    ? `Track your order: ${resolvedTrackingLink}`
+    : '';
+
+  return {
+    subjectKey: `job_completed:${job.id}`,
+    jobId: job.id,
+    jobNumber: job.jobNumber || null,
+    jobTitle: resolvedJobTitle,
+    customerId: customerObj.id || job.customerId || null,
+    customerName: customerObj.name || customerObj.company || 'Customer',
+    email: customerObj.email || null,
+    phone: customerObj.phone || null,
+    trackingLink: resolvedTrackingLink,
+    trackingUrl: resolvedTrackingLink,
+    trackingLinkLine,
+    hasTrackingLink: Boolean(resolvedTrackingLink),
+    customerHasPhone: Boolean(customerObj.phone),
+    customerHasEmail: Boolean(customerObj.email),
+    whatsappConsent: customerObj.whatsappConsent === true,
+    smsConsent: customerObj.smsConsent === true,
+    marketingConsent: customerObj.marketingConsent === true,
+    customer: {
+      id: customerObj.id || job.customerId || null,
+      name: customerObj.name || null,
+      company: customerObj.company || null,
+      email: customerObj.email || null,
+      phone: customerObj.phone || null,
+      shopId: customerObj.shopId || null,
+      studioLocationId: customerObj.studioLocationId || null,
+      whatsappConsent: customerObj.whatsappConsent === true,
+      smsConsent: customerObj.smsConsent === true,
+      marketingConsent: customerObj.marketingConsent === true,
+    },
+    shopId: job.shopId || customerObj.shopId || null,
+    studioLocationId: job.studioLocationId || customerObj.studioLocationId || null,
+    job: {
+      id: job.id,
+      jobNumber: job.jobNumber || null,
+      title: resolvedJobTitle,
+      shopId: job.shopId || null,
+      studioLocationId: job.studioLocationId || null,
+    },
+    message: resolvedTrackingLink
+      ? `Job ${job.jobNumber || job.id} is complete. Track here: ${resolvedTrackingLink}`
+      : `Job ${job.jobNumber || job.id} is complete.`,
+  };
+}
+
+/**
+ * Run job-completed customer notification automations.
+ * @param {object} params
+ * @returns {Promise<object>}
+ */
+async function runJobCompletedAutomations({
+  tenantId,
+  job,
+  customer = null,
+  actorUserId = null,
+}) {
+  if (!tenantId || !job?.id) {
+    return { skipped: true, reason: 'missing_job' };
+  }
+
+  const customerObj = customer || job.customer || null;
+  if (!customerObj?.id && !job.customerId) {
+    return { skipped: true, reason: 'missing_customer' };
+  }
+
+  let trackingLink = null;
+  try {
+    const { ensureJobViewToken } = require('./jobCustomerTrackingService');
+    const viewToken = await ensureJobViewToken(job.id, tenantId);
+    trackingLink = trackingLinkForJob(job.id, viewToken);
+  } catch (_error) {
+    trackingLink = null;
+  }
+
+  let jobTitle = job.title || null;
+  try {
+    const { buildCustomerFacingJobTitle } = require('../utils/jobCustomerMessageText');
+    jobTitle = buildCustomerFacingJobTitle(typeof job?.toJSON === 'function' ? job.toJSON() : job);
+  } catch (_error) {
+    jobTitle = job.title || null;
+  }
+
+  const triggerContext = buildJobCompletedTriggerContext({
+    job,
+    customer: customerObj,
+    trackingLink,
+    jobTitle,
+  });
+
+  return executeMatchingRules({
+    tenantId,
+    triggerType: 'job_completed',
+    triggerContext,
+    actorUserId,
+  });
+}
+
+/**
+ * Resolve workspace/business email for internal automation notifications.
+ * @param {string} tenantId
+ * @returns {Promise<string|null>}
+ */
+async function getTenantBusinessEmail(tenantId) {
+  if (!tenantId) return null;
+  const { organization } = await loadTenantOrganization(tenantId);
+  return organization?.email || null;
+}
+
+/**
+ * Build trigger context for a daily sales summary scheduler run.
+ * @param {string} tenantId
+ * @param {object} params
+ * @param {Date} params.periodStart
+ * @param {Date} params.periodEnd
+ * @param {'today'|'yesterday'} params.periodLabel
+ * @param {Date} [params.now]
+ * @returns {Promise<object>}
+ */
+async function buildDailySalesSummaryContext(tenantId, {
+  periodStart,
+  periodEnd,
+  periodLabel = 'yesterday',
+  now = new Date(),
+}) {
+  const dateKey = formatAutomationDate(periodEnd);
+  const salesWhere = {
+    tenantId,
+    status: { [Op.notIn]: ['cancelled', 'refunded'] },
+    createdAt: { [Op.between]: [periodStart, periodEnd] },
+  };
+
+  const salesAgg = await Sale.findOne({
+    where: salesWhere,
+    attributes: [
+      [fn('COUNT', col('id')), 'transactionCount'],
+      [fn('SUM', col('total')), 'totalSales'],
+    ],
+    raw: true,
+  });
+
+  const transactionCount = toNumber(salesAgg?.transactionCount, 0);
+  const totalSales = toNumber(salesAgg?.totalSales, 0);
+
+  const saleRows = await Sale.findAll({
+    where: salesWhere,
+    attributes: ['id'],
+    raw: true,
+    limit: MAX_SUBJECTS_PER_RULE,
+  });
+  const saleIds = saleRows.map((row) => row.id).filter(Boolean);
+
+  let topProducts = 'None';
+  if (saleIds.length) {
+    const topRows = await SaleItem.findAll({
+      where: { saleId: { [Op.in]: saleIds } },
+      attributes: [
+        'name',
+        [fn('SUM', col('quantity')), 'qty'],
+        [fn('SUM', col('total')), 'revenue'],
+      ],
+      group: ['name'],
+      order: [[fn('SUM', col('total')), 'DESC']],
+      limit: 5,
+      raw: true,
+    });
+    topProducts = topRows.length
+      ? topRows.map((row) => `${row.name} (${whatsappTemplates.formatCurrency(row.revenue)})`).join(', ')
+      : 'None';
+  }
+
+  const businessEmail = await getTenantBusinessEmail(tenantId);
+  const formattedTotal = whatsappTemplates.formatCurrency(totalSales);
+  const periodText = periodLabel === 'today' ? 'today' : 'yesterday';
+
+  return {
+    subjectKey: `daily_sales_summary:${dateKey}`,
+    date: dateKey,
+    summaryDate: dateKey,
+    periodLabel: periodText,
+    totalSales,
+    totalSalesFormatted: formattedTotal,
+    transactionCount,
+    topProducts,
+    email: businessEmail,
+    customerHasEmail: Boolean(businessEmail),
+    message: `Daily sales summary for ${dateKey}: ${formattedTotal} from ${transactionCount} transaction${transactionCount === 1 ? '' : 's'}. Top products: ${topProducts}.`,
+    scheduler: true,
+    triggerType: 'daily_sales_summary',
+  };
+}
+
+function quoteLinkForQuote(quote) {
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  return quote.viewToken
+    ? `${frontendUrl}/view-quote/${quote.viewToken}`
+    : `${frontendUrl}/quotes/${quote.id}`;
+}
+
+function buildLeadTriggerContext(lead) {
+  return {
+    subjectKey: `new_lead:${lead.id}`,
+    leadId: lead.id,
+    leadName: lead.name,
+    leadCompany: lead.company || lead.name,
+    leadSource: lead.source || 'unknown',
+    customerName: lead.name,
+    email: lead.email || null,
+    phone: lead.phone || null,
+    customerHasPhone: Boolean(lead.phone),
+    customerHasEmail: Boolean(lead.email),
+    shopId: lead.shopId || null,
+    studioLocationId: lead.studioLocationId || null,
+    message: `New lead: ${lead.name} from ${lead.source || 'unknown'}.`,
+  };
+}
+
+function buildCustomerCreatedTriggerContext(customer) {
+  return {
+    subjectKey: `customer_created:${customer.id}`,
+    customerId: customer.id,
+    customerName: customer.name || customer.company || 'Customer',
+    email: customer.email || null,
+    phone: customer.phone || null,
+    dateOfBirth: customer.dateOfBirth || null,
+    customerHasPhone: Boolean(customer.phone),
+    customerHasEmail: Boolean(customer.email),
+    whatsappConsent: customer.whatsappConsent === true,
+    smsConsent: customer.smsConsent === true,
+    marketingConsent: customer.marketingConsent === true,
+    customer: {
+      id: customer.id,
+      name: customer.name || null,
+      company: customer.company || null,
+      email: customer.email || null,
+      phone: customer.phone || null,
+      shopId: customer.shopId || null,
+      studioLocationId: customer.studioLocationId || null,
+      whatsappConsent: customer.whatsappConsent === true,
+      smsConsent: customer.smsConsent === true,
+      marketingConsent: customer.marketingConsent === true,
+    },
+    shopId: customer.shopId || null,
+    studioLocationId: customer.studioLocationId || null,
+    message: `Welcome new customer ${customer.name || customer.company || 'Customer'}.`,
+  };
+}
+
+function buildInvoiceSentTriggerContext(invoice, customer = null, paymentLink = null) {
+  const base = invoiceContext(invoice, null, 'invoice_sent');
+  const customerObj = customer || invoice.customer || {};
+  const balance = toNumber(invoice.balance ?? invoice.totalAmount, 0);
+  const totalAmount = toNumber(invoice.totalAmount, balance);
+  return {
+    ...base,
+    subjectKey: `invoice_sent:${invoice.id}`,
+    paymentLink: paymentLink || paymentLinkForInvoice(invoice),
+    totalAmount,
+    totalAmountFormatted: whatsappTemplates.formatCurrency(totalAmount),
+    amount: totalAmount,
+    customerName: customerObj.name || customerObj.company || base.customerName,
+    email: customerObj.email || base.email,
+    phone: customerObj.phone || base.phone,
+    message: `Invoice ${invoice.invoiceNumber || invoice.id} has been sent.`,
+  };
+}
+
+function buildHighValueInvoiceTriggerContext(invoice, customer = null) {
+  const customerObj = customer || invoice.customer || {};
+  const totalAmount = toNumber(invoice.totalAmount, 0);
+  return {
+    subjectKey: `high_value_invoice:${invoice.id}`,
+    invoiceId: invoice.id,
+    invoiceNumber: invoice.invoiceNumber,
+    customerId: customerObj.id || invoice.customerId,
+    customerName: customerObj.name || customerObj.company || 'Customer',
+    email: customerObj.email || null,
+    phone: customerObj.phone || null,
+    totalAmount,
+    totalAmountFormatted: whatsappTemplates.formatCurrency(totalAmount),
+    amount: totalAmount,
+    balance: toNumber(invoice.balance, totalAmount),
+    invoiceStatus: invoice.status || null,
+    shopId: invoice.shopId || null,
+    studioLocationId: invoice.studioLocationId || null,
+    message: `High value invoice ${invoice.invoiceNumber || invoice.id}: ${whatsappTemplates.formatCurrency(totalAmount)}.`,
+  };
+}
+
+function buildSaleCompletedTriggerContext(sale, customer = null) {
+  const customerObj = customer || sale.customer || {};
+  const totalAmount = toNumber(sale.total, 0);
+  return {
+    subjectKey: `sale_completed:${sale.id}`,
+    saleId: sale.id,
+    saleNumber: sale.saleNumber || null,
+    customerId: customerObj.id || sale.customerId || null,
+    customerName: customerObj.name || customerObj.company || 'Customer',
+    email: customerObj.email || null,
+    phone: customerObj.phone || null,
+    totalAmount,
+    totalAmountFormatted: whatsappTemplates.formatCurrency(totalAmount),
+    amount: totalAmount,
+    customerHasPhone: Boolean(customerObj.phone),
+    customerHasEmail: Boolean(customerObj.email),
+    whatsappConsent: customerObj.whatsappConsent === true,
+    smsConsent: customerObj.smsConsent === true,
+    marketingConsent: customerObj.marketingConsent === true,
+    shopId: sale.shopId || customerObj.shopId || null,
+    studioLocationId: sale.studioLocationId || customerObj.studioLocationId || null,
+    message: `Sale ${sale.saleNumber || sale.id} completed for ${whatsappTemplates.formatCurrency(totalAmount)}.`,
+  };
+}
+
+function buildQuoteSentTriggerContext(quote, customer = null, quoteLink = null) {
+  const customerObj = customer || quote.customer || {};
+  const totalAmount = toNumber(quote.totalAmount, 0);
+  const resolvedQuoteLink = quoteLink || quoteLinkForQuote(quote);
+  return {
+    subjectKey: `quote_sent:${quote.id}`,
+    quoteId: quote.id,
+    quoteNumber: quote.quoteNumber,
+    quoteTitle: quote.title || 'Your quote',
+    quoteLink: resolvedQuoteLink,
+    customerId: customerObj.id || quote.customerId,
+    customerName: customerObj.name || customerObj.company || 'Customer',
+    email: customerObj.email || null,
+    phone: customerObj.phone || null,
+    totalAmount,
+    totalAmountFormatted: whatsappTemplates.formatCurrency(totalAmount),
+    amount: totalAmount,
+    customerHasPhone: Boolean(customerObj.phone),
+    customerHasEmail: Boolean(customerObj.email),
+    whatsappConsent: customerObj.whatsappConsent === true,
+    smsConsent: customerObj.smsConsent === true,
+    marketingConsent: customerObj.marketingConsent === true,
+    shopId: quote.shopId || null,
+    studioLocationId: quote.studioLocationId || null,
+    message: `Quote ${quote.quoteNumber || quote.id} sent to customer.`,
+  };
+}
+
+function buildLowProfitMarginTriggerContext(sale, marginMeta, customer = null) {
+  const customerObj = customer || sale.customer || {};
+  const profitMargin = toNumber(marginMeta.profitMargin, 0);
+  const totalAmount = toNumber(sale.total, 0);
+  return {
+    subjectKey: `low_profit_margin:${sale.id}`,
+    saleId: sale.id,
+    saleNumber: sale.saleNumber || null,
+    customerId: customerObj.id || sale.customerId || null,
+    customerName: customerObj.name || customerObj.company || 'Customer',
+    email: customerObj.email || null,
+    phone: customerObj.phone || null,
+    totalAmount,
+    totalAmountFormatted: whatsappTemplates.formatCurrency(totalAmount),
+    profitMargin,
+    profitMarginFormatted: `${profitMargin.toFixed(1)}%`,
+    minMarginPercent: null,
+    revenue: toNumber(marginMeta.revenue, totalAmount),
+    cost: toNumber(marginMeta.cost, 0),
+    profit: toNumber(marginMeta.profit, 0),
+    shopId: sale.shopId || null,
+    message: `Sale ${sale.saleNumber || sale.id} margin is ${profitMargin.toFixed(1)}%.`,
+  };
+}
+
+async function runNewLeadAutomations({ tenantId, lead, actorUserId = null }) {
+  if (!tenantId || !lead?.id) return { skipped: true, reason: 'missing_lead' };
+  return executeMatchingRules({
+    tenantId,
+    triggerType: 'new_lead',
+    triggerContext: buildLeadTriggerContext(lead),
+    actorUserId,
+  });
+}
+
+async function runCustomerCreatedAutomations({ tenantId, customer, actorUserId = null }) {
+  if (!tenantId || !customer?.id) return { skipped: true, reason: 'missing_customer' };
+  return executeMatchingRules({
+    tenantId,
+    triggerType: 'customer_created',
+    triggerContext: buildCustomerCreatedTriggerContext(customer),
+    actorUserId,
+  });
+}
+
+async function runInvoiceSentAutomations({
+  tenantId,
+  invoice,
+  customer = null,
+  paymentLink = null,
+  actorUserId = null,
+}) {
+  if (!tenantId || !invoice?.id) return { skipped: true, reason: 'missing_invoice' };
+  return executeMatchingRules({
+    tenantId,
+    triggerType: 'invoice_sent',
+    triggerContext: buildInvoiceSentTriggerContext(invoice, customer, paymentLink),
+    actorUserId,
+  });
+}
+
+async function runHighValueInvoiceAutomations({
+  tenantId,
+  invoice,
+  customer = null,
+  actorUserId = null,
+}) {
+  if (!tenantId || !invoice?.id) return { skipped: true, reason: 'missing_invoice' };
+  return executeMatchingRules({
+    tenantId,
+    triggerType: 'high_value_invoice',
+    triggerContext: buildHighValueInvoiceTriggerContext(invoice, customer),
+    actorUserId,
+  });
+}
+
+async function runSaleCompletedAutomations({
+  tenantId,
+  sale,
+  customer = null,
+  actorUserId = null,
+}) {
+  if (!tenantId || !sale?.id || sale.status !== 'completed') {
+    return { skipped: true, reason: 'missing_or_incomplete_sale' };
+  }
+  return executeMatchingRules({
+    tenantId,
+    triggerType: 'sale_completed',
+    triggerContext: buildSaleCompletedTriggerContext(sale, customer),
+    actorUserId,
+  });
+}
+
+async function runQuoteSentAutomations({
+  tenantId,
+  quote,
+  customer = null,
+  quoteLink = null,
+  actorUserId = null,
+}) {
+  if (!tenantId || !quote?.id) return { skipped: true, reason: 'missing_quote' };
+  return executeMatchingRules({
+    tenantId,
+    triggerType: 'quote_sent',
+    triggerContext: buildQuoteSentTriggerContext(quote, customer, quoteLink),
+    actorUserId,
+  });
+}
+
+async function runStockChangeAutomations({
+  tenantId,
+  product,
+  stockEvent = 'low_stock_on_change',
+  actorUserId = null,
+}) {
+  if (!tenantId || !product?.id) return { skipped: true, reason: 'missing_product' };
+  if (product.trackStock === false) return { skipped: true, reason: 'stock_not_tracked' };
+
+  const quantityOnHand = toNumber(product.quantityOnHand, 0);
+  const reorderLevel = toNumber(product.reorderLevel, 0);
+  let triggerType = stockEvent;
+  if (stockEvent === 'auto') {
+    if (quantityOnHand <= 0) triggerType = 'out_of_stock_detected';
+    else if (quantityOnHand <= reorderLevel) triggerType = 'low_stock_on_change';
+    else return { skipped: true, reason: 'stock_above_threshold' };
+  }
+
+  const subjectPrefix = triggerType === 'out_of_stock_detected' ? 'out_of_stock' : 'low_stock_on_change';
+  return executeMatchingRules({
+    tenantId,
+    triggerType,
+    triggerContext: productStockContext(product, subjectPrefix),
+    actorUserId,
+  });
+}
+
+async function runLowProfitMarginAutomations({
+  tenantId,
+  sale,
+  saleItems = [],
+  productsById = null,
+  customer = null,
+  actorUserId = null,
+}) {
+  if (!tenantId || !sale?.id) return { skipped: true, reason: 'missing_sale' };
+  const marginMeta = calculateSaleProfitMargin(sale, saleItems, productsById || new Map());
+  if (marginMeta.revenue <= 0) return { skipped: true, reason: 'no_revenue' };
+
+  const rules = await AutomationRule.findAll({
+    where: { tenantId, enabled: true, triggerType: 'low_profit_margin' },
+  });
+  if (!rules.length) return { skipped: true, reason: 'no_rules' };
+
+  const triggerContext = buildLowProfitMarginTriggerContext(sale, marginMeta, customer);
+  const summary = { rulesChecked: rules.length, executed: 0, skipped: 0, failed: 0 };
+
+  for (const rule of rules) {
+    const minMargin = toNumber(rule.triggerConfig?.minMarginPercent, 15);
+    if (marginMeta.profitMargin >= minMargin) {
+      summary.skipped += 1;
+      continue;
+    }
+    const result = await executeRule({
+      rule,
+      tenantId,
+      triggerContext: {
+        ...(await enrichTriggerContextWithBusinessName(tenantId, triggerContext)),
+        minMarginPercent: minMargin,
+        triggerType: 'low_profit_margin',
+      },
+      actorUserId,
+    });
+    if (result.skipped) summary.skipped += 1;
+    else if (result.success) summary.executed += 1;
+    else summary.failed += 1;
+  }
+
+  return summary;
 }
 
 async function runDueAutomations({ now = new Date(), limit = MAX_RULES_PER_TICK } = {}) {
@@ -960,7 +2423,37 @@ async function runDueAutomations({ now = new Date(), limit = MAX_RULES_PER_TICK 
 module.exports = {
   getTemplates,
   executeRule,
+  executeMatchingRules,
+  buildPaymentReceivedTriggerContext,
+  buildReviewRequestTriggerContext,
+  buildJobCompletedTriggerContext,
+  buildDailySalesSummaryContext,
+  buildLeadTriggerContext,
+  buildCustomerCreatedTriggerContext,
+  buildInvoiceSentTriggerContext,
+  buildHighValueInvoiceTriggerContext,
+  buildSaleCompletedTriggerContext,
+  buildQuoteSentTriggerContext,
+  buildLowProfitMarginTriggerContext,
+  calculateSaleProfitMargin,
+  productStockContext,
+  getTenantReviewLink,
+  getTenantBusinessEmail,
+  reviewLinkForTenant,
+  runPaymentReceivedAutomations,
+  runReviewRequestAutomations,
+  runJobCompletedAutomations,
+  runNewLeadAutomations,
+  runCustomerCreatedAutomations,
+  runInvoiceSentAutomations,
+  runHighValueInvoiceAutomations,
+  runSaleCompletedAutomations,
+  runQuoteSentAutomations,
+  runStockChangeAutomations,
+  runLowProfitMarginAutomations,
   runDueAutomations,
   scheduleAllowsRun,
-  conditionsAllowRun
+  conditionsAllowRun,
+  triggerConfigAllowsRun,
+  getTriggerContextsForRule,
 };

@@ -33,6 +33,13 @@ const TEMPLATES = {
     parameters: ['invoiceNumber', 'amount', 'paymentLink'],
     example: 'Reminder: Invoice {{1}} for {{2}} is overdue. Please pay: {{3}}'
   },
+  payment_received: {
+    name: 'payment_received',
+    language: 'en',
+    description: 'Thank customer after a payment is recorded',
+    parameters: ['customerName', 'invoiceNumber', 'amount', 'businessName'],
+    example: 'Hi {{1}}, thank you! We received {{3}} for invoice {{2}}. — {{4}}'
+  },
   low_stock_alert: {
     name: 'low_stock_alert',
     language: 'en',
@@ -53,6 +60,41 @@ const TEMPLATES = {
     description: 'Notify customer when an order is created',
     parameters: ['customerName', 'orderNumber', 'amount', 'businessName'],
     example: 'Hello {{1}}, your order {{2}} for {{3}} from {{4}} has been received.'
+  },
+  review_request: {
+    name: 'review_request',
+    language: 'en',
+    description: 'Ask customer to leave a review after service or sale',
+    parameters: ['customerName', 'businessName', 'reviewLink'],
+    example: 'Hi {{1}}, thank you for choosing {{2}}! We would love your feedback: {{3}}'
+  },
+  job_completed: {
+    name: 'job_completed',
+    language: 'en',
+    description: 'Notify customer when a job or service is completed',
+    parameters: ['customerName', 'jobNumber', 'businessName'],
+    example: 'Hi {{1}}, your job {{2}} is complete. — {{3}}'
+  },
+  birthday_greeting: {
+    name: 'birthday_greeting',
+    language: 'en',
+    description: 'Send a birthday greeting to a customer',
+    parameters: ['customerName'],
+    example: 'Happy birthday {{1}}! Wishing you a wonderful day.'
+  },
+  win_back: {
+    name: 'win_back',
+    language: 'en',
+    description: 'Win-back message for inactive customers',
+    parameters: ['customerName', 'businessName'],
+    example: 'Hi {{1}}, we miss you at {{2}}! Come back soon.'
+  },
+  quote_follow_up: {
+    name: 'quote_follow_up',
+    language: 'en',
+    description: 'Follow up on a quote with no response',
+    parameters: ['customerName', 'quoteNumber', 'businessName'],
+    example: 'Hi {{1}}, just checking in on quote {{2}} from {{3}}.'
   }
 };
 

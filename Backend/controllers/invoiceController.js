@@ -34,6 +34,12 @@ const {
 } = require('../utils/shopUtils');
 const { invalidateInvoiceListCache, invalidateAfterMutation } = require('../middleware/cache');
 const activityLogger = require('../services/activityLogger');
+const {
+  runPaymentReceivedAutomations,
+  runReviewRequestAutomations,
+  runInvoiceSentAutomations,
+  runHighValueInvoiceAutomations,
+} = require('../services/automationEngineService');
 const { updateCustomerBalance } = require('../services/customerBalanceService');
 const { ensureSaleFromPaidInvoice } = require('../services/invoiceSaleService');
 const sabitoWebhookService = require('../services/sabitoWebhookService');
@@ -425,6 +431,28 @@ const enqueueInvoicePaymentSideEffects = ({
 
   if (customerId) {
     runInvoicePaymentBackgroundTask('customer balance refresh', () => updateCustomerBalance(customerId));
+  }
+
+  if (paymentAmount > 0 && payment) {
+    runInvoicePaymentBackgroundTask('payment_received automations', () => runPaymentReceivedAutomations({
+      tenantId,
+      invoice: updatedInvoice,
+      customer: updatedInvoice?.customer || null,
+      payment,
+      paymentAmount,
+      paymentMethod,
+      actorUserId: userId,
+    }));
+  }
+
+  if (wasFullyPaid && !wasAlreadyPaid && !updatedInvoice?.jobId && !updatedInvoice?.saleId && updatedInvoice?.customerId) {
+    runInvoicePaymentBackgroundTask('review_request automations', () => runReviewRequestAutomations({
+      tenantId,
+      sourceType: 'invoice',
+      source: updatedInvoice,
+      customer: updatedInvoice?.customer || null,
+      actorUserId: userId,
+    }));
   }
 };
 
@@ -1201,6 +1229,14 @@ exports.createInvoice = async (req, res, next) => {
     invalidateAfterMutation(req.tenantId);
 
     invalidateInvoiceListCache(req.tenantId);
+    runHighValueInvoiceAutomations({
+      tenantId: req.tenantId,
+      invoice: createdInvoice,
+      customer: createdInvoice.customer || null,
+      actorUserId: req.user?.id || null,
+    }).catch((err) =>
+      console.error('[Invoice] high_value_invoice automations failed:', err?.message || err)
+    );
     res.status(201).json({
       success: true,
       data: await invoiceToResponsePayload(createdInvoice)
@@ -1844,6 +1880,24 @@ exports.sendInvoice = async (req, res, next) => {
       console.error('[Invoice] SMS sending error:', error);
     }
     }
+
+    runInvoiceSentAutomations({
+      tenantId: req.tenantId,
+      invoice: updatedInvoice,
+      customer: updatedInvoice.customer || null,
+      paymentLink,
+      actorUserId: req.user?.id || null,
+    }).catch((err) =>
+      console.error('[Invoice] invoice_sent automations failed:', err?.message || err)
+    );
+    runHighValueInvoiceAutomations({
+      tenantId: req.tenantId,
+      invoice: updatedInvoice,
+      customer: updatedInvoice.customer || null,
+      actorUserId: req.user?.id || null,
+    }).catch((err) =>
+      console.error('[Invoice] high_value_invoice automations failed:', err?.message || err)
+    );
 
     res.status(200).json({
       success: true,
@@ -2542,6 +2596,41 @@ async function recordPublicInvoicePaymentCore(invoice, {
     await updateCustomerBalance(invoice.customerId);
   } catch (error) {
     console.error('Failed to update customer balance:', error);
+  }
+
+  if (paymentAmount > 0 && payment) {
+    setImmediate(() => {
+      runPaymentReceivedAutomations({
+        tenantId: invoice.tenantId,
+        invoice: updatedInvoice,
+        customer: invoice.customer || null,
+        payment,
+        paymentAmount,
+        paymentMethod: paymentMethod || 'online',
+        actorUserId: null,
+      }).catch((error) => {
+        console.error('[PublicInvoicePayment] payment_received automations failed:', error?.message || error);
+      });
+    });
+  }
+
+  if (
+    updatedInvoice.status === 'paid'
+    && !updatedInvoice.jobId
+    && !updatedInvoice.saleId
+    && updatedInvoice.customerId
+  ) {
+    setImmediate(() => {
+      runReviewRequestAutomations({
+        tenantId: invoice.tenantId,
+        sourceType: 'invoice',
+        source: updatedInvoice,
+        customer: updatedInvoice.customer || invoice.customer || null,
+        actorUserId: null,
+      }).catch((error) => {
+        console.error('[PublicInvoicePayment] review_request automations failed:', error?.message || error);
+      });
+    });
   }
 
   invalidateAfterMutation(invoice.tenantId);

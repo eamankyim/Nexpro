@@ -34,6 +34,86 @@ export const TRIGGER_OPTIONS = [
     label: 'Customer birthday',
     hint: 'When today matches a customer date of birth.',
   },
+  {
+    value: 'payment_received',
+    label: 'Payment received',
+    hint: 'When a payment is recorded on an invoice.',
+  },
+  {
+    value: 'review_request',
+    label: 'Review request',
+    hint: 'After a job, sale, or standalone invoice is fully paid.',
+  },
+  {
+    value: 'job_completed',
+    label: 'Job completed',
+    hint: 'When a job or service is marked complete.',
+  },
+  {
+    value: 'daily_sales_summary',
+    label: 'Daily sales summary',
+    hint: 'Scheduled recap of sales activity for your team.',
+  },
+  {
+    value: 'new_lead',
+    label: 'New lead',
+    hint: 'When a new lead is created.',
+  },
+  {
+    value: 'high_value_invoice',
+    label: 'High value invoice',
+    hint: 'When an invoice exceeds a set amount.',
+  },
+  {
+    value: 'customer_created',
+    label: 'New customer',
+    hint: 'When a new customer is added.',
+  },
+  {
+    value: 'lead_no_contact_days',
+    label: 'Lead no contact',
+    hint: 'When a lead has had no contact for a set time.',
+  },
+  {
+    value: 'invoice_sent',
+    label: 'Invoice sent',
+    hint: 'When an invoice is sent to a customer.',
+  },
+  {
+    value: 'sale_completed',
+    label: 'Sale completed',
+    hint: 'When a sale is completed (receipt / confirmation).',
+  },
+  {
+    value: 'low_stock_on_change',
+    label: 'Low stock (real-time)',
+    hint: 'When stock drops to reorder level after a sale or adjustment.',
+  },
+  {
+    value: 'out_of_stock_detected',
+    label: 'Out of stock (real-time)',
+    hint: 'When a product goes out of stock.',
+  },
+  {
+    value: 'quote_sent',
+    label: 'Quote sent',
+    hint: 'When a quote is sent to a customer.',
+  },
+  {
+    value: 'job_due_in_hours',
+    label: 'Job due soon',
+    hint: 'When a job is due within a set number of hours.',
+  },
+  {
+    value: 'prescription_refill_due',
+    label: 'Prescription refill due',
+    hint: 'Pharmacy: when a prescription refill is approaching.',
+  },
+  {
+    value: 'low_profit_margin',
+    label: 'Low profit margin',
+    hint: 'When a completed sale margin is below threshold.',
+  },
 ];
 
 export const THRESHOLD_MODE_OPTIONS = [
@@ -88,6 +168,64 @@ export const TRIGGER_PLACEHOLDERS = {
     'phone',
   ],
   customer_birthday: ['customerName', 'businessName', 'email', 'phone', 'dateOfBirth'],
+  payment_received: [
+    'customerName',
+    'businessName',
+    'invoiceNumber',
+    'amount',
+    'amountPaid',
+    'paymentAmount',
+    'paymentMethod',
+    'paymentNumber',
+    'balance',
+    'totalAmount',
+    'email',
+    'phone',
+  ],
+  review_request: [
+    'customerName',
+    'businessName',
+    'reviewLink',
+    'reviewUrl',
+    'jobNumber',
+    'saleNumber',
+    'invoiceNumber',
+    'sourceNumber',
+    'email',
+    'phone',
+  ],
+  job_completed: [
+    'customerName',
+    'businessName',
+    'jobNumber',
+    'jobTitle',
+    'trackingLink',
+    'trackingLinkLine',
+    'email',
+    'phone',
+  ],
+  daily_sales_summary: [
+    'businessName',
+    'date',
+    'periodLabel',
+    'totalSales',
+    'totalSalesFormatted',
+    'transactionCount',
+    'topProducts',
+    'email',
+  ],
+  new_lead: ['leadName', 'leadCompany', 'leadSource', 'businessName', 'email', 'phone'],
+  high_value_invoice: ['customerName', 'businessName', 'invoiceNumber', 'totalAmount', 'totalAmountFormatted', 'email', 'phone'],
+  customer_created: ['customerName', 'businessName', 'email', 'phone'],
+  lead_no_contact_days: ['leadName', 'leadCompany', 'leadSource', 'noContactDays', 'businessName', 'email', 'phone'],
+  invoice_sent: ['customerName', 'businessName', 'invoiceNumber', 'totalAmountFormatted', 'balance', 'paymentLink', 'dueDate', 'email', 'phone'],
+  sale_completed: ['customerName', 'businessName', 'saleNumber', 'totalAmountFormatted', 'email', 'phone'],
+  low_stock_on_change: ['productName', 'sku', 'quantityOnHand', 'reorderLevel', 'businessName'],
+  out_of_stock_detected: ['productName', 'sku', 'quantityOnHand', 'reorderLevel', 'businessName'],
+  quote_sent: ['customerName', 'businessName', 'quoteNumber', 'quoteTitle', 'quoteLink', 'totalAmountFormatted', 'email', 'phone'],
+  job_due_in_hours: ['customerName', 'businessName', 'jobNumber', 'jobTitle', 'dueDate', 'trackingLink', 'trackingLinkLine', 'email', 'phone'],
+  prescription_refill_due: ['customerName', 'businessName', 'prescriptionNumber', 'refillDueDate', 'email', 'phone'],
+  low_profit_margin: ['saleNumber', 'customerName', 'businessName', 'profitMargin', 'profitMarginFormatted', 'totalAmountFormatted', 'minMarginPercent'],
 };
 
 /**
@@ -224,6 +362,262 @@ export const DEFAULT_ACTION_CONTENT = {
       priority: 'low',
       description: 'Today is {{customerName}}\'s birthday.',
       link: '/customers',
+    },
+  },
+  payment_received: {
+    send_sms: {
+      body:
+        'Hi {{customerName}}, thank you! We received {{amount}} for invoice {{invoiceNumber}}. Balance: {{balance}}. — {{businessName}}',
+    },
+    send_whatsapp: {
+      templateName: 'payment_received',
+      language: 'en',
+      parametersText: '{{customerName}}, {{invoiceNumber}}, {{amount}}, {{businessName}}',
+    },
+    send_email_platform: {
+      subject: 'Payment received — thank you',
+      body:
+        'Hi {{customerName}},\n\nThank you! We have received your payment of {{amount}} for invoice {{invoiceNumber}}.\n\nRemaining balance: {{balance}}\n\n{{businessName}}',
+    },
+    create_task: {
+      title: 'Payment received for {{invoiceNumber}}',
+      priority: 'low',
+      description: '{{customerName}} paid {{amount}} via {{paymentMethod}}.',
+      link: '/invoices',
+    },
+  },
+  review_request: {
+    send_sms: {
+      body:
+        'Hi {{customerName}}, thank you for choosing {{businessName}}! We would love your feedback: {{reviewLink}}',
+    },
+    send_whatsapp: {
+      templateName: 'review_request',
+      language: 'en',
+      parametersText: '{{customerName}}, {{businessName}}, {{reviewLink}}',
+    },
+    send_email_platform: {
+      subject: 'How did we do, {{customerName}}?',
+      body:
+        'Hi {{customerName}},\n\nThank you for choosing {{businessName}}! We would love to hear about your experience.\n\nLeave a review here: {{reviewLink}}\n\nThank you,\n{{businessName}}',
+    },
+    create_task: {
+      title: 'Follow up for review — {{customerName}}',
+      priority: 'low',
+      description: 'Ask {{customerName}} for a review via {{reviewLink}}.',
+      link: '/customers',
+    },
+  },
+  job_completed: {
+    send_sms: {
+      body:
+        'Hi {{customerName}}, your job {{jobNumber}} is complete. {{trackingLinkLine}} — {{businessName}}',
+    },
+    send_whatsapp: {
+      templateName: 'job_completed',
+      language: 'en',
+      parametersText: '{{customerName}}, {{jobNumber}}, {{businessName}}',
+    },
+    send_email_platform: {
+      subject: 'Your job {{jobNumber}} is complete',
+      body:
+        'Hi {{customerName}},\n\nGood news! Your job {{jobNumber}} has been completed.\n\n{{trackingLinkLine}}\n\nThank you,\n{{businessName}}',
+    },
+    create_task: {
+      title: 'Job completed — {{jobNumber}}',
+      priority: 'low',
+      description: 'Notify {{customerName}} that job {{jobNumber}} is complete.',
+      link: '/jobs',
+    },
+  },
+  daily_sales_summary: {
+    send_sms: {
+      body:
+        'Daily sales ({{date}}): {{totalSalesFormatted}} from {{transactionCount}} transactions. Top: {{topProducts}}. — {{businessName}}',
+    },
+    send_whatsapp: {
+      templateName: 'sale_receipt',
+      language: 'en',
+      parametersText: '{{businessName}}, {{date}}, {{totalSalesFormatted}}, {{businessName}}',
+    },
+    send_email_platform: {
+      subject: 'Daily sales summary — {{date}}',
+      body:
+        'Daily sales recap for {{date}} ({{periodLabel}}):\n\nTotal sales: {{totalSalesFormatted}}\nTransactions: {{transactionCount}}\nTop products: {{topProducts}}\n\n— {{businessName}}',
+    },
+    create_task: {
+      title: 'Review daily sales — {{date}}',
+      priority: 'medium',
+      description: '{{totalSalesFormatted}} from {{transactionCount}} transactions. Top: {{topProducts}}.',
+      link: '/sales',
+    },
+  },
+  new_lead: {
+    send_sms: { body: 'New lead: {{leadName}} ({{leadSource}}). — {{businessName}}' },
+    send_whatsapp: { templateName: 'hello_world', language: 'en', parametersText: '{{leadName}}' },
+    send_email_platform: {
+      subject: 'New lead: {{leadName}}',
+      body: 'New lead added:\n\nName: {{leadName}}\nCompany: {{leadCompany}}\nSource: {{leadSource}}\nPhone: {{phone}}\nEmail: {{email}}\n\n— {{businessName}}',
+    },
+    create_task: {
+      title: 'Follow up new lead — {{leadName}}',
+      priority: 'medium',
+      description: 'Lead {{leadName}} from {{leadSource}}.',
+      link: '/leads',
+    },
+  },
+  high_value_invoice: {
+    send_sms: { body: 'High value invoice {{invoiceNumber}}: {{totalAmountFormatted}} for {{customerName}}. — {{businessName}}' },
+    send_whatsapp: { templateName: 'invoice_notification', language: 'en', parametersText: '{{customerName}}, {{invoiceNumber}}, {{totalAmountFormatted}}, {{paymentLink}}' },
+    send_email_platform: {
+      subject: 'High value invoice — {{invoiceNumber}}',
+      body: 'Invoice {{invoiceNumber}} for {{customerName}} totals {{totalAmountFormatted}}.\n\n— {{businessName}}',
+    },
+    create_task: {
+      title: 'High value invoice — {{invoiceNumber}}',
+      priority: 'high',
+      description: '{{customerName}} — {{totalAmountFormatted}}.',
+      link: '/invoices',
+    },
+  },
+  customer_created: {
+    send_sms: { body: 'Welcome to {{businessName}}, {{customerName}}! We look forward to serving you.' },
+    send_whatsapp: { templateName: 'hello_world', language: 'en', parametersText: '{{customerName}}, {{businessName}}' },
+    send_email_platform: {
+      subject: 'Welcome to {{businessName}}, {{customerName}}!',
+      body: 'Hi {{customerName}},\n\nWelcome to {{businessName}}! We are glad to have you.\n\n— {{businessName}}',
+    },
+    create_task: {
+      title: 'Welcome {{customerName}}',
+      priority: 'low',
+      description: 'New customer {{customerName}} was added.',
+      link: '/customers',
+    },
+  },
+  lead_no_contact_days: {
+    send_sms: { body: 'Follow up lead {{leadName}} — no contact for {{noContactDays}} days. — {{businessName}}' },
+    send_whatsapp: { templateName: 'quote_follow_up', language: 'en', parametersText: '{{leadName}}, {{leadCompany}}, {{businessName}}' },
+    send_email_platform: {
+      subject: 'Follow up lead {{leadName}}',
+      body: 'Lead {{leadName}} ({{leadCompany}}) has had no contact for {{noContactDays}} days.\n\n— {{businessName}}',
+    },
+    create_task: {
+      title: 'Follow up lead — {{leadName}}',
+      priority: 'medium',
+      description: 'No contact for {{noContactDays}} days.',
+      link: '/leads',
+    },
+  },
+  invoice_sent: {
+    send_sms: { body: 'Hi {{customerName}}, invoice {{invoiceNumber}} for {{totalAmountFormatted}} is ready. Pay: {{paymentLink}} — {{businessName}}' },
+    send_whatsapp: { templateName: 'invoice_notification', language: 'en', parametersText: '{{customerName}}, {{invoiceNumber}}, {{totalAmountFormatted}}, {{paymentLink}}' },
+    send_email_platform: {
+      subject: 'Invoice {{invoiceNumber}} from {{businessName}}',
+      body: 'Hi {{customerName}},\n\nInvoice {{invoiceNumber}} for {{totalAmountFormatted}} is ready.\n\nPay online: {{paymentLink}}\n\n— {{businessName}}',
+    },
+    create_task: {
+      title: 'Invoice sent — {{invoiceNumber}}',
+      priority: 'low',
+      description: 'Sent to {{customerName}} for {{totalAmountFormatted}}.',
+      link: '/invoices',
+    },
+  },
+  sale_completed: {
+    send_sms: { body: 'Hi {{customerName}}, thank you! Receipt {{saleNumber}}: {{totalAmountFormatted}}. — {{businessName}}' },
+    send_whatsapp: { templateName: 'sale_receipt', language: 'en', parametersText: '{{customerName}}, {{saleNumber}}, {{totalAmountFormatted}}, {{businessName}}' },
+    send_email_platform: {
+      subject: 'Your receipt — {{saleNumber}}',
+      body: 'Hi {{customerName}},\n\nThank you for your purchase! Receipt {{saleNumber}} totals {{totalAmountFormatted}}.\n\n— {{businessName}}',
+    },
+    create_task: {
+      title: 'Sale completed — {{saleNumber}}',
+      priority: 'low',
+      description: '{{customerName}} — {{totalAmountFormatted}}.',
+      link: '/sales',
+    },
+  },
+  low_stock_on_change: {
+    send_sms: { body: 'Low stock: {{productName}} ({{sku}}) — {{quantityOnHand}} left. — {{businessName}}' },
+    send_whatsapp: { templateName: 'low_stock_alert', language: 'en', parametersText: '{{productName}}, {{quantityOnHand}}, {{reorderLevel}}' },
+    send_email_platform: {
+      subject: 'Low stock: {{productName}}',
+      body: '{{productName}} ({{sku}}) is low: {{quantityOnHand}} on hand (reorder {{reorderLevel}}).\n\n— {{businessName}}',
+    },
+    create_task: {
+      title: 'Restock {{productName}}',
+      priority: 'high',
+      description: '{{quantityOnHand}} on hand, reorder at {{reorderLevel}}.',
+      link: '/materials',
+    },
+  },
+  out_of_stock_detected: {
+    send_sms: { body: 'Out of stock: {{productName}} ({{sku}}). — {{businessName}}' },
+    send_whatsapp: { templateName: 'low_stock_alert', language: 'en', parametersText: '{{productName}}, {{quantityOnHand}}, {{reorderLevel}}' },
+    send_email_platform: {
+      subject: 'Out of stock: {{productName}}',
+      body: '{{productName}} ({{sku}}) is out of stock.\n\n— {{businessName}}',
+    },
+    create_task: {
+      title: 'Out of stock — {{productName}}',
+      priority: 'high',
+      description: '{{productName}} is out of stock.',
+      link: '/materials',
+    },
+  },
+  quote_sent: {
+    send_sms: { body: 'Hi {{customerName}}, quote {{quoteNumber}} ({{totalAmountFormatted}}) is ready: {{quoteLink}} — {{businessName}}' },
+    send_whatsapp: { templateName: 'quote_delivery', language: 'en', parametersText: '{{customerName}}, {{quoteNumber}}, {{quoteTitle}}, {{quoteLink}}' },
+    send_email_platform: {
+      subject: 'Your quote {{quoteNumber}} from {{businessName}}',
+      body: 'Hi {{customerName}},\n\nQuote {{quoteNumber}} ({{totalAmountFormatted}}) is ready.\n\nView: {{quoteLink}}\n\n— {{businessName}}',
+    },
+    create_task: {
+      title: 'Quote sent — {{quoteNumber}}',
+      priority: 'low',
+      description: 'Sent to {{customerName}}.',
+      link: '/quotes',
+    },
+  },
+  job_due_in_hours: {
+    send_sms: { body: 'Hi {{customerName}}, job {{jobNumber}} is due on {{dueDate}}. {{trackingLinkLine}} — {{businessName}}' },
+    send_whatsapp: { templateName: 'job_completed', language: 'en', parametersText: '{{customerName}}, {{jobNumber}}, {{businessName}}' },
+    send_email_platform: {
+      subject: 'Reminder: job {{jobNumber}} due soon',
+      body: 'Hi {{customerName}},\n\nJob {{jobNumber}} is due on {{dueDate}}.\n\n{{trackingLinkLine}}\n\n— {{businessName}}',
+    },
+    create_task: {
+      title: 'Job due soon — {{jobNumber}}',
+      priority: 'medium',
+      description: 'Due {{dueDate}} for {{customerName}}.',
+      link: '/jobs',
+    },
+  },
+  prescription_refill_due: {
+    send_sms: { body: 'Hi {{customerName}}, prescription {{prescriptionNumber}} refill due {{refillDueDate}}. — {{businessName}}' },
+    send_whatsapp: { templateName: 'hello_world', language: 'en', parametersText: '{{customerName}}, {{prescriptionNumber}}' },
+    send_email_platform: {
+      subject: 'Prescription refill — {{prescriptionNumber}}',
+      body: 'Hi {{customerName}},\n\nYour prescription {{prescriptionNumber}} refill is due on {{refillDueDate}}.\n\n— {{businessName}}',
+    },
+    create_task: {
+      title: 'Refill due — {{prescriptionNumber}}',
+      priority: 'medium',
+      description: '{{customerName}} refill due {{refillDueDate}}.',
+      link: '/prescriptions',
+    },
+  },
+  low_profit_margin: {
+    send_sms: { body: 'Low margin sale {{saleNumber}}: {{profitMarginFormatted}}. — {{businessName}}' },
+    send_whatsapp: { templateName: 'hello_world', language: 'en', parametersText: '{{saleNumber}}, {{profitMarginFormatted}}' },
+    send_email_platform: {
+      subject: 'Low margin alert — {{saleNumber}}',
+      body: 'Sale {{saleNumber}} margin is {{profitMarginFormatted}} (threshold {{minMarginPercent}}%). Total: {{totalAmountFormatted}}.\n\n— {{businessName}}',
+    },
+    create_task: {
+      title: 'Low margin sale — {{saleNumber}}',
+      priority: 'high',
+      description: 'Margin {{profitMarginFormatted}} on {{totalAmountFormatted}}.',
+      link: '/sales',
     },
   },
 };
@@ -375,6 +769,38 @@ export function defaultTriggerForm(triggerType) {
       return { inactiveDays: 30 };
     case 'customer_birthday':
       return {};
+    case 'payment_received':
+      return {};
+    case 'review_request':
+      return {};
+    case 'job_completed':
+      return {};
+    case 'daily_sales_summary':
+      return { summaryPeriod: 'yesterday' };
+    case 'new_lead':
+      return {};
+    case 'high_value_invoice':
+      return { minAmount: 1000 };
+    case 'customer_created':
+      return {};
+    case 'lead_no_contact_days':
+      return { noContactDays: 3 };
+    case 'invoice_sent':
+      return {};
+    case 'sale_completed':
+      return {};
+    case 'low_stock_on_change':
+      return { thresholdMode: 'reorder_level', fixedThreshold: 5 };
+    case 'out_of_stock_detected':
+      return {};
+    case 'quote_sent':
+      return {};
+    case 'job_due_in_hours':
+      return { hoursBeforeDue: 24 };
+    case 'prescription_refill_due':
+      return { daysBeforeDue: 3 };
+    case 'low_profit_margin':
+      return { minMarginPercent: 15 };
     default:
       return {};
   }
@@ -421,6 +847,51 @@ export function buildTriggerConfig(triggerType, triggerForm) {
         inactiveDays: Math.max(1, Math.min(730, Number(merged.inactiveDays) || 30)),
       };
     case 'customer_birthday':
+      return {};
+    case 'payment_received':
+      return {};
+    case 'review_request':
+      return {};
+    case 'job_completed':
+      return {};
+    case 'daily_sales_summary':
+      return {
+        summaryPeriod: merged.summaryPeriod === 'today' ? 'today' : 'yesterday',
+      };
+    case 'high_value_invoice':
+      return {
+        minAmount: Math.max(0, Number(merged.minAmount) || 1000),
+      };
+    case 'lead_no_contact_days':
+      return {
+        noContactDays: Math.max(1, Math.min(365, Number(merged.noContactDays) || 3)),
+      };
+    case 'job_due_in_hours':
+      return {
+        hoursBeforeDue: Math.max(1, Math.min(168, Number(merged.hoursBeforeDue) || 24)),
+      };
+    case 'prescription_refill_due':
+      return {
+        daysBeforeDue: Math.max(0, Math.min(30, Number(merged.daysBeforeDue) || 3)),
+      };
+    case 'low_profit_margin':
+      return {
+        minMarginPercent: Math.max(0, Math.min(100, Number(merged.minMarginPercent) || 15)),
+      };
+    case 'low_stock_on_change': {
+      const mode = merged.thresholdMode === 'fixed' ? 'fixed' : 'reorder_level';
+      const out = { thresholdMode: mode };
+      if (mode === 'fixed') {
+        out.fixedThreshold = Math.max(0, Number(merged.fixedThreshold) || 0);
+      }
+      return out;
+    }
+    case 'new_lead':
+    case 'customer_created':
+    case 'invoice_sent':
+    case 'sale_completed':
+    case 'out_of_stock_detected':
+    case 'quote_sent':
       return {};
     default:
       return merged && typeof merged === 'object' && !Array.isArray(merged) ? merged : {};
@@ -730,8 +1201,13 @@ export function buildTestContextFromForm({ name, triggerType, triggerForm, condi
   const totalSpend = Math.max(0, matchingNumber(payload.conditionConfig?.totalSpendValue ?? amount * 3, payload.conditionConfig?.totalSpendOperator, amount * 3));
   const quantityOnHand = Math.max(0, matchingNumber(payload.conditionConfig?.quantityValue ?? 2, payload.conditionConfig?.quantityOperator, 2));
   const today = new Date();
-  const dueDate = new Date(today);
-  dueDate.setDate(today.getDate() + Number(payload.triggerConfig?.daysBeforeDue || 2));
+  const sampleDueDate = new Date(today);
+  if (payload.triggerType === 'invoice_overdue') {
+    sampleDueDate.setDate(today.getDate() - Number(payload.triggerConfig?.daysAfterDue ?? 1));
+  } else {
+    sampleDueDate.setDate(today.getDate() + Number(payload.triggerConfig?.daysBeforeDue ?? 2));
+  }
+  const dueDateIso = sampleDueDate.toISOString().slice(0, 10);
 
   const customer = {
     id: 'test-customer',
@@ -751,7 +1227,7 @@ export function buildTestContextFromForm({ name, triggerType, triggerForm, condi
     totalAmount: amount,
     amountPaid: 0,
     balance,
-    dueDate: dueDate.toISOString().slice(0, 10),
+    dueDate: dueDateIso,
     status: payload.conditionConfig?.invoiceStatus || (payload.triggerType === 'invoice_overdue' ? 'overdue' : 'sent'),
     paymentToken: 'test',
   };
@@ -806,6 +1282,33 @@ export function buildTestContextFromForm({ name, triggerType, triggerForm, condi
     totalSpend,
     dueDate: invoice.dueDate,
     paymentLink: 'http://localhost:3000/pay-invoice/test',
+    reviewLink: 'http://localhost:3000/review/sample-workspace',
+    reviewUrl: 'http://localhost:3000/review/sample-workspace',
+    jobNumber: 'JOB-TEST-0001',
+    jobTitle: 'Sample print job',
+    trackingLink: 'http://localhost:3000/track-job/sample-token',
+    trackingLinkLine: 'Track your order: http://localhost:3000/track-job/sample-token',
+    saleNumber: 'SALE-TEST-0001',
+    sourceNumber: 'JOB-TEST-0001',
+    leadName: 'Sample Lead',
+    leadCompany: 'Sample Lead Co',
+    leadSource: 'website',
+    noContactDays: 3,
+    quoteTitle: 'Sample quote',
+    quoteLink: 'http://localhost:3000/view-quote/sample',
+    totalAmountFormatted: `GHS ${amount.toFixed(2)}`,
+    profitMargin: 12.5,
+    profitMarginFormatted: '12.5%',
+    minMarginPercent: 15,
+    prescriptionNumber: 'RX-TEST-0001',
+    refillDueDate: dueDateIso,
+    hoursBeforeDue: 24,
+    date: today.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+    periodLabel: payload.triggerType === 'daily_sales_summary' && payload.triggerConfig?.summaryPeriod === 'today' ? 'today' : 'yesterday',
+    totalSales: amount,
+    totalSalesFormatted: `GHS ${amount.toFixed(2)}`,
+    transactionCount: 12,
+    topProducts: 'Sample Product A (GHS 450.00), Sample Product B (GHS 320.00)',
     message: `Test automation run for ${payload.name || 'automation rule'}.`,
     customer,
     invoice,

@@ -932,6 +932,17 @@ exports.updateProduct = async (req, res, next) => {
             } catch (taskErr) {
               console.error('[Product] Low stock task automation failed:', taskErr?.message);
             }
+            try {
+              const { runStockChangeAutomations } = require('../services/automationEngineService');
+              await runStockChangeAutomations({
+                tenantId: tenantIdForAlert,
+                product: { ...productForAlert.toJSON?.() || productForAlert, quantityOnHand: Number(newQuantity) || 0, reorderLevel: Number(reorderLevel) || 0 },
+                stockEvent: 'auto',
+                actorUserId: req.user?.id || null,
+              });
+            } catch (automationErr) {
+              console.error('[Product] Stock change automations failed:', automationErr?.message);
+            }
           } catch (error) {
             console.error('[Product] WhatsApp low stock alert error:', error);
           }

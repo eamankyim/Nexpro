@@ -11,6 +11,7 @@ const config = require('../config/config');
 const { getPagination } = require('../utils/paginationUtils');
 const activityLogger = require('../services/activityLogger');
 const taskAutomationService = require('../services/taskAutomationService');
+const { runNewLeadAutomations } = require('../services/automationEngineService');
 const { invalidateCustomerListCache } = require('../middleware/cache');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const {
@@ -223,6 +224,14 @@ exports.createLead = async (req, res, next) => {
         console.error('[LeadController] Failed to log lead activity:', error);
       }
     }
+
+    runNewLeadAutomations({
+      tenantId: req.tenantId,
+      lead: createdLead || lead,
+      actorUserId: req.user?.id || null,
+    }).catch((error) =>
+      console.error('[LeadController] new_lead automations failed:', error?.message || error)
+    );
 
     res.status(201).json({ success: true, data: createdLead });
   } catch (error) {

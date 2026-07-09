@@ -13,6 +13,7 @@ const {
 } = require('../utils/shopUtils');
 const { getPagination } = require('../utils/paginationUtils');
 const { invalidateCustomerListCache } = require('../middleware/cache');
+const { runCustomerCreatedAutomations } = require('../services/automationEngineService');
 const { assertCustomerContactUnique } = require('../utils/customerUniquenessUtils');
 
 const customerReadWhere = (req, extra = {}) =>
@@ -194,6 +195,14 @@ exports.createCustomer = async (req, res, next) => {
       })
     );
     invalidateCustomerListCache(req.tenantId);
+
+    runCustomerCreatedAutomations({
+      tenantId: req.tenantId,
+      customer,
+      actorUserId: req.user?.id || null,
+    }).catch((error) =>
+      console.error('[CustomerController] customer_created automations failed:', error?.message || error)
+    );
 
     res.status(201).json({
       success: true,
