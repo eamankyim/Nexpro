@@ -1169,6 +1169,10 @@ exports.testWhatsAppConnection = async (req, res, next) => {
 // @access  Private
 exports.getSMSSettings = async (req, res, next) => {
   try {
+    const smsService = require('../services/smsService');
+    const { getTenantUsageSummary } = require('../services/platformSmsUsageService');
+    const { getPlatformSmsSettingsSummary } = require('../services/platformSmsSettingsService');
+
     const smsSettings = await getSettingValue(req.tenantId, 'sms', {
       enabled: false,
       provider: 'termii',
@@ -1180,11 +1184,31 @@ exports.getSMSSettings = async (req, res, next) => {
       username: ''
     });
 
-    // Don't expose sensitive tokens in response
+    const [smsMode, platformAvailable, platformSettings] = await Promise.all([
+      smsService.getSmsMode(req.tenantId),
+      smsService.isPlatformSmsEnabled(),
+      getPlatformSmsSettingsSummary(),
+    ]);
+
+    let platformSms = null;
+    if (platformAvailable) {
+      const usage = await getTenantUsageSummary(req.tenantId);
+      platformSms = {
+        available: true,
+        monthlyLimit: usage.monthlyLimit,
+        sentThisMonth: usage.sentCount,
+        remaining: usage.remaining,
+        yearMonth: usage.yearMonth,
+        senderId: platformSettings.arkesel?.senderId || 'ABS',
+      };
+    }
+
     const safeSettings = {
       ...smsSettings,
       authToken: smsSettings.authToken ? '***' : '',
-      apiKey: smsSettings.apiKey ? '***' : ''
+      apiKey: smsSettings.apiKey ? '***' : '',
+      smsMode,
+      platformSms,
     };
 
     res.status(200).json({
@@ -1292,6 +1316,37 @@ exports.updateSMSSettings = async (req, res, next) => {
           provider: 'africas_talking',
           apiKey: finalApiKey,
           username: finalUsername
+        });
+
+        if (!testResult.success) {
+          return res.status(400).json({
+            success: false,
+            message: 'Failed to connect to SMS service',
+            error: testResult.error
+          });
+        }
+      } else if (finalProvider === 'arkesel') {
+        const finalApiKey = apiKey || existing.apiKey;
+        const finalSenderId = (senderId || existing.senderId || '').trim();
+
+        if (!finalApiKey || !finalSenderId) {
+          return res.status(400).json({
+            success: false,
+            message: 'API Key and Sender ID are required for Arkesel'
+          });
+        }
+        if (finalSenderId.length < 3 || finalSenderId.length > 11) {
+          return res.status(400).json({
+            success: false,
+            message: 'Arkesel Sender ID must be 3-11 characters'
+          });
+        }
+
+        const smsService = require('../services/smsService');
+        const testResult = await smsService.testConnection({
+          provider: 'arkesel',
+          apiKey: finalApiKey,
+          senderId: finalSenderId,
         });
 
         if (!testResult.success) {
@@ -1448,16 +1503,16 @@ exports.getNotificationChannels = async (req, res, next) => {
       return acc;
     }, {});
 
-    const smsConfig = settings.sms || {};
+    const smsService = require('../services/smsService');
+    const smsResolved = await smsService.getResolvedConfig(req.tenantId);
     const whatsappConfig = settings.whatsapp || {};
     const ev = settings.email || {};
-    // Must match emailService.getConfig: email is only used when enabled (and has credentials at send time)
     const emailConfigured = !!(ev.enabled && (ev.smtpHost || ev.sendgridApiKey || ev.sesAccessKeyId));
     const prefs = settings['customer-notification-preferences'] || {};
     const data = {
       email: emailConfigured,
       whatsapp: !!(whatsappConfig.enabled && whatsappConfig.phoneNumberId),
-      sms: !!(smsConfig.enabled),
+      sms: !!smsResolved,
       autoSendInvoiceToCustomer: prefs.autoSendInvoiceToCustomer !== false,
       autoSendReceiptToCustomer: prefs.autoSendReceiptToCustomer === true,
       sendPaymentReminderEmail: prefs.sendPaymentReminderEmail === true,
@@ -2066,13 +2121,14 @@ exports.getPOSConfig = async (req, res, next) => {
 
     // Check which receipt channels (SMS, WhatsApp, Email) are actually integrated
     const smsService = require('../services/smsService');
-    const [smsSetting, whatsappSetting, emailSetting] = await Promise.all([
+    const [smsSetting, whatsappSetting, emailSetting, smsResolved] = await Promise.all([
       Setting.findOne({ where: { tenantId: req.tenantId, key: 'sms' } }),
       Setting.findOne({ where: { tenantId: req.tenantId, key: 'whatsapp' } }),
-      Setting.findOne({ where: { tenantId: req.tenantId, key: 'email' } })
+      Setting.findOne({ where: { tenantId: req.tenantId, key: 'email' } }),
+      smsService.getResolvedConfig(req.tenantId),
     ]);
     merged.receiptChannelsAvailable = {
-      sms: !!(smsSetting?.value?.enabled) || smsService.isPlatformSmsEnabled(),
+      sms: !!smsResolved,
       whatsapp: !!(whatsappSetting?.value?.enabled),
       email: !!(emailSetting?.value?.enabled)
     };

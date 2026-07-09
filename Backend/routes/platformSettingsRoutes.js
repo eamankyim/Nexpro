@@ -4,6 +4,7 @@ const {
   getPlatformSettings,
   updatePlatformSettings,
   testPlatformEmailSettings,
+  testPlatformSmsSettings,
   getSubscriptionPlans,
   getSubscriptionPlan,
   createSubscriptionPlan,
@@ -72,6 +73,7 @@ router.get('/', getPlatformSettings);
 router.put('/', updatePlatformSettings);
 
 router.post('/email/test', testPlatformEmailSettings);
+router.post('/sms/test', testPlatformSmsSettings);
 
 /**
  * @swagger

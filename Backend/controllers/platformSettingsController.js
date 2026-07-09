@@ -29,6 +29,12 @@ const {
   savePlatformEmailSettings,
   testPlatformEmailConnection,
 } = require('../services/platformEmailSettingsService');
+const {
+  getPlatformSmsSettingsSummary,
+  savePlatformSmsSettings,
+  testPlatformSmsConnection,
+  migrateLegacySmsSender,
+} = require('../services/platformSmsSettingsService');
 const PLATFORM_EMAIL_ACCEPTED_PROVIDERS = [...PLATFORM_EMAIL_PROVIDERS, 'gmail'];
 const { sequelize } = require('../config/database');
 const { Op } = require('sequelize');
@@ -37,7 +43,8 @@ const CORE_SETTINGS_KEYS = [
   'platform:branding',
   'platform:featureFlags',
   'platform:communications',
-  'platform:email'
+  'platform:email',
+  'platform:sms',
 ];
 
 exports.getPlatformSettings = async (req, res, next) => {
@@ -61,6 +68,8 @@ exports.getPlatformSettings = async (req, res, next) => {
     });
 
     payload['platform:email'] = await getPlatformEmailSettingsSummary();
+    payload['platform:sms'] = await getPlatformSmsSettingsSummary();
+    await migrateLegacySmsSender();
 
     res.status(200).json({
       success: true,
@@ -73,7 +82,7 @@ exports.getPlatformSettings = async (req, res, next) => {
 
 exports.updatePlatformSettings = async (req, res, next) => {
   try {
-    const { branding, featureFlags, communications, platformEmail } = req.body || {};
+    const { branding, featureFlags, communications, platformEmail, platformSms } = req.body || {};
     if (platformEmail?.provider && !PLATFORM_EMAIL_ACCEPTED_PROVIDERS.includes(String(platformEmail.provider).toLowerCase())) {
       return res.status(400).json({
         success: false,
@@ -99,6 +108,13 @@ exports.updatePlatformSettings = async (req, res, next) => {
     if (platformEmail !== undefined) {
       await savePlatformEmailSettings({
         payload: platformEmail,
+        userId: req.user?.id,
+      });
+    }
+
+    if (platformSms !== undefined) {
+      await savePlatformSmsSettings({
+        payload: platformSms,
         userId: req.user?.id,
       });
     }
@@ -149,6 +165,35 @@ exports.testPlatformEmailSettings = async (req, res, next) => {
       message: result.message,
       data: {
         provider: result.provider,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.testPlatformSmsSettings = async (req, res, next) => {
+  try {
+    const { platformSms } = req.body || {};
+    if (!platformSms || typeof platformSms !== 'object') {
+      return res.status(400).json({
+        success: false,
+        message: 'Platform SMS settings are required',
+      });
+    }
+
+    const result = await testPlatformSmsConnection({
+      payload: platformSms,
+      userId: req.user?.id,
+      requestId: req.id || req.headers?.['x-request-id'],
+    });
+
+    res.status(200).json({
+      success: true,
+      message: result.message,
+      data: {
+        provider: result.provider,
+        ...(result.data ? { balance: result.data } : {}),
       },
     });
   } catch (error) {

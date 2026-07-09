@@ -47,6 +47,10 @@ const {
   resolveDocumentOrganization,
   organizationToEmailCompany,
 } = require('../utils/documentOrganizationUtils');
+const {
+  formatCustomerSmsMessage,
+  resolveSmsDisplayName,
+} = require('../utils/smsMessageUtils');
 const { resolveBusinessType } = require('../config/businessTypes');
 const {
   pickTrimmed,
@@ -653,9 +657,11 @@ async function sendInvoicePaidConfirmationToCustomer(tenantId, invoice) {
     const smsConfig = await smsService.getResolvedConfig(tenantId);
     if (smsConfig && customer.phone) {
       const smsPhone = smsService.validatePhoneNumber(customer.phone);
-      if (smsPhone && smsService.checkRateLimit(tenantId)) {
+      if (smsPhone) {
         const invNum = invoice.invoiceNumber || `#${invoice.id}`;
-        const smsMessage = `Invoice ${invNum} paid. Thank you.`.substring(0, 160);
+        const org = await resolveInvoiceOrganization(invoice);
+        const body = `Invoice ${invNum} paid. Thank you.`;
+        const smsMessage = formatCustomerSmsMessage(body, resolveSmsDisplayName(org));
         const smsResult = await smsService.sendMessage(tenantId, smsPhone, smsMessage);
         if (smsResult.success) {
           console.log('[Invoice] Paid confirmation SMS sent to customer');
@@ -1782,11 +1788,13 @@ exports.sendInvoice = async (req, res, next) => {
       const smsConfig = smsAllowed ? await smsService.getResolvedConfig(req.tenantId) : null;
       if (smsConfig && updatedInvoice.customer && updatedInvoice.customer.phone) {
         const smsPhone = smsService.validatePhoneNumber(updatedInvoice.customer.phone);
-        if (smsPhone && smsService.checkRateLimit(req.tenantId)) {
+        if (smsPhone) {
           const invNum = updatedInvoice.invoiceNumber || `#${updatedInvoice.id}`;
           const total = parseFloat(updatedInvoice.totalAmount);
           const amount = Number.isFinite(total) ? `GHS ${total.toFixed(2)}` : '';
-          const smsMessage = `Invoice ${invNum}. Amount: ${amount}. Pay: ${paymentLink}`.substring(0, 160);
+          const org = await resolveInvoiceOrganization(updatedInvoice);
+          const body = `Invoice ${invNum}. Amount: ${amount}. Pay: ${paymentLink}`;
+          const smsMessage = formatCustomerSmsMessage(body, resolveSmsDisplayName(org));
           const smsResult = await smsService.sendMessage(req.tenantId, smsPhone, smsMessage);
           if (smsResult.success) {
             smsSent = true;
@@ -2143,13 +2151,15 @@ async function sendInvoiceToCustomer(tenantId, invoice, options = {}) {
     try {
       const smsService = require('../services/smsService');
       const smsConfig = await smsService.getResolvedConfig(tenantId);
-      if (smsConfig && updatedInvoice.customer.phone && smsService.checkRateLimit(tenantId)) {
+      if (smsConfig && updatedInvoice.customer.phone) {
         const smsPhone = smsService.validatePhoneNumber(updatedInvoice.customer.phone);
         if (smsPhone) {
           const invNum = updatedInvoice.invoiceNumber || `#${updatedInvoice.id}`;
           const total = parseFloat(updatedInvoice.totalAmount);
           const amount = Number.isFinite(total) ? `GHS ${total.toFixed(2)}` : '';
-          const smsMessage = `Invoice ${invNum}. Amount: ${amount}. Pay: ${paymentLink}`.substring(0, 160);
+          const org = await resolveInvoiceOrganization(updatedInvoice);
+          const body = `Invoice ${invNum}. Amount: ${amount}. Pay: ${paymentLink}`;
+          const smsMessage = formatCustomerSmsMessage(body, resolveSmsDisplayName(org));
           await smsService.sendMessage(tenantId, smsPhone, smsMessage);
         }
       }

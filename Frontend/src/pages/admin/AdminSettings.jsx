@@ -96,10 +96,22 @@ const defaultFormValues = {
     smtp: {},
     envFallback: {},
   },
+  platformSms: {
+    enabled: false,
+    arkesel: { senderId: 'ABS' },
+    monthlyLimit: 100,
+    encryptionConfigured: true,
+  },
 };
 
 const PLATFORM_EMAIL_ENCRYPTION_KEY_MESSAGE =
   'Server is missing PLATFORM_EMAIL_CREDENTIALS_ENCRYPTION_KEY (64 hex chars). Configure it before saving platform email credentials.';
+
+const PLATFORM_SMS_ENCRYPTION_KEY_MESSAGE =
+  'Server is missing PLATFORM_SMS_CREDENTIALS_ENCRYPTION_KEY (64 hex chars). Configure it before saving platform SMS credentials.';
+
+const hasSavedPlatformSmsCredentials = (platformSms = {}) =>
+  Boolean(platformSms.arkesel?.apiKeyConfigured);
 
 const hasSavedPlatformEmailCredentials = (platformEmail = {}) => {
   const provider = platformEmail.provider || 'sendgrid';
@@ -233,6 +245,8 @@ const AdminSettings = () => {
   const [brandingLogoPreviewVisible, setBrandingLogoPreviewVisible] = useState(false);
   const [brandingLogoUploading, setBrandingLogoUploading] = useState(false);
   const [platformEmailEditing, setPlatformEmailEditing] = useState(false);
+  const [platformSmsEditing, setPlatformSmsEditing] = useState(false);
+  const [platformSmsTesting, setPlatformSmsTesting] = useState(false);
   
   // Get active tab from URL params, default to 'branding'
   const activeTab = searchParams.get('tab') || 'branding';
@@ -282,19 +296,24 @@ const AdminSettings = () => {
           'platform:featureFlags': featureFlags = {},
           'platform:communications': communications = {},
           'platform:email': platformEmail = defaultFormValues.platformEmail,
+          'platform:sms': platformSms = defaultFormValues.platformSms,
         } = response.data || {};
         const normalizedPlatformEmail = platformEmail || defaultFormValues.platformEmail;
+        const normalizedPlatformSms = platformSms || defaultFormValues.platformSms;
         form.reset({
           branding,
           featureFlags,
           communications,
           platformEmail: normalizedPlatformEmail,
+          platformSms: normalizedPlatformSms,
         });
         setPlatformEmailEditing(!hasSavedPlatformEmailCredentials(normalizedPlatformEmail));
+        setPlatformSmsEditing(!hasSavedPlatformSmsCredentials(normalizedPlatformSms));
         setBrandingLogoPreview(branding.logoUrl || '');
       } else {
         form.reset(defaultFormValues);
         setPlatformEmailEditing(true);
+        setPlatformSmsEditing(true);
         setBrandingLogoPreview('');
       }
     } catch (error) {
@@ -302,6 +321,7 @@ const AdminSettings = () => {
       showError(null, 'Failed to load settings');
       form.reset(defaultFormValues);
       setPlatformEmailEditing(true);
+      setPlatformSmsEditing(true);
       setBrandingLogoPreview('');
     } finally {
       setLoading(false);
@@ -344,12 +364,18 @@ const AdminSettings = () => {
 
   const handleSubmit = async (values) => {
     const platformEmail = values?.platformEmail || {};
+    const platformSms = values?.platformSms || {};
     const hasEnteredPlatformSecret = Boolean(
       platformEmail.sendgrid?.apiKey?.trim() || platformEmail.smtp?.password?.trim()
     );
+    const hasEnteredPlatformSmsSecret = Boolean(platformSms.arkesel?.apiKey?.trim());
 
     if (hasEnteredPlatformSecret && platformEmail.encryptionConfigured === false) {
       showError(null, PLATFORM_EMAIL_ENCRYPTION_KEY_MESSAGE);
+      return;
+    }
+    if (hasEnteredPlatformSmsSecret && platformSms.encryptionConfigured === false) {
+      showError(null, PLATFORM_SMS_ENCRYPTION_KEY_MESSAGE);
       return;
     }
 
@@ -429,6 +455,56 @@ const AdminSettings = () => {
       showError(error, 'Platform email connection test failed');
     } finally {
       setPlatformEmailTesting(false);
+    }
+  };
+
+  const handleSavePlatformSms = async () => {
+    const values = form.getValues();
+    const platformSms = values?.platformSms || {};
+    const hasEnteredPlatformSmsSecret = Boolean(platformSms.arkesel?.apiKey?.trim());
+
+    if (hasEnteredPlatformSmsSecret && platformSms.encryptionConfigured === false) {
+      showError(null, PLATFORM_SMS_ENCRYPTION_KEY_MESSAGE);
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await adminService.updatePlatformSettings(values);
+      await loadPlatformSettings();
+      setPlatformSmsEditing(false);
+      showSuccess('Platform SMS provider updated');
+    } catch (error) {
+      console.error('Failed to update platform SMS settings', error);
+      showError(error, 'Failed to update platform SMS provider');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCancelPlatformSmsEdit = async () => {
+    await loadPlatformSettings();
+    setPlatformSmsEditing(false);
+  };
+
+  const handleTestPlatformSms = async () => {
+    const platformSms = form.getValues('platformSms') || {};
+    const hasEnteredKey = Boolean(platformSms.arkesel?.apiKey?.trim());
+    const hasSavedKey = platformSms.arkesel?.apiKeyConfigured;
+    if (!hasEnteredKey && !hasSavedKey) {
+      showError(null, 'Enter an Arkesel API key or save one first before testing.');
+      return;
+    }
+
+    setPlatformSmsTesting(true);
+    try {
+      const response = await adminService.testPlatformSmsSettings({ platformSms });
+      showSuccess(response?.message || 'Platform SMS connection test successful');
+    } catch (error) {
+      console.error('Failed to test platform SMS settings', error);
+      showError(error, 'Platform SMS connection test failed');
+    } finally {
+      setPlatformSmsTesting(false);
     }
   };
 
@@ -816,6 +892,11 @@ const AdminSettings = () => {
     platformEmailSendgrid.apiKeyConfigured || platformEmailSmtp.passwordConfigured
   );
   const platformEmailProviderLabel = platformEmailProvider === 'smtp' ? 'SMTP' : 'SendGrid';
+  const platformSmsArkesel = useWatch({ control: form.control, name: 'platformSms.arkesel' }) || {};
+  const platformSmsEncryptionConfigured = useWatch({ control: form.control, name: 'platformSms.encryptionConfigured' });
+  const platformSmsEnabled = useWatch({ control: form.control, name: 'platformSms.enabled' }) === true;
+  const currentPlatformSms = useWatch({ control: form.control, name: 'platformSms' }) || {};
+  const platformSmsHasSavedCredentials = hasSavedPlatformSmsCredentials(currentPlatformSms);
   const isEnterprisePlanForm = String(watchedPlanId || '').toLowerCase() === 'enterprise';
 
   const handleEnterpriseTierChange = useCallback((tierId) => {
@@ -1651,6 +1732,147 @@ const AdminSettings = () => {
                   </div>
                 )}
               </div>
+              <div className="rounded-lg border border-border p-4 space-y-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <h3 className="font-semibold">Platform SMS (Arkesel)</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Default SMS for tenants without their own provider. Sender ID ABS; each tenant has a monthly message quota.
+                    </p>
+                  </div>
+                  {!platformSmsEditing && (
+                    <Button type="button" variant="outline" onClick={() => setPlatformSmsEditing(true)}>
+                      <Pencil className="mr-2 h-4 w-4" />
+                      Edit SMS
+                    </Button>
+                  )}
+                </div>
+                {platformSmsEncryptionConfigured === false && (
+                  <Alert variant="destructive">
+                    <XCircle className="h-4 w-4" />
+                    <AlertTitle>Encryption key missing</AlertTitle>
+                    <AlertDescription>
+                      {PLATFORM_SMS_ENCRYPTION_KEY_MESSAGE} Generate one with <code>openssl rand -hex 32</code>.
+                    </AlertDescription>
+                  </Alert>
+                )}
+                {platformSmsEditing ? (
+                  <>
+                    <FormField
+                      control={form.control}
+                      name="platformSms.enabled"
+                      render={({ field }) => (
+                        <FormItem className="flex items-center justify-between rounded-lg border border-border p-4">
+                          <div>
+                            <FormLabel className="text-base">Enable platform SMS</FormLabel>
+                            <FormDescription>Tenants without own SMS can send customer messages via ABS.</FormDescription>
+                          </div>
+                          <FormControl>
+                            <Switch checked={field.value === true} onCheckedChange={field.onChange} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    <Badge variant={platformSmsArkesel.apiKeyConfigured ? 'secondary' : 'outline'}>
+                      Arkesel key {platformSmsArkesel.apiKeyConfigured ? `saved ${platformSmsArkesel.apiKeyMasked || ''}` : 'not saved'}
+                    </Badge>
+                    <FormField
+                      control={form.control}
+                      name="platformSms.arkesel.apiKey"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Arkesel API key</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="password"
+                              placeholder={platformSmsArkesel.apiKeyConfigured ? 'Leave blank to keep saved API key' : 'Enter Arkesel API key'}
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <FormField
+                        control={form.control}
+                        name="platformSms.arkesel.senderId"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Sender ID</FormLabel>
+                            <FormControl>
+                              <Input placeholder="ABS" maxLength={11} {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="platformSms.monthlyLimit"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Monthly limit per tenant</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="number"
+                                min={1}
+                                value={field.value ?? 100}
+                                onChange={(e) => field.onChange(parseInt(e.target.value, 10) || 100)}
+                              />
+                            </FormControl>
+                            <FormDescription>Default 100 SMS per tenant per month (Africa/Accra).</FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div className="space-y-3">
+                    <Badge variant={platformSmsEnabled ? 'secondary' : 'outline'}>
+                      Platform SMS {platformSmsEnabled ? 'enabled' : 'disabled'}
+                    </Badge>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">API key</p>
+                        <p className="text-sm text-foreground">{platformSmsArkesel.apiKeyMasked || 'Not saved'}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Sender ID</p>
+                        <p className="text-sm text-foreground">{platformSmsArkesel.senderId || 'ABS'}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Monthly limit</p>
+                        <p className="text-sm text-foreground">{currentPlatformSms.monthlyLimit || 100} per tenant</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {platformSmsEditing && (
+                  <div className="flex flex-col gap-3 rounded-lg border border-border p-4 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <p className="text-sm font-medium">Verify platform SMS credentials</p>
+                      <p className="text-sm text-muted-foreground">Tests Arkesel balance endpoint without sending SMS.</p>
+                    </div>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                      {platformSmsHasSavedCredentials && (
+                        <Button type="button" variant="outline" onClick={handleCancelPlatformSmsEdit} disabled={platformSmsTesting || saving}>
+                          Cancel
+                        </Button>
+                      )}
+                      <Button type="button" variant="outline" onClick={handleTestPlatformSms} disabled={platformSmsTesting || saving}>
+                        {platformSmsTesting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Test connection
+                      </Button>
+                      <Button type="button" onClick={handleSavePlatformSms} disabled={saving || loading} className="bg-brand hover:bg-brand-dark">
+                        {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                        Save SMS
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
               <FormField
                 control={form.control}
                 name="communications.supportEmail"
@@ -1673,20 +1895,6 @@ const AdminSettings = () => {
                     <FormControl>
                       <Input type="email" placeholder="marketing@yourapp.com" {...field} />
                     </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="communications.smsSender"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>SMS sender ID</FormLabel>
-                    <FormControl>
-                      <Input placeholder="ABS" {...field} />
-                    </FormControl>
-                    <FormDescription>ID used for SMS notifications, if configured.</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}

@@ -104,6 +104,8 @@ const addMetadataToJobs = require('./add-metadata-to-jobs');
 const createDealersAccountTables = require('./create-dealers-account-tables');
 const addShopIdToDealers = require('./add-shop-id-to-dealers');
 const makeDealersTenantWide = require('./make-dealers-tenant-wide');
+const createTenantPlatformSmsUsage = require('./create-tenant-platform-sms-usage');
+const addPlatformSmsSettings = require('./add-platform-sms-settings');
 
 const migrate = async () => {
   try {
@@ -373,6 +375,9 @@ const migrate = async () => {
     await createDealersAccountTables.up({ closeConnection: false });
     await addShopIdToDealers({ closeConnection: false });
     await makeDealersTenantWide({ closeConnection: false });
+
+    await createTenantPlatformSmsUsage.up({ closeConnection: false });
+    await addPlatformSmsSettings.up({ closeConnection: false });
 
     console.log('\n✅ Database migration completed successfully!');
     console.log('📊 Incremental schema updates applied.');

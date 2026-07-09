@@ -5,6 +5,8 @@ const whatsappService = require('./whatsappService');
 const whatsappTemplates = require('./whatsappTemplates');
 const activityLogger = require('./activityLogger');
 const smsService = require('./smsService');
+const { Shop, StudioLocation } = require('../models');
+const { formatCustomerSmsForTenant } = require('../utils/smsMessageUtils');
 const emailService = require('./emailService');
 const emailTemplates = require('./emailTemplates');
 const taskAutomationService = require('./taskAutomationService');
@@ -23,12 +25,26 @@ class PaymentReminderService {
   /**
    * Build short SMS message for overdue invoice (under 160 chars when possible)
    */
-  buildPaymentReminderSms(invoice, paymentLink) {
+  async buildPaymentReminderSms(invoice, paymentLink) {
     const invNum = invoice.invoiceNumber || `#${invoice.id}`;
     const balance = parseFloat(invoice.balance);
     const amount = Number.isFinite(balance) ? `GHS ${balance.toFixed(2)}` : 'outstanding';
-    const msg = `Overdue: Invoice ${invNum}. Balance ${amount}. Pay: ${paymentLink}`;
-    return msg.substring(0, 160);
+    const body = `Overdue: Invoice ${invNum}. Balance ${amount}. Pay: ${paymentLink}`;
+
+    let shop = null;
+    let studioLocation = null;
+    if (invoice.shopId) {
+      shop = await Shop.findByPk(invoice.shopId);
+    } else if (invoice.studioLocationId) {
+      studioLocation = await StudioLocation.findByPk(invoice.studioLocationId);
+    }
+
+    return formatCustomerSmsForTenant({
+      tenantId: invoice.tenantId,
+      shop,
+      studioLocation,
+      body,
+    });
   }
 
   /**
@@ -140,8 +156,8 @@ class PaymentReminderService {
           const smsConfig = smsRule ? await smsService.getResolvedConfig(invoice.tenantId) : null;
           if (smsConfig && customerPhone) {
             const smsPhone = smsService.validatePhoneNumber(customerPhone);
-            if (smsPhone && smsService.checkRateLimit(invoice.tenantId)) {
-              const smsMessage = this.buildPaymentReminderSms(invoice, paymentLink);
+            if (smsPhone) {
+              const smsMessage = await this.buildPaymentReminderSms(invoice, paymentLink);
               const smsResult = await smsService.sendMessage(invoice.tenantId, smsPhone, smsMessage);
               if (smsResult.success) {
                 reminderSent = true;

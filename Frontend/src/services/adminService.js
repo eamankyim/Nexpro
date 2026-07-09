@@ -84,6 +84,9 @@ const updatePlatformSettings = async (payload) =>
 const testPlatformEmailSettings = async (payload) =>
   api.post('/platform-settings/email/test', payload);
 
+const testPlatformSmsSettings = async (payload) =>
+  api.post('/platform-settings/sms/test', payload);
+
 const getSystemHealth = async () => api.get('/admin/health');
 
 const getPlatformAdmins = async () => api.get('/platform-admins');
@@ -255,6 +258,7 @@ export default {
   getPlatformSettings,
   updatePlatformSettings,
   testPlatformEmailSettings,
+  testPlatformSmsSettings,
   getSystemHealth,
   getPlatformAdmins,
   getPlatformAdminInviteRoles,

@@ -363,7 +363,7 @@ exports.createQuote = async (req, res, next) => {
         const smsConfig = await smsService.getResolvedConfig(req.tenantId);
         if (smsConfig && fullQuote.customer && fullQuote.customer.phone) {
           const smsPhone = smsService.validatePhoneNumber(fullQuote.customer.phone);
-          if (smsPhone && smsService.checkRateLimit(req.tenantId)) {
+          if (smsPhone) {
             const intro = (typeof sendMessage === 'string' && sendMessage.trim())
               ? sendMessage.trim()
               : DEFAULT_QUOTE_SEND_MESSAGE;
@@ -372,8 +372,9 @@ exports.createQuote = async (req, res, next) => {
               shop: fullQuote.shop || null,
               studioLocation: fullQuote.studioLocation || null,
             });
-            const businessName = organization.name || 'Our team';
-            const smsMessage = `${intro} ${businessName}. View: ${quoteLink}`.substring(0, 160);
+            const body = `${intro} View: ${quoteLink}`;
+            const { formatCustomerSmsMessage, resolveSmsDisplayName } = require('../utils/smsMessageUtils');
+            const smsMessage = formatCustomerSmsMessage(body, resolveSmsDisplayName(organization));
             const smsResult = await smsService.sendMessage(req.tenantId, smsPhone, smsMessage).catch(error => {
               console.error('[Quote] SMS send failed:', error);
               return { success: false, error: error?.message || 'SMS send failed' };

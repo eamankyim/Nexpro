@@ -155,7 +155,7 @@ const whatsappSchema = z.object({
 
 const smsSchema = z.object({
   enabled: z.boolean().default(false),
-  provider: z.enum(['termii', 'twilio', 'africas_talking']).default('termii'),
+  provider: z.enum(['termii', 'twilio', 'africas_talking', 'arkesel']).default('termii'),
   senderId: z.string().optional(),
   apiKey: z.string().optional(),
   accountSid: z.string().optional(),
@@ -1506,6 +1506,12 @@ const Settings = () => {
         return null;
       }
       config = { ...config, apiKey: values.apiKey.trim() };
+    } else if (provider === 'arkesel') {
+      if (!values?.apiKey?.trim()) {
+        showError(null, 'Please provide API Key to test connection');
+        return null;
+      }
+      config = { ...config, apiKey: values.apiKey.trim(), senderId: values.senderId?.trim() || '' };
     } else if (provider === 'twilio') {
       if (!values?.accountSid?.trim() || !values?.authToken) {
         showError(null, 'Please provide Account SID and Auth Token to test connection');
@@ -3907,7 +3913,20 @@ const Settings = () => {
             <Alert className="mb-3 md:mb-6 py-2 px-3 md:py-4 md:px-4">
               <AlertTitle className="text-sm md:text-base">SMS Integration</AlertTitle>
               <AlertDescription className="text-xs md:text-sm">
-                Configure SMS service to send automated notifications to customers. Default: Termii. Also supports Twilio and Africa&apos;s Talking.
+                Configure your own SMS provider (Termii, Arkesel, Twilio, or Africa&apos;s Talking), or use platform SMS from ABS when available.
+                {smsData?.data?.smsMode === 'platform' && smsData?.data?.platformSms && (
+                  <span className="block mt-2 text-foreground">
+                    Using platform SMS (sender {smsData.data.platformSms.senderId || 'ABS'}).
+                    {' '}
+                    {smsData.data.platformSms.remaining} of {smsData.data.platformSms.monthlyLimit} messages remaining this month.
+                  </span>
+                )}
+                {smsData?.data?.smsMode === 'own' && (
+                  <span className="block mt-2 text-foreground">Using your own SMS provider. Platform monthly limits do not apply.</span>
+                )}
+                {smsData?.data?.smsMode === 'none' && !smsData?.data?.enabled && (
+                  <span className="block mt-2 text-muted-foreground">No SMS configured. Enable your own provider below or ask your admin to enable platform SMS.</span>
+                )}
               </AlertDescription>
             </Alert>
 
@@ -3949,11 +3968,12 @@ const Settings = () => {
                           <SelectTrigger>
                             <SelectValue placeholder="Select provider" />
                           </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="termii">Termii</SelectItem>
-                            <SelectItem value="twilio">Twilio</SelectItem>
-                            <SelectItem value="africas_talking">Africa&apos;s Talking</SelectItem>
-                          </SelectContent>
+                        <SelectContent>
+                          <SelectItem value="termii">Termii</SelectItem>
+                          <SelectItem value="arkesel">Arkesel</SelectItem>
+                          <SelectItem value="twilio">Twilio</SelectItem>
+                          <SelectItem value="africas_talking">Africa&apos;s Talking</SelectItem>
+                        </SelectContent>
                         </Select>
                       </FormControl>
                       <FormMessage />
@@ -3961,7 +3981,7 @@ const Settings = () => {
                   )}
                 />
 
-                {smsForm.watch('provider') === 'termii' && (
+                {(smsForm.watch('provider') === 'termii' || smsForm.watch('provider') === 'arkesel') && (
                   <>
                     <FormField
                       control={smsForm.control}
@@ -3973,7 +3993,7 @@ const Settings = () => {
                             <span className="text-xs text-muted-foreground ml-2">(Required)</span>
                           </FormLabel>
                           <FormControl>
-                            <Input type="password" placeholder="Your Termii API key" {...field} />
+                            <Input type="password" placeholder="Your SMS API key" {...field} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
