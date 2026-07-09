@@ -50,6 +50,245 @@ export const ACTION_TYPE_OPTIONS = [
 
 export const MESSAGING_ACTION_TYPES = ['send_sms', 'send_whatsapp', 'send_email_platform'];
 
+/** Placeholders available in trigger context when automations run (see automationEngineService). */
+export const TRIGGER_PLACEHOLDERS = {
+  invoice_due_in_days: [
+    'customerName',
+    'businessName',
+    'invoiceNumber',
+    'balance',
+    'amount',
+    'totalAmount',
+    'dueDate',
+    'paymentLink',
+    'email',
+    'phone',
+  ],
+  invoice_overdue: [
+    'customerName',
+    'businessName',
+    'invoiceNumber',
+    'balance',
+    'amount',
+    'totalAmount',
+    'dueDate',
+    'overdueDays',
+    'paymentLink',
+    'email',
+    'phone',
+  ],
+  low_stock_detected: ['productName', 'sku', 'quantityOnHand', 'reorderLevel', 'businessName'],
+  quote_no_response: ['customerName', 'businessName', 'quoteNumber', 'amount', 'email', 'phone'],
+  customer_inactive_days: [
+    'customerName',
+    'businessName',
+    'lastPurchaseDaysAgo',
+    'totalSpend',
+    'email',
+    'phone',
+  ],
+  customer_birthday: ['customerName', 'businessName', 'email', 'phone', 'dateOfBirth'],
+};
+
+/**
+ * Default messaging/task content per trigger and action type.
+ * Values use {{placeholder}} syntax resolved at send time by the automation engine.
+ */
+export const DEFAULT_ACTION_CONTENT = {
+  invoice_due_in_days: {
+    send_sms: {
+      body:
+        'Hi {{customerName}}, invoice {{invoiceNumber}} for {{balance}} is due on {{dueDate}}. Pay here: {{paymentLink}} — {{businessName}}',
+    },
+    send_whatsapp: {
+      templateName: 'payment_reminder',
+      language: 'en',
+      parametersText: '{{customerName}}, {{invoiceNumber}}, {{balance}}, {{dueDate}}',
+    },
+    send_email_platform: {
+      subject: 'Invoice {{invoiceNumber}} due soon',
+      body:
+        'Hi {{customerName}},\n\nThis is a friendly reminder that invoice {{invoiceNumber}} for {{balance}} is due on {{dueDate}}.\n\nPay online: {{paymentLink}}\n\nThank you,\n{{businessName}}',
+    },
+    create_task: {
+      title: 'Follow up on invoice {{invoiceNumber}}',
+      priority: 'medium',
+      description: 'Invoice {{invoiceNumber}} is due on {{dueDate}}. Balance: {{balance}}.',
+      link: '/invoices',
+    },
+  },
+  invoice_overdue: {
+    send_sms: {
+      body:
+        'Hi {{customerName}}, invoice {{invoiceNumber}} is overdue ({{overdueDays}} days). Balance due: {{balance}}. Pay here: {{paymentLink}} — {{businessName}}',
+    },
+    send_whatsapp: {
+      templateName: 'payment_reminder',
+      language: 'en',
+      parametersText: '{{invoiceNumber}}, {{balance}}, {{paymentLink}}',
+    },
+    send_email_platform: {
+      subject: 'Overdue invoice {{invoiceNumber}}',
+      body:
+        'Hi {{customerName}},\n\nInvoice {{invoiceNumber}} is now {{overdueDays}} days overdue. Outstanding balance: {{balance}}.\n\nPlease pay as soon as possible: {{paymentLink}}\n\n{{businessName}}',
+    },
+    create_task: {
+      title: 'Collect overdue payment — {{invoiceNumber}}',
+      priority: 'high',
+      description: 'Invoice {{invoiceNumber}} is {{overdueDays}} days overdue. Balance: {{balance}}.',
+      link: '/invoices',
+    },
+  },
+  low_stock_detected: {
+    send_sms: {
+      body: 'Low stock alert: {{productName}} ({{sku}}) has {{quantityOnHand}} left. Reorder level: {{reorderLevel}}. — {{businessName}}',
+    },
+    send_whatsapp: {
+      templateName: 'low_stock_alert',
+      language: 'en',
+      parametersText: '{{productName}}, {{quantityOnHand}}, {{reorderLevel}}',
+    },
+    send_email_platform: {
+      subject: 'Low stock: {{productName}}',
+      body:
+        'Stock alert for {{productName}} (SKU: {{sku}}).\n\nQuantity on hand: {{quantityOnHand}}\nReorder level: {{reorderLevel}}\n\n— {{businessName}}',
+    },
+    create_task: {
+      title: 'Restock {{productName}}',
+      priority: 'high',
+      description: '{{productName}} is low on stock ({{quantityOnHand}} on hand, reorder at {{reorderLevel}}).',
+      link: '/materials',
+    },
+  },
+  quote_no_response: {
+    send_sms: {
+      body:
+        'Hi {{customerName}}, just checking in on quote {{quoteNumber}} from {{businessName}}. Reply if you have any questions or would like to proceed.',
+    },
+    send_whatsapp: {
+      templateName: 'quote_follow_up',
+      language: 'en',
+      parametersText: '{{customerName}}, {{quoteNumber}}, {{businessName}}',
+    },
+    send_email_platform: {
+      subject: 'Following up on quote {{quoteNumber}}',
+      body:
+        'Hi {{customerName}},\n\nWe wanted to follow up on quote {{quoteNumber}} ({{amount}}). Let us know if you have any questions or would like to move forward.\n\nBest regards,\n{{businessName}}',
+    },
+    create_task: {
+      title: 'Follow up on quote {{quoteNumber}}',
+      priority: 'medium',
+      description: 'Quote {{quoteNumber}} for {{customerName}} has had no response.',
+      link: '/quotes',
+    },
+  },
+  customer_inactive_days: {
+    send_sms: {
+      body:
+        'Hi {{customerName}}, we miss you at {{businessName}}! It has been a while since your last visit. We would love to see you again.',
+    },
+    send_whatsapp: {
+      templateName: 'win_back',
+      language: 'en',
+      parametersText: '{{customerName}}, {{businessName}}',
+    },
+    send_email_platform: {
+      subject: 'We miss you, {{customerName}}',
+      body:
+        'Hi {{customerName}},\n\nWe have not seen you at {{businessName}} in a while and would love to welcome you back.\n\nWarm regards,\n{{businessName}}',
+    },
+    create_task: {
+      title: 'Win back {{customerName}}',
+      priority: 'medium',
+      description: 'Customer inactive for a while. Last purchase was {{lastPurchaseDaysAgo}} days ago.',
+      link: '/customers',
+    },
+  },
+  customer_birthday: {
+    send_sms: {
+      body:
+        'Happy birthday {{customerName}}! Wishing you a wonderful day from everyone at {{businessName}}.',
+    },
+    send_whatsapp: {
+      templateName: 'birthday_greeting',
+      language: 'en',
+      parametersText: '{{customerName}}',
+    },
+    send_email_platform: {
+      subject: 'Happy birthday, {{customerName}}!',
+      body:
+        'Hi {{customerName}},\n\nHappy birthday from all of us at {{businessName}}! We hope you have a fantastic day.\n\nWarm wishes,\n{{businessName}}',
+    },
+    create_task: {
+      title: 'Send birthday greeting to {{customerName}}',
+      priority: 'low',
+      description: 'Today is {{customerName}}\'s birthday.',
+      link: '/customers',
+    },
+  },
+};
+
+/**
+ * @param {string} triggerType
+ * @returns {string[]}
+ */
+export function getTriggerPlaceholders(triggerType) {
+  return TRIGGER_PLACEHOLDERS[triggerType] || ['customerName', 'businessName'];
+}
+
+/**
+ * @param {string} triggerType
+ * @returns {string}
+ */
+export function formatPlaceholderHint(triggerType) {
+  const keys = getTriggerPlaceholders(triggerType);
+  return keys.map((key) => `{{${key}}}`).join(', ');
+}
+
+/**
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+export function isEmptyActionField(value) {
+  return value == null || String(value).trim() === '';
+}
+
+/**
+ * @param {string} triggerType
+ * @param {string} actionType
+ * @returns {Record<string, unknown>}
+ */
+export function getDefaultActionContent(triggerType, actionType) {
+  return DEFAULT_ACTION_CONTENT[triggerType]?.[actionType] || {};
+}
+
+/**
+ * Merge trigger-specific defaults into an action row without overwriting user edits.
+ * @param {Record<string, unknown>} row
+ * @param {string} triggerType
+ * @returns {Record<string, unknown>}
+ */
+export function prefillActionRow(row, triggerType) {
+  if (!row?.type || !triggerType) return row;
+  const defaults = getDefaultActionContent(triggerType, row.type);
+  const out = { ...row };
+  for (const [key, value] of Object.entries(defaults)) {
+    if (isEmptyActionField(out[key])) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/**
+ * @param {Record<string, unknown>[]} actionRows
+ * @param {string} triggerType
+ * @returns {Record<string, unknown>[]}
+ */
+export function prefillActionRows(actionRows, triggerType) {
+  return (actionRows || []).map((row) => prefillActionRow(row, triggerType));
+}
+
 /**
  * Whether an automation rule includes outbound messaging actions.
  * @param {Record<string, unknown>[]} actionRows
@@ -190,38 +429,45 @@ export function buildTriggerConfig(triggerType, triggerForm) {
 
 /**
  * @param {string} [type]
+ * @param {string} [triggerType] - When set, pre-fills messaging fields from DEFAULT_ACTION_CONTENT.
  */
-export function defaultActionFormRow(type = 'create_task') {
+export function defaultActionFormRow(type = 'create_task', triggerType = null) {
+  let row;
   switch (type) {
     case 'create_task':
-      return {
+      row = {
         type: 'create_task',
         title: 'Follow up',
         priority: 'medium',
         description: '',
         link: '',
       };
+      break;
     case 'send_email_platform':
-      return {
+      row = {
         type: 'send_email_platform',
         subject: '',
         body: '',
       };
+      break;
     case 'send_sms':
-      return {
+      row = {
         type: 'send_sms',
         body: '',
       };
+      break;
     case 'send_whatsapp':
-      return {
+      row = {
         type: 'send_whatsapp',
         templateName: '',
         language: 'en',
         parametersText: '',
       };
+      break;
     default:
-      return defaultActionFormRow('create_task');
+      return defaultActionFormRow('create_task', triggerType);
   }
+  return triggerType ? prefillActionRow(row, triggerType) : row;
 }
 
 /**

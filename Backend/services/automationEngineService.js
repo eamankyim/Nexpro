@@ -467,14 +467,18 @@ async function executeRule({
           results.push({ type: 'send_email_platform', success: false, error: 'No recipient email available' });
           continue;
         }
-        const html = emailTemplates.marketingPlainMessageEmail(action.body || triggerContext.message || '', {
+        const rawSubject = action.subject || `${rule.name}`;
+        const rawBody = action.body || triggerContext.message || '';
+        const subject = applyTemplateValues([rawSubject], triggerContext)[0];
+        const body = applyTemplateValues([rawBody], triggerContext)[0];
+        const html = emailTemplates.marketingPlainMessageEmail(body, {
           name: triggerContext.businessName || 'Business'
         });
         const response = await emailService.sendPlatformMessage(
           triggerContext.email,
-          action.subject || `${rule.name}`,
+          subject,
           html,
-          action.body || triggerContext.message || ''
+          body
         );
         results.push({ type: 'send_email_platform', success: !!response?.success, error: response?.error || null });
         continue;

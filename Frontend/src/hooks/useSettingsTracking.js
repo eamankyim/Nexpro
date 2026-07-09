@@ -70,13 +70,22 @@ export const useSettingsTracking = () => {
     updateJobInvoiceMutation.mutate(
       checked
         ? { customerJobTrackingEnabled: true }
-        : { customerJobTrackingEnabled: false, emailCustomerJobTrackingOnJobCreation: false }
+        : {
+            customerJobTrackingEnabled: false,
+            emailCustomerJobTrackingOnJobCreation: false,
+            smsCustomerJobTrackingOnJobCreation: false,
+          }
     );
   }, [updateJobInvoiceMutation]);
 
   const handleEmailTrackingOnJobCreation = useCallback((checked) => {
     savingToastDismissRef.current = showLoading('Saving...');
     updateJobInvoiceMutation.mutate({ emailCustomerJobTrackingOnJobCreation: checked });
+  }, [updateJobInvoiceMutation]);
+
+  const handleSmsTrackingOnJobCreation = useCallback((checked) => {
+    savingToastDismissRef.current = showLoading('Saving...');
+    updateJobInvoiceMutation.mutate({ smsCustomerJobTrackingOnJobCreation: checked });
   }, [updateJobInvoiceMutation]);
 
   return {
@@ -90,5 +99,6 @@ export const useSettingsTracking = () => {
     handleCopyTrackingUrl,
     handleCustomerTrackingToggle,
     handleEmailTrackingOnJobCreation,
+    handleSmsTrackingOnJobCreation,
   };
 };

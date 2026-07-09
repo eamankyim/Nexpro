@@ -76,6 +76,7 @@ const buildJobInvoicePayload = (value = {}) => ({
   autoSendInvoiceOnJobCreation: value.autoSendInvoiceOnJobCreation === true,
   customerJobTrackingEnabled: value.customerJobTrackingEnabled === true,
   emailCustomerJobTrackingOnJobCreation: value.emailCustomerJobTrackingOnJobCreation === true,
+  smsCustomerJobTrackingOnJobCreation: value.smsCustomerJobTrackingOnJobCreation === true,
   autoCreateExpenseFromProductCost: value.autoCreateExpenseFromProductCost === true,
 });
 
@@ -175,12 +176,16 @@ const updateTenantAdminSettings = async ({ tenantId, actorUserId, payload, reaso
       ...(typeof patch.emailCustomerJobTrackingOnJobCreation === 'boolean' && {
         emailCustomerJobTrackingOnJobCreation: patch.emailCustomerJobTrackingOnJobCreation,
       }),
+      ...(typeof patch.smsCustomerJobTrackingOnJobCreation === 'boolean' && {
+        smsCustomerJobTrackingOnJobCreation: patch.smsCustomerJobTrackingOnJobCreation,
+      }),
       ...(typeof patch.autoCreateExpenseFromProductCost === 'boolean' && {
         autoCreateExpenseFromProductCost: patch.autoCreateExpenseFromProductCost,
       }),
     };
     if (value.customerJobTrackingEnabled !== true) {
       value.emailCustomerJobTrackingOnJobCreation = false;
+      value.smsCustomerJobTrackingOnJobCreation = false;
     }
     await upsertSettingValue(
       tenantId,

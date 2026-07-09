@@ -12,6 +12,8 @@ const SMS_TEMPLATE_VARIABLES = [
   'paymentLink',
   'quoteNumber',
   'orderNumber',
+  'jobNumber',
+  'jobTitle',
   'trackingLink',
   'dueDate',
 ];
@@ -82,6 +84,16 @@ const SMS_TEMPLATES_CATALOG = {
     requiredVariables: ['orderNumber', 'amount'],
     defaultBody:
       'Hi {customerName}, we received order {orderNumber} at {businessName}. Total: {amount}.',
+  },
+  job_tracking_created: {
+    key: 'job_tracking_created',
+    label: 'Job tracking link',
+    description: 'SMS when a job is created with a customer tracking link.',
+    category: 'operations',
+    variables: ['customerName', 'businessName', 'jobNumber', 'jobTitle', 'trackingLink'],
+    requiredVariables: ['trackingLink'],
+    defaultBody:
+      'Hi {customerName}, {businessName} created job {jobNumber}. Track here: {trackingLink}',
   },
 };
 

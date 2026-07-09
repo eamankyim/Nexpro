@@ -2,11 +2,13 @@ const crypto = require('crypto');
 const { Job, JobItem, Customer, Setting, Tenant } = require('../models');
 const { applyTenantFilter } = require('../utils/tenantUtils');
 const { getTenantLogoUrl } = require('../utils/tenantLogo');
+const { buildCustomerFacingJobTitle } = require('../utils/jobCustomerMessageText');
 
 const JOB_INVOICE_DEFAULTS = {
   autoSendInvoiceOnJobCreation: false,
   customerJobTrackingEnabled: false,
   emailCustomerJobTrackingOnJobCreation: false,
+  smsCustomerJobTrackingOnJobCreation: false,
   autoCreateExpenseFromProductCost: false
 };
 
@@ -35,26 +37,31 @@ async function ensureJobViewToken(jobId, tenantId) {
 }
 
 /**
- * Email customer a link to track their job when workspace settings allow it.
- * @param {{ tenantId: string, jobId: string, triggeredByUserId: string|null }} params
+ * Load job + branding context for customer tracking notifications.
+ * @param {string} tenantId
+ * @param {string} jobId
+ * @returns {Promise<{ job: object|null, company: object, trackUrl: string|null }>}
  */
-async function maybeSendJobTrackingEmailOnJobCreated({ tenantId, jobId, triggeredByUserId }) {
-  const flags = await getJobInvoiceSettingValue(tenantId);
-  if (flags.customerJobTrackingEnabled !== true || flags.emailCustomerJobTrackingOnJobCreation !== true) {
-    return;
-  }
-
+async function loadJobTrackingNotificationContext(tenantId, jobId) {
   const job = await Job.findOne({
     where: applyTenantFilter(tenantId, { id: jobId }),
     include: [
-      { model: Customer, as: 'customer', attributes: ['id', 'name', 'company', 'email'] },
+      {
+        model: Customer,
+        as: 'customer',
+        attributes: ['id', 'name', 'company', 'email', 'phone', 'smsConsent']
+      },
       { model: JobItem, as: 'items', attributes: ['description'], required: false }
     ]
   });
-  if (!job?.customer?.email) return;
+  if (!job) {
+    return { job: null, company: {}, trackUrl: null };
+  }
 
   const viewToken = await ensureJobViewToken(job.id, tenantId);
-  if (!viewToken) return;
+  if (!viewToken) {
+    return { job, company: {}, trackUrl: null };
+  }
 
   const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
   const trackUrl = `${frontendUrl}/track-job/${viewToken}`;
@@ -68,6 +75,22 @@ async function maybeSendJobTrackingEmailOnJobCreated({ tenantId, jobId, triggere
     primaryColor: org.primaryColor || tenant?.metadata?.primaryColor || '#166534'
   };
 
+  return { job, company, trackUrl };
+}
+
+/**
+ * Email customer a link to track their job when workspace settings allow it.
+ * @param {{ tenantId: string, jobId: string, triggeredByUserId: string|null }} params
+ */
+async function maybeSendJobTrackingEmailOnJobCreated({ tenantId, jobId, triggeredByUserId }) {
+  const flags = await getJobInvoiceSettingValue(tenantId);
+  if (flags.customerJobTrackingEnabled !== true || flags.emailCustomerJobTrackingOnJobCreation !== true) {
+    return;
+  }
+
+  const { job, company, trackUrl } = await loadJobTrackingNotificationContext(tenantId, jobId);
+  if (!job?.customer?.email || !trackUrl) return;
+
   const emailTemplates = require('./emailTemplates');
   const emailService = require('./emailService');
   const { subject, html, text } = emailTemplates.jobTrackingNotification(job, job.customer, trackUrl, company);
@@ -75,9 +98,58 @@ async function maybeSendJobTrackingEmailOnJobCreated({ tenantId, jobId, triggere
   await emailService.sendMessage(tenantId, job.customer.email, subject, html, text);
 }
 
+/**
+ * SMS customer a link to track their job when workspace settings allow it.
+ * @param {{ tenantId: string, jobId: string, triggeredByUserId: string|null }} params
+ */
+async function maybeSendJobTrackingSmsOnJobCreated({ tenantId, jobId, triggeredByUserId }) {
+  const flags = await getJobInvoiceSettingValue(tenantId);
+  if (flags.customerJobTrackingEnabled !== true || flags.smsCustomerJobTrackingOnJobCreation !== true) {
+    return;
+  }
+
+  const { job, company, trackUrl } = await loadJobTrackingNotificationContext(tenantId, jobId);
+  if (!job?.customer?.phone || !trackUrl) return;
+  if (job.customer.smsConsent === false) return;
+
+  const smsService = require('./smsService');
+  const smsConfig = await smsService.getResolvedConfig(tenantId);
+  const smsPhone = smsService.validatePhoneNumber(job.customer.phone);
+  if (!smsConfig || !smsPhone) return;
+
+  const smsTemplateService = require('./smsTemplateService');
+  const customerName = job.customer?.name || job.customer?.company || 'Customer';
+  const jobNumber = job.jobNumber || 'your job';
+  const jobTitle = buildCustomerFacingJobTitle(job);
+  const variables = {
+    customerName,
+    businessName: company.name,
+    jobNumber,
+    jobTitle,
+    trackingLink: trackUrl,
+  };
+  const smsMessage = await smsTemplateService.renderForTenant(tenantId, 'job_tracking_created', variables)
+    || `Hi ${customerName}, ${company.name} created job ${jobNumber}. Track here: ${trackUrl}`;
+
+  await smsService.sendMessage(tenantId, smsPhone, smsMessage);
+}
+
+/**
+ * Send configured customer tracking notifications (email and/or SMS) after job creation.
+ * @param {{ tenantId: string, jobId: string, triggeredByUserId: string|null }} params
+ */
+async function maybeSendJobTrackingNotificationsOnJobCreated(params) {
+  await Promise.allSettled([
+    maybeSendJobTrackingEmailOnJobCreated(params),
+    maybeSendJobTrackingSmsOnJobCreated(params),
+  ]);
+}
+
 module.exports = {
   getJobInvoiceSettingValue,
   ensureJobViewToken,
   maybeSendJobTrackingEmailOnJobCreated,
+  maybeSendJobTrackingSmsOnJobCreated,
+  maybeSendJobTrackingNotificationsOnJobCreated,
   JOB_INVOICE_DEFAULTS
 };

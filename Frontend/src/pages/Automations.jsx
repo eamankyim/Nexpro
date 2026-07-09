@@ -51,6 +51,7 @@ import {
   TASK_PRIORITY_OPTIONS,
   THRESHOLD_MODE_OPTIONS,
   TRIGGER_OPTIONS,
+  MESSAGING_ACTION_TYPES,
   actionRowsFromConfig,
   buildRulePayloadFromForm,
   buildTestContextFromForm,
@@ -58,8 +59,10 @@ import {
   conditionFormFromConfig,
   defaultActionFormRow,
   defaultTriggerForm,
+  formatPlaceholderHint,
   mergeTriggerForm,
   parseJsonObject,
+  prefillActionRows,
   ruleHasMessagingActions,
   triggerLabel,
 } from '../utils/automationForm';
@@ -113,12 +116,13 @@ const DEFAULT_TASK_AUTOMATION = {
 };
 
 function createInitialBuilder() {
+  const triggerType = 'invoice_due_in_days';
   return {
     name: '',
-    triggerType: 'invoice_due_in_days',
-    triggerForm: defaultTriggerForm('invoice_due_in_days'),
+    triggerType,
+    triggerForm: defaultTriggerForm(triggerType),
     conditionForm: conditionFormFromConfig({}),
-    actionRows: [defaultActionFormRow('create_task')],
+    actionRows: [defaultActionFormRow('create_task', triggerType)],
   };
 }
 
@@ -1423,8 +1427,11 @@ function AutomationTriggerFields({ triggerType, value, onPatch }) {
   }
 }
 
-function AutomationActionFields({ row, onPatch }) {
+function AutomationActionFields({ row, onPatch, triggerType }) {
   const r = row || {};
+  const placeholderHint = triggerType && MESSAGING_ACTION_TYPES.includes(r.type)
+    ? formatPlaceholderHint(triggerType)
+    : '';
   switch (r.type) {
     case 'create_task':
       return (
@@ -1484,6 +1491,9 @@ function AutomationActionFields({ row, onPatch }) {
               onChange={(e) => onPatch({ subject: e.target.value })}
               placeholder="Invoice due soon"
             />
+            {placeholderHint ? (
+              <p className="text-xs text-muted-foreground">Available placeholders: {placeholderHint}</p>
+            ) : null}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="auto-email-body">Message</Label>
@@ -1494,6 +1504,9 @@ function AutomationActionFields({ row, onPatch }) {
               onChange={(e) => onPatch({ body: e.target.value })}
               placeholder="Plain text or simple HTML supported by your email setup."
             />
+            {placeholderHint ? (
+              <p className="text-xs text-muted-foreground">Available placeholders: {placeholderHint}</p>
+            ) : null}
           </div>
         </div>
       );
@@ -1507,6 +1520,9 @@ function AutomationActionFields({ row, onPatch }) {
             value={r.body ?? ''}
             onChange={(e) => onPatch({ body: e.target.value })}
           />
+          {placeholderHint ? (
+            <p className="text-xs text-muted-foreground">Available placeholders: {placeholderHint}</p>
+          ) : null}
           <p className="text-xs text-muted-foreground">Requires customer phone on the record when the rule runs.</p>
         </div>
       );
@@ -1539,6 +1555,9 @@ function AutomationActionFields({ row, onPatch }) {
               onChange={(e) => onPatch({ parametersText: e.target.value })}
               placeholder="Comma-separated values"
             />
+            {placeholderHint ? (
+              <p className="text-xs text-muted-foreground">Available placeholders: {placeholderHint}</p>
+            ) : null}
           </div>
         </div>
       );
@@ -1656,6 +1675,7 @@ function AutomationCreationModal({
   setActionType,
   addActionRow,
   removeActionRow,
+  changeTriggerType,
   handleCreateRule,
   handleRunTest,
   isSaving,
@@ -1824,14 +1844,7 @@ function AutomationCreationModal({
                                     ? 'border-[#166534] bg-emerald-50/40'
                                     : 'border-slate-200 bg-white hover:border-emerald-200 hover:bg-emerald-50/20'
                                 } ${item.disabled ? 'opacity-60' : ''}`}
-                                onClick={() =>
-                                  !item.disabled &&
-                                  setBuilder((b) => ({
-                                    ...b,
-                                    triggerType: item.value,
-                                    triggerForm: defaultTriggerForm(item.value),
-                                  }))
-                                }
+                                onClick={() => !item.disabled && changeTriggerType(item.value)}
                               >
                                 <div className="flex items-start gap-3">
                                   <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${item.bg || 'bg-slate-100'}`}>
@@ -2190,7 +2203,7 @@ function AutomationCreationModal({
                                 )}
                               </div>
                             </div>
-                            <AutomationActionFields row={row} onPatch={(patch) => patchActionRow(index, patch)} />
+                            <AutomationActionFields row={row} triggerType={builder.triggerType} onPatch={(patch) => patchActionRow(index, patch)} />
                           </div>
                         );
                       })}
@@ -3695,10 +3708,19 @@ export default function Automations() {
     });
   }, []);
 
+  const changeTriggerType = useCallback((triggerType) => {
+    setBuilder((b) => ({
+      ...b,
+      triggerType,
+      triggerForm: defaultTriggerForm(triggerType),
+      actionRows: prefillActionRows(b.actionRows, triggerType),
+    }));
+  }, []);
+
   const setActionType = useCallback((index, type) => {
     setBuilder((b) => {
       const next = [...b.actionRows];
-      next[index] = defaultActionFormRow(type);
+      next[index] = defaultActionFormRow(type, b.triggerType);
       return { ...b, actionRows: next };
     });
   }, []);
@@ -3706,7 +3728,7 @@ export default function Automations() {
   const addActionRow = useCallback(() => {
     setBuilder((b) => {
       if (b.actionRows.length >= MAX_ACTIONS) return b;
-      return { ...b, actionRows: [...b.actionRows, defaultActionFormRow('create_task')] };
+      return { ...b, actionRows: [...b.actionRows, defaultActionFormRow('create_task', b.triggerType)] };
     });
   }, []);
 
@@ -3994,6 +4016,7 @@ export default function Automations() {
         setActionType={setActionType}
         addActionRow={addActionRow}
         removeActionRow={removeActionRow}
+        changeTriggerType={changeTriggerType}
         handleCreateRule={handleCreateRule}
         handleRunTest={handleRunTest}
         isSaving={createMutation.isPending || updateMutation.isPending}
@@ -4264,13 +4287,7 @@ export default function Automations() {
                   <Label>When this happens (trigger)</Label>
                   <Select
                     value={builder.triggerType}
-                    onValueChange={(value) =>
-                      setBuilder((b) => ({
-                        ...b,
-                        triggerType: value,
-                        triggerForm: defaultTriggerForm(value),
-                      }))
-                    }
+                    onValueChange={changeTriggerType}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select trigger" />
@@ -4358,7 +4375,7 @@ export default function Automations() {
                               </Button>
                             )}
                           </div>
-                          <AutomationActionFields row={row} onPatch={(p) => patchActionRow(index, p)} />
+                          <AutomationActionFields row={row} triggerType={builder.triggerType} onPatch={(p) => patchActionRow(index, p)} />
                         </div>
                       ))}
                       <Button
@@ -5876,13 +5893,7 @@ export default function Automations() {
                   <Label>When this happens (trigger)</Label>
                   <Select
                     value={builder.triggerType}
-                    onValueChange={(value) =>
-                      setBuilder((b) => ({
-                        ...b,
-                        triggerType: value,
-                        triggerForm: defaultTriggerForm(value),
-                      }))
-                    }
+                    onValueChange={changeTriggerType}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select trigger" />
@@ -5956,7 +5967,7 @@ export default function Automations() {
                           </Button>
                         )}
                       </div>
-                      <AutomationActionFields row={row} onPatch={(p) => patchActionRow(index, p)} />
+                      <AutomationActionFields row={row} triggerType={builder.triggerType} onPatch={(p) => patchActionRow(index, p)} />
                     </div>
                   ))}
                   <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={addActionRow} disabled={builder.actionRows.length >= MAX_ACTIONS}>

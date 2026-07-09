@@ -4,7 +4,7 @@ import SettingsTrackingSection from '../../components/settings/sections/Settings
 const SettingsTrackingPage = () => (
   <SettingsLayout
     title="Customer tracking"
-    description="Public tracking page toggles and shareable customer link."
+    description="Public tracking page toggles, shareable customer link, and email or SMS notifications when jobs are created."
   >
     <SettingsTrackingSection />
   </SettingsLayout>

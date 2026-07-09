@@ -790,14 +790,14 @@ async function convertQuoteToJobInternal(tenantId, quoteId, createdBy) {
     }
 
     try {
-      const { maybeSendJobTrackingEmailOnJobCreated } = require('../services/jobCustomerTrackingService');
-      await maybeSendJobTrackingEmailOnJobCreated({
+      const { maybeSendJobTrackingNotificationsOnJobCreated } = require('../services/jobCustomerTrackingService');
+      await maybeSendJobTrackingNotificationsOnJobCreated({
         tenantId,
         jobId: job.id,
         triggeredByUserId: createdBy
       });
-    } catch (trackMailErr) {
-      console.error('[convertQuoteToJobInternal] Job tracking email failed:', trackMailErr?.message);
+    } catch (trackNotifyErr) {
+      console.error('[convertQuoteToJobInternal] Job tracking notification failed:', trackNotifyErr?.message);
     }
 
     return { job };
@@ -1378,14 +1378,14 @@ exports.convertQuoteToJob = async (req, res, next) => {
     }
 
     try {
-      const { maybeSendJobTrackingEmailOnJobCreated } = require('../services/jobCustomerTrackingService');
-      await maybeSendJobTrackingEmailOnJobCreated({
+      const { maybeSendJobTrackingNotificationsOnJobCreated } = require('../services/jobCustomerTrackingService');
+      await maybeSendJobTrackingNotificationsOnJobCreated({
         tenantId: req.tenantId,
         jobId: jobWithDetails.id,
         triggeredByUserId: req.user?.id || null
       });
-    } catch (trackMailErr) {
-      console.error('[convertQuoteToJob] Job tracking email failed:', trackMailErr?.message);
+    } catch (trackNotifyErr) {
+      console.error('[convertQuoteToJob] Job tracking notification failed:', trackNotifyErr?.message);
     }
 
     try {

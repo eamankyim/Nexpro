@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import settingsService from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
 import { showError, showLoading, showSuccess } from '../utils/toast';
-import { QUERY_CACHE } from '../constants';
+import { STUDIO_LIKE_TYPES, QUERY_CACHE } from '../constants';
 
 const posConfigSchema = z.object({
   receipt: z.object({
@@ -57,6 +57,11 @@ export const useSettingsInvoicesReceipts = () => {
   const savingToastDismissRef = useRef(null);
   const [posConfigEditing, setPosConfigEditing] = useState(false);
 
+  const isStudioLike = useMemo(
+    () => STUDIO_LIKE_TYPES.includes(activeTenant?.businessType || 'printing_press'),
+    [activeTenant?.businessType]
+  );
+
   const posConfigForm = useForm({
     resolver: zodResolver(posConfigSchema),
     defaultValues: {
@@ -97,6 +102,20 @@ export const useSettingsInvoicesReceipts = () => {
     refetchOnWindowFocus: false,
   });
 
+  const { data: quoteWorkflowData } = useQuery({
+    queryKey: ['settings', 'quote-workflow'],
+    queryFn: settingsService.getQuoteWorkflow,
+    enabled: canManageOrganization,
+    staleTime: QUERY_CACHE.STALE_TIME_DEFAULT,
+  });
+
+  const { data: jobInvoiceData } = useQuery({
+    queryKey: ['settings', 'job-invoice'],
+    queryFn: settingsService.getJobInvoice,
+    enabled: canManageOrganization,
+    staleTime: QUERY_CACHE.STALE_TIME_DEFAULT,
+  });
+
   const updateCustomerNotificationPrefsMutation = useMutation({
     mutationFn: settingsService.updateCustomerNotificationPreferences,
     onSuccess: () => {
@@ -107,6 +126,32 @@ export const useSettingsInvoicesReceipts = () => {
     onError: (error) => {
       dismissSavingToast();
       showError(error?.response?.data?.message || error?.message || 'Failed to save preferences');
+    },
+  });
+
+  const updateQuoteWorkflowMutation = useMutation({
+    mutationFn: settingsService.updateQuoteWorkflow,
+    onSuccess: () => {
+      dismissSavingToast();
+      showSuccess('Quote workflow saved');
+      queryClient.invalidateQueries({ queryKey: ['settings', 'quote-workflow'] });
+    },
+    onError: (error) => {
+      dismissSavingToast();
+      showError(error?.response?.data?.message || error?.message || 'Failed to save quote workflow');
+    },
+  });
+
+  const updateJobInvoiceMutation = useMutation({
+    mutationFn: settingsService.updateJobInvoice,
+    onSuccess: () => {
+      dismissSavingToast();
+      showSuccess('Job invoice settings saved');
+      queryClient.invalidateQueries({ queryKey: ['settings', 'job-invoice'] });
+    },
+    onError: (error) => {
+      dismissSavingToast();
+      showError(error?.response?.data?.message || error?.message || 'Failed to save job invoice settings');
     },
   });
 
@@ -165,6 +210,11 @@ export const useSettingsInvoicesReceipts = () => {
   const sendPaymentReminderEmail = notificationChannels.sendPaymentReminderEmail === true;
   const sendInvoicePaidConfirmationToCustomer =
     notificationChannels.sendInvoicePaidConfirmationToCustomer !== false;
+
+  const quoteWorkflowOnAccept = quoteWorkflowData?.onAccept || 'record_only';
+  const quoteWorkflowEnabled = isStudioLike
+    ? quoteWorkflowOnAccept === 'create_job_invoice_and_send'
+    : ['create_sale_invoice_and_send', 'create_job_invoice_and_send'].includes(quoteWorkflowOnAccept);
 
   const configData = posConfigData?.data?.data ?? posConfigData?.data;
   const organization = organizationData?.data || {};
@@ -228,6 +278,20 @@ export const useSettingsInvoicesReceipts = () => {
     updateCustomerNotificationPrefsMutation.mutate(payload);
   }, [updateCustomerNotificationPrefsMutation]);
 
+  const handleQuoteWorkflowChange = useCallback((checked) => {
+    savingToastDismissRef.current = showLoading('Saving...');
+    updateQuoteWorkflowMutation.mutate({
+      onAccept: checked
+        ? (isStudioLike ? 'create_job_invoice_and_send' : 'create_sale_invoice_and_send')
+        : 'record_only',
+    });
+  }, [isStudioLike, updateQuoteWorkflowMutation]);
+
+  const handleAutoSendInvoiceOnJobCreation = useCallback((checked) => {
+    savingToastDismissRef.current = showLoading('Saving...');
+    updateJobInvoiceMutation.mutate({ autoSendInvoiceOnJobCreation: checked });
+  }, [updateJobInvoiceMutation]);
+
   const onPOSConfigSubmit = useCallback(async (values) => {
     const mode = values.receipt?.mode || 'ask';
     let channels = values.receipt?.channels || [];
@@ -248,12 +312,19 @@ export const useSettingsInvoicesReceipts = () => {
 
   return {
     canManageOrganization,
+    isStudioLike,
     loadingNotificationChannels,
     loadingPOSConfig,
     autoSendInvoice,
     autoSendReceipt,
     sendPaymentReminderEmail,
     sendInvoicePaidConfirmationToCustomer,
+    quoteWorkflowEnabled,
+    jobInvoiceData,
+    updateQuoteWorkflowMutation,
+    updateJobInvoiceMutation,
+    handleQuoteWorkflowChange,
+    handleAutoSendInvoiceOnJobCreation,
     updateCustomerNotificationPrefsMutation,
     handleNotificationPrefChange,
     configData,

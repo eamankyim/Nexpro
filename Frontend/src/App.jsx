@@ -70,7 +70,6 @@ const SettingsEmailPage = lazy(() => import('./pages/settings/SettingsEmailPage'
 const SettingsDeliveryRulesPage = lazy(() => import('./pages/settings/SettingsDeliveryRulesPage'));
 const SettingsNotificationsPage = lazy(() => import('./pages/settings/SettingsNotificationsPage'));
 const SettingsOrganizationPage = lazy(() => import('./pages/settings/SettingsOrganizationPage'));
-const SettingsWorkflowsPage = lazy(() => import('./pages/settings/SettingsWorkflowsPage'));
 const SettingsTrackingPage = lazy(() => import('./pages/settings/SettingsTrackingPage'));
 const SettingsDeliveryPage = lazy(() => import('./pages/settings/SettingsDeliveryPage'));
 const SettingsInventoryPage = lazy(() => import('./pages/settings/SettingsInventoryPage'));
@@ -356,7 +355,7 @@ function AppContent() {
               <Route path="appearance" element={<SettingsAppearancePage />} />
               <Route path="notifications" element={<SettingsNotificationsPage />} />
               <Route path="organization" element={<RequireWorkspaceManager><SettingsOrganizationPage /></RequireWorkspaceManager>} />
-              <Route path="workflows" element={<RequireWorkspaceManager><SettingsWorkflowsPage /></RequireWorkspaceManager>} />
+              <Route path="workflows" element={<Navigate to="/settings/invoices-receipts" replace />} />
               <Route path="tracking" element={<RequireWorkspaceManager><SettingsTrackingPage /></RequireWorkspaceManager>} />
               <Route path="delivery" element={<RequireWorkspaceManager><SettingsDeliveryPage /></RequireWorkspaceManager>} />
               <Route path="inventory" element={<RequireWorkspaceManager><SettingsInventoryPage /></RequireWorkspaceManager>} />

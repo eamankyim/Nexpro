@@ -1964,6 +1964,7 @@ exports.getJobInvoiceSettings = async (req, res, next) => {
         autoSendInvoiceOnJobCreation: value.autoSendInvoiceOnJobCreation === true,
         customerJobTrackingEnabled: value.customerJobTrackingEnabled === true,
         emailCustomerJobTrackingOnJobCreation: value.emailCustomerJobTrackingOnJobCreation === true,
+        smsCustomerJobTrackingOnJobCreation: value.smsCustomerJobTrackingOnJobCreation === true,
         autoCreateExpenseFromProductCost: value.autoCreateExpenseFromProductCost === true,
         tenantSlug: tenant?.slug || null
       }
@@ -1982,6 +1983,7 @@ exports.updateJobInvoiceSettings = async (req, res, next) => {
       autoSendInvoiceOnJobCreation,
       customerJobTrackingEnabled,
       emailCustomerJobTrackingOnJobCreation,
+      smsCustomerJobTrackingOnJobCreation,
       autoCreateExpenseFromProductCost
     } = sanitizePayload(req.body);
     const existing = await getSettingValue(req.tenantId, 'job-invoice', JOB_INVOICE_DEFAULTS);
@@ -1990,10 +1992,12 @@ exports.updateJobInvoiceSettings = async (req, res, next) => {
       ...(typeof autoSendInvoiceOnJobCreation === 'boolean' && { autoSendInvoiceOnJobCreation }),
       ...(typeof customerJobTrackingEnabled === 'boolean' && { customerJobTrackingEnabled }),
       ...(typeof emailCustomerJobTrackingOnJobCreation === 'boolean' && { emailCustomerJobTrackingOnJobCreation }),
+      ...(typeof smsCustomerJobTrackingOnJobCreation === 'boolean' && { smsCustomerJobTrackingOnJobCreation }),
       ...(typeof autoCreateExpenseFromProductCost === 'boolean' && { autoCreateExpenseFromProductCost })
     };
     if (value.customerJobTrackingEnabled !== true) {
       value.emailCustomerJobTrackingOnJobCreation = false;
+      value.smsCustomerJobTrackingOnJobCreation = false;
     }
     await upsertSettingValue(
       req.tenantId,
@@ -2008,6 +2012,7 @@ exports.updateJobInvoiceSettings = async (req, res, next) => {
         autoSendInvoiceOnJobCreation: value.autoSendInvoiceOnJobCreation === true,
         customerJobTrackingEnabled: value.customerJobTrackingEnabled === true,
         emailCustomerJobTrackingOnJobCreation: value.emailCustomerJobTrackingOnJobCreation === true,
+        smsCustomerJobTrackingOnJobCreation: value.smsCustomerJobTrackingOnJobCreation === true,
         autoCreateExpenseFromProductCost: value.autoCreateExpenseFromProductCost === true,
         tenantSlug: tenant?.slug || null
       }

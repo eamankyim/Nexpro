@@ -20,6 +20,7 @@ const SettingsTrackingSection = () => {
     handleCopyTrackingUrl,
     handleCustomerTrackingToggle,
     handleEmailTrackingOnJobCreation,
+    handleSmsTrackingOnJobCreation,
   } = useSettingsTracking();
 
   if (!canManageOrganization) {
@@ -98,21 +99,40 @@ const SettingsTrackingSection = () => {
             ) : null}
 
             {isStudioLike ? (
-              <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-                <div className="space-y-0.5 pr-4">
-                  <Label className="text-base">Email customer tracking link when a job is created</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Sends an email to the customer with a view &amp; track button. Requires a customer email and workspace email configured under Email settings.
-                  </p>
+              <div className="space-y-3">
+                <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
+                  <div className="space-y-0.5 pr-4">
+                    <Label className="text-base">Email customer tracking link when a job is created</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Sends an email to the customer with a view &amp; track button. Requires a customer email and workspace email configured under Email settings.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={jobInvoiceData?.emailCustomerJobTrackingOnJobCreation === true}
+                    disabled={
+                      updateJobInvoiceMutation.isPending
+                      || jobInvoiceData?.customerJobTrackingEnabled !== true
+                    }
+                    onCheckedChange={handleEmailTrackingOnJobCreation}
+                  />
                 </div>
-                <Switch
-                  checked={jobInvoiceData?.emailCustomerJobTrackingOnJobCreation === true}
-                  disabled={
-                    updateJobInvoiceMutation.isPending
-                    || jobInvoiceData?.customerJobTrackingEnabled !== true
-                  }
-                  onCheckedChange={handleEmailTrackingOnJobCreation}
-                />
+
+                <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
+                  <div className="space-y-0.5 pr-4">
+                    <Label className="text-base">SMS customer tracking link when a job is created</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Sends an SMS with a track link when a job is created. Requires a customer phone, SMS consent, and SMS configured under SMS settings.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={jobInvoiceData?.smsCustomerJobTrackingOnJobCreation === true}
+                    disabled={
+                      updateJobInvoiceMutation.isPending
+                      || jobInvoiceData?.customerJobTrackingEnabled !== true
+                    }
+                    onCheckedChange={handleSmsTrackingOnJobCreation}
+                  />
+                </div>
               </div>
             ) : null}
           </>

@@ -60,15 +60,7 @@ export const SETTINGS_HUB_CARDS = [
   {
     slug: 'invoices-receipts',
     title: 'Invoices & receipts',
-    subtitle: 'Auto-send, POS receipts, print format, and preview',
-    group: 'business',
-    migrated: true,
-    managerOnly: true,
-  },
-  {
-    slug: 'workflows',
-    title: 'Workflows',
-    subtitle: 'Quote accept → job/sale and auto-send invoice on job creation',
+    subtitle: 'Auto-send, quote/job workflow, POS receipts, print format, and preview',
     group: 'business',
     migrated: true,
     managerOnly: true,
@@ -161,7 +153,9 @@ const MIGRATED_TAB_ROUTES = {
   notifications: '/settings/notifications',
   organization: '/settings/organization',
   workspace: '/settings/organization',
-  workflows: '/settings/workflows',
+  workflows: '/settings/invoices-receipts',
+  operations: '/settings/invoices-receipts',
+  configurations: '/settings/invoices-receipts',
   tracking: '/settings/tracking',
   delivery: '/settings/delivery',
   inventory: '/settings/inventory',
@@ -229,8 +223,8 @@ export const legacyTabToRoute = (tab, subtab, smsSection, canManageOrganization 
     return '/settings/organization';
   }
 
-  if (rawTab === 'operations' || rawTab === 'configurations') {
-    return '/settings/workflows';
+  if (rawTab === 'operations' || rawTab === 'configurations' || rawTab === 'workflows') {
+    return '/settings/invoices-receipts';
   }
 
   if (rawTab === 'billing' || rawTab === 'subscription') {

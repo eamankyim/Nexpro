@@ -1046,6 +1046,17 @@ exports.createJob = async (req, res, next) => {
         eventType: 'created'
       });
 
+      try {
+        const { maybeSendJobTrackingNotificationsOnJobCreated } = require('../services/jobCustomerTrackingService');
+        await maybeSendJobTrackingNotificationsOnJobCreated({
+          tenantId: req.tenantId,
+          jobId: jobWithDetails.id,
+          triggeredByUserId: req.user?.id || null
+        });
+      } catch (trackNotifyErr) {
+        console.error('[CreateJob] Job tracking notification failed:', trackNotifyErr?.message);
+      }
+
       const response = {
         success: true,
         data: jobWithDetails,
