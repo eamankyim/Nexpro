@@ -5,6 +5,7 @@ const smsService = require('./smsService');
 const whatsappService = require('./whatsappService');
 const emailTemplates = require('./emailTemplates');
 const whatsappTemplates = require('./whatsappTemplates');
+const { resolveBusinessNameForContext } = require('../utils/resolveBusinessNameForContext');
 
 const DEDUPE_WINDOW_HOURS = 24;
 const MAX_RULES_PER_TICK = 100;
@@ -202,6 +203,21 @@ function addDays(date, days) {
   const d = new Date(date);
   d.setDate(d.getDate() + days);
   return d;
+}
+
+/**
+ * Attach branch-aware businessName / branchName to a trigger context.
+ * @param {string} tenantId
+ * @param {object} triggerContext
+ * @returns {Promise<object>}
+ */
+async function enrichTriggerContextWithBusinessName(tenantId, triggerContext) {
+  const names = await resolveBusinessNameForContext(tenantId, triggerContext);
+  return {
+    ...triggerContext,
+    businessName: names.businessName,
+    branchName: names.branchName,
+  };
 }
 
 function applyTemplateValues(parameters, triggerContext) {
@@ -612,8 +628,14 @@ function invoiceContext(invoice, rule, kind, now = new Date(), extras = {}) {
       smsConsent: customer.smsConsent === true,
       marketingConsent: customer.marketingConsent === true
     },
-    message: `Invoice ${invoice.invoiceNumber || invoice.id} has an outstanding balance of ${whatsappTemplates.formatCurrency(balance)}.`,
-    businessName: rule.tenant?.name || 'Business'
+    shopId: invoice.shopId || null,
+    studioLocationId: invoice.studioLocationId || null,
+    invoice: {
+      id: invoice.id,
+      shopId: invoice.shopId || null,
+      studioLocationId: invoice.studioLocationId || null
+    },
+    message: `Invoice ${invoice.invoiceNumber || invoice.id} has an outstanding balance of ${whatsappTemplates.formatCurrency(balance)}.`
   };
 }
 
@@ -681,13 +703,20 @@ function customerContext(customer, rule, subjectKey, message, stats = {}) {
       email: customer.email || null,
       phone: customer.phone || null,
       dateOfBirth: customer.dateOfBirth || null,
+      shopId: customer.shopId || null,
+      studioLocationId: customer.studioLocationId || null,
       whatsappConsent: customer.whatsappConsent === true,
       smsConsent: customer.smsConsent === true,
       marketingConsent: customer.marketingConsent === true
     },
-    message,
-    businessName: rule.tenant?.name || 'Business'
+    shopId: customer.shopId || null,
+    studioLocationId: customer.studioLocationId || null,
+    message
   };
+}
+
+async function finalizeTriggerContexts(tenantId, contexts) {
+  return Promise.all((contexts || []).map((context) => enrichTriggerContextWithBusinessName(tenantId, context)));
 }
 
 async function getTriggerContextsForRule(rule, now = new Date()) {
@@ -710,9 +739,9 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
       order: [['dueDate', 'ASC']]
     });
     const overdueCustomerIds = await overdueInvoiceCustomerIds(tenantId, invoices.map((invoice) => invoice.customerId), now);
-    return invoices.map((invoice) => invoiceContext(invoice, rule, 'invoice_due', now, {
+    return finalizeTriggerContexts(tenantId, invoices.map((invoice) => invoiceContext(invoice, rule, 'invoice_due', now, {
       hasOverdueInvoices: overdueCustomerIds.has(invoice.customerId)
-    }));
+    })));
   }
 
   if (triggerType === 'invoice_overdue') {
@@ -730,9 +759,9 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
       order: [['dueDate', 'ASC']]
     });
     const overdueCustomerIds = await overdueInvoiceCustomerIds(tenantId, invoices.map((invoice) => invoice.customerId), now);
-    return invoices.map((invoice) => invoiceContext(invoice, rule, 'invoice_overdue', now, {
+    return finalizeTriggerContexts(tenantId, invoices.map((invoice) => invoiceContext(invoice, rule, 'invoice_overdue', now, {
       hasOverdueInvoices: overdueCustomerIds.has(invoice.customerId)
-    }));
+    })));
   }
 
   if (triggerType === 'low_stock_detected') {
@@ -750,7 +779,7 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
       limit: MAX_SUBJECTS_PER_RULE,
       order: [['updatedAt', 'DESC']]
     });
-    return products
+    return finalizeTriggerContexts(tenantId, products
       .filter((product) => mode === 'fixed' || toNumber(product.quantityOnHand, 0) <= toNumber(product.reorderLevel, 0))
       .map((product) => ({
       subjectKey: `low_stock:${product.id}`,
@@ -765,11 +794,12 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
         sku: product.sku || null,
         quantityOnHand: toNumber(product.quantityOnHand, 0),
         reorderLevel: toNumber(product.reorderLevel, 0),
-        isActive: product.isActive !== false
+        isActive: product.isActive !== false,
+        shopId: product.shopId || null
       },
-      message: `${product.name} is low on stock. Current stock: ${product.quantityOnHand}.`,
-      businessName: rule.tenant?.name || 'Business'
-    }));
+      shopId: product.shopId || null,
+      message: `${product.name} is low on stock. Current stock: ${product.quantityOnHand}.`
+    })));
   }
 
   if (triggerType === 'quote_no_response') {
@@ -785,7 +815,7 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
       limit: MAX_SUBJECTS_PER_RULE,
       order: [['updatedAt', 'ASC']]
     });
-    return quotes.map((quote) => ({
+    return finalizeTriggerContexts(tenantId, quotes.map((quote) => ({
       subjectKey: `quote_no_response:${quote.id}`,
       quoteId: quote.id,
       quoteNumber: quote.quoteNumber,
@@ -809,9 +839,15 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
         smsConsent: quote.customer?.smsConsent === true,
         marketingConsent: quote.customer?.marketingConsent === true
       },
-      message: `Quote ${quote.quoteNumber || quote.id} has not received a response.`,
-      businessName: rule.tenant?.name || 'Business'
-    }));
+      shopId: quote.shopId || null,
+      studioLocationId: quote.studioLocationId || null,
+      quote: {
+        id: quote.id,
+        shopId: quote.shopId || null,
+        studioLocationId: quote.studioLocationId || null
+      },
+      message: `Quote ${quote.quoteNumber || quote.id} has not received a response.`
+    })));
   }
 
   if (triggerType === 'customer_inactive_days') {
@@ -835,13 +871,13 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
       order: [['updatedAt', 'ASC']]
     });
     const statsByCustomer = await saleStatsForCustomers(tenantId, customers.map((customer) => customer.id), now);
-    return customers.map((customer) => customerContext(
+    return finalizeTriggerContexts(tenantId, customers.map((customer) => customerContext(
       customer,
       rule,
       `customer_inactive:${customer.id}`,
       `${customer.name || 'Customer'} has been inactive for ${inactiveDays} days.`,
       statsByCustomer.get(customer.id) || {}
-    ));
+    )));
   }
 
   if (triggerType === 'customer_birthday') {
@@ -855,18 +891,18 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
           sequelizeWhere(fn('to_char', col('dateOfBirth'), 'MM-DD'), monthDay)
         ]
       },
-      attributes: ['id', 'name', 'company', 'phone', 'email', 'dateOfBirth', 'whatsappConsent', 'smsConsent', 'marketingConsent'],
+      attributes: ['id', 'name', 'company', 'phone', 'email', 'dateOfBirth', 'shopId', 'studioLocationId', 'whatsappConsent', 'smsConsent', 'marketingConsent'],
       limit: MAX_SUBJECTS_PER_RULE,
       order: [['updatedAt', 'ASC']]
     });
     const statsByCustomer = await saleStatsForCustomers(tenantId, customers.map((customer) => customer.id), now);
-    return customers.map((customer) => customerContext(
+    return finalizeTriggerContexts(tenantId, customers.map((customer) => customerContext(
       customer,
       rule,
       `customer_birthday:${customer.id}:${now.getFullYear()}`,
       `Happy birthday, ${customer.name || 'Customer'}!`,
       statsByCustomer.get(customer.id) || {}
-    ));
+    )));
   }
 
   return [];

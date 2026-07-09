@@ -2,6 +2,7 @@ const { Op, col, literal } = require('sequelize');
 const { sequelize } = require('../config/database');
 const { AutomationRule, AutomationRun, Invoice, Product, WhatsAppMessageEvent } = require('../models');
 const { getTemplates, executeRule } = require('../services/automationEngineService');
+const { resolveBusinessNameForContext } = require('../utils/resolveBusinessNameForContext');
 const automationSchedulerService = require('../services/automationSchedulerService');
 const openaiService = require('../services/openaiService');
 const { getPagination } = require('../utils/paginationUtils');
@@ -703,6 +704,9 @@ exports.testRule = async (req, res, next) => {
       manualTest: true,
       test: true
     };
+    const resolvedNames = await resolveBusinessNameForContext(req.tenantId, triggerContext);
+    triggerContext.businessName = resolvedNames.businessName;
+    triggerContext.branchName = resolvedNames.branchName;
     const messagingRequirements = getMessagingRequirements(rule.actionConfig);
     if (messagingRequirements.needsPhone && !String(triggerContext.phone || '').trim()) {
       return res.status(400).json({
