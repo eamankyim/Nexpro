@@ -284,7 +284,10 @@ exports.getLeadSources = async (req, res, next) => {
 exports.getProfile = async (req, res, next) => {
   try {
     const { mergeNotificationPreferences } = require('../services/notificationPreferenceHelper');
-    const user = await User.findByPk(req.user.id);
+    // defaultScope excludes notificationPreferences; unscoped load required for Settings UI.
+    const user = await User.unscoped().findByPk(req.user.id, {
+      attributes: { exclude: ['password', 'failedLoginAttempts', 'lockoutUntil'] },
+    });
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
@@ -299,7 +302,9 @@ exports.getProfile = async (req, res, next) => {
 
 exports.updateProfile = async (req, res, next) => {
   try {
-    const user = await User.findByPk(req.user.id);
+    const user = await User.unscoped().findByPk(req.user.id, {
+      attributes: { exclude: ['password', 'failedLoginAttempts', 'lockoutUntil'] },
+    });
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
@@ -1433,6 +1438,83 @@ exports.testSMSConnection = async (req, res, next) => {
       });
     }
   } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get SMS templates for tenant
+// @route   GET /api/settings/sms-templates
+// @access  Private
+exports.getSmsTemplates = async (req, res, next) => {
+  try {
+    const smsTemplateService = require('../services/smsTemplateService');
+    const templates = await smsTemplateService.getTemplatesForTenant(req.tenantId);
+    res.status(200).json({
+      success: true,
+      data: { templates },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Save SMS template override for an event
+// @route   PUT /api/settings/sms-templates/:eventKey
+// @access  Private
+exports.updateSmsTemplate = async (req, res, next) => {
+  try {
+    const { eventKey } = req.params;
+    const { body, enabled } = sanitizePayload(req.body);
+    if (!body || typeof body !== 'string' || !body.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Template body is required',
+      });
+    }
+
+    const smsTemplateService = require('../services/smsTemplateService');
+    const template = await smsTemplateService.saveTemplate(req.tenantId, eventKey, body, enabled);
+    invalidateTenantSettingsCache(req.tenantId);
+
+    res.status(200).json({
+      success: true,
+      message: 'SMS template saved',
+      data: template,
+    });
+  } catch (error) {
+    if (error.statusCode === 400) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+        errors: error.details || undefined,
+      });
+    }
+    next(error);
+  }
+};
+
+// @desc    Reset SMS template to platform default
+// @route   POST /api/settings/sms-templates/:eventKey/reset
+// @access  Private
+exports.resetSmsTemplate = async (req, res, next) => {
+  try {
+    const { eventKey } = req.params;
+    const smsTemplateService = require('../services/smsTemplateService');
+    const template = await smsTemplateService.resetTemplate(req.tenantId, eventKey);
+    invalidateTenantSettingsCache(req.tenantId);
+
+    res.status(200).json({
+      success: true,
+      message: 'SMS template reset to default',
+      data: template,
+    });
+  } catch (error) {
+    if (error.statusCode === 400) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
     next(error);
   }
 };

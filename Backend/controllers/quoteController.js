@@ -357,36 +357,50 @@ exports.createQuote = async (req, res, next) => {
         delivery.whatsappError = error?.message || 'WhatsApp integration error';
       }
 
-      // Send SMS notification if enabled and customer has phone (use suggested or custom message)
+      // Send SMS notification if enabled and customer has phone (use tenant template)
       try {
         const smsService = require('../services/smsService');
+        const smsTemplateService = require('../services/smsTemplateService');
         const smsConfig = await smsService.getResolvedConfig(req.tenantId);
         if (smsConfig && fullQuote.customer && fullQuote.customer.phone) {
           const smsPhone = smsService.validatePhoneNumber(fullQuote.customer.phone);
           if (smsPhone) {
-            const intro = (typeof sendMessage === 'string' && sendMessage.trim())
-              ? sendMessage.trim()
-              : DEFAULT_QUOTE_SEND_MESSAGE;
             const organization = await resolveDocumentOrganization({
               tenantId: req.tenantId,
               shop: fullQuote.shop || null,
               studioLocation: fullQuote.studioLocation || null,
             });
-            const body = `${intro} View: ${quoteLink}`;
-            const { formatCustomerSmsMessage, resolveSmsDisplayName } = require('../utils/smsMessageUtils');
-            const smsMessage = formatCustomerSmsMessage(body, resolveSmsDisplayName(organization));
-            const smsResult = await smsService.sendMessage(req.tenantId, smsPhone, smsMessage).catch(error => {
-              console.error('[Quote] SMS send failed:', error);
-              return { success: false, error: error?.message || 'SMS send failed' };
-            });
-            if (smsResult?.success) {
-              quoteSentViaAnyChannel = true;
-              delivery.smsSent = true;
-              console.log('[Quote] SMS delivery quoteNumber=%s result=sent', fullQuote.quoteNumber);
-            } else {
+            const { resolveSmsDisplayName } = require('../utils/smsMessageUtils');
+            const branchName = resolveSmsDisplayName(organization);
+            const variables = {
+              customerName: fullQuote.customer.name || fullQuote.customer.company || 'Customer',
+              businessName: organization?.name || branchName,
+              branchName,
+              quoteNumber: fullQuote.quoteNumber || `#${fullQuote.id}`,
+              paymentLink: quoteLink,
+            };
+            const smsMessage = await smsTemplateService.renderForTenant(
+              req.tenantId,
+              'quote_sent',
+              variables
+            );
+            if (!smsMessage) {
               delivery.smsSent = false;
-              delivery.smsError = smsResult?.error || 'SMS send failed';
-              console.log('[Quote] SMS delivery quoteNumber=%s result=failed: %s', fullQuote.quoteNumber, delivery.smsError);
+              delivery.smsError = 'SMS template render failed';
+            } else {
+              const smsResult = await smsService.sendMessage(req.tenantId, smsPhone, smsMessage).catch(error => {
+                console.error('[Quote] SMS send failed:', error);
+                return { success: false, error: error?.message || 'SMS send failed' };
+              });
+              if (smsResult?.success) {
+                quoteSentViaAnyChannel = true;
+                delivery.smsSent = true;
+                console.log('[Quote] SMS delivery quoteNumber=%s result=sent', fullQuote.quoteNumber);
+              } else {
+                delivery.smsSent = false;
+                delivery.smsError = smsResult?.error || 'SMS send failed';
+                console.log('[Quote] SMS delivery quoteNumber=%s result=failed: %s', fullQuote.quoteNumber, delivery.smsError);
+              }
             }
           }
         }

@@ -2482,8 +2482,9 @@ exports.sendReceipt = async (req, res, next) => {
       email: null
     };
 
-    // Build receipt message
+    // Build receipt message (long format for email/WhatsApp; short template for SMS)
     const receiptMessage = buildReceiptMessage(sale, req.tenantId);
+    const receiptSmsMessage = await buildReceiptSmsMessage(sale, req.tenantId);
 
     const { isChannelEnabledForEvent } = require('../services/messageDeliveryRulesService');
 
@@ -2501,7 +2502,11 @@ exports.sendReceipt = async (req, res, next) => {
               results.sms = { success: false, error: 'No phone number provided' };
               break;
             }
-            results.sms = await sendSMSReceipt(req.tenantId, recipientPhone, receiptMessage);
+            results.sms = await sendSMSReceipt(
+              req.tenantId,
+              recipientPhone,
+              receiptSmsMessage || receiptMessage
+            );
             break;
 
           case 'whatsapp':
@@ -2583,6 +2588,7 @@ async function autoSendReceiptIfEnabled(tenantId, saleId) {
   const emailConfig = emailAllowed ? await emailService.getConfig(tenantId) : null;
 
   const receiptMessage = buildReceiptMessage(sale, tenantId);
+  const receiptSmsMessage = await buildReceiptSmsMessage(sale, tenantId);
   const phone = sale.customer.phone?.trim();
   const email = sale.customer.email?.trim();
   const hasPhone = !!smsService.validatePhoneNumber(phone);
@@ -2593,7 +2599,11 @@ async function autoSendReceiptIfEnabled(tenantId, saleId) {
     );
   }
   if (smsConfig && hasPhone) {
-    await sendSMSReceipt(tenantId, smsService.validatePhoneNumber(phone), receiptMessage).catch((e) =>
+    await sendSMSReceipt(
+      tenantId,
+      smsService.validatePhoneNumber(phone),
+      receiptSmsMessage || receiptMessage
+    ).catch((e) =>
       console.error('[AutoSendReceipt] SMS failed:', e?.message)
     );
   }
@@ -2602,6 +2612,27 @@ async function autoSendReceiptIfEnabled(tenantId, saleId) {
       console.error('[AutoSendReceipt] WhatsApp failed:', e?.message)
     );
   }
+}
+
+/**
+ * Build short SMS receipt message from tenant template.
+ * @param {Object} sale
+ * @param {string} tenantId
+ * @returns {Promise<string|null>}
+ */
+async function buildReceiptSmsMessage(sale, tenantId) {
+  const smsTemplateService = require('../services/smsTemplateService');
+  const { formatCedi } = require('../utils/formatNumber');
+  const business = sale.shop?.name || sale.studioLocation?.name || sale.tenant?.name || '';
+  const branchName = sale.shop?.name || sale.studioLocation?.name || '';
+  const variables = {
+    customerName: sale.customer?.name?.trim() || 'Customer',
+    businessName: business,
+    branchName,
+    orderNumber: sale.saleNumber || String(sale.id),
+    amount: formatCedi(sale.total),
+  };
+  return smsTemplateService.renderForTenant(tenantId, 'sales_receipt', variables);
 }
 
 /**

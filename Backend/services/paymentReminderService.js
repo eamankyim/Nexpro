@@ -7,6 +7,7 @@ const activityLogger = require('./activityLogger');
 const smsService = require('./smsService');
 const { Shop, StudioLocation } = require('../models');
 const { formatCustomerSmsForTenant } = require('../utils/smsMessageUtils');
+const smsTemplateService = require('./smsTemplateService');
 const emailService = require('./emailService');
 const emailTemplates = require('./emailTemplates');
 const taskAutomationService = require('./taskAutomationService');
@@ -23,13 +24,13 @@ class PaymentReminderService {
   }
 
   /**
-   * Build short SMS message for overdue invoice (under 160 chars when possible)
+   * Build SMS message for overdue invoice using tenant template.
    */
   async buildPaymentReminderSms(invoice, paymentLink) {
     const invNum = invoice.invoiceNumber || `#${invoice.id}`;
     const balance = parseFloat(invoice.balance);
     const amount = Number.isFinite(balance) ? `GHS ${balance.toFixed(2)}` : 'outstanding';
-    const body = `Overdue: Invoice ${invNum}. Balance ${amount}. Pay: ${paymentLink}`;
+    const customer = invoice.customer || {};
 
     let shop = null;
     let studioLocation = null;
@@ -39,11 +40,35 @@ class PaymentReminderService {
       studioLocation = await StudioLocation.findByPk(invoice.studioLocationId);
     }
 
+    const branchName = shop?.name || studioLocation?.name || '';
+    const tenant = await Tenant.findByPk(invoice.tenantId, { attributes: ['id', 'name'] });
+    const businessName = branchName || tenant?.name || 'Business';
+    const dueDate = invoice.dueDate
+      ? new Date(invoice.dueDate).toLocaleDateString('en-GH', { day: 'numeric', month: 'short', year: 'numeric' })
+      : '';
+
+    const variables = {
+      customerName: customer.name || customer.company || 'Customer',
+      businessName,
+      branchName,
+      invoiceNumber: invNum,
+      amount,
+      paymentLink: paymentLink || '',
+      dueDate,
+    };
+
+    const rendered = await smsTemplateService.renderForTenant(
+      invoice.tenantId,
+      'payment_reminder',
+      variables
+    );
+    if (rendered) return rendered;
+
     return formatCustomerSmsForTenant({
       tenantId: invoice.tenantId,
       shop,
       studioLocation,
-      body,
+      body: `Reminder: invoice ${invNum} (${amount}) is overdue. Pay: ${paymentLink}`,
     });
   }
 

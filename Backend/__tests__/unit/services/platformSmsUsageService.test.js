@@ -32,6 +32,7 @@ describe('platformSmsUsageService', () => {
     expect(summary.monthlyLimit).toBe(100);
     expect(summary.remaining).toBe(75);
     expect(summary.yearMonth).toMatch(/^\d{4}-\d{2}$/);
+    expect(summary.resetsAt).toMatch(/^\d{4}-\d{2}-01T00:00:00\.000Z$/);
   });
 
   it('blocks sends when monthly limit would be exceeded', async () => {

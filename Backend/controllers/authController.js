@@ -1313,33 +1313,20 @@ exports.updateNotificationPreferences = async (req, res, next) => {
   try {
     const {
       mergeNotificationPreferences,
-      NOTIFICATION_PREFERENCE_CATEGORIES
+      applyNotificationPreferencePatch,
     } = require('../services/notificationPreferenceHelper');
-    const user = await User.findByPk(req.user.id);
+    const user = await findUserForAuthResponse(req.user.id);
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    const merged = mergeNotificationPreferences(user.notificationPreferences);
     const raw = req.body || {};
     const patch =
       raw.categories && typeof raw.categories === 'object' ? raw.categories : raw;
+    const toSave = applyNotificationPreferencePatch(user.notificationPreferences, patch);
+    const merged = mergeNotificationPreferences(toSave);
 
-    for (const key of NOTIFICATION_PREFERENCE_CATEGORIES) {
-      if (
-        Object.prototype.hasOwnProperty.call(patch, key) &&
-        patch[key] &&
-        typeof patch[key] === 'object'
-      ) {
-        merged.categories[key] = {
-          in_app: patch[key].in_app !== false,
-          email: patch[key].email === true,
-          push: patch[key].push !== false
-        };
-      }
-    }
-
-    user.notificationPreferences = merged;
+    user.notificationPreferences = toSave;
     try {
       await user.save();
     } catch (error) {

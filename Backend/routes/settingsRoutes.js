@@ -20,6 +20,9 @@ const {
   getSMSSettings,
   updateSMSSettings,
   testSMSConnection,
+  getSmsTemplates,
+  updateSmsTemplate,
+  resetSmsTemplate,
   getEmailSettings,
   updateEmailSettings,
   testEmailConnection,
@@ -162,6 +165,26 @@ router.post(
   '/sms/test',
   authorize('admin', 'manager'),
   testSMSConnection
+);
+
+router.get(
+  '/sms-templates',
+  authorize('admin', 'manager'),
+  getSmsTemplates
+);
+
+router.put(
+  '/sms-templates/:eventKey',
+  authorize('admin', 'manager'),
+  timeCrudAction('settings.sms_templates.update'),
+  updateSmsTemplate
+);
+
+router.post(
+  '/sms-templates/:eventKey/reset',
+  authorize('admin', 'manager'),
+  timeCrudAction('settings.sms_templates.reset'),
+  resetSmsTemplate
 );
 
 router

@@ -48,7 +48,6 @@ const {
   organizationToEmailCompany,
 } = require('../utils/documentOrganizationUtils');
 const {
-  formatCustomerSmsMessage,
   resolveSmsDisplayName,
 } = require('../utils/smsMessageUtils');
 const { resolveBusinessType } = require('../config/businessTypes');
@@ -620,6 +619,50 @@ const findVisibleInvoiceById = async (req, id, include = []) => {
 };
 
 /**
+ * Build SMS template variables for an invoice notification.
+ * @param {Object} invoice
+ * @param {string} [paymentLink]
+ * @returns {Promise<Record<string, string>>}
+ */
+async function buildInvoiceSmsVariables(invoice, paymentLink = '') {
+  const org = await resolveInvoiceOrganization(invoice);
+  const customer = invoice.customer || {};
+  const invNum = invoice.invoiceNumber || `#${invoice.id}`;
+  const total = parseFloat(invoice.totalAmount);
+  const amount = Number.isFinite(total) ? `GHS ${total.toFixed(2)}` : '';
+  const branchName = resolveSmsDisplayName(org);
+  return {
+    customerName: customer.name || customer.company || 'Customer',
+    businessName: org?.name || branchName,
+    branchName,
+    invoiceNumber: invNum,
+    amount,
+    paymentLink: paymentLink || '',
+  };
+}
+
+/**
+ * Render and send invoice SMS for a given template event.
+ * @param {string} tenantId
+ * @param {string} eventKey
+ * @param {Object} invoice
+ * @param {string} phone
+ * @param {string} [paymentLink]
+ */
+async function sendInvoiceSmsFromTemplate(tenantId, eventKey, invoice, phone, paymentLink = '') {
+  const smsService = require('../services/smsService');
+  const smsTemplateService = require('../services/smsTemplateService');
+  const smsPhone = smsService.validatePhoneNumber(phone);
+  if (!smsPhone) return { success: false };
+
+  const variables = await buildInvoiceSmsVariables(invoice, paymentLink);
+  const smsMessage = await smsTemplateService.renderForTenant(tenantId, eventKey, variables);
+  if (!smsMessage) return { success: false, error: 'SMS template render failed' };
+
+  return smsService.sendMessage(tenantId, smsPhone, smsMessage);
+}
+
+/**
  * Send invoice paid confirmation to customer (email + optional SMS). Fire-and-forget; errors are logged only.
  * @param {string} tenantId - Tenant ID
  * @param {Object} invoice - Invoice with customer included (totalAmount, invoiceNumber, amountPaid, paidDate)
@@ -656,16 +699,14 @@ async function sendInvoicePaidConfirmationToCustomer(tenantId, invoice) {
     const smsService = require('../services/smsService');
     const smsConfig = await smsService.getResolvedConfig(tenantId);
     if (smsConfig && customer.phone) {
-      const smsPhone = smsService.validatePhoneNumber(customer.phone);
-      if (smsPhone) {
-        const invNum = invoice.invoiceNumber || `#${invoice.id}`;
-        const org = await resolveInvoiceOrganization(invoice);
-        const body = `Invoice ${invNum} paid. Thank you.`;
-        const smsMessage = formatCustomerSmsMessage(body, resolveSmsDisplayName(org));
-        const smsResult = await smsService.sendMessage(tenantId, smsPhone, smsMessage);
-        if (smsResult.success) {
-          console.log('[Invoice] Paid confirmation SMS sent to customer');
-        }
+      const smsResult = await sendInvoiceSmsFromTemplate(
+        tenantId,
+        'invoice_paid',
+        invoice,
+        customer.phone
+      );
+      if (smsResult.success) {
+        console.log('[Invoice] Paid confirmation SMS sent to customer');
       }
     }
   } catch (error) {
@@ -1787,21 +1828,18 @@ exports.sendInvoice = async (req, res, next) => {
       const smsService = require('../services/smsService');
       const smsConfig = smsAllowed ? await smsService.getResolvedConfig(req.tenantId) : null;
       if (smsConfig && updatedInvoice.customer && updatedInvoice.customer.phone) {
-        const smsPhone = smsService.validatePhoneNumber(updatedInvoice.customer.phone);
-        if (smsPhone) {
-          const invNum = updatedInvoice.invoiceNumber || `#${updatedInvoice.id}`;
-          const total = parseFloat(updatedInvoice.totalAmount);
-          const amount = Number.isFinite(total) ? `GHS ${total.toFixed(2)}` : '';
-          const org = await resolveInvoiceOrganization(updatedInvoice);
-          const body = `Invoice ${invNum}. Amount: ${amount}. Pay: ${paymentLink}`;
-          const smsMessage = formatCustomerSmsMessage(body, resolveSmsDisplayName(org));
-          const smsResult = await smsService.sendMessage(req.tenantId, smsPhone, smsMessage);
+          const smsResult = await sendInvoiceSmsFromTemplate(
+            req.tenantId,
+            'invoice_sent',
+            updatedInvoice,
+            updatedInvoice.customer.phone,
+            paymentLink
+          );
           if (smsResult.success) {
             smsSent = true;
             console.log('[Invoice] SMS sent successfully to customer');
           }
         }
-      }
     } catch (error) {
       console.error('[Invoice] SMS sending error:', error);
     }
@@ -2152,16 +2190,13 @@ async function sendInvoiceToCustomer(tenantId, invoice, options = {}) {
       const smsService = require('../services/smsService');
       const smsConfig = await smsService.getResolvedConfig(tenantId);
       if (smsConfig && updatedInvoice.customer.phone) {
-        const smsPhone = smsService.validatePhoneNumber(updatedInvoice.customer.phone);
-        if (smsPhone) {
-          const invNum = updatedInvoice.invoiceNumber || `#${updatedInvoice.id}`;
-          const total = parseFloat(updatedInvoice.totalAmount);
-          const amount = Number.isFinite(total) ? `GHS ${total.toFixed(2)}` : '';
-          const org = await resolveInvoiceOrganization(updatedInvoice);
-          const body = `Invoice ${invNum}. Amount: ${amount}. Pay: ${paymentLink}`;
-          const smsMessage = formatCustomerSmsMessage(body, resolveSmsDisplayName(org));
-          await smsService.sendMessage(tenantId, smsPhone, smsMessage);
-        }
+        await sendInvoiceSmsFromTemplate(
+          tenantId,
+          'invoice_sent',
+          updatedInvoice,
+          updatedInvoice.customer.phone,
+          paymentLink
+        );
       }
     } catch (e) {
       console.error('[Invoice] sendInvoiceToCustomer SMS:', e?.message);

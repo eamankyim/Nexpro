@@ -230,6 +230,21 @@ const updateSidebarPreferences = async (payload) => {
   return res?.data?.data ?? res?.data ?? { hiddenSidebarKeys: [] };
 };
 
+const getSmsTemplates = async () => {
+  const res = await api.get('/settings/sms-templates');
+  return res?.data?.data ?? res?.data ?? { templates: [] };
+};
+
+const updateSmsTemplate = async (eventKey, payload) => {
+  const res = await api.put(`/settings/sms-templates/${encodeURIComponent(eventKey)}`, payload);
+  return res?.data?.data ?? res?.data ?? res;
+};
+
+const resetSmsTemplate = async (eventKey) => {
+  const res = await api.post(`/settings/sms-templates/${encodeURIComponent(eventKey)}/reset`);
+  return res?.data?.data ?? res?.data ?? res;
+};
+
 export default {
   getProfile,
   updateProfile,
@@ -273,5 +288,8 @@ export default {
   disconnectMtnCollectionCredentials,
   getSidebarPreferences,
   updateSidebarPreferences,
+  getSmsTemplates,
+  updateSmsTemplate,
+  resetSmsTemplate,
 };
 

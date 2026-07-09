@@ -31,6 +31,40 @@ const applyLockedNotificationChannels = (categories) => {
   return categories;
 };
 
+const normalizeCategoryPatch = (row) => ({
+  in_app: row.in_app !== false,
+  email: row.email === true,
+  push: row.push !== false,
+});
+
+/**
+ * Apply a client categories patch onto stored prefs. Preserves top-level keys (e.g. pushDevices).
+ * @param {object|null|undefined} stored
+ * @param {Record<string, object>} patchCategories
+ */
+function applyNotificationPreferencePatch(stored, patchCategories) {
+  const merged = mergeNotificationPreferences(stored);
+  const patch =
+    patchCategories && typeof patchCategories === 'object' ? patchCategories : {};
+
+  for (const key of NOTIFICATION_PREFERENCE_CATEGORIES) {
+    if (
+      Object.prototype.hasOwnProperty.call(patch, key) &&
+      patch[key] &&
+      typeof patch[key] === 'object'
+    ) {
+      merged.categories[key] = normalizeCategoryPatch(patch[key]);
+    }
+  }
+  applyLockedNotificationChannels(merged.categories);
+
+  const base = stored && typeof stored === 'object' ? { ...stored } : {};
+  return {
+    ...base,
+    categories: merged.categories,
+  };
+}
+
 /**
  * @returns {{ categories: Record<string, { in_app: boolean, email: boolean }> }}
  */
@@ -48,7 +82,10 @@ function buildDefaultPreferences() {
  */
 function mergeNotificationPreferences(stored) {
   const defaults = buildDefaultPreferences();
-  if (!stored || typeof stored !== 'object') return defaults;
+  if (!stored || typeof stored !== 'object') {
+    applyLockedNotificationChannels(defaults.categories);
+    return defaults;
+  }
   const out = { categories: { ...defaults.categories } };
   const incoming =
     stored.categories && typeof stored.categories === 'object' ? stored.categories : {};
@@ -122,6 +159,7 @@ module.exports = {
   LOCKED_NOTIFICATION_CHANNELS,
   buildDefaultPreferences,
   mergeNotificationPreferences,
+  applyNotificationPreferencePatch,
   normalizeNotificationCategory,
   isNotificationChannelEnabled,
   getPreferencesForUsers

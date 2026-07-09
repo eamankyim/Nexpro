@@ -9,7 +9,7 @@ import settingsService from '../services/settingsService';
 import whatsappService from '../services/whatsappService';
 import smsService from '../services/smsService';
 import emailService from '../services/emailService';
-import { Camera, User, Mail, UserCog, Loader2, Eye, EyeOff, Trash2, Moon, Lightbulb, ExternalLink, HelpCircle, CreditCard, ChevronDown, ChevronLeft, Bell, CalendarDays, Send, Lock, Info } from 'lucide-react';
+import { Camera, User, Mail, UserCog, Loader2, Eye, EyeOff, Trash2, Moon, Lightbulb, ExternalLink, HelpCircle, CreditCard, ChevronDown, ChevronLeft, Bell, CalendarDays, Send, Lock, Info, RotateCcw, MessageSquare } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useResponsive } from '../hooks/useResponsive';
@@ -34,6 +34,8 @@ import { Card as ShadcnCard, CardContent, CardHeader, CardTitle, CardDescription
 import { Separator } from '@/components/ui/separator';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -70,6 +72,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+
+const SMS_SECTIONS = ['overview', 'provider', 'templates'];
+
+const SMS_TEMPLATE_PREVIEW_VARS = {
+  customerName: 'Ama Mensah',
+  businessName: 'Kofi Prints',
+  branchName: 'Osu Branch',
+  invoiceNumber: 'INV-2045',
+  amount: 'GHS 150.00',
+  paymentLink: 'https://abs.example/pay/abc',
+  quoteNumber: 'QT-108',
+  orderNumber: 'SR-9921',
+  trackingLink: 'https://abs.example/track/xyz',
+  dueDate: '15 Mar 2026',
+};
+
+const SMS_SEGMENT_LENGTH = 160;
 
 const profileSchema = z.object({
   name: z.string().min(1, 'Enter your name'),
@@ -310,6 +329,12 @@ const Settings = () => {
   const [activeTab, setActiveTab] = useState(tabFromUrl);
   const [integrationSubTab, setIntegrationSubTab] = useState('whatsapp');
   const [paymentsSubTab, setPaymentsSubTab] = useState('settlements');
+  const smsSectionFromUrl = searchParams.get('smsSection');
+  const [smsSubTab, setSmsSubTab] = useState(
+    SMS_SECTIONS.includes(smsSectionFromUrl) ? smsSectionFromUrl : 'overview'
+  );
+  const [selectedSmsTemplateKey, setSelectedSmsTemplateKey] = useState('invoice_sent');
+  const [smsTemplateDraft, setSmsTemplateDraft] = useState('');
 
   // Update tab when URL parameter changes (keep old links working)
   useEffect(() => {
@@ -334,6 +359,12 @@ const Settings = () => {
     if (tab === 'integration' || tab === 'messaging') {
       if (subtab && ['whatsapp', 'sms', 'email'].includes(subtab)) {
         setIntegrationSubTab(subtab);
+      }
+      const smsSection = searchParams.get('smsSection');
+      if (subtab === 'sms' && SMS_SECTIONS.includes(smsSection)) {
+        setSmsSubTab(smsSection);
+      } else if (subtab === 'sms') {
+        setSmsSubTab('overview');
       }
       if (tab === 'integration') {
         setSearchParams({ tab: 'messaging', subtab: subtab && ['whatsapp', 'sms', 'email'].includes(subtab) ? subtab : 'whatsapp' });
@@ -656,6 +687,39 @@ const Settings = () => {
   });
 
   const {
+    data: smsTemplatesData,
+    isLoading: loadingSmsTemplates,
+  } = useQuery({
+    queryKey: ['settings', 'sms-templates'],
+    queryFn: settingsService.getSmsTemplates,
+    enabled: canManageOrganization && activeTab === 'messaging' && integrationSubTab === 'sms',
+  });
+
+  const updateSmsTemplateMutation = useMutation({
+    mutationFn: ({ eventKey, body }) => settingsService.updateSmsTemplate(eventKey, { body }),
+    onSuccess: () => {
+      showSuccess('SMS template saved');
+      queryClient.invalidateQueries({ queryKey: ['settings', 'sms-templates'] });
+    },
+    onError: (error) => {
+      const errMsg = error?.response?.data?.message || 'Failed to save SMS template';
+      showError(errMsg);
+    },
+  });
+
+  const resetSmsTemplateMutation = useMutation({
+    mutationFn: (eventKey) => settingsService.resetSmsTemplate(eventKey),
+    onSuccess: (data) => {
+      showSuccess('Template reset to default');
+      if (data?.body) setSmsTemplateDraft(data.body);
+      queryClient.invalidateQueries({ queryKey: ['settings', 'sms-templates'] });
+    },
+    onError: (error) => {
+      showError(error?.response?.data?.message || 'Failed to reset template');
+    },
+  });
+
+  const {
     data: emailData,
     isLoading: loadingEmail
   } = useQuery({
@@ -859,6 +923,70 @@ const Settings = () => {
       });
     }
   }, [smsData, smsForm, canManageOrganization]);
+
+  const smsTemplatesList = useMemo(
+    () => smsTemplatesData?.templates || [],
+    [smsTemplatesData]
+  );
+
+  const selectedSmsTemplate = useMemo(
+    () => smsTemplatesList.find((t) => t.eventKey === selectedSmsTemplateKey) || null,
+    [smsTemplatesList, selectedSmsTemplateKey]
+  );
+
+  useEffect(() => {
+    if (selectedSmsTemplate?.body) {
+      setSmsTemplateDraft(selectedSmsTemplate.body);
+    }
+  }, [selectedSmsTemplate?.body, selectedSmsTemplateKey]);
+
+  const smsTemplatePreviewText = useMemo(() => {
+    if (!smsTemplateDraft) return '';
+    let text = smsTemplateDraft;
+    Object.entries(SMS_TEMPLATE_PREVIEW_VARS).forEach(([key, value]) => {
+      text = text.split(`{${key}}`).join(value);
+    });
+    const prefixName = SMS_TEMPLATE_PREVIEW_VARS.branchName || SMS_TEMPLATE_PREVIEW_VARS.businessName;
+    const prefixed = prefixName ? `${prefixName}: ${text}` : text;
+    return prefixed.substring(0, SMS_SEGMENT_LENGTH);
+  }, [smsTemplateDraft]);
+
+  const smsTemplateCharCount = smsTemplatePreviewText.length;
+  const smsTemplateSegmentCount = Math.max(1, Math.ceil(smsTemplateCharCount / SMS_SEGMENT_LENGTH));
+
+  const setMessagingSmsSection = useCallback((section) => {
+    setSmsSubTab(section);
+    const params = new URLSearchParams(searchParams);
+    params.set('tab', 'messaging');
+    params.set('subtab', 'sms');
+    if (section && section !== 'overview') {
+      params.set('smsSection', section);
+    } else {
+      params.delete('smsSection');
+    }
+    setSearchParams(params);
+  }, [searchParams, setSearchParams]);
+
+  const insertSmsTemplateVariable = useCallback((varName) => {
+    setSmsTemplateDraft((prev) => {
+      const token = `{${varName}}`;
+      if (!prev) return token;
+      return prev.endsWith(' ') ? `${prev}${token}` : `${prev} ${token}`;
+    });
+  }, []);
+
+  const handleSaveSmsTemplate = useCallback(() => {
+    if (!selectedSmsTemplateKey || !smsTemplateDraft.trim()) {
+      showError('Template message cannot be empty');
+      return;
+    }
+    updateSmsTemplateMutation.mutate({ eventKey: selectedSmsTemplateKey, body: smsTemplateDraft.trim() });
+  }, [selectedSmsTemplateKey, smsTemplateDraft, updateSmsTemplateMutation]);
+
+  const handleResetSmsTemplate = useCallback(() => {
+    if (!selectedSmsTemplateKey) return;
+    resetSmsTemplateMutation.mutate(selectedSmsTemplateKey);
+  }, [selectedSmsTemplateKey, resetSmsTemplateMutation]);
 
   /** Merge saved email settings with organization (business name/email) for auto-fill. Only the app password cannot be guessed. */
   const getEmailFormValues = useCallback((ed, org, options = {}) => {
@@ -1789,7 +1917,7 @@ const Settings = () => {
       .mutateAsync(config)
       .then(() => {
         fieldOnChange(true);
-        showSuccess('Connection verified. Email is enabled.');
+        showSuccess('Connection verified. Your email provider is enabled.');
       })
       .catch(() => { /* Error already shown by testEmailMutation.onError */ });
   };
@@ -2004,13 +2132,14 @@ const Settings = () => {
           Delivery Rules
         </CardTitle>
         <CardDescription className="text-xs md:text-sm mt-1">
-          Choose which channels may send each system message. Message wording is managed by ABS; you only control Email, SMS, and WhatsApp per event.
+          Choose which channels may send each system message. Edit SMS wording under Messaging → SMS → Templates. Email and WhatsApp templates are managed by ABS.
         </CardDescription>
       </CardHeader>
       <CardContent className="p-0 md:p-6 pt-0 space-y-4">
         <Alert>
-          <AlertTitle>Templates are not editable here</AlertTitle>
+          <AlertTitle>SMS templates are editable separately</AlertTitle>
           <AlertDescription className="text-xs md:text-sm">
+            Use the SMS section below to customize message text. This table only controls which channels are allowed per event.
             Locked toggles are required for security or account messages and cannot be turned off.
           </AlertDescription>
         </Alert>
@@ -3928,317 +4057,516 @@ const Settings = () => {
   const ownSmsActive = smsMode === 'own';
   const switchingToOwnSms = ownSmsToggleOn && !ownSmsActive;
   const platformSmsActive = Boolean(smsPlatformInfo) && smsMode === 'platform' && !switchingToOwnSms;
+  const showPlatformSmsUsage = Boolean(smsPlatformInfo) && smsMode === 'platform';
   const noSmsAvailable = smsMode === 'none' && !smsPlatformInfo;
+  const smsUsagePercent = smsPlatformInfo?.monthlyLimit
+    ? Math.min(100, Math.round(((smsPlatformInfo.sentThisMonth || 0) / smsPlatformInfo.monthlyLimit) * 100))
+    : 0;
 
   const smsTab = canManageOrganization ? (
     <ShadcnCard className="border-0 shadow-none bg-transparent md:border md:bg-card">
       <CardHeader className="p-0 md:p-6 pb-0 md:pb-6">
-        <CardTitle className="text-base md:text-2xl">SMS Service Configuration</CardTitle>
+        <CardTitle className="text-base md:text-2xl flex items-center gap-2">
+          <MessageSquare className="h-5 w-5 text-muted-foreground shrink-0" />
+          SMS
+        </CardTitle>
+        <CardDescription className="text-xs md:text-sm mt-1">
+          Platform usage, your own provider connection, and editable customer SMS templates.
+        </CardDescription>
       </CardHeader>
       <CardContent className="p-0 md:p-6 pt-2 md:pt-0">
-        {loadingSMS ? (
-          <div className="flex items-center justify-center py-6 md:py-12">
-            <Loader2 className="h-8 w-8 animate-spin" />
-          </div>
-        ) : (
-          <>
-            <Alert className="mb-3 md:mb-4 py-2 px-3 md:py-4 md:px-4">
-              <AlertTitle className="text-sm md:text-base">SMS Integration</AlertTitle>
-              <AlertDescription className="text-xs md:text-sm space-y-2">
-                <p>
-                  <span className="font-medium text-foreground">Default:</span>{' '}
-                  Customer SMS is sent through ABS platform SMS automatically—no setup required.
-                  Messages use sender ID <span className="font-medium">ABS</span>, include your shop name, and count toward a{' '}
-                  {smsPlatformInfo?.monthlyLimit ?? 100} messages/month limit.
-                </p>
-                <p>
-                  <span className="font-medium text-foreground">Optional:</span>{' '}
-                  Connect your own provider below (Termii, Arkesel, Twilio, or Africa&apos;s Talking) to use your sender ID and remove the platform limit.
-                </p>
+        <Tabs value={smsSubTab} onValueChange={setMessagingSmsSection}>
+          {isMobile ? (
+            <Select value={smsSubTab} onValueChange={setMessagingSmsSection}>
+              <SelectTrigger className="w-full mb-3">
+                <SelectValue placeholder="SMS section" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="overview">Overview</SelectItem>
+                <SelectItem value="provider">Provider</SelectItem>
+                <SelectItem value="templates">Templates</SelectItem>
+              </SelectContent>
+            </Select>
+          ) : (
+            <TabsList className="grid grid-cols-3 w-full mb-3 md:mb-4">
+              <TabsTrigger value="overview" className="text-xs md:text-sm">Overview</TabsTrigger>
+              <TabsTrigger value="provider" className="text-xs md:text-sm">Provider</TabsTrigger>
+              <TabsTrigger value="templates" className="text-xs md:text-sm">Templates</TabsTrigger>
+            </TabsList>
+          )}
+
+          <TabsContent value="overview" className="mt-0 space-y-3 md:space-y-4">
+            {loadingSMS ? (
+              <div className="flex items-center justify-center py-6 md:py-12">
+                <Loader2 className="h-8 w-8 animate-spin" />
+              </div>
+            ) : (
+              <>
+                <Alert className="py-2 px-3 md:py-4 md:px-4">
+                  <AlertTitle className="text-sm md:text-base">How SMS works</AlertTitle>
+                  <AlertDescription className="text-xs md:text-sm space-y-2">
+                    <p>
+                      <span className="font-medium text-foreground">Default:</span>{' '}
+                      Customer SMS uses ABS platform SMS—no setup required. Messages include your shop name and count toward a{' '}
+                      {smsPlatformInfo?.monthlyLimit ?? 100}/month limit.
+                    </p>
+                    <p>
+                      <span className="font-medium text-foreground">Optional:</span>{' '}
+                      Connect your own provider under the Provider tab to use your sender ID and remove the platform limit.
+                    </p>
+                  </AlertDescription>
+                </Alert>
+
+                <div className="rounded-lg border border-border p-3 md:p-4 space-y-2">
+                  <p className="text-sm font-medium">Current mode</p>
+                  {platformSmsActive && (
+                    <Badge variant="secondary">ABS platform SMS (default)</Badge>
+                  )}
+                  {ownSmsActive && (
+                    <Badge variant="secondary">Your own SMS provider</Badge>
+                  )}
+                  {noSmsAvailable && (
+                    <Badge variant="outline">No SMS configured</Badge>
+                  )}
+                  {switchingToOwnSms && (
+                    <p className="text-xs text-muted-foreground">
+                      You are switching to your own provider—save Provider settings after a successful connection test.
+                    </p>
+                  )}
+                </div>
+
+                {showPlatformSmsUsage && (
+                  <div className="rounded-lg border border-brand bg-brand-5 p-3 md:p-4 space-y-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="space-y-1">
+                        <p className="text-sm md:text-base font-medium text-brand">Platform usage</p>
+                        <p className="text-xs md:text-sm text-foreground">
+                          {smsPlatformInfo.sentThisMonth ?? 0} / {smsPlatformInfo.monthlyLimit} messages this month
+                          {' · '}
+                          {smsPlatformInfo.remaining} remaining
+                          {smsPlatformInfo.senderId ? ` · sender ${smsPlatformInfo.senderId}` : ''}
+                        </p>
+                        {smsPlatformInfo.resetsAt && (
+                          <p className="text-xs text-muted-foreground">
+                            Resets {dayjs(smsPlatformInfo.resetsAt).format('MMM D, YYYY')}
+                          </p>
+                        )}
+                      </div>
+                      <Badge variant="secondary" className="shrink-0">
+                        {smsPlatformInfo.remaining} left
+                      </Badge>
+                    </div>
+                    <Progress value={smsUsagePercent} className="h-2" />
+                  </div>
+                )}
+
+                <Alert className="border-border">
+                  <Send className="h-4 w-4" />
+                  <AlertTitle className="text-sm">Delivery rules</AlertTitle>
+                  <AlertDescription className="text-xs md:text-sm space-y-2">
+                    <p>
+                      Choose which events may send SMS in the Delivery Rules section at the top of Messaging.
+                      Templates here only control message wording—not whether SMS is sent.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setActiveTab('messaging');
+                        setSearchParams({ tab: 'messaging' });
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                      }}
+                    >
+                      Go to Delivery Rules
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              </>
+            )}
+          </TabsContent>
+
+          <TabsContent value="provider" className="mt-0 space-y-3 md:space-y-4">
+            {loadingSMS ? (
+              <div className="flex items-center justify-center py-6 md:py-12">
+                <Loader2 className="h-8 w-8 animate-spin" />
+              </div>
+            ) : (
+              <>
+                {ownSmsActive && (
+                  <Alert className="border-border py-2 px-3 md:py-4 md:px-4">
+                    <Info className="h-4 w-4" />
+                    <AlertTitle className="text-sm md:text-base">Using your own SMS provider</AlertTitle>
+                    <AlertDescription className="text-xs md:text-sm">
+                      Customer SMS is sent through your configured provider. Platform SMS limits no longer apply.
+                    </AlertDescription>
+                  </Alert>
+                )}
+                {switchingToOwnSms && (
+                  <Alert className="border-border py-2 px-3 md:py-4 md:px-4">
+                    <Info className="h-4 w-4" />
+                    <AlertTitle className="text-sm md:text-base">Switching to your own provider</AlertTitle>
+                    <AlertDescription className="text-xs md:text-sm">
+                      Save after the connection test succeeds to start using your provider.
+                    </AlertDescription>
+                  </Alert>
+                )}
+                {noSmsAvailable && (
+                  <Alert className="py-2 px-3 md:py-4 md:px-4">
+                    <AlertTitle className="text-sm md:text-base">No SMS available</AlertTitle>
+                    <AlertDescription className="text-xs md:text-sm text-muted-foreground">
+                      Platform SMS is not enabled. Connect your own provider below or contact ABS support.
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                <p className="text-xs md:text-sm font-medium text-foreground">Your own SMS provider (optional)</p>
+
+                <Form {...smsForm}>
+                  <form onSubmit={smsForm.handleSubmit(onSMSSubmit)} className="space-y-3 md:space-y-4">
+                    <FormField
+                      control={smsForm.control}
+                      name="enabled"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-center justify-between rounded-lg border p-2 md:p-4">
+                          <div className="space-y-0.5">
+                            <FormLabel className="text-base">Use my own SMS provider</FormLabel>
+                            <FormDescription>
+                              Connect Termii, Arkesel, Twilio, or Africa&apos;s Talking. A connection test runs when you turn this on.
+                            </FormDescription>
+                          </div>
+                          <FormControl>
+                            <Switch
+                              checked={field.value}
+                              onCheckedChange={(checked) => handleSMSEnabledChange(checked, field.onChange)}
+                              disabled={testSMSMutation.isPending}
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={smsForm.control}
+                      name="provider"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>SMS Provider</FormLabel>
+                          <FormControl>
+                            <Select onValueChange={field.onChange} value={field.value}>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select provider" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="termii">Termii</SelectItem>
+                                <SelectItem value="arkesel">Arkesel</SelectItem>
+                                <SelectItem value="twilio">Twilio</SelectItem>
+                                <SelectItem value="africas_talking">Africa&apos;s Talking</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    {(smsForm.watch('provider') === 'termii' || smsForm.watch('provider') === 'arkesel') && (
+                      <>
+                        <FormField
+                          control={smsForm.control}
+                          name="apiKey"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                API Key
+                                <span className="text-xs text-muted-foreground ml-2">(Required)</span>
+                              </FormLabel>
+                              <FormControl>
+                                <Input type="password" placeholder="Your SMS API key" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={smsForm.control}
+                          name="senderId"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                Sender ID
+                                <span className="text-xs text-muted-foreground ml-2">(Required, 3-11 characters)</span>
+                              </FormLabel>
+                              <FormControl>
+                                <Input placeholder="e.g. MyShop" maxLength={11} {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </>
+                    )}
+
+                    {smsForm.watch('provider') === 'twilio' && (
+                      <>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
+                          <FormField
+                            control={smsForm.control}
+                            name="accountSid"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>
+                                  Account SID
+                                  <span className="text-xs text-muted-foreground ml-2">(Required)</span>
+                                </FormLabel>
+                                <FormControl>
+                                  <Input placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" {...field} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={smsForm.control}
+                            name="fromNumber"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>
+                                  From Number
+                                  <span className="text-xs text-muted-foreground ml-2">(Required)</span>
+                                </FormLabel>
+                                <FormControl>
+                                  <Input placeholder="+1234567890" {...field} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+                        <FormField
+                          control={smsForm.control}
+                          name="authToken"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                Auth Token
+                                <span className="text-xs text-muted-foreground ml-2">(Required - keep this secure)</span>
+                              </FormLabel>
+                              <FormControl>
+                                <Input type="password" placeholder="Enter auth token" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </>
+                    )}
+
+                    {smsForm.watch('provider') === 'africas_talking' && (
+                      <>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <FormField
+                            control={smsForm.control}
+                            name="username"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>
+                                  Username
+                                  <span className="text-xs text-muted-foreground ml-2">(Required)</span>
+                                </FormLabel>
+                                <FormControl>
+                                  <Input placeholder="sandbox" {...field} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={smsForm.control}
+                            name="fromNumber"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>
+                                  From Number
+                                  <span className="text-xs text-muted-foreground ml-2">(Required)</span>
+                                </FormLabel>
+                                <FormControl>
+                                  <Input placeholder="+1234567890" {...field} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+                        <FormField
+                          control={smsForm.control}
+                          name="apiKey"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                API Key
+                                <span className="text-xs text-muted-foreground ml-2">(Required - keep this secure)</span>
+                              </FormLabel>
+                              <FormControl>
+                                <Input type="password" placeholder="Enter API key" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </>
+                    )}
+
+                    <div className="flex gap-2 justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          smsForm.reset();
+                          if (smsData?.data) {
+                            smsForm.reset({
+                              enabled: smsData.data.enabled || false,
+                              provider: smsData.data.provider || 'termii',
+                              senderId: smsData.data.senderId || '',
+                              apiKey: '',
+                              accountSid: smsData.data.accountSid || '',
+                              authToken: '',
+                              fromNumber: smsData.data.fromNumber || '',
+                              username: smsData.data.username || ''
+                            });
+                          }
+                        }}
+                      >
+                        Reset
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={handleTestSMS}
+                        loading={testSMSMutation.isLoading}
+                      >
+                        Test Connection
+                      </Button>
+                      <Button type="submit" loading={updateSMSMutation.isLoading}>
+                        Save Settings
+                      </Button>
+                    </div>
+                  </form>
+                </Form>
+              </>
+            )}
+          </TabsContent>
+
+          <TabsContent value="templates" className="mt-0 space-y-3 md:space-y-4">
+            <Alert className="border-border">
+              <Send className="h-4 w-4" />
+              <AlertTitle className="text-sm">Delivery rules</AlertTitle>
+              <AlertDescription className="text-xs md:text-sm">
+                Templates control wording only. Turn SMS on or off per event in Delivery Rules at the top of Messaging.
               </AlertDescription>
             </Alert>
 
-            {platformSmsActive && (
-              <Alert className="mb-3 md:mb-4 border-brand bg-brand-5 py-2 px-3 md:py-4 md:px-4">
-                <Info className="h-4 w-4 text-brand" />
-                <AlertTitle className="text-sm md:text-base text-brand">ABS platform SMS is active</AlertTitle>
-                <AlertDescription className="text-xs md:text-sm text-foreground">
-                  SMS is already working for your workspace—you do not need to enable anything below.
-                  {' '}
-                  {smsPlatformInfo.remaining} of {smsPlatformInfo.monthlyLimit} platform messages remaining this month
-                  (sender {smsPlatformInfo.senderId || 'ABS'}).
-                </AlertDescription>
-              </Alert>
-            )}
+            {loadingSmsTemplates ? (
+              <div className="flex items-center justify-center py-6 md:py-12">
+                <Loader2 className="h-8 w-8 animate-spin" />
+              </div>
+            ) : smsTemplatesList.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No SMS templates available.</p>
+            ) : (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="sms-template-event">Message event</Label>
+                  <Select
+                    value={selectedSmsTemplateKey}
+                    onValueChange={setSelectedSmsTemplateKey}
+                  >
+                    <SelectTrigger id="sms-template-event">
+                      <SelectValue placeholder="Select event" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {smsTemplatesList.map((template) => (
+                        <SelectItem key={template.eventKey} value={template.eventKey}>
+                          {template.label}
+                          {template.isCustom ? ' (custom)' : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {selectedSmsTemplate?.description ? (
+                    <p className="text-xs text-muted-foreground">{selectedSmsTemplate.description}</p>
+                  ) : null}
+                </div>
 
-            {ownSmsActive && (
-              <Alert className="mb-3 md:mb-4 border-border py-2 px-3 md:py-4 md:px-4">
-                <Info className="h-4 w-4" />
-                <AlertTitle className="text-sm md:text-base">Using your own SMS provider</AlertTitle>
-                <AlertDescription className="text-xs md:text-sm">
-                  Customer SMS is sent through your configured provider with your sender ID. ABS platform SMS and its monthly limit no longer apply.
-                </AlertDescription>
-              </Alert>
-            )}
+                <div className="space-y-2">
+                  <Label>Variables</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {(selectedSmsTemplate?.variables || []).map((varName) => (
+                      <Button
+                        key={varName}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs font-mono"
+                        onClick={() => insertSmsTemplateVariable(varName)}
+                      >
+                        {`{${varName}}`}
+                      </Button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Tap a variable to insert it. Your shop name is added automatically as a prefix when sent.
+                  </p>
+                </div>
 
-            {switchingToOwnSms && (
-              <Alert className="mb-3 md:mb-4 border-border py-2 px-3 md:py-4 md:px-4">
-                <Info className="h-4 w-4" />
-                <AlertTitle className="text-sm md:text-base">Switching to your own SMS provider</AlertTitle>
-                <AlertDescription className="text-xs md:text-sm">
-                  Once saved and verified, customer SMS will use your provider instead of ABS platform SMS.
-                  Save your settings after the connection test succeeds.
-                </AlertDescription>
-              </Alert>
-            )}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <Label htmlFor="sms-template-body">Message template</Label>
+                    {selectedSmsTemplate?.isCustom ? (
+                      <Badge variant="secondary" className="text-xs">Custom</Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-xs">Default</Badge>
+                    )}
+                  </div>
+                  <Textarea
+                    id="sms-template-body"
+                    value={smsTemplateDraft}
+                    onChange={(e) => setSmsTemplateDraft(e.target.value)}
+                    rows={4}
+                    className="font-mono text-sm"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {smsTemplateCharCount} characters · ~{smsTemplateSegmentCount} segment{smsTemplateSegmentCount !== 1 ? 's' : ''} (160 chars each)
+                  </p>
+                </div>
 
-            {noSmsAvailable && (
-              <Alert className="mb-3 md:mb-4 py-2 px-3 md:py-4 md:px-4">
-                <AlertTitle className="text-sm md:text-base">No SMS available</AlertTitle>
-                <AlertDescription className="text-xs md:text-sm text-muted-foreground">
-                  Platform SMS is not enabled for your account. Connect your own provider below, or contact ABS support to enable platform SMS.
-                </AlertDescription>
-              </Alert>
-            )}
-
-            <p className="mb-3 md:mb-4 text-xs md:text-sm font-medium text-foreground">Your own SMS provider (optional)</p>
-
-            <Form {...smsForm}>
-              <form onSubmit={smsForm.handleSubmit(onSMSSubmit)} className="space-y-3 md:space-y-4">
-                <FormField
-                  control={smsForm.control}
-                  name="enabled"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-2 md:p-4">
-                      <div className="space-y-0.5">
-                        <FormLabel className="text-base">Use my own SMS provider</FormLabel>
-                        <FormDescription>
-                          Connect Termii, Arkesel, Twilio, or Africa&apos;s Talking with your API credentials. A connection test runs when you turn this on.
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={(checked) => handleSMSEnabledChange(checked, field.onChange)}
-                          disabled={testSMSMutation.isPending}
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={smsForm.control}
-                  name="provider"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>SMS Provider</FormLabel>
-                      <FormControl>
-                        <Select
-                          onValueChange={field.onChange}
-                          value={field.value}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select provider" />
-                          </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="termii">Termii</SelectItem>
-                          <SelectItem value="arkesel">Arkesel</SelectItem>
-                          <SelectItem value="twilio">Twilio</SelectItem>
-                          <SelectItem value="africas_talking">Africa&apos;s Talking</SelectItem>
-                        </SelectContent>
-                        </Select>
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                {(smsForm.watch('provider') === 'termii' || smsForm.watch('provider') === 'arkesel') && (
-                  <>
-                    <FormField
-                      control={smsForm.control}
-                      name="apiKey"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>
-                            API Key
-                            <span className="text-xs text-muted-foreground ml-2">(Required)</span>
-                          </FormLabel>
-                          <FormControl>
-                            <Input type="password" placeholder="Your SMS API key" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={smsForm.control}
-                      name="senderId"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>
-                            Sender ID
-                            <span className="text-xs text-muted-foreground ml-2">(Required, 3-11 characters)</span>
-                          </FormLabel>
-                          <FormControl>
-                            <Input placeholder="e.g. MyShop" maxLength={11} {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </>
-                )}
-
-                {smsForm.watch('provider') === 'twilio' && (
-                  <>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
-                      <FormField
-                        control={smsForm.control}
-                        name="accountSid"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>
-                              Account SID
-                              <span className="text-xs text-muted-foreground ml-2">(Required)</span>
-                            </FormLabel>
-                            <FormControl>
-                              <Input placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={smsForm.control}
-                        name="fromNumber"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>
-                              From Number
-                              <span className="text-xs text-muted-foreground ml-2">(Required)</span>
-                            </FormLabel>
-                            <FormControl>
-                              <Input placeholder="+1234567890" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                    <FormField
-                      control={smsForm.control}
-                      name="authToken"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>
-                            Auth Token
-                            <span className="text-xs text-muted-foreground ml-2">(Required - keep this secure)</span>
-                          </FormLabel>
-                          <FormControl>
-                            <Input type="password" placeholder="Enter auth token" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </>
-                )}
-
-                {smsForm.watch('provider') === 'africas_talking' && (
-                  <>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <FormField
-                        control={smsForm.control}
-                        name="username"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>
-                              Username
-                              <span className="text-xs text-muted-foreground ml-2">(Required)</span>
-                            </FormLabel>
-                            <FormControl>
-                              <Input placeholder="sandbox" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={smsForm.control}
-                        name="fromNumber"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>
-                              From Number
-                              <span className="text-xs text-muted-foreground ml-2">(Required)</span>
-                            </FormLabel>
-                            <FormControl>
-                              <Input placeholder="+1234567890" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                    <FormField
-                      control={smsForm.control}
-                      name="apiKey"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>
-                            API Key
-                            <span className="text-xs text-muted-foreground ml-2">(Required - keep this secure)</span>
-                          </FormLabel>
-                          <FormControl>
-                            <Input type="password" placeholder="Enter API key" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </>
-                )}
+                <div className="rounded-lg border border-border p-3 md:p-4 space-y-2 bg-muted/30">
+                  <p className="text-sm font-medium">Preview (sample data)</p>
+                  <p className="text-sm whitespace-pre-wrap break-words">{smsTemplatePreviewText || '—'}</p>
+                </div>
 
                 <div className="flex gap-2 justify-end">
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => {
-                      smsForm.reset();
-                      if (smsData?.data) {
-                        smsForm.reset({
-                          enabled: smsData.data.enabled || false,
-                          provider: smsData.data.provider || 'termii',
-                          senderId: smsData.data.senderId || '',
-                          apiKey: '',
-                          accountSid: smsData.data.accountSid || '',
-                          authToken: '',
-                          fromNumber: smsData.data.fromNumber || '',
-                          username: smsData.data.username || ''
-                        });
-                      }
-                    }}
+                    onClick={handleResetSmsTemplate}
+                    loading={resetSmsTemplateMutation.isPending}
+                    disabled={!selectedSmsTemplate?.isCustom}
                   >
-                    Reset
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Reset to default
                   </Button>
                   <Button
                     type="button"
-                    variant="outline"
-                    onClick={handleTestSMS}
-                    loading={testSMSMutation.isLoading}
+                    onClick={handleSaveSmsTemplate}
+                    loading={updateSmsTemplateMutation.isPending}
                   >
-                    Test Connection
-                  </Button>
-                  <Button type="submit" loading={updateSMSMutation.isLoading}>
-                    Save Settings
+                    Save template
                   </Button>
                 </div>
-              </form>
-            </Form>
-          </>
-        )}
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
       </CardContent>
     </ShadcnCard>
   ) : (
@@ -4255,7 +4583,15 @@ const Settings = () => {
   );
 
   const emailDataLoaded = emailData?.data;
-  const emailSavedAndEnabled = !!(emailDataLoaded?.enabled && (emailDataLoaded?.fromEmail || emailDataLoaded?.smtpHost || emailDataLoaded?.sendgridApiKey || emailDataLoaded?.sesAccessKeyId));
+  const emailPlatformInfo = emailData?.data?.platformEmail;
+  const emailMode = emailData?.data?.emailMode;
+  const hasOwnEmailConfigured = !!(emailDataLoaded?.enabled && (emailDataLoaded?.fromEmail || emailDataLoaded?.smtpHost || emailDataLoaded?.sendgridApiKey || emailDataLoaded?.sesAccessKeyId));
+  const ownEmailToggleOn = emailForm.watch('enabled');
+  const ownEmailActive = emailMode === 'own' || (emailMode == null && hasOwnEmailConfigured);
+  const switchingToOwnEmail = ownEmailToggleOn && !ownEmailActive;
+  const platformEmailActive = Boolean(emailPlatformInfo) && (emailMode === 'platform' || (emailMode == null && !hasOwnEmailConfigured)) && !switchingToOwnEmail;
+  const noEmailAvailable = emailMode === 'none' && !emailPlatformInfo;
+  const emailSavedAndEnabled = ownEmailActive;
   const showEmailSummary = emailSavedAndEnabled && !emailEditing;
 
   const emailTab = canManageOrganization ? (
@@ -4283,9 +4619,10 @@ const Settings = () => {
         ) : showEmailSummary ? (
           <>
             <Alert className="mb-3 md:mb-6 py-2 px-3 md:py-4 md:px-4">
-              <AlertTitle className="text-sm md:text-base">Email Integration</AlertTitle>
+              <Info className="h-4 w-4" />
+              <AlertTitle className="text-sm md:text-base">Using your own email provider</AlertTitle>
               <AlertDescription className="text-xs md:text-sm">
-                Email is enabled. Notifications will be sent using your configured provider and from address.
+                Customer email is sent through your configured provider with your from address. ABS platform email no longer applies.
               </AlertDescription>
             </Alert>
             <ShadcnDescriptions>
@@ -4308,10 +4645,60 @@ const Settings = () => {
             )}
             <Alert className="mb-3 md:mb-6 py-2 px-3 md:py-4 md:px-4">
               <AlertTitle className="text-sm md:text-base">Email Integration</AlertTitle>
-              <AlertDescription className="text-xs md:text-sm">
-                Configure email service to send automated notifications to customers. Supports SMTP, SendGrid, and AWS SES providers.
+              <AlertDescription className="text-xs md:text-sm space-y-2">
+                <p>
+                  <span className="font-medium text-foreground">Default:</span>{' '}
+                  Customer email is sent through ABS platform email automatically when you have not configured your own provider.
+                  {emailPlatformInfo?.fromName ? (
+                    <>
+                      {' '}Messages are sent as <span className="font-medium">{emailPlatformInfo.fromName}</span>
+                      {emailPlatformInfo.fromEmail ? (
+                        <> ({emailPlatformInfo.fromEmail})</>
+                      ) : null}.
+                    </>
+                  ) : (
+                    ' Messages use the ABS platform sender.'
+                  )}
+                </p>
+                <p>
+                  <span className="font-medium text-foreground">Optional:</span>{' '}
+                  Connect your own SMTP, SendGrid, or AWS SES below to send from your business address instead.
+                </p>
               </AlertDescription>
             </Alert>
+
+            {platformEmailActive && (
+              <Alert className="mb-3 md:mb-4 border-brand bg-brand-5 py-2 px-3 md:py-4 md:px-4">
+                <Info className="h-4 w-4 text-brand" />
+                <AlertTitle className="text-sm md:text-base text-brand">ABS platform email is active</AlertTitle>
+                <AlertDescription className="text-xs md:text-sm text-foreground">
+                  Email is already working for your workspace—you do not need to enable anything below.
+                  Transactional messages (invoices, quotes, reminders) use ABS platform email until you connect your own provider.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {switchingToOwnEmail && (
+              <Alert className="mb-3 md:mb-4 border-border py-2 px-3 md:py-4 md:px-4">
+                <Info className="h-4 w-4" />
+                <AlertTitle className="text-sm md:text-base">Switching to your own email provider</AlertTitle>
+                <AlertDescription className="text-xs md:text-sm">
+                  Once saved and verified, customer email will use your provider instead of ABS platform email.
+                  Save your settings after the connection test succeeds.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {noEmailAvailable && (
+              <Alert className="mb-3 md:mb-4 py-2 px-3 md:py-4 md:px-4">
+                <AlertTitle className="text-sm md:text-base">No email available</AlertTitle>
+                <AlertDescription className="text-xs md:text-sm text-muted-foreground">
+                  Platform email is not enabled for your account. Connect your own provider below, or contact ABS support.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            <p className="mb-3 md:mb-4 text-xs md:text-sm font-medium text-foreground">Your own email provider (optional)</p>
 
             <Form {...emailForm}>
               <form onSubmit={emailForm.handleSubmit(onEmailSubmit)} className="space-y-3 md:space-y-4">
@@ -4321,9 +4708,9 @@ const Settings = () => {
                   render={({ field }) => (
                     <FormItem className="flex flex-row items-center justify-between rounded-lg border p-2 md:p-4">
                       <div className="space-y-0.5">
-                        <FormLabel className="text-base">Enable Email</FormLabel>
+                        <FormLabel className="text-base">Use my own email provider</FormLabel>
                         <FormDescription>
-                          Enable email service integration. When turned on, a connection test runs to verify your settings.
+                          Connect SMTP, SendGrid, or AWS SES with your credentials. A connection test runs when you turn this on.
                         </FormDescription>
                       </div>
                       <FormControl>
@@ -6633,7 +7020,7 @@ const Settings = () => {
       <CardHeader className="p-0 md:p-6 pb-2 md:pb-6">
         <CardTitle className="text-lg md:text-2xl">Integration Settings</CardTitle>
         <CardDescription className="mt-1 md:mt-0">
-          Configure communication channels (WhatsApp, SMS, Email). Saving a channel runs a connection test and marks it verified for Marketing — you only need to do that again if you change credentials. Use Payment collections to link bank or MoMo for receiving customer payments. Customer auto-send, quotes, and job options are under the Configurations tab.
+          Configure communication channels (WhatsApp, SMS, Email). SMS includes overview, provider connection, and editable templates. Saving a channel runs a connection test and marks it verified for Marketing — you only need to do that again if you change credentials.
         </CardDescription>
       </CardHeader>
       <CardContent className="p-0 md:p-6 pt-0">
