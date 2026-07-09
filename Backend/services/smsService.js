@@ -8,6 +8,26 @@ const {
 } = require('./platformSmsUsageService');
 
 const ARKESEL_BASE_URL = 'https://sms.arkesel.com';
+const SMS_PROVIDER_TIMEOUT_MS = 10000;
+
+/**
+ * Normalize provider errors, including axios timeouts.
+ * @param {Error} error
+ * @returns {string}
+ */
+function formatSmsProviderError(error) {
+  const code = error?.code;
+  const message = String(error?.message || '');
+  if (code === 'ECONNABORTED' || /timeout/i.test(message)) {
+    return 'SMS provider timed out - check credentials and network connectivity';
+  }
+  return error?.response?.data?.message
+    || error?.response?.data?.Message
+    || error?.response?.data?.errorMessage
+    || error?.response?.data?.error
+    || message
+    || 'Failed to send SMS message';
+}
 
 /**
  * Format E.164 phone for Arkesel recipients array (digits only, no +).
@@ -261,7 +281,7 @@ class SMSService {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
-        timeout: 10000,
+        timeout: SMS_PROVIDER_TIMEOUT_MS,
       });
 
       console.log('[SMS] Message sent successfully via Twilio:', {
@@ -278,7 +298,7 @@ class SMSService {
       console.error('[SMS] Twilio error:', error.response?.data || error.message);
       return {
         success: false,
-        error: error.response?.data?.message || error.message,
+        error: formatSmsProviderError(error),
       };
     }
   }
@@ -310,7 +330,7 @@ class SMSService {
 
       const response = await axios.post(url, payload, {
         headers: { 'Content-Type': 'application/json' },
-        timeout: 10000,
+        timeout: SMS_PROVIDER_TIMEOUT_MS,
       });
 
       const messageId = response.data?.message_id || response.data?.messageId;
@@ -326,10 +346,9 @@ class SMSService {
       };
     } catch (error) {
       console.error('[SMS] Termii error:', error.response?.data || error.message);
-      const errMsg = error.response?.data?.message || error.response?.data?.Message || error.message;
       return {
         success: false,
-        error: errMsg,
+        error: formatSmsProviderError(error),
       };
     }
   }
@@ -359,7 +378,7 @@ class SMSService {
             'api-key': apiKey,
             'Content-Type': 'application/json',
           },
-          timeout: 10000,
+          timeout: SMS_PROVIDER_TIMEOUT_MS,
         }
       );
 
@@ -379,12 +398,9 @@ class SMSService {
       };
     } catch (error) {
       console.error('[SMS] Arkesel error:', error.response?.data || error.message);
-      const errMsg = error.response?.data?.message
-        || error.response?.data?.error
-        || error.message;
       return {
         success: false,
-        error: errMsg,
+        error: formatSmsProviderError(error),
       };
     }
   }
@@ -418,7 +434,7 @@ class SMSService {
             'Content-Type': 'application/json',
             Accept: 'application/json',
           },
-          timeout: 10000,
+          timeout: SMS_PROVIDER_TIMEOUT_MS,
         }
       );
 
@@ -436,7 +452,7 @@ class SMSService {
       console.error('[SMS] Africa\'s Talking error:', error.response?.data || error.message);
       return {
         success: false,
-        error: error.response?.data?.errorMessage || error.message,
+        error: formatSmsProviderError(error),
       };
     }
   }
@@ -461,7 +477,7 @@ class SMSService {
           const balanceUrl = `${termiiBaseUrl}/api/get-balance`;
           const termiiResponse = await axios.get(balanceUrl, {
             params: { api_key: config.apiKey },
-            timeout: 10000,
+            timeout: SMS_PROVIDER_TIMEOUT_MS,
           });
           return {
             success: true,
@@ -481,7 +497,7 @@ class SMSService {
           const balanceUrl = `${ARKESEL_BASE_URL}/api/v2/clients/balance-details`;
           const arkeselResponse = await axios.get(balanceUrl, {
             headers: { 'api-key': config.apiKey },
-            timeout: 10000,
+            timeout: SMS_PROVIDER_TIMEOUT_MS,
           });
           return {
             success: true,
@@ -500,7 +516,7 @@ class SMSService {
               username: config.accountSid,
               password: config.authToken,
             },
-            timeout: 10000,
+            timeout: SMS_PROVIDER_TIMEOUT_MS,
           });
           return {
             success: true,
@@ -523,7 +539,7 @@ class SMSService {
               Accept: 'application/json',
             },
             params: { username: config.username },
-            timeout: 10000,
+            timeout: SMS_PROVIDER_TIMEOUT_MS,
           });
           return {
             success: true,
@@ -541,10 +557,7 @@ class SMSService {
     } catch (error) {
       return {
         success: false,
-        error: error.response?.data?.message
-          || error.response?.data?.errorMessage
-          || error.response?.data?.error
-          || error.message,
+        error: formatSmsProviderError(error),
       };
     }
   }
@@ -553,3 +566,4 @@ class SMSService {
 module.exports = new SMSService();
 module.exports.hasValidTenantSmsCredentials = hasValidTenantSmsCredentials;
 module.exports.toArkeselRecipient = toArkeselRecipient;
+module.exports.formatSmsProviderError = formatSmsProviderError;

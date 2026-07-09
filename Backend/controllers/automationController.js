@@ -240,6 +240,14 @@ function normalizeWhatsAppLog(event, ruleNameById) {
   };
 }
 
+function getMessagingRequirements(actionConfig) {
+  const actions = Array.isArray(actionConfig?.actions) ? actionConfig.actions : [];
+  return {
+    needsPhone: actions.some((action) => ['send_sms', 'send_whatsapp'].includes(action?.type)),
+    needsEmail: actions.some((action) => action?.type === 'send_email_platform'),
+  };
+}
+
 function buildTestTriggerContext(rule) {
   const triggerType = rule?.triggerType || 'manual_test';
   return {
@@ -247,8 +255,6 @@ function buildTestTriggerContext(rule) {
     triggerType,
     scheduler: false,
     customerName: 'Test Customer',
-    email: 'customer@example.com',
-    phone: '+233200000000',
     invoiceNumber: 'INV-TEST-0001',
     quoteNumber: 'QTE-TEST-0001',
     productName: 'Test Product',
@@ -261,8 +267,8 @@ function buildTestTriggerContext(rule) {
     paymentStatus: 'unpaid',
     overdueDays: 2,
     hasOverdueInvoices: true,
-    customerHasPhone: true,
-    customerHasEmail: true,
+    customerHasPhone: false,
+    customerHasEmail: false,
     whatsappConsent: true,
     smsConsent: true,
     marketingConsent: true,
@@ -271,8 +277,6 @@ function buildTestTriggerContext(rule) {
     totalSpend: 300,
     customer: {
       name: 'Test Customer',
-      email: 'customer@example.com',
-      phone: '+233200000000',
       dateOfBirth: new Date().toISOString().slice(0, 10),
       whatsappConsent: true,
       smsConsent: true,
@@ -699,6 +703,21 @@ exports.testRule = async (req, res, next) => {
       manualTest: true,
       test: true
     };
+    const messagingRequirements = getMessagingRequirements(rule.actionConfig);
+    if (messagingRequirements.needsPhone && !String(triggerContext.phone || '').trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Test run requires a recipient phone number for SMS or WhatsApp actions.',
+        errorCode: 'TEST_RECIPIENT_PHONE_REQUIRED'
+      });
+    }
+    if (messagingRequirements.needsEmail && !String(triggerContext.email || '').trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Test run requires a recipient email address for email actions.',
+        errorCode: 'TEST_RECIPIENT_EMAIL_REQUIRED'
+      });
+    }
     const result = await executeRule({
       rule,
       tenantId: req.tenantId,

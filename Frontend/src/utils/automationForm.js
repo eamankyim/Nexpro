@@ -48,6 +48,70 @@ export const ACTION_TYPE_OPTIONS = [
   { value: 'send_whatsapp', label: 'Send WhatsApp (template)' },
 ];
 
+export const MESSAGING_ACTION_TYPES = ['send_sms', 'send_whatsapp', 'send_email_platform'];
+
+/**
+ * Whether an automation rule includes outbound messaging actions.
+ * @param {Record<string, unknown>[]} actionRows
+ * @returns {boolean}
+ */
+export function ruleHasMessagingActions(actionRows) {
+  return (actionRows || []).some((row) => MESSAGING_ACTION_TYPES.includes(row?.type));
+}
+
+/**
+ * Recipient fields required for messaging test runs.
+ * @param {Record<string, unknown>[]} actionRows
+ * @returns {{ needsPhone: boolean, needsEmail: boolean }}
+ */
+export function messagingActionRequirements(actionRows) {
+  const types = new Set((actionRows || []).map((row) => row?.type).filter(Boolean));
+  return {
+    needsPhone: types.has('send_sms') || types.has('send_whatsapp'),
+    needsEmail: types.has('send_email_platform'),
+  };
+}
+
+/**
+ * Merge a real test recipient into automation trigger context.
+ * @param {Record<string, unknown>} baseContext
+ * @param {Record<string, unknown>} recipient
+ * @returns {Record<string, unknown>}
+ */
+export function buildTestRecipientContext(baseContext = {}, recipient = {}) {
+  const name = String(recipient.name || recipient.customerName || baseContext.customerName || 'Test Customer').trim();
+  const phone = String(recipient.phone || baseContext.phone || '').trim();
+  const email = String(recipient.email || baseContext.email || '').trim();
+  const customerId = recipient.customerId || recipient.id || baseContext.customerId || 'test-customer';
+  const dateOfBirth = recipient.dateOfBirth || baseContext.customer?.dateOfBirth || baseContext.dateOfBirth;
+
+  const customer = {
+    ...(baseContext.customer && typeof baseContext.customer === 'object' ? baseContext.customer : {}),
+    id: customerId,
+    name,
+    company: recipient.company || baseContext.customer?.company || name,
+    email,
+    phone,
+    dateOfBirth,
+    whatsappConsent: true,
+    smsConsent: true,
+    marketingConsent: true,
+  };
+
+  return {
+    ...baseContext,
+    customerId,
+    customerName: name,
+    recipientName: name,
+    email,
+    phone,
+    dateOfBirth,
+    customerHasPhone: Boolean(phone),
+    customerHasEmail: Boolean(email),
+    customer,
+  };
+}
+
 export const TASK_PRIORITY_OPTIONS = [
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
@@ -427,8 +491,8 @@ export function buildTestContextFromForm({ name, triggerType, triggerForm, condi
     id: 'test-customer',
     name: 'Test Customer',
     company: 'Test Customer Co.',
-    email: 'customer@example.com',
-    phone: '+233200000000',
+    email: '',
+    phone: '',
     dateOfBirth: today.toISOString().slice(0, 10),
     whatsappConsent: true,
     smsConsent: true,
@@ -487,8 +551,8 @@ export function buildTestContextFromForm({ name, triggerType, triggerForm, condi
     paymentStatus: payload.conditionConfig?.paymentStatus || 'unpaid',
     overdueDays: matchingNumber(payload.conditionConfig?.overdueDaysValue ?? (payload.triggerType === 'invoice_overdue' ? Number(payload.triggerConfig?.daysAfterDue || 1) : 0), payload.conditionConfig?.overdueDaysOperator, 0),
     hasOverdueInvoices: payload.conditionConfig?.hasOverdueInvoices ?? (payload.triggerType === 'invoice_overdue'),
-    customerHasPhone: true,
-    customerHasEmail: true,
+    customerHasPhone: false,
+    customerHasEmail: false,
     whatsappConsent: true,
     smsConsent: true,
     marketingConsent: true,

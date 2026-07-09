@@ -462,7 +462,11 @@ async function executeRule({
         continue;
       }
 
-      if (action.type === 'send_email_platform' && triggerContext?.email) {
+      if (action.type === 'send_email_platform') {
+        if (!triggerContext?.email) {
+          results.push({ type: 'send_email_platform', success: false, error: 'No recipient email available' });
+          continue;
+        }
         const html = emailTemplates.marketingPlainMessageEmail(action.body || triggerContext.message || '', {
           name: triggerContext.businessName || 'Business'
         });
@@ -476,9 +480,17 @@ async function executeRule({
         continue;
       }
 
-      if (action.type === 'send_sms' && triggerContext?.phone) {
+      if (action.type === 'send_sms') {
+        if (!triggerContext?.phone) {
+          results.push({ type: 'send_sms', success: false, error: 'No recipient phone available' });
+          continue;
+        }
         try {
-          const response = await smsService.sendMessage(tenantId, triggerContext.phone, action.body || triggerContext.message || '', action.fromNumber || null);
+          const rawBody = action.body || triggerContext.message || '';
+          const message = typeof rawBody === 'string'
+            ? applyTemplateValues([rawBody], triggerContext)[0]
+            : rawBody;
+          const response = await smsService.sendMessage(tenantId, triggerContext.phone, message, action.fromNumber || null);
           results.push({ type: 'send_sms', success: !!response?.success, error: response?.error || null });
         } catch (error) {
           results.push({ type: 'send_sms', success: false, error: error?.message || 'send_failed' });
@@ -486,7 +498,11 @@ async function executeRule({
         continue;
       }
 
-      if (action.type === 'send_whatsapp' && triggerContext?.phone) {
+      if (action.type === 'send_whatsapp') {
+        if (!triggerContext?.phone) {
+          results.push({ type: 'send_whatsapp', success: false, error: 'No recipient phone available' });
+          continue;
+        }
         try {
           const response = await whatsappService.sendMessage(
             tenantId,

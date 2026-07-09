@@ -23,8 +23,6 @@ import StatusChip from '../components/StatusChip';
 import FileUpload from '../components/FileUpload';
 import FilePreview from '../components/FilePreview';
 import { OrganizationReviewShareSection } from '../components/OrganizationReviewShareSection';
-import SidebarMenusSettings from '../components/settings/SidebarMenusSettings';
-import PrintableInvoice from '../components/PrintableInvoice';
 import { API_BASE_URL } from '../services/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -209,23 +207,6 @@ const subscriptionSchema = z.object({
   notes: z.string().optional(),
 });
 
-const posConfigSchema = z.object({
-  receipt: z.object({
-    mode: z.enum(['ask', 'auto_send', 'auto_print', 'auto_both']),
-    channels: z.array(z.enum(['sms', 'whatsapp', 'email', 'print'])),
-  }),
-  print: z.object({
-    format: z.enum(['a4', 'thermal_58', 'thermal_80']),
-    showLogo: z.boolean().optional(),
-    color: z.boolean().optional(),
-    fontSize: z.enum(['normal', 'small']).optional(),
-  }),
-  customer: z.object({
-    phoneRequired: z.boolean(),
-    nameRequired: z.boolean(),
-  }),
-});
-
 const DEFAULT_DELIVERY_SETTINGS = {
   enabled: false,
   requireSelectionAtCheckout: false,
@@ -299,15 +280,17 @@ const Settings = () => {
   /** Must match API authorize() which uses workspace membership role (req.tenantRole), not only users.role */
   const canManageOrganization = Boolean(isManager);
   const normalizeMainTab = (tab) => {
-    const value = String(tab || 'profile');
+    const value = String(tab || 'workspace');
     if (!canManageOrganization) return 'profile';
-    if (['profile', 'workspace', 'operations', 'billing', PAYMENT_COLLECTION_TAB, 'messaging'].includes(value)) return value;
+    if (['workspace', 'operations', 'billing', 'notifications'].includes(value)) return value;
+    if (value === 'messaging') return 'notifications';
     if (['organization', 'appearance'].includes(value)) return 'workspace';
     if (value === 'subscription') return 'billing';
-    if (value === 'payments') return PAYMENT_COLLECTION_TAB;
-    if (['integration', 'notifications', 'whatsapp', 'sms', 'email'].includes(value)) return 'messaging';
     if (value === 'configurations') return 'operations';
-    return 'profile';
+    if (['profile', 'payments', PAYMENT_COLLECTION_TAB, 'integration', 'messaging', 'whatsapp', 'sms', 'email', 'delivery-rules'].includes(value)) {
+      return 'workspace';
+    }
+    return 'workspace';
   };
   const tabFromUrl = normalizeMainTab(searchParams.get('tab') || 'profile');
   const returnToParam = searchParams.get('returnTo');
@@ -336,56 +319,28 @@ const Settings = () => {
   const [selectedSmsTemplateKey, setSelectedSmsTemplateKey] = useState('invoice_sent');
   const [smsTemplateDraft, setSmsTemplateDraft] = useState('');
 
-  // Update tab when URL parameter changes (keep old links working)
+  // Update tab when URL parameter changes (legacy workspace / operations / billing / notifications)
   useEffect(() => {
-    const tab = searchParams.get('tab') || 'profile';
-    const subtab = searchParams.get('subtab');
+    const tab = searchParams.get('tab') || 'workspace';
     const mappedTab = normalizeMainTab(tab);
     setActiveTab(mappedTab);
 
     if (!canManageOrganization) {
-      if (tab !== 'profile' || subtab) {
+      if (tab !== 'profile') {
         setSearchParams({ tab: 'profile' });
       }
       return;
     }
 
-    if (['whatsapp', 'sms', 'email'].includes(tab)) {
-      setIntegrationSubTab(tab);
-      setSearchParams({ tab: 'messaging', subtab: tab });
+    const migratedTabs = ['profile', 'appearance', 'payments', PAYMENT_COLLECTION_TAB, 'integration', 'messaging', 'whatsapp', 'sms', 'email', 'delivery-rules', 'invoices-receipts', 'invoices', 'receipts'];
+    if (migratedTabs.includes(tab)) {
       return;
     }
 
-    if (tab === 'integration' || tab === 'messaging') {
-      if (subtab && ['whatsapp', 'sms', 'email'].includes(subtab)) {
-        setIntegrationSubTab(subtab);
-      }
-      const smsSection = searchParams.get('smsSection');
-      if (subtab === 'sms' && SMS_SECTIONS.includes(smsSection)) {
-        setSmsSubTab(smsSection);
-      } else if (subtab === 'sms') {
-        setSmsSubTab('overview');
-      }
-      if (tab === 'integration') {
-        setSearchParams({ tab: 'messaging', subtab: subtab && ['whatsapp', 'sms', 'email'].includes(subtab) ? subtab : 'whatsapp' });
-        return;
-      }
-    }
-
-    if (tab === 'payments' || tab === PAYMENT_COLLECTION_TAB || (tab === 'billing' && PAYMENT_COLLECTION_SUBTABS.includes(subtab))) {
-      const paySub = searchParams.get('subtab');
-      setPaymentsSubTab(paySub === 'mtn-collection' ? 'mtn-collection' : 'settlements');
-      if (tab !== PAYMENT_COLLECTION_TAB) {
-        setActiveTab(PAYMENT_COLLECTION_TAB);
-        setSearchParams(buildPaymentCollectionParams(paySub === 'mtn-collection' ? 'mtn-collection' : 'settlements'));
-        return;
-      }
-    }
-
-    if (tab !== mappedTab && !['whatsapp', 'sms', 'email', 'integration', 'payments'].includes(tab)) {
+    if (tab !== mappedTab && !migratedTabs.includes(tab)) {
       setSearchParams({ tab: mappedTab });
     }
-  }, [buildPaymentCollectionParams, canManageOrganization, searchParams, setSearchParams]);
+  }, [canManageOrganization, searchParams, setSearchParams]);
   const [profilePreview, setProfilePreview] = useState('');
   const [profileEditing, setProfileEditing] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -426,7 +381,6 @@ const Settings = () => {
   const [paystackTxPage, setPaystackTxPage] = useState(1);
   /** Dismiss "Saving..." toast when mutation completes (success or error). */
   const savingToastDismissRef = useRef(null);
-  const [posConfigEditing, setPosConfigEditing] = useState(false);
   const [deliverySettingsEditing, setDeliverySettingsEditing] = useState(false);
   const [deliveryDraft, setDeliveryDraft] = useState(DEFAULT_DELIVERY_SETTINGS);
   const [seatUsage, setSeatUsage] = useState(null);
@@ -562,15 +516,6 @@ const Settings = () => {
       seats: 5,
       currentPeriodEnd: null,
       notes: '',
-    },
-  });
-
-  const posConfigForm = useForm({
-    resolver: zodResolver(posConfigSchema),
-    defaultValues: {
-      receipt: { mode: 'ask', channels: ['sms', 'print'] },
-      print: { format: 'a4', showLogo: true, color: true, fontSize: 'normal' },
-      customer: { phoneRequired: false, nameRequired: false },
     },
   });
 
@@ -729,15 +674,6 @@ const Settings = () => {
   });
 
   const {
-    data: posConfigData,
-    isLoading: loadingPOSConfig
-  } = useQuery({
-    queryKey: ['settings', 'pos-config'],
-    queryFn: settingsService.getPOSConfig,
-    enabled: canManageOrganization && activeTab === 'operations'
-  });
-
-  const {
     data: deliverySettingsData,
     isLoading: loadingDeliverySettings
   } = useQuery({
@@ -810,12 +746,6 @@ const Settings = () => {
       paymentsSubTab === 'settlements'
   });
 
-  const { data: notificationChannelsData } = useQuery({
-    queryKey: ['settings', 'notification-channels'],
-    queryFn: settingsService.getNotificationChannels,
-    enabled: canManageOrganization && activeTab === 'messaging'
-  });
-
   const {
     data: messageDeliveryRulesData,
     isLoading: loadingMessageDeliveryRules,
@@ -874,19 +804,6 @@ const Settings = () => {
       dismissSavingToast();
       showError(error?.response?.data?.message || error?.message || 'Failed to save job invoice settings');
     }
-  });
-
-  const updateCustomerNotificationPrefsMutation = useMutation({
-    mutationFn: settingsService.updateCustomerNotificationPreferences,
-    onSuccess: () => {
-      dismissSavingToast();
-      showSuccess('Auto-send preferences saved');
-      queryClient.invalidateQueries({ queryKey: ['settings', 'notification-channels'] });
-    },
-    onError: (error) => {
-      dismissSavingToast();
-      showError(error?.response?.data?.message || error?.message || 'Failed to save preferences');
-    },
   });
 
   const filteredBanksList = useMemo(() => {
@@ -1018,33 +935,6 @@ const Settings = () => {
       emailForm.reset(getEmailFormValues(emailData.data, org));
     }
   }, [emailData, organizationData, emailForm, canManageOrganization, getEmailFormValues]);
-
-  useEffect(() => {
-    const config = posConfigData?.data?.data ?? posConfigData?.data;
-    if (config && canManageOrganization) {
-      const mode = config.receipt?.mode || 'ask';
-      let channels = config.receipt?.channels || ['sms', 'print'];
-      if (mode === 'auto_print') {
-        channels = ['print'];
-      } else if (mode === 'auto_send') {
-        channels = channels.filter((c) => ['sms', 'whatsapp', 'email'].includes(c));
-        if (channels.length === 0) channels = ['sms'];
-      }
-      posConfigForm.reset({
-        receipt: { mode, channels },
-        print: {
-          format: config.print?.format || 'a4',
-          showLogo: config.print?.showLogo !== false,
-          color: config.print?.color !== false,
-          fontSize: config.print?.fontSize || 'normal',
-        },
-        customer: {
-          phoneRequired: config.customer?.phoneRequired || false,
-          nameRequired: config.customer?.nameRequired || false,
-        },
-      });
-    }
-  }, [posConfigData, posConfigForm, canManageOrganization]);
 
   useEffect(() => {
     if (!canManageOrganization || deliverySettingsEditing) return;
@@ -1427,29 +1317,6 @@ const Settings = () => {
     },
   });
 
-  const updatePOSConfigMutation = useMutation({
-    mutationFn: settingsService.updatePOSConfig,
-    onSuccess: async (response) => {
-      dismissSavingToast();
-      showSuccess('Configuration saved successfully');
-      await queryClient.invalidateQueries({ queryKey: ['settings', 'pos-config'] });
-      const data = response?.data ?? response;
-      if (data) {
-        posConfigForm.reset({
-          receipt: { ...posConfigForm.getValues('receipt'), ...(data.receipt || {}) },
-          print: { ...posConfigForm.getValues('print'), ...(data.print || {}) },
-          customer: { ...posConfigForm.getValues('customer'), ...(data.customer || {}) },
-        });
-      }
-      setPosConfigEditing(false);
-    },
-    onError: (error) => {
-      dismissSavingToast();
-      const errMsg = error?.response?.data?.message || 'Failed to update configuration';
-      showError(error, errMsg);
-    },
-  });
-
   const updateDeliverySettingsMutation = useMutation({
     mutationFn: settingsService.updateDeliverySettings,
     onSuccess: async (data) => {
@@ -1777,24 +1644,6 @@ const Settings = () => {
     }
   };
 
-  const onPOSConfigSubmit = async (values) => {
-    const mode = values.receipt?.mode || 'ask';
-    let channels = values.receipt?.channels || [];
-    if (mode === 'auto_print') {
-      channels = ['print'];
-    } else if (mode === 'auto_send') {
-      channels = channels.filter((c) => ['sms', 'whatsapp', 'email'].includes(c));
-      if (channels.length === 0) channels = ['sms'];
-    }
-    const payload = {
-      receipt: { ...values.receipt, mode, channels },
-      print: values.print || {},
-      customer: values.customer || {}
-    };
-    savingToastDismissRef.current = showLoading('Saving...');
-    updatePOSConfigMutation.mutate(payload);
-  };
-
   const handleDeliveryDraftChange = useCallback((patch) => {
     setDeliveryDraft((prev) => ({ ...prev, ...patch }));
   }, []);
@@ -1978,33 +1827,6 @@ const Settings = () => {
 
   const organization = organizationData?.data || {};
   const organizationLogo = organizationLogoPreview || organization.logoUrl || '';
-  const mockInvoice = useMemo(() => ({
-    invoiceNumber: 'INV-2024-001',
-    invoiceDate: new Date(),
-    dueDate: dayjs().add(30, 'days').toDate(),
-    customer: {
-      name: 'Customer name',
-      company: 'Company name',
-      email: 'customer@example.com',
-      phone: '+233 XX XXX XXXX',
-      address: '123 Sample Street',
-      city: 'Sample City',
-      state: 'Sample State',
-      zipCode: 'SAMPLE-123'
-    },
-    items: [
-      { description: 'Sample Product/Service 1', quantity: 2, unitPrice: 100.00, total: 200.00 },
-      { description: 'Sample Product/Service 2', quantity: 1, unitPrice: 150.00, total: 150.00 }
-    ],
-    subtotal: 350.00,
-    taxRate: 12.5,
-    taxAmount: 43.75,
-    discountAmount: 0,
-    totalAmount: 393.75,
-    balance: 393.75,
-    paymentTerms: organization.defaultPaymentTerms || 'Net 30',
-    termsAndConditions: organization.defaultTermsAndConditions || 'Payment is due within 30 days of invoice date.'
-  }), [organization.defaultPaymentTerms, organization.defaultTermsAndConditions]);
 
   const appearanceTab = (
     <ShadcnCard className="border-0 shadow-none bg-transparent md:border md:bg-card">
@@ -2046,29 +1868,6 @@ const Settings = () => {
             onCheckedChange={setHintMode}
           />
         </div>
-
-        {canManageOrganization && (
-          <>
-            <Separator className="my-3 md:my-0" />
-
-            <div>
-              <h3 className="text-sm font-medium mb-2 md:mb-4">Invoice Preview</h3>
-              <p className="text-xs md:text-sm text-muted-foreground mb-2 md:mb-4">
-                Preview how your invoice will look with your current branding
-              </p>
-              <div className="border rounded-lg p-2 md:p-4 bg-card" style={{ maxHeight: '800px', overflow: 'auto' }}>
-                <PrintableInvoice
-                  invoice={mockInvoice}
-                  organization={{
-                    ...organization,
-                    logoUrl: organizationLogo || organization.logoUrl
-                  }}
-                  maskAmounts
-                />
-              </div>
-            </div>
-          </>
-        )}
       </CardContent>
     </ShadcnCard>
   );
@@ -2597,7 +2396,6 @@ const Settings = () => {
           </Form>
           </CardContent>
         </ShadcnCard>
-        {!isDriver ? <SidebarMenusSettings /> : null}
       </div>
     </div>
   );
@@ -2670,8 +2468,8 @@ const Settings = () => {
     ? quoteWorkflowOnAccept === 'create_job_invoice_and_send'
     : ['create_sale_invoice_and_send', 'create_job_invoice_and_send'].includes(quoteWorkflowOnAccept);
   const configurationsDescription = isStudioLike
-    ? 'Customer notifications, quote and job workflows, public customer tracking link (share with clients), and checkout settings.'
-    : 'Customer notifications, quote-to-sale workflow, public order tracking link, inventory cost automation, and POS checkout settings.';
+    ? 'Quote and job workflows, public customer tracking link, delivery settings, and AI.'
+    : 'Quote-to-sale workflow, public order tracking link, inventory cost automation, and delivery settings.';
   const publicTrackingUrl = useMemo(() => {
     const slug = jobInvoiceData?.tenantSlug || activeTenant?.slug;
     if (!slug) return '';
@@ -5046,17 +4844,7 @@ const Settings = () => {
     </ShadcnCard>
   );
 
-  const configData = posConfigData?.data?.data ?? posConfigData?.data;
   const deliverySettings = deliverySettingsData?.data?.data ?? deliverySettingsData?.data ?? deliverySettingsData ?? DEFAULT_DELIVERY_SETTINGS;
-  const modeLabels = { ask: 'Ask staff', auto_send: 'Auto send', auto_print: 'Auto print', auto_both: 'Auto send + print' };
-  const formatLabels = { a4: 'A4 (full page)', thermal_58: '58mm Thermal', thermal_80: '80mm Thermal' };
-  const channelLabels = { sms: 'SMS', whatsapp: 'WhatsApp', email: 'Email', print: 'Print' };
-
-  const notificationChannels = notificationChannelsData ?? {};
-  const autoSendInvoice = notificationChannels.autoSendInvoiceToCustomer !== false;
-  const autoSendReceipt = notificationChannels.autoSendReceiptToCustomer === true;
-  const sendPaymentReminderEmail = notificationChannels.sendPaymentReminderEmail === true;
-  const sendInvoicePaidConfirmationToCustomer = notificationChannels.sendInvoicePaidConfirmationToCustomer !== false;
 
   const aiSettings = aiSettingsData || {};
   const aiSourceText = aiSettings.source === 'tenant'
@@ -5179,78 +4967,6 @@ const Settings = () => {
       </CardHeader>
       <CardContent className="p-0 md:p-6 pt-0">
         <h2 className="text-base font-semibold mb-3">Configurations</h2>
-        <div className="rounded-lg border border-border p-4 mb-4 md:mb-6">
-          <h3 className="text-sm font-semibold mb-1">Auto-send to customers</h3>
-          <p className="text-xs text-muted-foreground mb-4">
-            When to automatically notify customers via Email, WhatsApp, or SMS (using your configured channels).
-          </p>
-          <div className="space-y-4">
-            <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-              <div className="space-y-0.5">
-                <Label className="text-base">Auto send invoice to customer</Label>
-                <p className="text-xs text-muted-foreground">
-                  When you send an invoice, notify the customer via configured channels (email, WhatsApp, SMS).
-                </p>
-              </div>
-              <Switch
-                checked={autoSendInvoice}
-                disabled={updateCustomerNotificationPrefsMutation.isPending}
-                onCheckedChange={(checked) => {
-                  savingToastDismissRef.current = showLoading('Saving...');
-                  updateCustomerNotificationPrefsMutation.mutate({ autoSendInvoiceToCustomer: checked });
-                }}
-              />
-            </div>
-            <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-              <div className="space-y-0.5">
-                <Label className="text-base">Auto send receipt to customer</Label>
-                <p className="text-xs text-muted-foreground">
-                  When a sale is completed (e.g. POS), automatically send the receipt via configured channels.
-                </p>
-              </div>
-              <Switch
-                checked={autoSendReceipt}
-                disabled={updateCustomerNotificationPrefsMutation.isPending}
-                onCheckedChange={(checked) => {
-                  savingToastDismissRef.current = showLoading('Saving...');
-                  updateCustomerNotificationPrefsMutation.mutate({ autoSendReceiptToCustomer: checked });
-                }}
-              />
-            </div>
-            <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-              <div className="space-y-0.5">
-                <Label className="text-base">Send payment reminder by email</Label>
-                <p className="text-xs text-muted-foreground">
-                  Include email when sending overdue payment reminders (in addition to WhatsApp/SMS if configured).
-                </p>
-              </div>
-              <Switch
-                checked={sendPaymentReminderEmail}
-                disabled={updateCustomerNotificationPrefsMutation.isPending}
-                onCheckedChange={(checked) => {
-                  savingToastDismissRef.current = showLoading('Saving...');
-                  updateCustomerNotificationPrefsMutation.mutate({ sendPaymentReminderEmail: checked });
-                }}
-              />
-            </div>
-            <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-              <div className="space-y-0.5">
-                <Label className="text-base">Send invoice paid confirmation to customer</Label>
-                <p className="text-xs text-muted-foreground">
-                  When an invoice is paid, send a confirmation email (and SMS if configured) to the customer.
-                </p>
-              </div>
-              <Switch
-                checked={sendInvoicePaidConfirmationToCustomer}
-                disabled={updateCustomerNotificationPrefsMutation.isPending}
-                onCheckedChange={(checked) => {
-                  savingToastDismissRef.current = showLoading('Saving...');
-                  updateCustomerNotificationPrefsMutation.mutate({ sendInvoicePaidConfirmationToCustomer: checked });
-                }}
-              />
-            </div>
-          </div>
-        </div>
         <div className="rounded-lg border border-border p-4 mb-4 md:mb-6">
           <h3 className="text-sm font-semibold mb-1">Quote workflow</h3>
           <p className="text-xs text-muted-foreground mb-4">
@@ -5409,712 +5125,151 @@ const Settings = () => {
         <div className="rounded-lg border border-border p-4 mb-6 md:mb-8">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
             <div className="min-w-0 space-y-1">
-              <h3 className="text-sm font-semibold">POS &amp; checkout</h3>
+              <h3 className="text-sm font-semibold">Delivery settings</h3>
               <p className="text-xs text-muted-foreground">
-                Receipt delivery, print format, and customer fields at checkout.
+                Delivery availability and fee bands for POS checkout.
               </p>
             </div>
-            {!loadingPOSConfig && !posConfigEditing && (
+            {!loadingDeliverySettings && !deliverySettingsEditing && (
               <Button
+                type="button"
                 variant="secondaryStroke"
                 size="sm"
                 className="shrink-0 self-start sm:self-auto"
                 onClick={() => {
-                  const cfg = configData;
-                  if (cfg) {
-                    const mode = cfg.receipt?.mode || 'ask';
-                    let channels = cfg.receipt?.channels || ['sms', 'print'];
-                    if (mode === 'auto_print') channels = ['print'];
-                    else if (mode === 'auto_send') {
-                      channels = channels.filter((c) => ['sms', 'whatsapp', 'email'].includes(c));
-                      if (channels.length === 0) channels = ['sms'];
-                    }
-                    posConfigForm.reset({
-                      receipt: { mode, channels },
-                      print: { format: cfg.print?.format || 'a4', showLogo: cfg.print?.showLogo !== false, color: cfg.print?.color !== false, fontSize: cfg.print?.fontSize || 'normal' },
-                      customer: { phoneRequired: cfg.customer?.phoneRequired || false, nameRequired: cfg.customer?.nameRequired || false },
-                    });
-                  }
-                  setPosConfigEditing(true);
+                  handleResetDeliveryDraft();
+                  setDeliverySettingsEditing(true);
                 }}
               >
                 Edit
               </Button>
             )}
           </div>
-          {loadingPOSConfig ? (
-          <div className="flex items-center justify-center py-6 md:py-12">
-            <Loader2 className="h-8 w-8 animate-spin" />
-          </div>
-        ) : posConfigEditing ? (
-          <Form {...posConfigForm}>
-            <form onSubmit={posConfigForm.handleSubmit(onPOSConfigSubmit)} className="space-y-6 md:space-y-8">
-              <div>
-                <p className="text-sm font-semibold mb-1">Receipt delivery</p>
-                <p className="text-xs text-muted-foreground mb-4">
-                  Configure how receipts are sent or printed after a sale.
-                </p>
-                <div className="space-y-4">
-                  <div className="rounded-lg border border-border p-3">
-                    <FormField
-                      control={posConfigForm.control}
-                      name="receipt.mode"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>After sale</FormLabel>
-                          <Select
-                            onValueChange={(value) => {
-                              field.onChange(value);
-                              if (value === 'auto_print') {
-                                posConfigForm.setValue('receipt.channels', ['print']);
-                              } else if (value === 'auto_send') {
-                                const current = posConfigForm.getValues('receipt.channels') || [];
-                                const sendChannels = current.filter((c) => ['sms', 'whatsapp', 'email'].includes(c));
-                                posConfigForm.setValue('receipt.channels', sendChannels.length ? sendChannels : ['sms']);
-                              }
-                            }}
-                            value={field.value}
-                          >
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select behavior" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value="ask">Ask staff</SelectItem>
-                              <SelectItem value="auto_send">Auto send</SelectItem>
-                              <SelectItem value="auto_print">Auto print</SelectItem>
-                              <SelectItem value="auto_both">Auto send + print</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <FormDescription>
-                            {{
-                              ask: 'Staff will choose how to send or print the receipt after each sale.',
-                              auto_send: 'Receipt will automatically be sent to customers via the enabled channels (SMS, WhatsApp, Email) after each sale.',
-                              auto_print: 'Receipt will automatically be printed for the customer after each sale.',
-                              auto_both: 'Receipt will automatically be sent to customers and printed for the customer after each sale.'
-                            }[posConfigForm.watch('receipt.mode')] || 'Choose how receipts are handled after each sale.'}
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                  <div className="rounded-lg border border-border p-3">
-                    <FormField
-                      control={posConfigForm.control}
-                      name="receipt.channels"
-                      render={({ field }) => {
-                        const mode = posConfigForm.watch('receipt.mode');
-                        const allChannels = [
-                          { id: 'sms', label: 'SMS' },
-                          { id: 'whatsapp', label: 'WhatsApp' },
-                          { id: 'email', label: 'Email' },
-                          { id: 'print', label: 'Print' },
-                        ];
-                        const selectableChannels = mode === 'auto_print'
-                          ? allChannels.filter((c) => c.id === 'print')
-                          : mode === 'auto_send'
-                            ? allChannels.filter((c) => ['sms', 'whatsapp', 'email'].includes(c.id))
-                            : allChannels;
-                        const channelDescription = mode === 'auto_print'
-                          ? 'Print only — receipt will be printed automatically.'
-                          : mode === 'auto_send'
-                            ? 'Select channels for sending receipts automatically (SMS, WhatsApp, Email).'
-                            : mode === 'auto_both'
-                              ? 'Select channels for send + print (SMS, WhatsApp, Email, Print).'
-                              : 'Select which channels staff can choose from.';
-                        return (
-                        <FormItem>
-                          <div className="mb-2">
-                            <FormLabel>Enabled channels</FormLabel>
-                            <FormDescription>
-                              {channelDescription}
-                            </FormDescription>
-                          </div>
-                          <div className="flex flex-wrap gap-4">
-                            {selectableChannels.map((item) => (
-                              <div key={item.id} className="flex items-center space-x-2">
-                                <Checkbox
-                                  id={`channel-${item.id}`}
-                                  checked={field.value?.includes(item.id)}
-                                  disabled={mode === 'auto_print'}
-                                  onCheckedChange={(checked) => {
-                                    const next = checked
-                                      ? [...(field.value || []), item.id]
-                                      : (field.value || []).filter((c) => c !== item.id);
-                                    field.onChange(next);
-                                  }}
-                                />
-                                <Label htmlFor={`channel-${item.id}`} className="font-normal cursor-pointer">
-                                  {item.label}
-                                </Label>
-                              </div>
-                            ))}
-                          </div>
-                          <FormMessage />
-                        </FormItem>
-                      );
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <p className="text-sm font-semibold mb-1">Print</p>
-                <p className="text-xs text-muted-foreground mb-4">
-                  Receipt and invoice print layout. Thermal printers use black and white, no logo, small font.
-                </p>
-                <div className="space-y-4">
-                  <div className="rounded-lg border border-border p-3">
-                    <FormField
-                      control={posConfigForm.control}
-                      name="print.format"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Format</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value}>
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select format" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value="a4">A4 (full page)</SelectItem>
-                              <SelectItem value="thermal_58">58mm Thermal</SelectItem>
-                              <SelectItem value="thermal_80">80mm Thermal</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <FormDescription>
-                            58mm/80mm: black and white, no logo, small font for thermal receipt printers
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <p className="text-sm font-semibold mb-1">Customer at checkout</p>
-                <p className="text-xs text-muted-foreground mb-4">
-                  Require customer details before completing checkout.
-                </p>
-                <div className="space-y-4">
-                  <FormField
-                    control={posConfigForm.control}
-                    name="customer.phoneRequired"
-                    render={({ field }) => (
-                      <FormItem className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-                        <div className="space-y-0.5">
-                          <FormLabel className="text-base">Require phone number</FormLabel>
-                          <FormDescription>
-                            Block checkout until customer phone is provided
-                          </FormDescription>
-                        </div>
-                        <FormControl>
-                          <Switch
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                          />
-                        </FormControl>
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={posConfigForm.control}
-                    name="customer.nameRequired"
-                    render={({ field }) => (
-                      <FormItem className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-                        <div className="space-y-0.5">
-                          <FormLabel className="text-base">Require customer name</FormLabel>
-                          <FormDescription>
-                            Block checkout until customer name is provided
-                          </FormDescription>
-                        </div>
-                        <FormControl>
-                          <Switch
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                          />
-                        </FormControl>
-                      </FormItem>
-                    )}
-                  />
-                </div>
-              </div>
-
-              <div>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
-                  <div>
-                    <p className="text-sm font-semibold mb-1">Delivery Settings</p>
-                    <p className="text-xs text-muted-foreground">
-                      Configure delivery availability and fee bands for POS checkout.
-                    </p>
-                  </div>
-                  {!loadingDeliverySettings && !deliverySettingsEditing && (
-                    <Button
-                      type="button"
-                      variant="secondaryStroke"
-                      size="sm"
-                      onClick={() => {
-                        handleResetDeliveryDraft();
-                        setDeliverySettingsEditing(true);
-                      }}
-                    >
-                      Edit Delivery
-                    </Button>
-                  )}
-                </div>
-                {loadingDeliverySettings ? (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground rounded-lg border border-border p-3">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Loading delivery settings...
-                  </div>
-                ) : deliverySettingsEditing ? (
-                  <div className="space-y-4">
-                    <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-                      <div className="space-y-0.5">
-                        <Label className="text-base">Enable delivery</Label>
-                        <p className="text-xs text-muted-foreground">
-                          Allow staff to add a delivery fee during POS checkout.
-                        </p>
-                      </div>
-                      <Switch
-                        checked={deliveryDraft.enabled}
-                        onCheckedChange={(checked) => handleDeliveryDraftChange(
-                          checked
-                            ? { enabled: true }
-                            : { enabled: false, requireSelectionAtCheckout: false }
-                        )}
-                      />
-                    </div>
-                    <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-                      <div className="space-y-0.5">
-                        <Label className="text-base">Require selection at checkout</Label>
-                        <p className="text-xs text-muted-foreground">
-                          Require staff to select a delivery band before completing a sale.
-                        </p>
-                      </div>
-                      <Switch
-                        checked={deliveryDraft.requireSelectionAtCheckout}
-                        onCheckedChange={(checked) => handleDeliveryDraftChange({ requireSelectionAtCheckout: checked })}
-                        disabled={!deliveryDraft.enabled}
-                      />
-                    </div>
-                    <div className="rounded-lg border border-border p-3">
-                      <div className="flex items-center justify-between gap-3 mb-3">
-                        <div>
-                          <Label className="text-base">Delivery bands</Label>
-                          <p className="text-xs text-muted-foreground">
-                            Set distance ranges and fees in GHS.
-                          </p>
-                        </div>
-                        <Button type="button" variant="secondaryStroke" size="sm" onClick={handleAddDeliveryBand}>
-                          <Plus className="h-4 w-4 mr-1" />
-                          Add band
-                        </Button>
-                      </div>
-                      <div className="space-y-3">
-                        {(deliveryDraft.bands || []).length === 0 ? (
-                          <p className="text-sm text-muted-foreground rounded-lg border border-dashed border-border p-3">
-                            No delivery bands yet.
-                          </p>
-                        ) : (
-                          deliveryDraft.bands.map((band) => (
-                            <div key={band.id} className="grid grid-cols-1 md:grid-cols-12 gap-3 rounded-lg border border-border p-3">
-                              <div className="md:col-span-4">
-                                <Label className="text-xs text-muted-foreground">Label</Label>
-                                <Input
-                                  value={band.label}
-                                  onChange={(event) => handleDeliveryBandChange(band.id, 'label', event.target.value)}
-                                  placeholder="Nearby"
-                                  className="mt-1"
-                                />
-                              </div>
-                              <div className="md:col-span-2">
-                                <Label className="text-xs text-muted-foreground">Min km</Label>
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={band.minKm}
-                                  onChange={(event) => handleDeliveryBandChange(band.id, 'minKm', event.target.value)}
-                                  placeholder="0"
-                                  className="mt-1"
-                                />
-                              </div>
-                              <div className="md:col-span-2">
-                                <Label className="text-xs text-muted-foreground">Max km</Label>
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={band.maxKm}
-                                  onChange={(event) => handleDeliveryBandChange(band.id, 'maxKm', event.target.value)}
-                                  placeholder="5"
-                                  className="mt-1"
-                                />
-                              </div>
-                              <div className="md:col-span-3">
-                                <Label className="text-xs text-muted-foreground">Fee (GHS)</Label>
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={band.fee}
-                                  onChange={(event) => handleDeliveryBandChange(band.id, 'fee', event.target.value)}
-                                  placeholder="12.50"
-                                  className="mt-1"
-                                />
-                              </div>
-                              <div className="md:col-span-1 flex md:items-end">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="icon"
-                                  className="h-10 w-10 text-red-600 hover:text-red-700"
-                                  onClick={() => handleRemoveDeliveryBand(band.id)}
-                                  aria-label="Remove delivery band"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => {
-                          handleResetDeliveryDraft();
-                          setDeliverySettingsEditing(false);
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        type="button"
-                        className="bg-[#166534] hover:bg-[#14532d]"
-                        loading={updateDeliverySettingsMutation.isPending || updateDeliverySettingsMutation.isLoading}
-                        onClick={handleSaveDeliverySettings}
-                      >
-                        Save Delivery Settings
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-                      <div className="space-y-0.5">
-                        <Label className="text-base">Enable delivery</Label>
-                        <p className="text-xs text-muted-foreground">Allow delivery fees during checkout.</p>
-                      </div>
-                      <span className="text-sm font-medium shrink-0">{deliverySettings.enabled ? 'Yes' : 'No'}</span>
-                    </div>
-                    <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-                      <div className="space-y-0.5">
-                        <Label className="text-base">Require selection at checkout</Label>
-                        <p className="text-xs text-muted-foreground">Require staff to pick a delivery band before sale completion.</p>
-                      </div>
-                      <span className="text-sm font-medium shrink-0">{deliverySettings.requireSelectionAtCheckout ? 'Yes' : 'No'}</span>
-                    </div>
-                    <div className="rounded-lg border border-border p-3">
-                      <Label className="text-base">Delivery bands</Label>
-                      <div className="mt-3 space-y-2">
-                        {(deliverySettings.bands || []).length === 0 ? (
-                          <p className="text-sm text-muted-foreground">No delivery bands configured.</p>
-                        ) : (
-                          deliverySettings.bands.map((band) => (
-                            <div key={band.id} className="flex flex-col gap-1 rounded-lg border border-border p-3 sm:flex-row sm:items-center sm:justify-between">
-                              <div>
-                                <p className="text-sm font-medium text-foreground">{band.label}</p>
-                                <p className="text-xs text-muted-foreground">{band.minKm} km - {band.maxKm} km</p>
-                              </div>
-                              <span className="text-sm font-semibold text-[#166534]">GHS {Number(band.fee || 0).toFixed(2)}</span>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <Alert>
-                <AlertDescription>
-                  For SMS, WhatsApp, or Email receipts, configure those channels under Settings → Integration.
-                </AlertDescription>
-              </Alert>
-
-              <div className="flex justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    const cfg = configData;
-                    if (cfg) {
-                      const mode = cfg.receipt?.mode || 'ask';
-                      let channels = cfg.receipt?.channels || ['sms', 'print'];
-                      if (mode === 'auto_print') channels = ['print'];
-                      else if (mode === 'auto_send') {
-                        channels = channels.filter((c) => ['sms', 'whatsapp', 'email'].includes(c));
-                        if (channels.length === 0) channels = ['sms'];
-                      }
-                      posConfigForm.reset({
-                        receipt: { mode, channels },
-                        print: { format: cfg.print?.format || 'a4', showLogo: cfg.print?.showLogo !== false, color: cfg.print?.color !== false, fontSize: cfg.print?.fontSize || 'normal' },
-                        customer: { phoneRequired: cfg.customer?.phoneRequired || false, nameRequired: cfg.customer?.nameRequired || false },
-                      });
-                    }
-                    setPosConfigEditing(false);
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit" loading={updatePOSConfigMutation.isLoading}>
-                  Save Configuration
-                </Button>
-              </div>
-            </form>
-          </Form>
-          ) : (
-          <div className="space-y-6 md:space-y-8">
-            <div>
-              <p className="text-sm font-semibold mb-1">Receipt delivery</p>
-              <p className="text-xs text-muted-foreground mb-4">
-                How receipts are sent or printed after each completed sale.
-              </p>
-              <div className="space-y-4">
-                <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-                  <div className="space-y-0.5">
-                    <Label className="text-base">After sale</Label>
-                    <p className="text-xs text-muted-foreground">
-                      What happens when a sale completes at the register or checkout.
-                    </p>
-                  </div>
-                  <span className="text-sm font-medium shrink-0 text-right">
-                    {modeLabels[configData?.receipt?.mode] || configData?.receipt?.mode || '—'}
-                  </span>
-                </div>
-                <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-                  <div className="space-y-0.5">
-                    <Label className="text-base">Enabled channels</Label>
-                    <p className="text-xs text-muted-foreground">
-                      Channels staff can use or that run automatically, depending on the mode above.
-                    </p>
-                  </div>
-                  <span className="text-sm font-medium shrink-0 text-right max-w-[45%] break-words">
-                    {(configData?.receipt?.channels || []).map((c) => channelLabels[c] || c).join(', ') || '—'}
-                  </span>
-                </div>
-              </div>
+          {loadingDeliverySettings ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground rounded-lg border border-border p-3">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading delivery settings...
             </div>
-            <div>
-              <p className="text-sm font-semibold mb-1">Print</p>
-              <p className="text-xs text-muted-foreground mb-4">
-                Layout for printed receipts and invoices from POS or checkout.
-              </p>
-              <div className="space-y-4">
-                <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-                  <div className="space-y-0.5">
-                    <Label className="text-base">Format</Label>
-                    <p className="text-xs text-muted-foreground">
-                      Page or roll width used when printing receipts and invoices.
-                    </p>
-                  </div>
-                  <span className="text-sm font-medium shrink-0 text-right">
-                    {formatLabels[configData?.print?.format] || configData?.print?.format || '—'}
-                  </span>
-                </div>
-              </div>
-            </div>
-            <div>
-              <p className="text-sm font-semibold mb-1">Customer at checkout</p>
-              <p className="text-xs text-muted-foreground mb-4">
-                Whether customers must provide contact details before completing checkout.
-              </p>
-              <div className="space-y-4">
-                <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-                  <div className="space-y-0.5">
-                    <Label className="text-base">Require phone number</Label>
-                    <p className="text-xs text-muted-foreground">
-                      Block checkout until a phone number is entered for the customer.
-                    </p>
-                  </div>
-                  <span className="text-sm font-medium shrink-0">{configData?.customer?.phoneRequired ? 'Yes' : 'No'}</span>
-                </div>
-                <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-                  <div className="space-y-0.5">
-                    <Label className="text-base">Require customer name</Label>
-                    <p className="text-xs text-muted-foreground">
-                      Block checkout until a name is entered for the customer.
-                    </p>
-                  </div>
-                  <span className="text-sm font-medium shrink-0">{configData?.customer?.nameRequired ? 'Yes' : 'No'}</span>
-                </div>
-              </div>
-            </div>
-            <div>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
-                <div>
-                  <p className="text-sm font-semibold mb-1">Delivery Settings</p>
+          ) : deliverySettingsEditing ? (
+            <div className="space-y-4">
+              <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
+                <div className="space-y-0.5">
+                  <Label className="text-base">Enable delivery</Label>
                   <p className="text-xs text-muted-foreground">
-                    Delivery availability and fee bands for POS checkout.
+                    Allow staff to add a delivery fee during POS checkout.
                   </p>
                 </div>
-                {!loadingDeliverySettings && (
-                  <Button
-                    type="button"
-                    variant="secondaryStroke"
-                    size="sm"
-                    onClick={() => {
-                      handleResetDeliveryDraft();
-                      setDeliverySettingsEditing(true);
-                    }}
-                  >
-                    Edit Delivery
-                  </Button>
-                )}
+                <Switch
+                  checked={deliveryDraft.enabled}
+                  onCheckedChange={(checked) => handleDeliveryDraftChange(
+                    checked
+                      ? { enabled: true }
+                      : { enabled: false, requireSelectionAtCheckout: false }
+                  )}
+                />
               </div>
-              {loadingDeliverySettings ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground rounded-lg border border-border p-3">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading delivery settings...
+              <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
+                <div className="space-y-0.5">
+                  <Label className="text-base">Require selection at checkout</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Require staff to select a delivery band before completing a sale.
+                  </p>
                 </div>
-              ) : deliverySettingsEditing ? (
-                <div className="space-y-4">
-                  <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-                    <div className="space-y-0.5">
-                      <Label className="text-base">Enable delivery</Label>
-                      <p className="text-xs text-muted-foreground">
-                        Allow staff to add a delivery fee during POS checkout.
-                      </p>
-                    </div>
-                    <Switch
-                      checked={deliveryDraft.enabled}
-                      onCheckedChange={(checked) => handleDeliveryDraftChange(
-                        checked
-                          ? { enabled: true }
-                          : { enabled: false, requireSelectionAtCheckout: false }
-                      )}
-                    />
-                  </div>
-                  <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-                    <div className="space-y-0.5">
-                      <Label className="text-base">Require selection at checkout</Label>
-                      <p className="text-xs text-muted-foreground">
-                        Require staff to select a delivery band before completing a sale.
-                      </p>
-                    </div>
-                    <Switch
-                      checked={deliveryDraft.requireSelectionAtCheckout}
-                      onCheckedChange={(checked) => handleDeliveryDraftChange({ requireSelectionAtCheckout: checked })}
-                      disabled={!deliveryDraft.enabled}
-                    />
-                  </div>
-                  <div className="rounded-lg border border-border p-3">
-                    <div className="flex items-center justify-between gap-3 mb-3">
-                      <div>
-                        <Label className="text-base">Delivery bands</Label>
-                        <p className="text-xs text-muted-foreground">Set distance ranges and fees in GHS.</p>
-                      </div>
-                      <Button type="button" variant="secondaryStroke" size="sm" onClick={handleAddDeliveryBand}>
-                        <Plus className="h-4 w-4 mr-1" />
-                        Add band
-                      </Button>
-                    </div>
-                    <div className="space-y-3">
-                      {(deliveryDraft.bands || []).length === 0 ? (
-                        <p className="text-sm text-muted-foreground rounded-lg border border-dashed border-border p-3">
-                          No delivery bands yet.
-                        </p>
-                      ) : (
-                        deliveryDraft.bands.map((band) => (
-                          <div key={band.id} className="grid grid-cols-1 md:grid-cols-12 gap-3 rounded-lg border border-border p-3">
-                            <div className="md:col-span-4">
-                              <Label className="text-xs text-muted-foreground">Label</Label>
-                              <Input value={band.label} onChange={(event) => handleDeliveryBandChange(band.id, 'label', event.target.value)} placeholder="Nearby" className="mt-1" />
-                            </div>
-                            <div className="md:col-span-2">
-                              <Label className="text-xs text-muted-foreground">Min km</Label>
-                              <Input type="number" min="0" step="0.01" value={band.minKm} onChange={(event) => handleDeliveryBandChange(band.id, 'minKm', event.target.value)} placeholder="0" className="mt-1" />
-                            </div>
-                            <div className="md:col-span-2">
-                              <Label className="text-xs text-muted-foreground">Max km</Label>
-                              <Input type="number" min="0" step="0.01" value={band.maxKm} onChange={(event) => handleDeliveryBandChange(band.id, 'maxKm', event.target.value)} placeholder="5" className="mt-1" />
-                            </div>
-                            <div className="md:col-span-3">
-                              <Label className="text-xs text-muted-foreground">Fee (GHS)</Label>
-                              <Input type="number" min="0" step="0.01" value={band.fee} onChange={(event) => handleDeliveryBandChange(band.id, 'fee', event.target.value)} placeholder="12.50" className="mt-1" />
-                            </div>
-                            <div className="md:col-span-1 flex md:items-end">
-                              <Button type="button" variant="outline" size="icon" className="h-10 w-10 text-red-600 hover:text-red-700" onClick={() => handleRemoveDeliveryBand(band.id)} aria-label="Remove delivery band">
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex justify-end gap-2">
-                    <Button type="button" variant="outline" onClick={() => { handleResetDeliveryDraft(); setDeliverySettingsEditing(false); }}>
-                      Cancel
-                    </Button>
-                    <Button type="button" className="bg-[#166534] hover:bg-[#14532d]" loading={updateDeliverySettingsMutation.isPending || updateDeliverySettingsMutation.isLoading} onClick={handleSaveDeliverySettings}>
-                      Save Delivery Settings
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-                    <div className="space-y-0.5">
-                      <Label className="text-base">Enable delivery</Label>
-                      <p className="text-xs text-muted-foreground">Allow delivery fees during checkout.</p>
-                    </div>
-                    <span className="text-sm font-medium shrink-0">{deliverySettings.enabled ? 'Yes' : 'No'}</span>
-                  </div>
-                  <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-                    <div className="space-y-0.5">
-                      <Label className="text-base">Require selection at checkout</Label>
-                      <p className="text-xs text-muted-foreground">Require staff to pick a delivery band before sale completion.</p>
-                    </div>
-                    <span className="text-sm font-medium shrink-0">{deliverySettings.requireSelectionAtCheckout ? 'Yes' : 'No'}</span>
-                  </div>
-                  <div className="rounded-lg border border-border p-3">
+                <Switch
+                  checked={deliveryDraft.requireSelectionAtCheckout}
+                  onCheckedChange={(checked) => handleDeliveryDraftChange({ requireSelectionAtCheckout: checked })}
+                  disabled={!deliveryDraft.enabled}
+                />
+              </div>
+              <div className="rounded-lg border border-border p-3">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div>
                     <Label className="text-base">Delivery bands</Label>
-                    <div className="mt-3 space-y-2">
-                      {(deliverySettings.bands || []).length === 0 ? (
-                        <p className="text-sm text-muted-foreground">No delivery bands configured.</p>
-                      ) : (
-                        deliverySettings.bands.map((band) => (
-                          <div key={band.id} className="flex flex-col gap-1 rounded-lg border border-border p-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div>
-                              <p className="text-sm font-medium text-foreground">{band.label}</p>
-                              <p className="text-xs text-muted-foreground">{band.minKm} km - {band.maxKm} km</p>
-                            </div>
-                            <span className="text-sm font-semibold text-[#166534]">GHS {Number(band.fee || 0).toFixed(2)}</span>
-                          </div>
-                        ))
-                      )}
-                    </div>
+                    <p className="text-xs text-muted-foreground">Set distance ranges and fees in GHS.</p>
                   </div>
+                  <Button type="button" variant="secondaryStroke" size="sm" onClick={handleAddDeliveryBand}>
+                    <Plus className="h-4 w-4 mr-1" />
+                    Add band
+                  </Button>
                 </div>
-              )}
+                <div className="space-y-3">
+                  {(deliveryDraft.bands || []).length === 0 ? (
+                    <p className="text-sm text-muted-foreground rounded-lg border border-dashed border-border p-3">
+                      No delivery bands yet.
+                    </p>
+                  ) : (
+                    deliveryDraft.bands.map((band) => (
+                      <div key={band.id} className="grid grid-cols-1 md:grid-cols-12 gap-3 rounded-lg border border-border p-3">
+                        <div className="md:col-span-4">
+                          <Label className="text-xs text-muted-foreground">Label</Label>
+                          <Input value={band.label} onChange={(event) => handleDeliveryBandChange(band.id, 'label', event.target.value)} placeholder="Nearby" className="mt-1" />
+                        </div>
+                        <div className="md:col-span-2">
+                          <Label className="text-xs text-muted-foreground">Min km</Label>
+                          <Input type="number" min="0" step="0.01" value={band.minKm} onChange={(event) => handleDeliveryBandChange(band.id, 'minKm', event.target.value)} placeholder="0" className="mt-1" />
+                        </div>
+                        <div className="md:col-span-2">
+                          <Label className="text-xs text-muted-foreground">Max km</Label>
+                          <Input type="number" min="0" step="0.01" value={band.maxKm} onChange={(event) => handleDeliveryBandChange(band.id, 'maxKm', event.target.value)} placeholder="5" className="mt-1" />
+                        </div>
+                        <div className="md:col-span-3">
+                          <Label className="text-xs text-muted-foreground">Fee (GHS)</Label>
+                          <Input type="number" min="0" step="0.01" value={band.fee} onChange={(event) => handleDeliveryBandChange(band.id, 'fee', event.target.value)} placeholder="12.50" className="mt-1" />
+                        </div>
+                        <div className="md:col-span-1 flex md:items-end">
+                          <Button type="button" variant="outline" size="icon" className="h-10 w-10 text-red-600 hover:text-red-700" onClick={() => handleRemoveDeliveryBand(band.id)} aria-label="Remove delivery band">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="outline" onClick={() => { handleResetDeliveryDraft(); setDeliverySettingsEditing(false); }}>
+                  Cancel
+                </Button>
+                <Button type="button" className="bg-[#166534] hover:bg-[#14532d]" loading={updateDeliverySettingsMutation.isPending || updateDeliverySettingsMutation.isLoading} onClick={handleSaveDeliverySettings}>
+                  Save delivery settings
+                </Button>
+              </div>
             </div>
-            <Alert>
-              <AlertDescription>
-                For SMS, WhatsApp, or Email receipts, configure those channels under Settings → Integration.
-              </AlertDescription>
-            </Alert>
-          </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
+                <div className="space-y-0.5">
+                  <Label className="text-base">Enable delivery</Label>
+                  <p className="text-xs text-muted-foreground">Allow delivery fees during checkout.</p>
+                </div>
+                <span className="text-sm font-medium shrink-0">{deliverySettings.enabled ? 'Yes' : 'No'}</span>
+              </div>
+              <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
+                <div className="space-y-0.5">
+                  <Label className="text-base">Require selection at checkout</Label>
+                  <p className="text-xs text-muted-foreground">Require staff to pick a delivery band before sale completion.</p>
+                </div>
+                <span className="text-sm font-medium shrink-0">{deliverySettings.requireSelectionAtCheckout ? 'Yes' : 'No'}</span>
+              </div>
+              <div className="rounded-lg border border-border p-3">
+                <Label className="text-base">Delivery bands</Label>
+                <div className="mt-3 space-y-2">
+                  {(deliverySettings.bands || []).length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No delivery bands configured.</p>
+                  ) : (
+                    deliverySettings.bands.map((band) => (
+                      <div key={band.id} className="flex flex-col gap-1 rounded-lg border border-border p-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-foreground">{band.label}</p>
+                          <p className="text-xs text-muted-foreground">{band.minKm} km - {band.maxKm} km</p>
+                        </div>
+                        <span className="text-sm font-semibold text-[#166534]">GHS {Number(band.fee || 0).toFixed(2)}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
           )}
         </div>
       </CardContent>
@@ -6125,7 +5280,7 @@ const Settings = () => {
         <Alert variant="destructive" className="py-2 px-3 md:py-4 md:px-4">
           <AlertTitle>Access Restricted</AlertTitle>
           <AlertDescription>
-            You need admin or manager permissions to change configurations and POS settings.
+            You need admin or manager permissions to change operations settings.
           </AlertDescription>
         </Alert>
       </CardContent>
@@ -7123,15 +6278,7 @@ const Settings = () => {
           return;
         }
         setActiveTab(key);
-        if (key === 'messaging') {
-          const currentSubtab = searchParams.get('subtab') || integrationSubTab || 'whatsapp';
-          setSearchParams({ tab: 'messaging', subtab: currentSubtab });
-        } else if (key === PAYMENT_COLLECTION_TAB) {
-          const currentSubtab = searchParams.get('subtab') || paymentsSubTab || 'settlements';
-          setSearchParams(buildPaymentCollectionParams(currentSubtab));
-        } else {
-          setSearchParams({ tab: key });
-        }
+        setSearchParams({ tab: key });
       }}>
         {isMobile ? (
           <Select value={activeTab} onValueChange={(key) => {
@@ -7141,37 +6288,24 @@ const Settings = () => {
               return;
             }
             setActiveTab(key);
-            if (key === 'messaging') {
-              const currentSubtab = searchParams.get('subtab') || integrationSubTab || 'whatsapp';
-              setSearchParams({ tab: 'messaging', subtab: currentSubtab });
-            } else if (key === PAYMENT_COLLECTION_TAB) {
-              const currentSubtab = searchParams.get('subtab') || paymentsSubTab || 'settlements';
-              setSearchParams(buildPaymentCollectionParams(currentSubtab));
-            } else {
-              setSearchParams({ tab: key });
-            }
+            setSearchParams({ tab: key });
           }}>
             <SelectTrigger className="w-full mb-3 md:mb-4">
               <SelectValue placeholder="Select section" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="profile">Profile</SelectItem>
               {canManageOrganization && (
                 <>
                   <SelectItem value="workspace">Workspace</SelectItem>
                   <SelectItem value="operations">Operations</SelectItem>
                   <SelectItem value="billing">Billing</SelectItem>
-                  <SelectItem value={PAYMENT_COLLECTION_TAB}>Payment collections</SelectItem>
-                  <SelectItem value="messaging">Messaging</SelectItem>
+                  <SelectItem value="notifications">Notifications</SelectItem>
                 </>
               )}
             </SelectContent>
           </Select>
         ) : (
           <TabsList className="w-full mb-3 md:mb-4 h-auto flex items-center justify-start gap-1 overflow-x-auto whitespace-nowrap">
-            <TabsTrigger value="profile" className="text-xs md:text-sm shrink-0">
-              Profile
-            </TabsTrigger>
             {canManageOrganization && (
               <>
                 <TabsTrigger value="workspace" className="text-xs md:text-sm shrink-0">
@@ -7183,22 +6317,13 @@ const Settings = () => {
                 <TabsTrigger value="billing" className="text-xs md:text-sm shrink-0">
                   Billing
                 </TabsTrigger>
-                <TabsTrigger value={PAYMENT_COLLECTION_TAB} className="text-xs md:text-sm shrink-0">
-                  Payment collections
-                </TabsTrigger>
-                <TabsTrigger value="messaging" className="text-xs md:text-sm shrink-0">
-                  Messaging
+                <TabsTrigger value="notifications" className="text-xs md:text-sm shrink-0">
+                  Notifications
                 </TabsTrigger>
               </>
             )}
           </TabsList>
         )}
-        <TabsContent value="profile">
-          <div className="space-y-4 md:space-y-6">
-            {profileTab}
-            {!canManageOrganization && appearanceTab}
-          </div>
-        </TabsContent>
         <TabsContent value="workspace">
           <div className="space-y-4 md:space-y-6">
             {canManageOrganization && jobInvoiceData?.customerJobTrackingEnabled === true && publicTrackingUrl ? (
@@ -7245,7 +6370,11 @@ const Settings = () => {
                 organizationName={organizationRecord?.name || activeTenant?.name}
               />
             ) : null}
-            {appearanceTab}
+          </div>
+        </TabsContent>
+        <TabsContent value="notifications">
+          <div className="space-y-4 md:space-y-6">
+            {notificationsTab}
           </div>
         </TabsContent>
         <TabsContent value="operations">
@@ -7257,30 +6386,6 @@ const Settings = () => {
         <TabsContent value="billing">
           <div className="space-y-4 md:space-y-6">
             {subscriptionTab}
-          </div>
-        </TabsContent>
-        <TabsContent value={PAYMENT_COLLECTION_TAB}>
-          <div className="space-y-4 md:space-y-6">
-            {safeReturnTo ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="w-full sm:w-auto"
-                onClick={() => navigate(safeReturnTo)}
-              >
-                <ChevronLeft className="mr-2 h-4 w-4" />
-                Back to store setup
-              </Button>
-            ) : null}
-            {paymentsTab}
-          </div>
-        </TabsContent>
-        <TabsContent value="messaging">
-          <div className="space-y-4 md:space-y-6">
-            {deliveryRulesTab}
-            {notificationsTab}
-            {integrationTab}
           </div>
         </TabsContent>
       </Tabs>

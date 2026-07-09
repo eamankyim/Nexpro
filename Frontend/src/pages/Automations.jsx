@@ -54,14 +54,17 @@ import {
   actionRowsFromConfig,
   buildRulePayloadFromForm,
   buildTestContextFromForm,
+  buildTestRecipientContext,
   conditionFormFromConfig,
   defaultActionFormRow,
   defaultTriggerForm,
   mergeTriggerForm,
   parseJsonObject,
+  ruleHasMessagingActions,
   triggerLabel,
 } from '../utils/automationForm';
 import { handleApiError, showError, showSuccess } from '../utils/toast';
+import AutomationTestRecipientDialog from '../components/automations/AutomationTestRecipientDialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -2303,7 +2306,11 @@ function AutomationCreationModal({
                       <div>
                         <p className="text-sm font-semibold text-slate-950">Test with a sample record</p>
                         <p className="text-xs text-slate-500">
-                          {editingRuleId ? 'We will simulate the trigger and run all actions.' : 'We will save a disabled draft first, then run the test.'}
+                          {ruleHasMessagingActions(builder.actionRows)
+                            ? 'Choose a real recipient when testing SMS, WhatsApp, or email actions.'
+                            : editingRuleId
+                              ? 'We will simulate the trigger and run all actions.'
+                              : 'We will save a disabled draft first, then run the test.'}
                         </p>
                       </div>
                       <Button type="button" variant="outline" className="bg-white" disabled={isSaving || isPreparingTest || testMutation.isPending || !builder.name.trim()} onClick={handleRunTest}>
@@ -2644,6 +2651,8 @@ export default function Automations() {
   const [aiDraftMetadata, setAiDraftMetadata] = useState(null);
   const [viewingRuleId, setViewingRuleId] = useState('');
   const [isPreparingTest, setIsPreparingTest] = useState(false);
+  const [testRecipientDialogOpen, setTestRecipientDialogOpen] = useState(false);
+  const [pendingTestRun, setPendingTestRun] = useState(null);
   useEffect(() => {
     if (useJsonOverride) setAdvancedOpen(true);
   }, [useJsonOverride]);
@@ -3633,6 +3642,17 @@ export default function Automations() {
 
   const handleViewRuleTest = useCallback(
     (rule) => {
+      const actionRows = actionRowsFromConfig(rule.actionConfig);
+      if (ruleHasMessagingActions(actionRows)) {
+        setPendingTestRun({
+          source: 'rule',
+          ruleId: rule.id,
+          actionRows,
+          baseContext: {},
+        });
+        setTestRecipientDialogOpen(true);
+        return;
+      }
       testMutation.mutate(rule.id);
     },
     [testMutation]
@@ -3829,6 +3849,17 @@ export default function Automations() {
       actionRows: builder.actionRows,
     });
 
+    if (ruleHasMessagingActions(builder.actionRows)) {
+      setPendingTestRun({
+        source: 'builder',
+        editingRuleId,
+        actionRows: builder.actionRows,
+        baseContext: triggerContext,
+      });
+      setTestRecipientDialogOpen(true);
+      return;
+    }
+
     if (editingRuleId) {
       testMutation.mutate({ id: editingRuleId, triggerContext });
       return;
@@ -3861,6 +3892,62 @@ export default function Automations() {
     }
   }, [buildAutomationPayloadFromCurrentForm, builder, editingRuleId, queryClient, testMutation]);
 
+  const executePendingTestRun = useCallback(async (recipient) => {
+    if (!pendingTestRun) return;
+
+    const recipientContext = buildTestRecipientContext(pendingTestRun.baseContext || {}, recipient);
+
+    try {
+      if (pendingTestRun.source === 'builder') {
+        if (pendingTestRun.editingRuleId) {
+          testMutation.mutate({ id: pendingTestRun.editingRuleId, triggerContext: recipientContext });
+          return;
+        }
+
+        let payload;
+        try {
+          payload = buildAutomationPayloadFromCurrentForm(false);
+        } catch (error) {
+          showError(error instanceof Error ? error.message : 'Invalid automation rule');
+          return;
+        }
+
+        setIsPreparingTest(true);
+        let createdRuleId = '';
+        try {
+          const response = await automationService.createRule(payload);
+          const createdRule = response?.data || {};
+          createdRuleId = createdRule.id || '';
+          if (!createdRuleId) {
+            throw new Error('Draft saved but no automation ID was returned.');
+          }
+          setEditingRuleId(createdRuleId);
+          queryClient.invalidateQueries({ queryKey: ['automations', 'rules'] });
+          showSuccess('Automation draft saved. Running test.');
+        } catch (error) {
+          handleApiError(error, { context: 'Save automation draft for test' });
+          return;
+        } finally {
+          setIsPreparingTest(false);
+        }
+
+        try {
+          await testMutation.mutateAsync({ id: createdRuleId, triggerContext: recipientContext });
+        } catch {
+          // onError handles the user-facing toast.
+        }
+        return;
+      }
+
+      if (pendingTestRun.source === 'rule') {
+        testMutation.mutate({ id: pendingTestRun.ruleId, triggerContext: recipientContext });
+      }
+    } finally {
+      setTestRecipientDialogOpen(false);
+      setPendingTestRun(null);
+    }
+  }, [pendingTestRun, buildAutomationPayloadFromCurrentForm, queryClient, testMutation]);
+
   const selectedTriggerMeta = useMemo(
     () => TRIGGER_OPTIONS.find((o) => o.value === builder.triggerType),
     [builder.triggerType]
@@ -3879,6 +3966,16 @@ export default function Automations() {
 
   return (
     <div className="w-full space-y-5 md:space-y-6">
+      <AutomationTestRecipientDialog
+        open={testRecipientDialogOpen}
+        onOpenChange={(open) => {
+          setTestRecipientDialogOpen(open);
+          if (!open) setPendingTestRun(null);
+        }}
+        actionRows={pendingTestRun?.actionRows || []}
+        isSubmitting={testMutation.isPending || isPreparingTest}
+        onConfirm={executePendingTestRun}
+      />
       <AutomationCreationModal
         open={builderModalOpen}
         onOpenChange={setBuilderModalOpen}

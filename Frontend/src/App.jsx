@@ -59,7 +59,15 @@ const Equipment = lazy(() => import('./pages/Equipment'));
 const Leads = lazy(() => import('./pages/Leads'));
 const Users = lazy(() => import('./pages/Users'));
 const Profile = lazy(() => import('./pages/Profile'));
-const Settings = lazy(() => import('./pages/Settings'));
+const SettingsIndex = lazy(() => import('./pages/settings/SettingsIndex'));
+const SettingsProfilePage = lazy(() => import('./pages/settings/SettingsProfilePage'));
+const SettingsAppearancePage = lazy(() => import('./pages/settings/SettingsAppearancePage'));
+const SettingsSmsPage = lazy(() => import('./pages/settings/SettingsSmsPage'));
+const SettingsInvoicesReceiptsPage = lazy(() => import('./pages/settings/SettingsInvoicesReceiptsPage'));
+const SettingsPaymentsPage = lazy(() => import('./pages/settings/SettingsPaymentsPage'));
+const SettingsWhatsAppPage = lazy(() => import('./pages/settings/SettingsWhatsAppPage'));
+const SettingsEmailPage = lazy(() => import('./pages/settings/SettingsEmailPage'));
+const SettingsDeliveryRulesPage = lazy(() => import('./pages/settings/SettingsDeliveryRulesPage'));
 const Plans = lazy(() => import('./pages/Plans'));
 const Employees = lazy(() => import('./pages/Employees'));
 const Payroll = lazy(() => import('./pages/Payroll'));
@@ -334,7 +342,17 @@ function AppContent() {
             <Route path="prescriptions" element={<FeatureRoute featureKey="pharmacyOps"><Prescriptions /></FeatureRoute>} />
             <Route path="users" element={<FeatureRoute featureKey="roleManagement"><RequireWorkspaceManager><Users /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="profile" element={<Profile />} />
-            <Route path="settings" element={<Settings />} />
+            <Route path="settings">
+              <Route index element={<SettingsIndex />} />
+              <Route path="profile" element={<SettingsProfilePage />} />
+              <Route path="appearance" element={<SettingsAppearancePage />} />
+              <Route path="sms" element={<RequireWorkspaceManager><SettingsSmsPage /></RequireWorkspaceManager>} />
+              <Route path="invoices-receipts" element={<RequireWorkspaceManager><SettingsInvoicesReceiptsPage /></RequireWorkspaceManager>} />
+              <Route path="payments" element={<RequireWorkspaceManager><SettingsPaymentsPage /></RequireWorkspaceManager>} />
+              <Route path="whatsapp" element={<RequireWorkspaceManager><SettingsWhatsAppPage /></RequireWorkspaceManager>} />
+              <Route path="email" element={<RequireWorkspaceManager><SettingsEmailPage /></RequireWorkspaceManager>} />
+              <Route path="delivery-rules" element={<RequireWorkspaceManager><SettingsDeliveryRulesPage /></RequireWorkspaceManager>} />
+            </Route>
             <Route path="plans" element={<RequireWorkspaceManager><Plans /></RequireWorkspaceManager>} />
             <Route path="checkout" element={<RequireWorkspaceManager><Checkout /></RequireWorkspaceManager>} />
           </Route>
