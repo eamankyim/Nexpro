@@ -89,6 +89,12 @@ const testPlatformSmsSettings = async (payload) =>
 
 const getSystemHealth = async () => api.get('/admin/health');
 
+const getAutomationsOverview = async (params = {}) =>
+  api.get('/admin/automations/overview', { params });
+
+const getMessagingUsage = async (params = {}) =>
+  api.get('/admin/messaging/usage', { params });
+
 const getPlatformAdmins = async () => api.get('/platform-admins');
 
 /** Roles offered when inviting a platform admin */
@@ -260,6 +266,8 @@ export default {
   testPlatformEmailSettings,
   testPlatformSmsSettings,
   getSystemHealth,
+  getAutomationsOverview,
+  getMessagingUsage,
   getPlatformAdmins,
   getPlatformAdminInviteRoles,
   invitePlatformAdmin,

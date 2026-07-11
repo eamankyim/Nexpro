@@ -266,6 +266,9 @@ const migrate = async () => {
     const addSupportPermissions = require('./add-support-permissions');
     await addSupportPermissions();
 
+    const addAutomationsPermission = require('./add-automations-permission-to-platform-admin');
+    await addAutomationsPermission();
+
     // Automations V1 tables
     await createAutomationsTables.up({ closeConnection: false });
 

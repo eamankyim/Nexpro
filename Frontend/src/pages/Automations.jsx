@@ -4593,36 +4593,6 @@ export default function Automations() {
               </Card>
             </div>
           </div>
-
-          <Card style={CARD_BORDER} className="rounded-2xl bg-emerald-50/30">
-            <CardContent className="grid gap-4 p-4 lg:grid-cols-[minmax(0,220px)_1fr_auto] lg:items-center">
-              <div>
-                <p className="text-sm font-semibold text-emerald-800">Save time with AI</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Describe what you want to automate and let AI build it for you.
-                </p>
-              </div>
-              <Input
-                value={aiInstruction}
-                onChange={(e) => setAiInstruction(e.target.value)}
-                placeholder="Example: Send a WhatsApp reminder when an invoice is overdue by 2 days"
-                className="bg-background"
-              />
-              <Button
-                type="button"
-                className="bg-brand hover:bg-brand-dark"
-                onClick={() => draftMutation.mutate(aiInstruction.trim())}
-                disabled={!aiInstruction.trim() || draftMutation.isPending}
-              >
-                {draftMutation.isPending ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-                ) : (
-                  <Sparkles className="mr-2 h-4 w-4" aria-hidden />
-                )}
-                Generate with AI
-              </Button>
-            </CardContent>
-          </Card>
         </TabsContent>
 
         <TabsContent value="rules" className="mt-5 space-y-5">

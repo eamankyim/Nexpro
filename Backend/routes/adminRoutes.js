@@ -95,6 +95,10 @@ const {
   getTenantSettings,
   updateTenantSettings,
 } = require('../controllers/adminTenantSettingsController');
+const {
+  getAdminAutomationsOverview,
+  getAdminMessagingUsage,
+} = require('../controllers/adminAutomationsController');
 
 const router = express.Router();
 
@@ -352,6 +356,20 @@ router.get('/billing/tenants', requirePlatformAdminPermission('billing.view'), g
  *         description: Uptime, database status, and recent alerts.
  */
 router.get('/health', requirePlatformAdminPermission('health.view'), getSystemHealth);
+
+/**
+ * Automations & Messaging observability (cross-tenant, privacy-safe)
+ */
+router.get(
+  '/automations/overview',
+  requirePlatformAdminPermission('automations.view'),
+  getAdminAutomationsOverview
+);
+router.get(
+  '/messaging/usage',
+  requirePlatformAdminPermission('automations.view'),
+  getAdminMessagingUsage
+);
 
 /**
  * Platform-wide report endpoints (aggregate across all tenants)
