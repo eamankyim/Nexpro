@@ -78,6 +78,12 @@ const SettingsInvoicesReceiptsSection = () => {
           <CardTitle className="text-base md:text-2xl">Auto-send to customers</CardTitle>
           <CardDescription className="text-xs md:text-sm">
             When to automatically notify customers via Email, WhatsApp, or SMS (using your configured channels).
+            {' '}
+            <a href="/automations" className="text-[#166534] underline underline-offset-2">
+              Managed in Automations
+            </a>
+            {' '}
+            after migration.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

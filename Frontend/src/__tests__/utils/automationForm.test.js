@@ -1,10 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_ACTION_CONTENT,
+  buildRulePayloadFromForm,
+  buildScheduleConfigFromForm,
+  conditionFormFromConfig,
   defaultActionFormRow,
+  defaultFrequencyForTrigger,
   formatPlaceholderHint,
+  isStickyTrigger,
   prefillActionRow,
   prefillActionRows,
+  scheduleFormFromConfig,
 } from '../../utils/automationForm';
 
 describe('automationForm action prefill', () => {
@@ -61,11 +67,71 @@ describe('automationForm action prefill', () => {
     expect(triggers).toContain('review_request');
     expect(triggers).toContain('job_completed');
     expect(triggers).toContain('daily_sales_summary');
+    expect(triggers).toContain('job_due_in_hours');
     for (const triggerType of triggers) {
-      for (const actionType of ['send_sms', 'send_whatsapp', 'send_email_platform']) {
-        const content = DEFAULT_ACTION_CONTENT[triggerType][actionType];
+      const actions = DEFAULT_ACTION_CONTENT[triggerType];
+      expect(Object.keys(actions).length).toBeGreaterThan(0);
+      for (const [actionType, content] of Object.entries(actions)) {
         expect(content, `${triggerType}/${actionType}`).toBeTruthy();
+      }
+      // job_due_in_hours targets assignees via email/task only
+      if (triggerType !== 'job_due_in_hours') {
+        for (const actionType of ['send_sms', 'send_whatsapp', 'send_email_platform']) {
+          expect(actions[actionType], `${triggerType}/${actionType}`).toBeTruthy();
+        }
       }
     }
   });
 });
+
+describe('automationForm frequency / schedule', () => {
+  it('marks sticky triggers and defaults overdue to weekly', () => {
+    expect(isStickyTrigger('invoice_overdue')).toBe(true);
+    expect(isStickyTrigger('payment_received')).toBe(false);
+    expect(defaultFrequencyForTrigger('invoice_overdue')).toBe('weekly');
+    expect(defaultFrequencyForTrigger('low_stock_detected')).toBe('daily');
+  });
+
+  it('maps frequency form fields to scheduleConfig cooldownHours / maxSends', () => {
+    expect(buildScheduleConfigFromForm({ frequency: 'once' }, 'invoice_overdue')).toEqual({
+      frequency: 'once',
+      maxSends: 1,
+    });
+    expect(buildScheduleConfigFromForm({ frequency: 'daily' }, 'invoice_overdue')).toEqual({
+      frequency: 'daily',
+      cooldownHours: 24,
+    });
+    expect(buildScheduleConfigFromForm({ frequency: 'weekly' }, 'invoice_overdue')).toEqual({
+      frequency: 'weekly',
+      cooldownHours: 168,
+    });
+    expect(buildScheduleConfigFromForm({ frequency: 'monthly' }, 'invoice_overdue')).toEqual({
+      frequency: 'monthly',
+      cooldownHours: 720,
+    });
+    expect(buildScheduleConfigFromForm({ frequency: 'every_n_days', intervalDays: '5' }, 'quote_no_response')).toEqual({
+      frequency: 'every_n_days',
+      intervalDays: 5,
+      cooldownHours: 120,
+    });
+  });
+
+  it('lazily normalizes empty sticky schedule to daily (overdue weekly)', () => {
+    expect(scheduleFormFromConfig({}, 'invoice_overdue').frequency).toBe('daily');
+    expect(scheduleFormFromConfig({}, 'customer_inactive_days').frequency).toBe('daily');
+    expect(conditionFormFromConfig({}, { frequency: 'weekly', cooldownHours: 168 }, 'invoice_overdue').frequency).toBe('weekly');
+    expect(defaultFrequencyForTrigger('invoice_overdue')).toBe('weekly');
+  });
+
+  it('includes scheduleConfig in buildRulePayloadFromForm', () => {
+    const payload = buildRulePayloadFromForm({
+      name: 'Overdue weekly',
+      triggerType: 'invoice_overdue',
+      triggerForm: { daysAfterDue: 1 },
+      conditionForm: { frequency: 'weekly', intervalDays: '1' },
+      actionRows: [{ type: 'send_email_platform', subject: 'Overdue', body: 'Pay now' }],
+    });
+    expect(payload.scheduleConfig).toEqual({ frequency: 'weekly', cooldownHours: 168 });
+  });
+});
+

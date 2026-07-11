@@ -691,16 +691,223 @@ async function sendInvoiceSmsFromTemplate(tenantId, eventKey, invoice, phone, pa
 }
 
 /**
+ * Deliver invoice to customer via built-in channels or automation rules (unified path).
+ * @param {object} params
+ * @returns {Promise<{ emailSent: boolean, smsSent: boolean, emailError: string|null, viaAutomation?: boolean }>}
+ */
+async function deliverInvoiceToCustomer({
+  tenantId,
+  updatedInvoice,
+  paymentLink,
+  userId = null,
+  deliverySource = 'internal_invoice_send',
+  forceCustomerChannels = false,
+  actorUserId = null,
+  prefsSetting = null,
+}) {
+  const {
+    TEMPLATE_KEYS,
+    isCustomerNotificationEffectiveEnabled,
+    shouldUseAutomationInsteadOfBuiltIn,
+  } = require('../services/customerNotificationBridgeService');
+  const { isChannelEnabledForEvent } = require('../services/messageDeliveryRulesService');
+
+  const resolvedPrefs = prefsSetting
+    || await Setting.findOne({ where: { tenantId, key: 'customer-notification-preferences' } });
+  const prefAllows = resolvedPrefs?.value?.autoSendInvoiceToCustomer !== false;
+  const effectiveEnabled = await isCustomerNotificationEffectiveEnabled(tenantId, {
+    settingEnabled: forceCustomerChannels || prefAllows,
+    templateKey: TEMPLATE_KEYS.INVOICE_SENT,
+  });
+
+  const deliveryLogContext = buildInvoiceDeliveryLogContext({
+    tenantId,
+    userId,
+    invoice: updatedInvoice,
+    customer: updatedInvoice?.customer,
+    prefsSetting: resolvedPrefs,
+    forceCustomerChannels,
+    deliverySource,
+  });
+
+  if (!effectiveEnabled) {
+    logInvoiceDelivery('invoice_send_decision', deliveryLogContext, {
+      decision: 'skip_customer_channels',
+      reason: 'auto_send_disabled',
+    });
+    logInvoiceDelivery('invoice_email_skipped', deliveryLogContext, {
+      reason: 'auto_send_disabled',
+    });
+    return { emailSent: false, smsSent: false, emailError: 'Auto-send invoice to customer is disabled' };
+  }
+
+  const useAutomation = await shouldUseAutomationInsteadOfBuiltIn(tenantId, TEMPLATE_KEYS.INVOICE_SENT);
+  logInvoiceDelivery('invoice_send_decision', deliveryLogContext, {
+    decision: useAutomation ? 'send_via_automation' : 'send_customer_channels',
+    reason: useAutomation ? 'automation_rule_enabled' : (forceCustomerChannels && !prefAllows ? 'forced_customer_channels' : 'auto_send_enabled'),
+  });
+
+  if (useAutomation) {
+    await runInvoiceSentAutomations({
+      tenantId,
+      invoice: updatedInvoice,
+      customer: updatedInvoice.customer || null,
+      paymentLink,
+      actorUserId: actorUserId ?? userId ?? null,
+    }).catch((err) =>
+      console.error('[Invoice] invoice_sent automations failed:', err?.message || err)
+    );
+    runHighValueInvoiceAutomations({
+      tenantId,
+      invoice: updatedInvoice,
+      customer: updatedInvoice.customer || null,
+      actorUserId: actorUserId ?? userId ?? null,
+    }).catch((err) =>
+      console.error('[Invoice] high_value_invoice automations failed:', err?.message || err)
+    );
+    return { emailSent: false, smsSent: false, emailError: null, viaAutomation: true };
+  }
+
+  let emailSent = false;
+  let smsSent = false;
+  let emailError = null;
+
+  if (updatedInvoice.customer) {
+    try {
+      const whatsappAllowed = await isChannelEnabledForEvent(tenantId, 'invoice_sent', 'whatsapp');
+      const whatsappService = require('../services/whatsappService');
+      const whatsappTemplates = require('../services/whatsappTemplates');
+      const config = whatsappAllowed ? await whatsappService.getConfig(tenantId) : null;
+      if (config && updatedInvoice.customer.phone) {
+        const phoneNumber = whatsappService.validatePhoneNumber(updatedInvoice.customer.phone);
+        if (phoneNumber) {
+          const parameters = whatsappTemplates.prepareInvoiceNotification(
+            updatedInvoice,
+            updatedInvoice.customer,
+            paymentLink
+          );
+          await whatsappService.sendMessage(
+            tenantId,
+            phoneNumber,
+            'invoice_notification',
+            parameters
+          ).catch(() => {});
+        }
+      }
+    } catch (e) {
+      console.error('[Invoice] deliverInvoiceToCustomer WhatsApp:', e?.message);
+    }
+
+    try {
+      const emailAllowed = await isChannelEnabledForEvent(tenantId, 'invoice_sent', 'email');
+      const emailService = require('../services/emailService');
+      const emailTemplates = require('../services/emailTemplates');
+      if (emailAllowed && updatedInvoice.customer.email) {
+        const company = await companyFromInvoice(updatedInvoice);
+        const invoiceForEmail = { ...updatedInvoice.toJSON(), items: updatedInvoice.items || [] };
+        const { subject, html, text } = emailTemplates.invoiceNotification(
+          invoiceForEmail,
+          updatedInvoice.customer,
+          paymentLink,
+          company
+        );
+        logInvoiceDelivery('invoice_email_attempt', deliveryLogContext, {
+          providerPath: 'emailService.sendMessage',
+        });
+        const emailResult = await emailService.sendMessage(
+          tenantId,
+          updatedInvoice.customer.email,
+          subject,
+          html,
+          text
+        );
+        if (emailResult?.success) {
+          emailSent = true;
+          logInvoiceDelivery('invoice_email_success', deliveryLogContext, {
+            providerPath: 'emailService.sendMessage',
+            messageId: emailResult.messageId || null,
+          });
+        } else {
+          emailError = emailResult?.error || 'unknown error';
+          logInvoiceDelivery('invoice_email_failed', deliveryLogContext, {
+            providerPath: 'emailService.sendMessage',
+            error: emailError,
+          }, 'warn');
+        }
+      } else {
+        emailError = 'Customer email address not available';
+        logInvoiceDelivery('invoice_email_skipped', deliveryLogContext, {
+          reason: updatedInvoice.customer ? 'missing_customer_email' : 'missing_customer',
+        }, 'warn');
+      }
+    } catch (e) {
+      emailError = e?.message || 'unknown error';
+      logInvoiceDelivery('invoice_email_failed', deliveryLogContext, {
+        providerPath: 'emailService.sendMessage',
+        error: emailError,
+      }, 'error');
+    }
+
+    try {
+      const smsAllowed = await isChannelEnabledForEvent(tenantId, 'invoice_sent', 'sms');
+      const smsService = require('../services/smsService');
+      const smsConfig = smsAllowed ? await smsService.getResolvedConfig(tenantId) : null;
+      if (smsConfig && updatedInvoice.customer.phone) {
+        const smsResult = await sendInvoiceSmsFromTemplate(
+          tenantId,
+          'invoice_sent',
+          updatedInvoice,
+          updatedInvoice.customer.phone,
+          paymentLink
+        );
+        if (smsResult?.success) {
+          smsSent = true;
+        }
+      }
+    } catch (e) {
+      console.error('[Invoice] deliverInvoiceToCustomer SMS:', e?.message);
+    }
+  } else {
+    logInvoiceDelivery('invoice_email_skipped', deliveryLogContext, {
+      reason: 'missing_customer',
+    }, 'warn');
+  }
+
+  runHighValueInvoiceAutomations({
+    tenantId,
+    invoice: updatedInvoice,
+    customer: updatedInvoice.customer || null,
+    actorUserId: actorUserId ?? userId ?? null,
+  }).catch((err) =>
+    console.error('[Invoice] high_value_invoice automations failed:', err?.message || err)
+  );
+
+  return { emailSent, smsSent, emailError };
+}
+
+/**
  * Send invoice paid confirmation to customer (email + optional SMS). Fire-and-forget; errors are logged only.
  * @param {string} tenantId - Tenant ID
  * @param {Object} invoice - Invoice with customer included (totalAmount, invoiceNumber, amountPaid, paidDate)
  */
 async function sendInvoicePaidConfirmationToCustomer(tenantId, invoice) {
   try {
-    const { Setting } = require('../models');
+    const {
+      TEMPLATE_KEYS,
+      isCustomerNotificationEffectiveEnabled,
+      shouldUseAutomationInsteadOfBuiltIn,
+    } = require('../services/customerNotificationBridgeService');
     const prefsRow = await Setting.findOne({ where: { tenantId, key: 'customer-notification-preferences' } });
     const prefs = prefsRow?.value || {};
-    if (prefs.sendInvoicePaidConfirmationToCustomer === false) return;
+    const settingOn = prefs.sendInvoicePaidConfirmationToCustomer !== false;
+    const effective = await isCustomerNotificationEffectiveEnabled(tenantId, {
+      settingEnabled: settingOn,
+      templateKey: TEMPLATE_KEYS.PAYMENT_RECEIVED_THANK_YOU,
+    });
+    if (!effective) return;
+    if (await shouldUseAutomationInsteadOfBuiltIn(tenantId, TEMPLATE_KEYS.PAYMENT_RECEIVED_THANK_YOU)) {
+      return;
+    }
 
     const customer = invoice.customer;
     if (!customer) return;
@@ -1727,53 +1934,6 @@ exports.sendInvoice = async (req, res, next) => {
     const paymentLink = `${frontendUrl}/pay-invoice/${updatedInvoice.paymentToken}`;
 
     const prefsSetting = await Setting.findOne({ where: { tenantId: req.tenantId, key: 'customer-notification-preferences' } });
-    const autoSendInvoice = (prefsSetting?.value?.autoSendInvoiceToCustomer !== false);
-    const deliveryLogContext = buildInvoiceDeliveryLogContext({
-      tenantId: req.tenantId,
-      userId: req.user?.id || null,
-      invoice: updatedInvoice,
-      customer: updatedInvoice.customer,
-      prefsSetting,
-      deliverySource: 'manual_invoice_send'
-    });
-    logInvoiceDelivery('invoice_send_decision', deliveryLogContext, {
-      decision: autoSendInvoice ? 'send_customer_channels' : 'skip_customer_channels',
-      reason: autoSendInvoice ? 'auto_send_enabled' : 'auto_send_disabled'
-    });
-
-    // Send WhatsApp notification if enabled, customer has phone, and auto-send is on
-    const { isChannelEnabledForEvent } = require('../services/messageDeliveryRulesService');
-    if (autoSendInvoice) {
-    try {
-      const whatsappAllowed = await isChannelEnabledForEvent(req.tenantId, 'invoice_sent', 'whatsapp');
-      const whatsappService = require('../services/whatsappService');
-      const whatsappTemplates = require('../services/whatsappTemplates');
-      const config = whatsappAllowed ? await whatsappService.getConfig(req.tenantId) : null;
-      
-      if (config && updatedInvoice.customer && updatedInvoice.customer.phone) {
-        const phoneNumber = whatsappService.validatePhoneNumber(updatedInvoice.customer.phone);
-        if (phoneNumber) {
-          const parameters = whatsappTemplates.prepareInvoiceNotification(
-            updatedInvoice,
-            updatedInvoice.customer,
-            paymentLink
-          );
-          
-          await whatsappService.sendMessage(
-            req.tenantId,
-            phoneNumber,
-            'invoice_notification',
-            parameters
-          ).catch(error => {
-            console.error('[Invoice] WhatsApp send failed:', error);
-            // Don't fail the request if WhatsApp fails
-          });
-        }
-      }
-    } catch (error) {
-      console.error('[Invoice] WhatsApp integration error:', error);
-    }
-    }
 
     // Log activity
     try {
@@ -1782,122 +1942,17 @@ exports.sendInvoice = async (req, res, next) => {
       console.error('Failed to log invoice sent activity:', error);
     }
 
-    // Send email notification if auto-send is on
-    let emailSent = false;
-    let emailError = null;
-    if (autoSendInvoice) {
-    try {
-      const emailAllowed = await isChannelEnabledForEvent(req.tenantId, 'invoice_sent', 'email');
-      const emailService = require('../services/emailService');
-      const emailTemplates = require('../services/emailTemplates');
-      const { Tenant } = require('../models');
-      
-      // Check if customer has email
-      if (emailAllowed && updatedInvoice.customer && updatedInvoice.customer.email) {
-        const company = await companyFromInvoice(updatedInvoice);
-        
-        // Prepare invoice items for email
-        const invoiceItems = updatedInvoice.items || [];
-        const invoiceForEmail = {
-          ...updatedInvoice.toJSON(),
-          items: invoiceItems
-        };
-        
-        // Generate email content
-        const { subject, html, text } = emailTemplates.invoiceNotification(
-          invoiceForEmail,
-          updatedInvoice.customer,
-          paymentLink,
-          company
-        );
-        
-        // Send the email
-        logInvoiceDelivery('invoice_email_attempt', deliveryLogContext, {
-          providerPath: 'emailService.sendMessage'
-        });
-        const emailResult = await emailService.sendMessage(
-          req.tenantId,
-          updatedInvoice.customer.email,
-          subject,
-          html,
-          text
-        );
-        
-        if (emailResult.success) {
-          emailSent = true;
-          logInvoiceDelivery('invoice_email_success', deliveryLogContext, {
-            providerPath: 'emailService.sendMessage',
-            messageId: emailResult.messageId || null
-          });
-        } else {
-          emailError = emailResult.error;
-          logInvoiceDelivery('invoice_email_failed', deliveryLogContext, {
-            providerPath: 'emailService.sendMessage',
-            error: emailResult.error || 'unknown error'
-          }, 'warn');
-        }
-      } else {
-        emailError = 'Customer email address not available';
-        logInvoiceDelivery('invoice_email_skipped', deliveryLogContext, {
-          reason: updatedInvoice.customer ? 'missing_customer_email' : 'missing_customer'
-        }, 'warn');
-      }
-    } catch (error) {
-      emailError = error.message;
-      logInvoiceDelivery('invoice_email_failed', deliveryLogContext, {
-        providerPath: 'emailService.sendMessage',
-        error: error.message
-      }, 'error');
-    }
-    } else {
-      emailError = 'Auto-send invoice to customer is disabled';
-      logInvoiceDelivery('invoice_email_skipped', deliveryLogContext, {
-        reason: 'auto_send_disabled'
-      });
-    }
-
-    // Send SMS notification if enabled and customer has phone (and auto-send is on)
-    let smsSent = false;
-    if (autoSendInvoice) {
-    try {
-      const smsAllowed = await isChannelEnabledForEvent(req.tenantId, 'invoice_sent', 'sms');
-      const smsService = require('../services/smsService');
-      const smsConfig = smsAllowed ? await smsService.getResolvedConfig(req.tenantId) : null;
-      if (smsConfig && updatedInvoice.customer && updatedInvoice.customer.phone) {
-          const smsResult = await sendInvoiceSmsFromTemplate(
-            req.tenantId,
-            'invoice_sent',
-            updatedInvoice,
-            updatedInvoice.customer.phone,
-            paymentLink
-          );
-          if (smsResult.success) {
-            smsSent = true;
-            console.log('[Invoice] SMS sent successfully to customer');
-          }
-        }
-    } catch (error) {
-      console.error('[Invoice] SMS sending error:', error);
-    }
-    }
-
-    runInvoiceSentAutomations({
+    const deliveryResult = await deliverInvoiceToCustomer({
       tenantId: req.tenantId,
-      invoice: updatedInvoice,
-      customer: updatedInvoice.customer || null,
+      updatedInvoice,
       paymentLink,
+      userId: req.user?.id || null,
+      deliverySource: 'manual_invoice_send',
       actorUserId: req.user?.id || null,
-    }).catch((err) =>
-      console.error('[Invoice] invoice_sent automations failed:', err?.message || err)
-    );
-    runHighValueInvoiceAutomations({
-      tenantId: req.tenantId,
-      invoice: updatedInvoice,
-      customer: updatedInvoice.customer || null,
-      actorUserId: req.user?.id || null,
-    }).catch((err) =>
-      console.error('[Invoice] high_value_invoice automations failed:', err?.message || err)
-    );
+      prefsSetting,
+    });
+
+    const { emailSent, smsSent, emailError } = deliveryResult;
 
     res.status(200).json({
       success: true,
@@ -2175,91 +2230,16 @@ async function sendInvoiceToCustomer(tenantId, invoice, options = {}) {
   });
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
   const paymentLink = `${frontendUrl}/pay-invoice/${updatedInvoice.paymentToken}`;
-  const prefsSetting = await Setting.findOne({ where: { tenantId, key: 'customer-notification-preferences' } });
-  const prefAllows = prefsSetting?.value?.autoSendInvoiceToCustomer !== false;
-  const autoSend = forceCustomerChannels || prefAllows;
-  const deliveryLogContext = buildInvoiceDeliveryLogContext({
-    tenantId,
-    userId,
-    invoice: updatedInvoice,
-    customer: updatedInvoice?.customer,
-    prefsSetting,
-    forceCustomerChannels,
-    deliverySource
-  });
-  logInvoiceDelivery('invoice_send_decision', deliveryLogContext, {
-    decision: autoSend ? 'send_customer_channels' : 'skip_customer_channels',
-    reason: autoSend ? (forceCustomerChannels && !prefAllows ? 'forced_customer_channels' : 'auto_send_enabled') : 'auto_send_disabled'
-  });
 
-  if (autoSend && updatedInvoice.customer) {
-    try {
-      const whatsappService = require('../services/whatsappService');
-      const whatsappTemplates = require('../services/whatsappTemplates');
-      const config = await whatsappService.getConfig(tenantId);
-      if (config && updatedInvoice.customer.phone) {
-        const phoneNumber = whatsappService.validatePhoneNumber(updatedInvoice.customer.phone);
-        if (phoneNumber) {
-          const parameters = whatsappTemplates.prepareInvoiceNotification(updatedInvoice, updatedInvoice.customer, paymentLink);
-          await whatsappService.sendMessage(tenantId, phoneNumber, 'invoice_notification', parameters).catch(() => {});
-        }
-      }
-    } catch (e) {
-      console.error('[Invoice] sendInvoiceToCustomer WhatsApp:', e?.message);
-    }
-    try {
-      const emailService = require('../services/emailService');
-      const emailTemplates = require('../services/emailTemplates');
-      const company = await companyFromInvoice(updatedInvoice);
-      if (updatedInvoice.customer.email) {
-        const invoiceForEmail = { ...updatedInvoice.toJSON(), items: updatedInvoice.items || [] };
-        const { subject, html, text } = emailTemplates.invoiceNotification(invoiceForEmail, updatedInvoice.customer, paymentLink, company);
-        logInvoiceDelivery('invoice_email_attempt', deliveryLogContext, {
-          providerPath: 'emailService.sendMessage'
-        });
-        const emailResult = await emailService.sendMessage(tenantId, updatedInvoice.customer.email, subject, html, text);
-        if (emailResult?.success === false) {
-          logInvoiceDelivery('invoice_email_failed', deliveryLogContext, {
-            providerPath: 'emailService.sendMessage',
-            error: emailResult.error || 'unknown error'
-          }, 'warn');
-        } else {
-          logInvoiceDelivery('invoice_email_success', deliveryLogContext, {
-            providerPath: 'emailService.sendMessage',
-            messageId: emailResult?.messageId || null
-          });
-        }
-      } else {
-        logInvoiceDelivery('invoice_email_skipped', deliveryLogContext, {
-          reason: 'missing_customer_email'
-        }, 'warn');
-      }
-    } catch (e) {
-      logInvoiceDelivery('invoice_email_failed', deliveryLogContext, {
-        providerPath: 'emailService.sendMessage',
-        error: e?.message || 'unknown error'
-      }, 'error');
-    }
-    try {
-      const smsService = require('../services/smsService');
-      const smsConfig = await smsService.getResolvedConfig(tenantId);
-      if (smsConfig && updatedInvoice.customer.phone) {
-        await sendInvoiceSmsFromTemplate(
-          tenantId,
-          'invoice_sent',
-          updatedInvoice,
-          updatedInvoice.customer.phone,
-          paymentLink
-        );
-      }
-    } catch (e) {
-      console.error('[Invoice] sendInvoiceToCustomer SMS:', e?.message);
-    }
-  } else {
-    logInvoiceDelivery('invoice_email_skipped', deliveryLogContext, {
-      reason: autoSend ? 'missing_customer' : 'auto_send_disabled'
-    }, autoSend ? 'warn' : 'log');
-  }
+  await deliverInvoiceToCustomer({
+    tenantId,
+    updatedInvoice,
+    paymentLink,
+    userId,
+    deliverySource,
+    forceCustomerChannels,
+    actorUserId: userId,
+  });
 }
 
 // @desc    Ensure an invoice has a public payment link without sending customer notifications

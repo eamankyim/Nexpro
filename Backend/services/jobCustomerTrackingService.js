@@ -139,15 +139,40 @@ async function maybeSendJobTrackingSmsOnJobCreated({ tenantId, jobId, triggeredB
  * @param {{ tenantId: string, jobId: string, triggeredByUserId: string|null }} params
  */
 async function maybeSendJobTrackingNotificationsOnJobCreated(params) {
+  const { runJobCreatedAutomations } = require('./automationEngineService');
+  const {
+    TEMPLATE_KEYS,
+    shouldUseAutomationInsteadOfBuiltIn,
+  } = require('./customerNotificationBridgeService');
+  const { tenantId, jobId, triggeredByUserId } = params;
+
+  await runJobCreatedAutomations({
+    tenantId,
+    jobId,
+    actorUserId: triggeredByUserId,
+  }).catch((err) => {
+    console.error('[JobTracking] job_created automations failed:', err?.message || err);
+  });
+
+  const skipEmailBuiltIn = await shouldUseAutomationInsteadOfBuiltIn(
+    tenantId,
+    TEMPLATE_KEYS.JOB_CREATED_TRACKING_EMAIL
+  );
+  const skipSmsBuiltIn = await shouldUseAutomationInsteadOfBuiltIn(
+    tenantId,
+    TEMPLATE_KEYS.JOB_CREATED_TRACKING_SMS
+  );
+
   await Promise.allSettled([
-    maybeSendJobTrackingEmailOnJobCreated(params),
-    maybeSendJobTrackingSmsOnJobCreated(params),
+    skipEmailBuiltIn ? Promise.resolve() : maybeSendJobTrackingEmailOnJobCreated(params),
+    skipSmsBuiltIn ? Promise.resolve() : maybeSendJobTrackingSmsOnJobCreated(params),
   ]);
 }
 
 module.exports = {
   getJobInvoiceSettingValue,
   ensureJobViewToken,
+  loadJobTrackingNotificationContext,
   maybeSendJobTrackingEmailOnJobCreated,
   maybeSendJobTrackingSmsOnJobCreated,
   maybeSendJobTrackingNotificationsOnJobCreated,

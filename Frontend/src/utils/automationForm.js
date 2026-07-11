@@ -102,7 +102,7 @@ export const TRIGGER_OPTIONS = [
   {
     value: 'job_due_in_hours',
     label: 'Job due soon',
-    hint: 'When a job is due within a set number of hours.',
+    hint: 'Remind the assigned team member when a job is due within a set number of hours.',
   },
   {
     value: 'prescription_refill_due',
@@ -223,7 +223,7 @@ export const TRIGGER_PLACEHOLDERS = {
   low_stock_on_change: ['productName', 'sku', 'quantityOnHand', 'reorderLevel', 'businessName'],
   out_of_stock_detected: ['productName', 'sku', 'quantityOnHand', 'reorderLevel', 'businessName'],
   quote_sent: ['customerName', 'businessName', 'quoteNumber', 'quoteTitle', 'quoteLink', 'totalAmountFormatted', 'email', 'phone'],
-  job_due_in_hours: ['customerName', 'businessName', 'jobNumber', 'jobTitle', 'dueDate', 'trackingLink', 'trackingLinkLine', 'email', 'phone'],
+  job_due_in_hours: ['assigneeName', 'businessName', 'jobNumber', 'jobTitle', 'dueDate', 'customerName', 'email'],
   prescription_refill_due: ['customerName', 'businessName', 'prescriptionNumber', 'refillDueDate', 'email', 'phone'],
   low_profit_margin: ['saleNumber', 'customerName', 'businessName', 'profitMargin', 'profitMarginFormatted', 'totalAmountFormatted', 'minMarginPercent'],
 };
@@ -579,16 +579,14 @@ export const DEFAULT_ACTION_CONTENT = {
     },
   },
   job_due_in_hours: {
-    send_sms: { body: 'Hi {{customerName}}, job {{jobNumber}} is due on {{dueDate}}. {{trackingLinkLine}} — {{businessName}}' },
-    send_whatsapp: { templateName: 'job_completed', language: 'en', parametersText: '{{customerName}}, {{jobNumber}}, {{businessName}}' },
     send_email_platform: {
-      subject: 'Reminder: job {{jobNumber}} due soon',
-      body: 'Hi {{customerName}},\n\nJob {{jobNumber}} is due on {{dueDate}}.\n\n{{trackingLinkLine}}\n\n— {{businessName}}',
+      subject: 'Job {{jobNumber}} due soon',
+      body: 'Hi {{assigneeName}},\n\nJob {{jobNumber}} for {{customerName}} is due on {{dueDate}}.\n\nPlease prioritize this work before the due date.\n\n— {{businessName}}',
     },
     create_task: {
       title: 'Job due soon — {{jobNumber}}',
       priority: 'medium',
-      description: 'Due {{dueDate}} for {{customerName}}.',
+      description: 'Job {{jobNumber}} for {{customerName}} is due on {{dueDate}}.',
       link: '/jobs',
     },
   },
@@ -750,6 +748,141 @@ export const TASK_PRIORITY_OPTIONS = [
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
 ];
+
+/** Sticky (condition-while-true) triggers that show the repeat-frequency control. */
+export const STICKY_TRIGGER_TYPES = [
+  'invoice_overdue',
+  'invoice_due_in_days',
+  'quote_no_response',
+  'lead_no_contact_days',
+  'customer_inactive_days',
+  'low_stock_detected',
+  'out_of_stock_detected',
+  'low_stock_on_change',
+  'job_due_in_hours',
+];
+
+export const FREQUENCY_OPTIONS = [
+  { value: 'once', label: 'Once only' },
+  { value: 'daily', label: 'Daily' },
+  { value: 'every_n_days', label: 'Every N days' },
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'monthly', label: 'Monthly' },
+];
+
+const FREQUENCY_COOLDOWN_HOURS = {
+  daily: 24,
+  weekly: 168,
+  monthly: 720,
+};
+
+/**
+ * @param {string} triggerType
+ * @returns {boolean}
+ */
+export function isStickyTrigger(triggerType) {
+  return STICKY_TRIGGER_TYPES.includes(String(triggerType || ''));
+}
+
+/**
+ * Default frequency for sticky triggers when creating a new rule.
+ * Overdue defaults to weekly to avoid daily spam.
+ * @param {string} triggerType
+ * @returns {string}
+ */
+export function defaultFrequencyForTrigger(triggerType) {
+  if (triggerType === 'invoice_overdue') return 'weekly';
+  if (isStickyTrigger(triggerType)) return 'daily';
+  return '';
+}
+
+/**
+ * Map frequency form fields to engine scheduleConfig (including derived cooldownHours / maxSends).
+ * @param {{ frequency?: string, intervalDays?: string|number, cooldownDays?: string|number }} form
+ * @param {string} triggerType
+ * @returns {Record<string, unknown>}
+ */
+export function buildScheduleConfigFromForm(form = {}, triggerType) {
+  if (isStickyTrigger(triggerType)) {
+    const frequency = FREQUENCY_OPTIONS.some((o) => o.value === form.frequency)
+      ? form.frequency
+      : defaultFrequencyForTrigger(triggerType);
+    const schedule = { frequency };
+    if (frequency === 'once') {
+      schedule.maxSends = 1;
+      return schedule;
+    }
+    if (frequency === 'every_n_days') {
+      const intervalDays = Math.max(1, Math.min(365, Number(form.intervalDays) || 1));
+      schedule.intervalDays = intervalDays;
+      schedule.cooldownHours = intervalDays * 24;
+      return schedule;
+    }
+    schedule.cooldownHours = FREQUENCY_COOLDOWN_HOURS[frequency] || FREQUENCY_COOLDOWN_HOURS.daily;
+    return schedule;
+  }
+
+  // Non-sticky: preserve optional legacy cooldown days only.
+  const scheduleConfig = {};
+  if (form?.cooldownDays !== '' && form?.cooldownDays != null) {
+    const n = Number(form.cooldownDays);
+    if (!Number.isNaN(n) && n > 0) scheduleConfig.cooldownHours = Math.round(n * 24);
+  }
+  return scheduleConfig;
+}
+
+/**
+ * Infer frequency UI state from a saved scheduleConfig.
+ * @param {Record<string, unknown>} scheduleConfig
+ * @param {string} [triggerType]
+ * @returns {{ frequency: string, intervalDays: string, cooldownDays: string }}
+ */
+export function scheduleFormFromConfig(scheduleConfig = {}, triggerType = '') {
+  const s = scheduleConfig && typeof scheduleConfig === 'object' ? scheduleConfig : {};
+  const cooldownHours = Number(s.cooldownHours) > 0 ? Number(s.cooldownHours) : 0;
+  const sticky = isStickyTrigger(triggerType);
+
+  if (s.frequency === 'once' || Number(s.maxSends) === 1) {
+    return { frequency: 'once', intervalDays: '1', cooldownDays: '' };
+  }
+  if (FREQUENCY_OPTIONS.some((o) => o.value === s.frequency)) {
+    return {
+      frequency: s.frequency,
+      intervalDays: String(Math.max(1, Number(s.intervalDays) || 1)),
+      cooldownDays: cooldownHours > 0 ? String(cooldownHours / 24) : '',
+    };
+  }
+
+  // Lazy normalize: sticky rules with empty schedule → daily (matches engine).
+  // New overdue templates set weekly explicitly in scheduleConfig.
+  if (sticky && !s.frequency && cooldownHours <= 0) {
+    return {
+      frequency: 'daily',
+      intervalDays: '1',
+      cooldownDays: '',
+    };
+  }
+
+  // Infer from legacy cooldownHours when frequency is missing.
+  if (sticky && cooldownHours > 0) {
+    if (cooldownHours === 24) return { frequency: 'daily', intervalDays: '1', cooldownDays: '1' };
+    if (cooldownHours === 168) return { frequency: 'weekly', intervalDays: '1', cooldownDays: '7' };
+    if (cooldownHours === 720) return { frequency: 'monthly', intervalDays: '1', cooldownDays: '30' };
+    if (cooldownHours % 24 === 0) {
+      return {
+        frequency: 'every_n_days',
+        intervalDays: String(cooldownHours / 24),
+        cooldownDays: String(cooldownHours / 24),
+      };
+    }
+  }
+
+  return {
+    frequency: sticky ? 'daily' : '',
+    intervalDays: '1',
+    cooldownDays: cooldownHours > 0 ? String(cooldownHours / 24) : '',
+  };
+}
 
 /**
  * @param {string} triggerType
@@ -1092,12 +1225,14 @@ export function buildConditionConfig(form) {
 /**
  * @param {Record<string, unknown>} conditionConfig
  * @param {Record<string, unknown>} scheduleConfig
+ * @param {string} [triggerType]
  */
-export function conditionFormFromConfig(conditionConfig, scheduleConfig = {}) {
+export function conditionFormFromConfig(conditionConfig, scheduleConfig = {}, triggerType = '') {
   const c = conditionConfig && typeof conditionConfig === 'object' ? conditionConfig : {};
   const s = scheduleConfig && typeof scheduleConfig === 'object' ? scheduleConfig : {};
   const boolToChoice = (value) => (value === true ? 'yes' : value === false ? 'no' : '');
   const legacyMinInvoiceAmount = c.invoiceAmountValue == null && c.minInvoiceAmount != null ? c.minInvoiceAmount : c.invoiceAmountValue;
+  const scheduleForm = scheduleFormFromConfig(s, triggerType);
   return {
     minInvoiceAmount: c.minInvoiceAmount != null ? String(c.minInvoiceAmount) : '',
     invoiceAmountOperator: c.invoiceAmountOperator || 'greater_than',
@@ -1121,7 +1256,9 @@ export function conditionFormFromConfig(conditionConfig, scheduleConfig = {}) {
     weekdaysOnly: c.weekdaysOnly === true,
     runAfterTime: c.runAfterTime || '',
     runBeforeTime: c.runBeforeTime || '',
-    cooldownDays: Number(s.cooldownHours) > 0 ? String(Number(s.cooldownHours) / 24) : '',
+    cooldownDays: scheduleForm.cooldownDays,
+    frequency: scheduleForm.frequency,
+    intervalDays: scheduleForm.intervalDays,
     stockBelowReorderLevel: c.stockBelowReorderLevel === true,
     quantityOperator: c.quantityOperator || 'less_than',
     quantityValue: c.quantityValue != null ? String(c.quantityValue) : '',
@@ -1155,16 +1292,12 @@ export function parseJsonObject(raw, fieldLabel) {
  * @param {string} params.name
  * @param {string} params.triggerType
  * @param {Record<string, unknown>} params.triggerForm
- * @param {{ minInvoiceAmount: string, weekdaysOnly: boolean }} params.conditionForm
+ * @param {{ minInvoiceAmount: string, weekdaysOnly: boolean, frequency?: string, intervalDays?: string, cooldownDays?: string }} params.conditionForm
  * @param {Record<string, unknown>[]} params.actionRows
  */
 export function buildRulePayloadFromForm({ name, triggerType, triggerForm, conditionForm, actionRows }) {
   const actions = (actionRows || []).map((r) => actionFormRowToPayload(r));
-  const scheduleConfig = {};
-  if (conditionForm?.cooldownDays !== '' && conditionForm?.cooldownDays != null) {
-    const n = Number(conditionForm.cooldownDays);
-    if (!Number.isNaN(n) && n > 0) scheduleConfig.cooldownHours = Math.round(n * 24);
-  }
+  const scheduleConfig = buildScheduleConfigFromForm(conditionForm, triggerType);
   return {
     name: String(name).trim(),
     triggerType: String(triggerType).trim(),

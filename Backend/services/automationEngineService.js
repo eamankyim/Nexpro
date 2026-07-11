@@ -13,6 +13,7 @@ const {
   Sale,
   SaleItem,
   Tenant,
+  User,
   UserTask,
 } = require('../models');
 const { loadTenantOrganization } = require('../utils/documentOrganizationUtils');
@@ -26,6 +27,25 @@ const { resolveBusinessNameForContext } = require('../utils/resolveBusinessNameF
 const DEDUPE_WINDOW_HOURS = 24;
 const MAX_RULES_PER_TICK = 100;
 const MAX_SUBJECTS_PER_RULE = 50;
+
+/** Sticky (condition-while-true) triggers that support repeat frequency. */
+const STICKY_TRIGGER_TYPES = new Set([
+  'invoice_overdue',
+  'invoice_due_in_days',
+  'quote_no_response',
+  'lead_no_contact_days',
+  'customer_inactive_days',
+  'low_stock_detected',
+  'out_of_stock_detected',
+  'low_stock_on_change',
+  'job_due_in_hours',
+]);
+
+const FREQUENCY_COOLDOWN_HOURS = {
+  daily: 24,
+  weekly: 168,
+  monthly: 720,
+};
 
 function getTemplates() {
   return [
@@ -81,6 +101,7 @@ function getTemplates() {
       description: 'Send a WhatsApp payment reminder after an invoice is overdue.',
       triggerType: 'invoice_overdue',
       triggerConfig: { daysAfterDue: 1 },
+      scheduleConfig: { frequency: 'weekly', cooldownHours: 168 },
       actionConfig: {
         actions: [{
           type: 'send_whatsapp',
@@ -377,17 +398,20 @@ function getTemplates() {
     {
       key: 'job_due_reminder',
       name: 'Job due soon',
-      description: 'Remind customers when a job is due within a set number of hours.',
+      description: 'Remind the assigned team member when a job is due within a set number of hours.',
       triggerType: 'job_due_in_hours',
       triggerConfig: { hoursBeforeDue: 24 },
       actionConfig: {
         actions: [{
-          type: 'send_email_platform',
-          subject: 'Reminder: job {{jobNumber}} due soon',
-          body: 'Hi {{customerName}},\n\nThis is a friendly reminder that your job {{jobNumber}} is due on {{dueDate}}.\n\n{{trackingLinkLine}}\n\n— {{businessName}}',
+          type: 'create_task',
+          title: 'Job due soon — {{jobNumber}}',
+          priority: 'medium',
+          description: 'Job {{jobNumber}} for {{customerName}} is due on {{dueDate}}.',
+          link: '/jobs',
         }, {
-          type: 'send_sms',
-          body: 'Hi {{customerName}}, job {{jobNumber}} is due on {{dueDate}}. — {{businessName}}',
+          type: 'send_email_platform',
+          subject: 'Job {{jobNumber}} due soon',
+          body: 'Hi {{assigneeName}},\n\nJob {{jobNumber}} for {{customerName}} is due on {{dueDate}}.\n\nPlease prioritize this work before the due date.\n\n— {{businessName}}',
         }]
       }
     },
@@ -407,8 +431,49 @@ function getTemplates() {
           body: 'Hi {{customerName}},\n\nYour prescription {{prescriptionNumber}} refill is due on {{refillDueDate}}.\n\nPlease visit us or call to arrange your refill.\n\n— {{businessName}}',
         }]
       }
+    },
+    {
+      key: 'job_created_tracking_email',
+      name: 'Job created — tracking email',
+      description: 'Email customers a tracking link when a job is created.',
+      triggerType: 'job_created',
+      triggerConfig: { channel: 'email' },
+      conditionConfig: { customerHasEmail: true },
+      actionConfig: {
+        actions: [{
+          type: 'send_email_platform',
+          subject: 'Your job {{jobNumber}} has been created',
+          body: 'Hi {{customerName}},\n\n{{businessName}} created job {{jobNumber}} ({{jobTitle}}).\n\nTrack your order: {{trackingLink}}\n\n— {{businessName}}',
+        }]
+      }
+    },
+    {
+      key: 'job_created_tracking_sms',
+      name: 'Job created — tracking SMS',
+      description: 'SMS customers a tracking link when a job is created.',
+      triggerType: 'job_created',
+      triggerConfig: { channel: 'sms' },
+      conditionConfig: { customerHasPhone: true, smsConsent: true },
+      actionConfig: {
+        actions: [{
+          type: 'send_sms',
+          body: 'Hi {{customerName}}, {{businessName}} created job {{jobNumber}}. Track: {{trackingLink}}',
+        }]
+      }
+    },
+    {
+      key: 'job_created_send_invoice',
+      name: 'Job created — send invoice',
+      description: 'Automatically send an invoice when a job is created.',
+      triggerType: 'job_created',
+      triggerConfig: { action: 'send_invoice' },
+      actionConfig: { actions: [] }
     }
   ];
+}
+
+function getTemplateByKey(key) {
+  return getTemplates().find((template) => template.key === key) || null;
 }
 
 function normalizeActions(actionConfig) {
@@ -703,6 +768,93 @@ function triggerConfigAllowsRun(rule, triggerContext) {
   return { allowed: true };
 }
 
+/**
+ * Whether a trigger type supports sticky repeat frequency.
+ * @param {string} triggerType
+ * @returns {boolean}
+ */
+function isStickyTriggerType(triggerType) {
+  return STICKY_TRIGGER_TYPES.has(String(triggerType || ''));
+}
+
+/**
+ * Resolve schedule frequency / cooldown for a rule.
+ * once / maxSends:1 → lifetime success gate; else frequency → cooldownHours;
+ * fallback legacy cooldownHours, sticky empty → daily, else DEDUPE_WINDOW_HOURS.
+ * @param {{ triggerType?: string, scheduleConfig?: object, actionConfig?: object }} rule
+ * @returns {{ mode: 'lifetime'|'cooldown'|'dedupe', frequency: string|null, cooldownHours: number, maxSends: number, intervalDays: number|null }}
+ */
+function resolveRuleSchedule(rule) {
+  const schedule = (rule?.scheduleConfig && typeof rule.scheduleConfig === 'object')
+    ? rule.scheduleConfig
+    : {};
+  const frequency = String(schedule.frequency || '').trim() || null;
+  const maxSends = toNumber(schedule.maxSends, 0);
+  const intervalDaysRaw = toNumber(schedule.intervalDays, 0);
+
+  if (frequency === 'once' || maxSends === 1) {
+    return {
+      mode: 'lifetime',
+      frequency: 'once',
+      cooldownHours: 0,
+      maxSends: 1,
+      intervalDays: null,
+    };
+  }
+
+  if (frequency === 'daily') {
+    return { mode: 'cooldown', frequency, cooldownHours: FREQUENCY_COOLDOWN_HOURS.daily, maxSends: 0, intervalDays: null };
+  }
+  if (frequency === 'weekly') {
+    return { mode: 'cooldown', frequency, cooldownHours: FREQUENCY_COOLDOWN_HOURS.weekly, maxSends: 0, intervalDays: null };
+  }
+  if (frequency === 'monthly') {
+    return { mode: 'cooldown', frequency, cooldownHours: FREQUENCY_COOLDOWN_HOURS.monthly, maxSends: 0, intervalDays: null };
+  }
+  if (frequency === 'every_n_days') {
+    const intervalDays = Math.max(1, intervalDaysRaw || 1);
+    return {
+      mode: 'cooldown',
+      frequency,
+      cooldownHours: intervalDays * 24,
+      maxSends: 0,
+      intervalDays,
+    };
+  }
+
+  const legacyCooldown = toNumber(
+    schedule.cooldownHours ?? rule?.actionConfig?.cooldownHours,
+    0
+  );
+  if (legacyCooldown > 0) {
+    return {
+      mode: 'cooldown',
+      frequency: null,
+      cooldownHours: legacyCooldown,
+      maxSends: 0,
+      intervalDays: null,
+    };
+  }
+
+  if (isStickyTriggerType(rule?.triggerType)) {
+    return {
+      mode: 'cooldown',
+      frequency: 'daily',
+      cooldownHours: FREQUENCY_COOLDOWN_HOURS.daily,
+      maxSends: 0,
+      intervalDays: null,
+    };
+  }
+
+  return {
+    mode: 'dedupe',
+    frequency: null,
+    cooldownHours: DEDUPE_WINDOW_HOURS,
+    maxSends: 0,
+    intervalDays: null,
+  };
+}
+
 async function isDuplicateRun({ tenantId, ruleId, subjectKey }) {
   if (!subjectKey) return false;
   const threshold = new Date(Date.now() - DEDUPE_WINDOW_HOURS * 60 * 60 * 1000);
@@ -727,6 +879,25 @@ async function isCooldownRun({ tenantId, ruleId, subjectKey, cooldownHours }) {
       createdAt: { [Op.gte]: threshold },
       triggerContext: { subjectKey }
     }
+  });
+  return Boolean(existing);
+}
+
+/**
+ * Skip further sends when a successful lifetime run already exists (frequency once / maxSends:1).
+ * @param {{ tenantId: string, ruleId: string, subjectKey: string }} params
+ * @returns {Promise<boolean>}
+ */
+async function hasSuccessfulLifetimeRun({ tenantId, ruleId, subjectKey }) {
+  if (!subjectKey) return false;
+  const existing = await AutomationRun.findOne({
+    where: {
+      tenantId,
+      ruleId,
+      status: 'success',
+      triggerContext: { subjectKey },
+    },
+    attributes: ['id'],
   });
   return Boolean(existing);
 }
@@ -783,12 +954,24 @@ async function executeRule({
     }
 
     const subjectKey = triggerContext?.subjectKey || null;
-    const cooldownHours = toNumber(rule.scheduleConfig?.cooldownHours || rule.actionConfig?.cooldownHours, 0);
-    if (!skipDedupe && cooldownHours > 0 && await isCooldownRun({ tenantId, ruleId: rule.id, subjectKey, cooldownHours })) {
-      return recordSkipped('cooldown_window');
-    }
-    if (!skipDedupe && cooldownHours <= 0 && await isDuplicateRun({ tenantId, ruleId: rule.id, subjectKey })) {
-      return recordSkipped('duplicate_window');
+    const resolvedSchedule = resolveRuleSchedule(rule);
+    if (!skipDedupe && resolvedSchedule.mode === 'lifetime') {
+      if (await hasSuccessfulLifetimeRun({ tenantId, ruleId: rule.id, subjectKey })) {
+        return recordSkipped('max_sends_reached');
+      }
+    } else if (!skipDedupe && resolvedSchedule.mode === 'cooldown') {
+      if (await isCooldownRun({
+        tenantId,
+        ruleId: rule.id,
+        subjectKey,
+        cooldownHours: resolvedSchedule.cooldownHours,
+      })) {
+        return recordSkipped('cooldown_window');
+      }
+    } else if (!skipDedupe && resolvedSchedule.mode === 'dedupe') {
+      if (await isDuplicateRun({ tenantId, ruleId: rule.id, subjectKey })) {
+        return recordSkipped('duplicate_window');
+      }
     }
 
     const actions = normalizeActions(rule.actionConfig);
@@ -796,14 +979,15 @@ async function executeRule({
 
     for (const action of actions) {
       if (action.type === 'create_task') {
-        if (!actorUserId) {
-          results.push({ type: 'create_task', success: false, reason: 'missing_actor' });
+        const taskAssigneeId = triggerContext.assigneeId || actorUserId;
+        if (!taskAssigneeId) {
+          results.push({ type: 'create_task', success: false, reason: 'missing_assignee' });
           continue;
         }
         const task = await UserTask.create({
           tenantId,
-          userId: actorUserId,
-          assigneeId: actorUserId,
+          userId: actorUserId || taskAssigneeId,
+          assigneeId: taskAssigneeId,
           title: action.title || `Automation task: ${rule.name}`,
           description: action.description || triggerContext?.message || null,
           status: 'todo',
@@ -1532,36 +1716,36 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
         tenantId,
         dueDate: { [Op.between]: [now, windowEnd] },
         status: { [Op.notIn]: ['completed', 'cancelled'] },
-        customerId: { [Op.ne]: null },
+        assignedTo: { [Op.ne]: null },
       },
-      include: [{ model: Customer, as: 'customer', attributes: ['id', 'name', 'company', 'phone', 'email', 'whatsappConsent', 'smsConsent', 'marketingConsent'] }],
+      include: [
+        { model: Customer, as: 'customer', attributes: ['id', 'name', 'company'], required: false },
+        { model: User, as: 'assignedUser', attributes: ['id', 'name', 'email'], required: true },
+      ],
       limit: MAX_SUBJECTS_PER_RULE,
       order: [['dueDate', 'ASC']],
     });
     return finalizeTriggerContexts(tenantId, jobs.map((job) => {
       const customer = job.customer || {};
-      const trackingLink = job.viewToken ? trackingLinkForJob(job.id, job.viewToken) : null;
+      const assignee = job.assignedUser || {};
+      const customerName = customer.name || customer.company || 'Customer';
+      const dueDate = formatAutomationDate(job.dueDate);
       return {
-        subjectKey: `job_due:${job.id}:${formatAutomationDate(job.dueDate)}`,
+        subjectKey: `job_due:${job.id}:${dueDate}`,
         jobId: job.id,
         jobNumber: job.jobNumber || null,
         jobTitle: job.title || null,
-        dueDate: formatAutomationDate(job.dueDate),
+        dueDate,
         hoursBeforeDue,
-        customerId: customer.id || job.customerId,
-        customerName: customer.name || customer.company || 'Customer',
-        email: customer.email || null,
-        phone: customer.phone || null,
-        trackingLink,
-        trackingLinkLine: trackingLink ? `Track your order: ${trackingLink}` : '',
-        customerHasPhone: Boolean(customer.phone),
-        customerHasEmail: Boolean(customer.email),
-        whatsappConsent: customer.whatsappConsent === true,
-        smsConsent: customer.smsConsent === true,
-        marketingConsent: customer.marketingConsent === true,
+        customerId: customer.id || job.customerId || null,
+        customerName,
+        assigneeId: assignee.id || job.assignedTo,
+        assigneeName: assignee.name || 'Team member',
+        email: assignee.email || null,
+        recipientName: assignee.name || null,
         shopId: job.shopId || null,
         studioLocationId: job.studioLocationId || null,
-        message: `Job ${job.jobNumber || job.id} is due on ${formatAutomationDate(job.dueDate)}.`,
+        message: `Job ${job.jobNumber || job.id} for ${customerName} is due on ${dueDate}.`,
       };
     }));
   }
@@ -1896,10 +2080,126 @@ function buildJobCompletedTriggerContext({
 }
 
 /**
- * Run job-completed customer notification automations.
+ * Build trigger context when a job is created (tracking notifications).
+ * @param {object} params
+ * @returns {object}
+ */
+function buildJobCreatedTriggerContext({
+  job,
+  customer = null,
+  trackingLink = null,
+  jobTitle = null,
+}) {
+  const customerObj = customer || job?.customer || {};
+  const resolvedJobTitle = jobTitle || job?.title || job?.description || null;
+  const resolvedTrackingLink = trackingLink || null;
+  const trackingLinkLine = resolvedTrackingLink
+    ? `Track your order: ${resolvedTrackingLink}`
+    : '';
+
+  return {
+    subjectKey: `job_created:${job.id}`,
+    jobId: job.id,
+    jobNumber: job.jobNumber || null,
+    jobTitle: resolvedJobTitle,
+    customerId: customerObj.id || job.customerId || null,
+    customerName: customerObj.name || customerObj.company || 'Customer',
+    email: customerObj.email || null,
+    phone: customerObj.phone || null,
+    trackingLink: resolvedTrackingLink,
+    trackingUrl: resolvedTrackingLink,
+    trackingLinkLine,
+    hasTrackingLink: Boolean(resolvedTrackingLink),
+    customerHasPhone: Boolean(customerObj.phone),
+    customerHasEmail: Boolean(customerObj.email),
+    whatsappConsent: customerObj.whatsappConsent === true,
+    smsConsent: customerObj.smsConsent === true,
+    marketingConsent: customerObj.marketingConsent === true,
+    customer: {
+      id: customerObj.id || job.customerId || null,
+      name: customerObj.name || null,
+      company: customerObj.company || null,
+      email: customerObj.email || null,
+      phone: customerObj.phone || null,
+      shopId: customerObj.shopId || null,
+      studioLocationId: customerObj.studioLocationId || null,
+      whatsappConsent: customerObj.whatsappConsent === true,
+      smsConsent: customerObj.smsConsent === true,
+      marketingConsent: customerObj.marketingConsent === true,
+    },
+    shopId: job.shopId || customerObj.shopId || null,
+    studioLocationId: job.studioLocationId || customerObj.studioLocationId || null,
+    job: {
+      id: job.id,
+      jobNumber: job.jobNumber || null,
+      title: resolvedJobTitle,
+      shopId: job.shopId || null,
+      studioLocationId: job.studioLocationId || null,
+    },
+    message: resolvedTrackingLink
+      ? `Job ${job.jobNumber || job.id} created. Track here: ${resolvedTrackingLink}`
+      : `Job ${job.jobNumber || job.id} created.`,
+  };
+}
+
+/**
+ * Run job-created customer notification automations (tracking email/SMS).
  * @param {object} params
  * @returns {Promise<object>}
  */
+async function runJobCreatedAutomations({
+  tenantId,
+  job,
+  jobId = null,
+  customer = null,
+  actorUserId = null,
+}) {
+  if (!tenantId) return { skipped: true, reason: 'missing_tenant' };
+
+  let resolvedJob = job;
+  let trackingLink = null;
+  if (!resolvedJob?.id && jobId) {
+    const { loadJobTrackingNotificationContext } = require('./jobCustomerTrackingService');
+    const ctx = await loadJobTrackingNotificationContext(tenantId, jobId);
+    resolvedJob = ctx.job;
+    trackingLink = ctx.trackUrl;
+  }
+
+  if (!resolvedJob?.id) return { skipped: true, reason: 'missing_job' };
+
+  if (!trackingLink) {
+    try {
+      const { ensureJobViewToken } = require('./jobCustomerTrackingService');
+      const viewToken = await ensureJobViewToken(resolvedJob.id, tenantId);
+      trackingLink = trackingLinkForJob(resolvedJob.id, viewToken);
+    } catch (_error) {
+      trackingLink = null;
+    }
+  }
+
+  let jobTitle = resolvedJob.title || null;
+  try {
+    const { buildCustomerFacingJobTitle } = require('../utils/jobCustomerMessageText');
+    jobTitle = buildCustomerFacingJobTitle(
+      typeof resolvedJob?.toJSON === 'function' ? resolvedJob.toJSON() : resolvedJob
+    );
+  } catch (_error) {
+    jobTitle = resolvedJob.title || null;
+  }
+
+  return executeMatchingRules({
+    tenantId,
+    triggerType: 'job_created',
+    triggerContext: buildJobCreatedTriggerContext({
+      job: resolvedJob,
+      customer: customer || resolvedJob.customer || null,
+      trackingLink,
+      jobTitle,
+    }),
+    actorUserId,
+  });
+}
+
 async function runJobCompletedAutomations({
   tenantId,
   job,
@@ -2409,7 +2709,7 @@ async function runDueAutomations({ now = new Date(), limit = MAX_RULES_PER_TICK 
         rule,
         tenantId: rule.tenantId,
         triggerContext: { ...triggerContext, scheduler: true, triggerType: rule.triggerType },
-        actorUserId: rule.createdBy || rule.updatedBy || null
+        actorUserId: triggerContext.assigneeId || rule.createdBy || rule.updatedBy || null
       });
       if (result.skipped) summary.skipped += 1;
       else if (result.success) summary.executed += 1;
@@ -2421,11 +2721,16 @@ async function runDueAutomations({ now = new Date(), limit = MAX_RULES_PER_TICK 
 }
 
 module.exports = {
+  DEDUPE_WINDOW_HOURS,
+  STICKY_TRIGGER_TYPES,
+  FREQUENCY_COOLDOWN_HOURS,
   getTemplates,
+  getTemplateByKey,
   executeRule,
   executeMatchingRules,
   buildPaymentReceivedTriggerContext,
   buildReviewRequestTriggerContext,
+  buildJobCreatedTriggerContext,
   buildJobCompletedTriggerContext,
   buildDailySalesSummaryContext,
   buildLeadTriggerContext,
@@ -2442,6 +2747,7 @@ module.exports = {
   reviewLinkForTenant,
   runPaymentReceivedAutomations,
   runReviewRequestAutomations,
+  runJobCreatedAutomations,
   runJobCompletedAutomations,
   runNewLeadAutomations,
   runCustomerCreatedAutomations,
@@ -2456,4 +2762,8 @@ module.exports = {
   conditionsAllowRun,
   triggerConfigAllowsRun,
   getTriggerContextsForRule,
+  isStickyTriggerType,
+  resolveRuleSchedule,
+  isCooldownRun,
+  hasSuccessfulLifetimeRun,
 };

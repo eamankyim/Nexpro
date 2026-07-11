@@ -113,20 +113,31 @@ describe('automationEngineService scheduler triggers', () => {
     expect(contexts[0].leadName).toBe('Lead A');
   });
 
-  it('returns job_due_in_hours contexts', async () => {
+  it('returns job_due_in_hours contexts for assigned jobs', async () => {
     const due = new Date(Date.now() + 2 * 60 * 60 * 1000);
     Job.findAll.mockResolvedValue([{
       id: 'j1',
       jobNumber: 'JOB-1',
+      title: 'Print banners',
       dueDate: due,
-      customer: { id: 'c1', name: 'Client', email: 'c@x.com', phone: '+233200000000' },
+      assignedTo: 'u1',
+      customer: { id: 'c1', name: 'Client' },
+      assignedUser: { id: 'u1', name: 'Alex', email: 'alex@example.com' },
     }]);
     const contexts = await getTriggerContextsForRule({
       tenantId: 't1',
       triggerType: 'job_due_in_hours',
       triggerConfig: { hoursBeforeDue: 24 },
     });
+    expect(contexts).toHaveLength(1);
     expect(contexts[0].jobNumber).toBe('JOB-1');
+    expect(contexts[0].assigneeId).toBe('u1');
+    expect(contexts[0].assigneeName).toBe('Alex');
+    expect(contexts[0].email).toBe('alex@example.com');
+    expect(contexts[0].customerName).toBe('Client');
+    expect(contexts[0].message).toContain('JOB-1');
+    expect(contexts[0].message).toContain('Client');
+    expect(contexts[0].phone).toBeUndefined();
   });
 
   it('returns prescription_refill_due contexts from metadata', async () => {

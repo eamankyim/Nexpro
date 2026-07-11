@@ -665,8 +665,17 @@ const autoCreateInvoice = async (jobId, tenantId) => {
  */
 async function maybeAutoSendInvoiceOnJobCreation(tenantId, invoice, userId) {
   if (!invoice?.id || !tenantId) return;
+  const {
+    TEMPLATE_KEYS,
+    isCustomerNotificationEffectiveEnabled,
+  } = require('../services/customerNotificationBridgeService');
   const row = await Setting.findOne({ where: { tenantId, key: 'job-invoice' } });
-  if (row?.value?.autoSendInvoiceOnJobCreation !== true) {
+  const settingOn = row?.value?.autoSendInvoiceOnJobCreation === true;
+  const effective = await isCustomerNotificationEffectiveEnabled(tenantId, {
+    settingEnabled: settingOn,
+    templateKey: TEMPLATE_KEYS.JOB_CREATED_SEND_INVOICE,
+  });
+  if (!effective) {
     return;
   }
   try {

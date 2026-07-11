@@ -48,6 +48,7 @@ import automationService from '../services/automationService';
 import settingsService from '../services/settingsService';
 import {
   ACTION_TYPE_OPTIONS,
+  FREQUENCY_OPTIONS,
   TASK_PRIORITY_OPTIONS,
   THRESHOLD_MODE_OPTIONS,
   TRIGGER_OPTIONS,
@@ -60,10 +61,13 @@ import {
   defaultActionFormRow,
   defaultTriggerForm,
   formatPlaceholderHint,
+  isStickyTrigger,
   mergeTriggerForm,
   parseJsonObject,
   prefillActionRows,
   ruleHasMessagingActions,
+  scheduleFormFromConfig,
+  defaultFrequencyForTrigger,
   triggerLabel,
 } from '../utils/automationForm';
 import { handleApiError, showError, showSuccess } from '../utils/toast';
@@ -123,7 +127,7 @@ function createInitialBuilder() {
     name: '',
     triggerType,
     triggerForm: defaultTriggerForm(triggerType),
-    conditionForm: conditionFormFromConfig({}),
+    conditionForm: conditionFormFromConfig({}, {}, triggerType),
     actionRows: [defaultActionFormRow('create_task', triggerType)],
   };
 }
@@ -509,7 +513,7 @@ const TRIGGER_CARD_DETAILS = {
   job_due_in_hours: {
     category: 'General',
     title: 'Job due soon',
-    description: 'Customer reminder before job due date',
+    description: 'Staff reminder before job due date',
     tag: 'New',
     Icon: Clock3,
     bg: 'bg-green-50',
@@ -620,7 +624,6 @@ const CONDITION_GROUPS = [
       { key: 'weekdaysOnly', label: 'Only run on weekdays', control: 'toggle', valueKey: 'weekdaysOnly' },
       { key: 'runAfterTime', label: 'Earliest run time', control: 'time', valueKey: 'runAfterTime' },
       { key: 'runBeforeTime', label: 'Latest run time', control: 'time', valueKey: 'runBeforeTime' },
-      { key: 'cooldownDays', label: 'Cooldown before repeating for the same record', control: 'number', valueKey: 'cooldownDays', suffix: 'days', placeholder: 'Optional', min: 1 },
     ],
   },
   {
@@ -1218,10 +1221,10 @@ const TEMPLATE_METADATA = {
   job_due_reminder: {
     category: 'operations',
     title: 'Job due soon',
-    description: 'Remind customers before a job is due.',
+    description: 'Remind the assigned team member before a job is due.',
     Icon: Clock3,
     accent: 'green',
-    channels: ['email', 'sms'],
+    channels: ['task', 'email'],
     difficulty: 'medium',
     usage: 118,
   },
@@ -1380,7 +1383,7 @@ function LogLevelBadge({ level }) {
 
 function buildActionMessage(action, triggerContext = {}) {
   const label = actionLabel(action);
-  const recipient = triggerContext.customerName || triggerContext.email || triggerContext.phone || triggerContext.recipientName;
+  const recipient = triggerContext.assigneeName || triggerContext.recipientName || triggerContext.customerName || triggerContext.email || triggerContext.phone;
   if (action?.error) return `${label} failed${recipient ? ` for ${recipient}` : ''}: ${action.error}`;
   if (action?.reason) return `${label} skipped: ${String(action.reason).replace(/_/g, ' ')}`;
   if (action?.messageId) return `${label} message sent${recipient ? ` to ${recipient}` : ''}`;
@@ -1710,6 +1713,54 @@ function AutomationTriggerFields({ triggerType, value, onPatch }) {
   }
 }
 
+/**
+ * First-class repeat frequency control for sticky (condition-while-true) triggers.
+ */
+function AutomationFrequencyFields({ triggerType, conditionForm, onPatch }) {
+  if (!isStickyTrigger(triggerType)) return null;
+  const frequency = conditionForm?.frequency || 'daily';
+  const intervalDays = conditionForm?.intervalDays ?? '1';
+
+  return (
+    <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+      <div className="space-y-1.5">
+        <Label>How often should this repeat?</Label>
+        <Select
+          value={FREQUENCY_OPTIONS.some((o) => o.value === frequency) ? frequency : 'daily'}
+          onValueChange={(value) => onPatch({ frequency: value })}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {FREQUENCY_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-slate-500">
+          Keeps sending while the condition is still true (e.g. invoice unpaid).
+        </p>
+      </div>
+      {frequency === 'every_n_days' && (
+        <div className="space-y-1.5">
+          <Label htmlFor="auto-interval-days">Repeat every (days)</Label>
+          <Input
+            id="auto-interval-days"
+            type="number"
+            min={1}
+            max={365}
+            value={intervalDays}
+            onChange={(e) => onPatch({ intervalDays: e.target.value === '' ? '' : String(Math.max(1, Number(e.target.value) || 1)) })}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AutomationActionFields({ row, onPatch, triggerType }) {
   const r = row || {};
   const placeholderHint = triggerType && MESSAGING_ACTION_TYPES.includes(r.type)
@@ -1886,7 +1937,17 @@ function getConditionLines(conditionForm = {}) {
   if (conditionForm.weekdaysOnly) lines.push('Runs only on weekdays');
   if (conditionForm.runAfterTime) lines.push(`Runs after ${conditionForm.runAfterTime}`);
   if (conditionForm.runBeforeTime) lines.push(`Runs before ${conditionForm.runBeforeTime}`);
-  if (conditionForm.cooldownDays !== '' && conditionForm.cooldownDays != null && Number(conditionForm.cooldownDays) > 0) {
+  if (conditionForm.frequency === 'once') {
+    lines.push('Sends once per record (does not repeat)');
+  } else if (conditionForm.frequency === 'daily') {
+    lines.push('Repeats daily while the condition is still true');
+  } else if (conditionForm.frequency === 'weekly') {
+    lines.push('Repeats weekly while the condition is still true');
+  } else if (conditionForm.frequency === 'monthly') {
+    lines.push('Repeats monthly while the condition is still true');
+  } else if (conditionForm.frequency === 'every_n_days') {
+    lines.push(`Repeats every ${Number(conditionForm.intervalDays) || 1} days while the condition is still true`);
+  } else if (conditionForm.cooldownDays !== '' && conditionForm.cooldownDays != null && Number(conditionForm.cooldownDays) > 0) {
     lines.push(`Does not repeat for the same record for ${Number(conditionForm.cooldownDays)} days`);
   }
   if (conditionForm.stockBelowReorderLevel) lines.push('Stock is below reorder level');
@@ -2193,6 +2254,11 @@ function AutomationCreationModal({
                       <div className="space-y-3">
                         <p className="text-sm font-semibold text-slate-950">Trigger settings</p>
                         <AutomationTriggerFields triggerType={builder.triggerType} value={builder.triggerForm} onPatch={patchTriggerForm} />
+                        <AutomationFrequencyFields
+                          triggerType={builder.triggerType}
+                          conditionForm={builder.conditionForm}
+                          onPatch={patchConditionForm}
+                        />
                         <div className="space-y-1.5">
                           <Label>Trigger time</Label>
                           <Select value="09:00 AM" onValueChange={() => {}}>
@@ -2358,7 +2424,7 @@ function AutomationCreationModal({
                       <div>
                         <CardTitle className="text-base">Conditions summary</CardTitle>
                       </div>
-                      <Button type="button" variant="ghost" size="sm" className="text-red-600 hover:text-red-700" onClick={() => setBuilder((b) => ({ ...b, conditionForm: conditionFormFromConfig({}) }))}>
+                      <Button type="button" variant="ghost" size="sm" className="text-red-600 hover:text-red-700" onClick={() => setBuilder((b) => ({ ...b, conditionForm: conditionFormFromConfig({}, {}, b.triggerType) }))}>
                         <Trash2 className="mr-2 h-3.5 w-3.5" aria-hidden />
                         Clear all
                       </Button>
@@ -3249,6 +3315,8 @@ export default function Automations() {
         triggerContext.subjectKey,
       ].filter(Boolean);
       const recipientName =
+        triggerContext.assigneeName ||
+        triggerContext.recipientName ||
         triggerContext.customerName ||
         triggerContext.companyName ||
         triggerContext.productName ||
@@ -3802,7 +3870,7 @@ export default function Automations() {
         name: draft.name || '',
         triggerType: draft.triggerType || 'invoice_due_in_days',
         triggerForm: mergeTriggerForm(draft.triggerType || 'invoice_due_in_days', draft.triggerConfig || {}),
-        conditionForm: conditionFormFromConfig(draft.conditionConfig || {}, draft.scheduleConfig || {}),
+        conditionForm: conditionFormFromConfig(draft.conditionConfig || {}, draft.scheduleConfig || {}, draft.triggerType || 'invoice_due_in_days'),
         actionRows: actionRowsFromConfig(draft.actionConfig),
       });
       setUseJsonOverride(false);
@@ -3869,7 +3937,7 @@ export default function Automations() {
       name: t.name || '',
       triggerType: tt,
       triggerForm: mergeTriggerForm(tt, t.triggerConfig || {}),
-      conditionForm: conditionFormFromConfig(t.conditionConfig || {}, t.scheduleConfig || {}),
+      conditionForm: conditionFormFromConfig(t.conditionConfig || {}, t.scheduleConfig || {}, t.triggerType),
       actionRows: actionRowsFromConfig(t.actionConfig),
     });
     setUseJsonOverride(false);
@@ -3932,7 +4000,7 @@ export default function Automations() {
       name: rule.name || '',
       triggerType: tt,
       triggerForm: mergeTriggerForm(tt, rule.triggerConfig || {}),
-      conditionForm: conditionFormFromConfig(rule.conditionConfig || {}, rule.scheduleConfig || {}),
+      conditionForm: conditionFormFromConfig(rule.conditionConfig || {}, rule.scheduleConfig || {}, rule.triggerType),
       actionRows: actionRowsFromConfig(rule.actionConfig),
     });
     setRawJson({
@@ -4013,10 +4081,18 @@ export default function Automations() {
   }, []);
 
   const changeTriggerType = useCallback((triggerType) => {
+    const defaultFrequency = defaultFrequencyForTrigger(triggerType);
     setBuilder((b) => ({
       ...b,
       triggerType,
       triggerForm: defaultTriggerForm(triggerType),
+      conditionForm: {
+        ...b.conditionForm,
+        ...scheduleFormFromConfig(
+          defaultFrequency ? { frequency: defaultFrequency } : {},
+          triggerType
+        ),
+      },
       actionRows: prefillActionRows(b.actionRows, triggerType),
     }));
   }, []);
@@ -4619,6 +4695,11 @@ export default function Automations() {
                         triggerType={builder.triggerType}
                         value={builder.triggerForm}
                         onPatch={patchTriggerForm}
+                      />
+                      <AutomationFrequencyFields
+                        triggerType={builder.triggerType}
+                        conditionForm={builder.conditionForm}
+                        onPatch={patchConditionForm}
                       />
                     </div>
 
@@ -6218,6 +6299,11 @@ export default function Automations() {
                 <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
                   <p className="text-sm font-medium text-foreground">Trigger settings</p>
                   <AutomationTriggerFields triggerType={builder.triggerType} value={builder.triggerForm} onPatch={patchTriggerForm} />
+                  <AutomationFrequencyFields
+                    triggerType={builder.triggerType}
+                    conditionForm={builder.conditionForm}
+                    onPatch={patchConditionForm}
+                  />
                 </div>
 
                 <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">

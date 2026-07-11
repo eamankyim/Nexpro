@@ -13,6 +13,10 @@ jest.mock('../../../models', () => ({
   Setting: {
     findOne: jest.fn(),
   },
+  AutomationRule: {
+    findAll: jest.fn().mockResolvedValue([]),
+    findOne: jest.fn().mockResolvedValue(null),
+  },
   WhatsAppMessageEvent: {
     findOne: jest.fn(),
   },
@@ -65,7 +69,7 @@ jest.mock('../../../utils/tenantLogo', () => ({
   getTenantLogoUrl: jest.fn(() => ''),
 }));
 
-const { Invoice, Setting, Tenant } = require('../../../models');
+const { Invoice, Setting, Tenant, AutomationRule } = require('../../../models');
 const emailService = require('../../../services/emailService');
 const smsService = require('../../../services/smsService');
 const whatsappService = require('../../../services/whatsappService');
@@ -83,6 +87,8 @@ describe('paymentReminderService', () => {
     emailService.sendMessage.mockResolvedValue({ success: true });
     Setting.findOne.mockResolvedValue({ value: { sendPaymentReminderEmail: true } });
     Tenant.findByPk.mockResolvedValue({ name: 'Test Business', metadata: {} });
+    AutomationRule.findAll.mockResolvedValue([]);
+    AutomationRule.findOne.mockResolvedValue(null);
   });
 
   it('sends email reminders for email-only overdue customers when enabled', async () => {
@@ -145,6 +151,52 @@ describe('paymentReminderService', () => {
 
     await paymentReminderService.checkAndSendReminders();
 
+    expect(emailService.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('skips all built-in channels when an overdue automation is enabled', async () => {
+    AutomationRule.findAll.mockResolvedValue([
+      {
+        id: 'rule-1',
+        enabled: true,
+        triggerType: 'invoice_overdue',
+        metadata: { templateKey: 'overdue_invoice_reminder' },
+      },
+    ]);
+    whatsappService.getConfig.mockResolvedValue({ enabled: true, paymentReminderCooldownHours: 24 });
+    whatsappService.validatePhoneNumber.mockReturnValue('+233201234567');
+    whatsappService.checkRateLimit.mockReturnValue(true);
+    smsService.getResolvedConfig.mockResolvedValue({ enabled: true });
+    smsService.validatePhoneNumber.mockReturnValue('+233201234567');
+
+    Invoice.findAll.mockResolvedValue([
+      {
+        id: 'invoice-1',
+        tenantId: 'tenant-1',
+        invoiceNumber: 'INV-001',
+        balance: '125.50',
+        totalAmount: '125.50',
+        currency: 'GHS',
+        dueDate: new Date(Date.now() - 24 * 60 * 60 * 1000),
+        status: 'overdue',
+        paymentToken: 'pay-token',
+        customer: {
+          id: 'customer-1',
+          name: 'Ama',
+          phone: '+233201234567',
+          email: 'ama@example.com',
+        },
+        toJSON: jest.fn(function toJSON() {
+          return { ...this };
+        }),
+        update: jest.fn(),
+      },
+    ]);
+
+    await paymentReminderService.checkAndSendReminders();
+
+    expect(whatsappService.sendMessage).not.toHaveBeenCalled();
+    expect(smsService.sendMessage).not.toHaveBeenCalled();
     expect(emailService.sendMessage).not.toHaveBeenCalled();
   });
 });

@@ -2542,6 +2542,26 @@ exports.sendReceipt = async (req, res, next) => {
       throw accessErr;
     }
 
+    const {
+      hasRecentReceiptForSale,
+      shouldUseAutomationInsteadOfBuiltIn,
+      TEMPLATE_KEYS,
+    } = require('../services/customerNotificationBridgeService');
+    if (await hasRecentReceiptForSale(req.tenantId, sale.id)) {
+      return res.status(200).json({
+        success: true,
+        message: 'Receipt already sent recently',
+        data: { deduped: true },
+      });
+    }
+    if (await shouldUseAutomationInsteadOfBuiltIn(req.tenantId, TEMPLATE_KEYS.SALE_COMPLETED_RECEIPT)) {
+      return res.status(200).json({
+        success: true,
+        message: 'Receipt delivery managed by sale_completed automation',
+        data: { managedByAutomation: true },
+      });
+    }
+
     // Determine phone and email to use; normalize phone for SMS/WhatsApp (0XX / +233)
     const rawPhone = phone || sale.customer?.phone;
     const { formatToE164 } = require('../utils/phoneUtils');
@@ -2632,8 +2652,31 @@ exports.sendReceipt = async (req, res, next) => {
  * Used by sale creation and completion paths; skips quietly when no customer contact is available.
  */
 async function autoSendReceiptIfEnabled(tenantId, saleId) {
+  const {
+    TEMPLATE_KEYS,
+    isCustomerNotificationEffectiveEnabled,
+    shouldUseAutomationInsteadOfBuiltIn,
+    isPosAutoSendReceiptEnabled,
+    hasRecentReceiptForSale,
+    recordReceiptSentActivity,
+  } = require('../services/customerNotificationBridgeService');
+
   const prefs = await Setting.findOne({ where: { tenantId, key: 'customer-notification-preferences' } });
-  if (!prefs?.value?.autoSendReceiptToCustomer) return;
+  const settingOn = prefs?.value?.autoSendReceiptToCustomer === true;
+  const posAutoSend = await isPosAutoSendReceiptEnabled(tenantId);
+  const effective = await isCustomerNotificationEffectiveEnabled(tenantId, {
+    settingEnabled: settingOn || posAutoSend,
+    templateKey: TEMPLATE_KEYS.SALE_COMPLETED_RECEIPT,
+  });
+  if (!effective) return;
+
+  if (await shouldUseAutomationInsteadOfBuiltIn(tenantId, TEMPLATE_KEYS.SALE_COMPLETED_RECEIPT)) {
+    return;
+  }
+
+  if (await hasRecentReceiptForSale(tenantId, saleId)) {
+    return;
+  }
 
   const sale = await Sale.findOne({
     where: { tenantId, id: saleId },
@@ -2684,6 +2727,11 @@ async function autoSendReceiptIfEnabled(tenantId, saleId) {
       console.error('[AutoSendReceipt] WhatsApp failed:', e?.message)
     );
   }
+
+  await recordReceiptSentActivity(tenantId, saleId, {
+    source: 'auto_send_receipt',
+    channels: ['email', 'sms', 'whatsapp'],
+  }).catch((e) => console.error('[AutoSendReceipt] Failed to record receipt activity:', e?.message));
 }
 
 /**

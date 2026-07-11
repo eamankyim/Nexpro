@@ -102,6 +102,27 @@ jest.mock('../../../services/emailTemplates', () => ({
 
 jest.mock('../../../services/emailService', () => ({
   sendMessage: jest.fn(),
+  getConfig: jest.fn().mockResolvedValue({}),
+}));
+
+jest.mock('../../../services/messageDeliveryRulesService', () => ({
+  isChannelEnabledForEvent: jest.fn().mockResolvedValue(true),
+}));
+
+jest.mock('../../../services/customerNotificationBridgeService', () => ({
+  TEMPLATE_KEYS: {
+    INVOICE_SENT: 'invoice_sent_notification',
+    PAYMENT_RECEIVED_THANK_YOU: 'payment_received_thank_you',
+  },
+  isCustomerNotificationEffectiveEnabled: jest.fn(),
+  shouldUseAutomationInsteadOfBuiltIn: jest.fn(),
+}));
+
+jest.mock('../../../services/automationEngineService', () => ({
+  runPaymentReceivedAutomations: jest.fn(),
+  runReviewRequestAutomations: jest.fn(),
+  runInvoiceSentAutomations: jest.fn().mockResolvedValue({ executed: 1 }),
+  runHighValueInvoiceAutomations: jest.fn().mockResolvedValue({ executed: 0 }),
 }));
 
 const { Invoice, Payment, Setting, Job, Sale } = require('../../../models');
@@ -110,6 +131,8 @@ const { updateCustomerBalance } = require('../../../services/customerBalanceServ
 const { ensureSaleFromPaidInvoice } = require('../../../services/invoiceSaleService');
 const emailService = require('../../../services/emailService');
 const { createInvoicePaymentJournal } = require('../../../services/invoiceAccountingService');
+const bridgeService = require('../../../services/customerNotificationBridgeService');
+const automationEngineService = require('../../../services/automationEngineService');
 const invoiceController = require('../../../controllers/invoiceController');
 
 describe('invoiceController sendInvoiceToCustomer logging', () => {
@@ -148,6 +171,8 @@ describe('invoiceController sendInvoiceToCustomer logging', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    bridgeService.isCustomerNotificationEffectiveEnabled.mockImplementation(async (_tenantId, { settingEnabled }) => settingEnabled);
+    bridgeService.shouldUseAutomationInsteadOfBuiltIn.mockResolvedValue(false);
     logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -226,6 +251,36 @@ describe('invoiceController sendInvoiceToCustomer logging', () => {
     expect(logSpy).toHaveBeenCalledWith('[InvoiceDelivery]', expect.objectContaining({
       event: 'invoice_email_skipped',
       reason: 'auto_send_disabled',
+    }));
+  });
+
+  it('uses automation rules instead of built-in channels when invoice_sent rule is enabled', async () => {
+    const invoice = baseInvoice();
+    Invoice.findOne.mockResolvedValue(invoice);
+    Setting.findOne.mockResolvedValue({
+      value: { autoSendInvoiceToCustomer: true },
+    });
+    bridgeService.isCustomerNotificationEffectiveEnabled.mockResolvedValue(true);
+    bridgeService.shouldUseAutomationInsteadOfBuiltIn.mockResolvedValue(true);
+
+    await invoiceController.sendInvoiceToCustomer('tenant-1', invoice, {
+      userId: 'user-1',
+      deliverySource: 'quote_accept',
+    });
+
+    expect(emailService.sendMessage).not.toHaveBeenCalled();
+    expect(automationEngineService.runInvoiceSentAutomations).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'tenant-1',
+        invoice,
+        paymentLink: expect.stringContaining('/pay-invoice/'),
+        actorUserId: 'user-1',
+      })
+    );
+    expect(logSpy).toHaveBeenCalledWith('[InvoiceDelivery]', expect.objectContaining({
+      event: 'invoice_send_decision',
+      decision: 'send_via_automation',
+      reason: 'automation_rule_enabled',
     }));
   });
 });

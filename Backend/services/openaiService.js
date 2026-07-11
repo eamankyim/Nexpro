@@ -559,7 +559,7 @@ Formatting rules:
 
 const draftAutomationRule = async ({ instruction, businessType = 'printing_press', suggestionsContext = {}, tenantId = null }) => {
   try {
-  const allowedTriggers = ['invoice_due_in_days', 'invoice_overdue', 'low_stock_detected', 'low_stock_on_change', 'out_of_stock_detected', 'quote_no_response', 'quote_sent', 'customer_inactive_days', 'customer_birthday', 'customer_created', 'payment_received', 'review_request', 'job_completed', 'job_due_in_hours', 'daily_sales_summary', 'new_lead', 'high_value_invoice', 'invoice_sent', 'sale_completed', 'lead_no_contact_days', 'low_profit_margin', 'prescription_refill_due'];
+  const allowedTriggers = ['invoice_due_in_days', 'invoice_overdue', 'low_stock_detected', 'low_stock_on_change', 'out_of_stock_detected', 'quote_no_response', 'quote_sent', 'customer_inactive_days', 'customer_birthday', 'customer_created', 'payment_received', 'review_request', 'job_completed', 'job_created', 'job_due_in_hours', 'daily_sales_summary', 'new_lead', 'high_value_invoice', 'invoice_sent', 'sale_completed', 'lead_no_contact_days', 'low_profit_margin', 'prescription_refill_due'];
   const allowedActions = ['create_task', 'send_email_platform', 'send_sms', 'send_whatsapp'];
   const system = `You draft automation rules for African Business Suite. Return only JSON. Never enable a rule or execute actions. Use only allowed trigger/action values.`;
   const prompt = `Create one draft automation rule from this user request:
@@ -576,11 +576,12 @@ Return JSON with this exact shape:
   "triggerType": "one allowed trigger",
   "triggerConfig": {},
   "conditionConfig": {},
-  "scheduleConfig": {"cooldownHours": 24},
+  "scheduleConfig": {"frequency": "weekly", "cooldownHours": 168},
   "actionConfig": {"actions": []},
   "explanation": "one sentence explaining what will happen"
 }
 
+For sticky triggers (invoice_overdue, invoice_due_in_days, quote_no_response, lead_no_contact_days, customer_inactive_days, low_stock_*, job_due_in_hours), set scheduleConfig.frequency to one of: once, daily, every_n_days, weekly, monthly. Prefer weekly for invoice_overdue. For every_n_days also set intervalDays. Derive cooldownHours (daily=24, weekly=168, monthly=720, every_n_days=N*24); for once set maxSends: 1.
 For WhatsApp actions, use template messages only and set "category" to "transactional" unless the user clearly asks for marketing. Use placeholder values like "{{customerName}}", "{{invoiceNumber}}", "{{paymentLink}}" in parameters when appropriate.`;
 
   const anthropic = await requireAnthropic({ tenantId });
