@@ -44,6 +44,10 @@ jest.mock('../../../utils/customerUniquenessUtils', () => ({
   assertCustomerContactUnique: jest.fn(),
 }));
 
+jest.mock('../../../services/automationEngineService', () => ({
+  runCustomerCreatedAutomations: jest.fn().mockResolvedValue({}),
+}));
+
 const { Customer } = require('../../../models');
 const { assertCustomerContactUnique } = require('../../../utils/customerUniquenessUtils');
 const { attachScopedToPayload } = require('../../../utils/shopUtils');
@@ -109,5 +113,25 @@ describe('customerController createCustomer', () => {
 
     expect(Customer.create).not.toHaveBeenCalled();
     expect(next).toHaveBeenCalledWith(dupErr);
+  });
+
+  it('normalizes dateOfBirth to fixed-year day+month on create', async () => {
+    const req = {
+      tenantId: 'tenant-1',
+      body: { name: 'Kojo', dateOfBirth: '1990-07-15' },
+    };
+    const res = mockRes();
+    const next = jest.fn();
+
+    await customerController.createCustomer(req, res, next);
+
+    expect(Customer.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'tenant-1',
+        name: 'Kojo',
+        dateOfBirth: '2000-07-15',
+      })
+    );
+    expect(next).not.toHaveBeenCalled();
   });
 });

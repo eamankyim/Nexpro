@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import {
   Loader2,
   Search,
@@ -95,13 +95,19 @@ const ORDER_FLOW_STEPS = [
 
 export default function TenantTrackLookup() {
   const { tenantSlug } = useParams();
+  const [searchParams] = useSearchParams();
   const [branding, setBranding] = useState(null);
   const [brandingError, setBrandingError] = useState('');
-  const [trackingId, setTrackingId] = useState('');
+  const [trackingId, setTrackingId] = useState(() => String(searchParams.get('order') || '').trim());
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
   const [lookupError, setLookupError] = useState(null);
   const [result, setResult] = useState(null);
+
+  useEffect(() => {
+    const fromQuery = String(searchParams.get('order') || '').trim();
+    if (fromQuery) setTrackingId(fromQuery);
+  }, [searchParams]);
 
   useEffect(() => {
     if (!tenantSlug) return undefined;

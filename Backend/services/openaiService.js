@@ -557,9 +557,15 @@ Formatting rules:
   }
 };
 
-const draftAutomationRule = async ({ instruction, businessType = 'printing_press', suggestionsContext = {}, tenantId = null }) => {
+const draftAutomationRule = async ({ instruction, businessType = 'printing_press', suggestionsContext = {}, tenantId = null, tenant = null }) => {
   try {
-  const allowedTriggers = ['invoice_due_in_days', 'invoice_overdue', 'low_stock_detected', 'low_stock_on_change', 'out_of_stock_detected', 'quote_no_response', 'quote_sent', 'customer_inactive_days', 'customer_birthday', 'customer_created', 'payment_received', 'review_request', 'job_completed', 'job_created', 'job_due_in_hours', 'daily_sales_summary', 'new_lead', 'high_value_invoice', 'invoice_sent', 'sale_completed', 'lead_no_contact_days', 'low_profit_margin', 'prescription_refill_due'];
+  const allTriggers = ['invoice_due_in_days', 'invoice_overdue', 'low_stock_detected', 'low_stock_on_change', 'out_of_stock_detected', 'quote_no_response', 'quote_sent', 'customer_inactive_days', 'customer_birthday', 'customer_created', 'payment_received', 'review_request', 'job_completed', 'job_created', 'job_due_in_hours', 'daily_sales_summary', 'new_lead', 'high_value_invoice', 'invoice_sent', 'sale_completed', 'order_created', 'lead_no_contact_days', 'low_profit_margin', 'prescription_refill_due'];
+  const { filterTriggerTypesForTenant } = require('../utils/automationBusinessType');
+  const tenantForFilter = tenant || { businessType };
+  const allowedTriggers = filterTriggerTypesForTenant(allTriggers, tenantForFilter);
+  if (!allowedTriggers.length) {
+    throw new Error('No automation triggers are available for this business type');
+  }
   const allowedActions = ['create_task', 'send_email_platform', 'send_sms', 'send_whatsapp'];
   const system = `You draft automation rules for African Business Suite. Return only JSON. Never enable a rule or execute actions. Use only allowed trigger/action values.`;
   const prompt = `Create one draft automation rule from this user request:

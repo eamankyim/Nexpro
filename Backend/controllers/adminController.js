@@ -765,6 +765,84 @@ const formatDuration = (totalSeconds) => {
   return parts.join(' ');
 };
 
+/**
+ * Prefer business/company email from tenant metadata, then first membership (owner) email.
+ * Matches how Admin Tenants identify workspaces.
+ * @param {object|null} tenant
+ * @param {string|null} primaryUserEmail
+ * @returns {string|null}
+ */
+const resolveTenantIdentityEmail = (tenant, primaryUserEmail = null) => {
+  const metadata = tenant?.metadata && typeof tenant.metadata === 'object' ? tenant.metadata : {};
+  const candidates = [metadata.email, metadata.companyEmail, primaryUserEmail];
+  for (const value of candidates) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+};
+
+/**
+ * Attach tenant/user display fields to in-memory slow operations for Admin Health.
+ * @param {{ operations?: object[] } & object} performance
+ * @returns {Promise<object>}
+ */
+const enrichSlowOperationsWithIdentity = async (performance) => {
+  const operations = Array.isArray(performance?.operations) ? performance.operations : [];
+  if (!operations.length) return performance;
+
+  const tenantIds = [...new Set(operations.map((op) => op.tenantId).filter(Boolean))];
+  const userIds = [...new Set(operations.map((op) => op.userId).filter(Boolean))];
+
+  const [tenants, users, firstMemberships] = await Promise.all([
+    tenantIds.length
+      ? Tenant.findAll({
+          where: { id: { [Op.in]: tenantIds } },
+          attributes: ['id', 'name', 'slug', 'metadata'],
+        })
+      : Promise.resolve([]),
+    userIds.length
+      ? User.findAll({
+          where: { id: { [Op.in]: userIds } },
+          attributes: ['id', 'email', 'name'],
+        })
+      : Promise.resolve([]),
+    tenantIds.length
+      ? UserTenant.findAll({
+          where: { tenantId: { [Op.in]: tenantIds } },
+          attributes: ['tenantId', 'userId'],
+          include: [{ model: User, as: 'user', attributes: ['email'], required: true }],
+          order: [['createdAt', 'ASC']],
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const tenantsById = new Map(tenants.map((tenant) => [tenant.id, tenant]));
+  const usersById = new Map(users.map((user) => [user.id, user]));
+  const primaryEmailsByTenant = {};
+  firstMemberships.forEach((ut) => {
+    if (primaryEmailsByTenant[ut.tenantId] == null && ut.user?.email) {
+      primaryEmailsByTenant[ut.tenantId] = ut.user.email;
+    }
+  });
+
+  return {
+    ...performance,
+    operations: operations.map((op) => {
+      const tenant = op.tenantId ? tenantsById.get(op.tenantId) : null;
+      const user = op.userId ? usersById.get(op.userId) : null;
+      const primaryUserEmail = op.tenantId ? primaryEmailsByTenant[op.tenantId] || null : null;
+      return {
+        ...op,
+        tenantName: tenant?.name || null,
+        tenantSlug: tenant?.slug || null,
+        tenantEmail: resolveTenantIdentityEmail(tenant, primaryUserEmail),
+        userName: user?.name || null,
+        userEmail: user?.email || null,
+      };
+    }),
+  };
+};
+
 exports.getPlatformSummary = async (req, res, next) => {
   try {
     const sevenDaysAgo = dayjs().subtract(7, 'day').toDate();
@@ -2560,6 +2638,10 @@ exports.getSystemHealth = async (req, res, next) => {
       limit: 5,
     });
 
+    const performance = await enrichSlowOperationsWithIdentity(
+      getRecentSlowOperations(req.query.limit)
+    );
+
     res.status(200).json({
       success: true,
       data: {
@@ -2576,7 +2658,7 @@ exports.getSystemHealth = async (req, res, next) => {
           suspendedTenants,
           activeAdmins,
         },
-        performance: getRecentSlowOperations(req.query.limit),
+        performance,
         recentTenants,
         recentNotifications,
       },

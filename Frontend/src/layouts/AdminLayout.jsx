@@ -71,7 +71,7 @@ const menuItems = [
   { path: '/admin/billing', icon: Currency, label: 'Billing' },
   { path: '/admin/reports', icon: FileSearch, label: 'Reports' },
   { path: '/admin/health', icon: AlertTriangle, label: 'System Health' },
-  { path: '/admin/automations', icon: Workflow, label: 'Automations & Messaging' },
+  { path: '/admin/automations', icon: Workflow, label: 'Automations' },
   { path: '/admin/support-tickets', icon: LifeBuoy, label: 'Support Tickets' },
   { path: '/admin/sabito/overview', icon: ShoppingBag, label: 'Sabito Admin', activePrefix: '/admin/sabito' },
   { path: '/admin/tasks', icon: CheckSquare, label: 'Tasks' },

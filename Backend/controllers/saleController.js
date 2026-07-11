@@ -20,7 +20,13 @@ const { computeDocumentTax } = require('../utils/taxCalculation');
 const { getTenantLogoUrl } = require('../utils/tenantLogo');
 const { resolveDeliveryForSale } = require('../services/deliverySettingsService');
 const { notifyOrderCreatedForCustomer } = require('../services/orderCustomerNotificationService');
-const { runReviewRequestAutomations, runSaleCompletedAutomations, runLowProfitMarginAutomations, runStockChangeAutomations } = require('../services/automationEngineService');
+const {
+  runReviewRequestAutomations,
+  runSaleCompletedAutomations,
+  runOrderCreatedAutomations,
+  runLowProfitMarginAutomations,
+  runStockChangeAutomations,
+} = require('../services/automationEngineService');
 const { getTenantShopType } = require('../config/businessTypes');
 const {
   applyShopFilter,
@@ -856,6 +862,14 @@ const runPostSaleAutomation = async ({ sale, items, tenantId, userId, isRestaura
 
     if (createdSale.customer) {
       mark('customer-order-alert:start');
+      await runOrderCreatedAutomations({
+        tenantId,
+        sale: createdSale,
+        customer: createdSale.customer || null,
+        actorUserId: userId || null,
+      }).catch((err) =>
+        console.error('[CreateSale] order_created automations failed:', err?.message || err)
+      );
       await notifyOrderCreatedForCustomer({
         tenantId,
         sale: createdSale

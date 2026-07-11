@@ -53,6 +53,18 @@ describe('automationForm action prefill', () => {
     expect(formatPlaceholderHint('daily_sales_summary')).toContain('{{totalSalesFormatted}}');
   });
 
+  it('lists placeholders for order_created trigger', () => {
+    expect(formatPlaceholderHint('order_created')).toContain('{{trackingLink}}');
+    expect(formatPlaceholderHint('order_created')).toContain('{{orderNumber}}');
+  });
+
+  it('prefills order_created SMS with tracking link', () => {
+    const row = defaultActionFormRow('send_sms', 'order_created');
+    expect(row.body).toContain('{{trackingLink}}');
+    expect(row.body).toContain('{{orderNumber}}');
+    expect(row.body).not.toMatch(/ETA|ready in|minutes/i);
+  });
+
   it('prefills job completed email with tracking line placeholder', () => {
     const row = defaultActionFormRow('send_email_platform', 'job_completed');
     expect(row.body).toContain('{{trackingLinkLine}}');

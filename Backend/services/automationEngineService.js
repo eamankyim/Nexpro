@@ -23,6 +23,12 @@ const whatsappService = require('./whatsappService');
 const emailTemplates = require('./emailTemplates');
 const whatsappTemplates = require('./whatsappTemplates');
 const { resolveBusinessNameForContext } = require('../utils/resolveBusinessNameForContext');
+const { matchBirthdayMonthDay } = require('../utils/customerBirthday');
+const {
+  annotateTemplateEligibility,
+  filterTemplatesForTenant,
+  isTriggerAllowedForTenant,
+} = require('../utils/automationBusinessType');
 
 const DEDUPE_WINDOW_HOURS = 24;
 const MAX_RULES_PER_TICK = 100;
@@ -47,13 +53,19 @@ const FREQUENCY_COOLDOWN_HOURS = {
   monthly: 720,
 };
 
+/**
+ * Catalog of automation templates. Each entry is annotated with allowedBusinessTypes
+ * and optional feature gates (requiresQuotes / requiresOrders) via annotateTemplateEligibility.
+ * @returns {object[]}
+ */
 function getTemplates() {
-  return [
+  const templates = [
     {
       key: 'invoice_due_reminder',
       name: 'Invoice due reminder',
       description: 'Email customers before an invoice is due.',
       triggerType: 'invoice_due_in_days',
+      allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
       triggerConfig: { daysBeforeDue: 2 },
       actionConfig: {
         actions: [{ type: 'send_email_platform', subject: 'Invoice due soon', body: 'Your invoice is due soon.' }]
@@ -64,6 +76,7 @@ function getTemplates() {
       name: 'Low-stock alert',
       description: 'Create a task when stock reaches the reorder level.',
       triggerType: 'low_stock_detected',
+      allowedBusinessTypes: ['shop'],
       triggerConfig: { thresholdMode: 'reorder_level' },
       actionConfig: {
         actions: [{ type: 'create_task', title: 'Restock low item', priority: 'high', link: '/materials' }]
@@ -74,6 +87,7 @@ function getTemplates() {
       name: 'Win-back campaign',
       description: 'Email customers after a period of inactivity.',
       triggerType: 'customer_inactive_days',
+      allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
       triggerConfig: { inactiveDays: 30 },
       actionConfig: {
         actions: [{ type: 'send_email_platform', subject: 'We miss you', body: 'Come back for a special offer.' }]
@@ -84,6 +98,7 @@ function getTemplates() {
       name: 'Birthday greeting',
       description: 'Send customers a WhatsApp birthday message on their birthday.',
       triggerType: 'customer_birthday',
+      allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
       triggerConfig: {},
       actionConfig: {
         actions: [{
@@ -100,6 +115,7 @@ function getTemplates() {
       name: 'Overdue invoice reminder',
       description: 'Send a WhatsApp payment reminder after an invoice is overdue.',
       triggerType: 'invoice_overdue',
+      allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
       triggerConfig: { daysAfterDue: 1 },
       scheduleConfig: { frequency: 'weekly', cooldownHours: 168 },
       actionConfig: {
@@ -117,6 +133,8 @@ function getTemplates() {
       name: 'Quote follow-up',
       description: 'Email customers when a sent quote has no response.',
       triggerType: 'quote_no_response',
+      allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
+      requiresQuotes: true,
       triggerConfig: { silentDays: 3 },
       actionConfig: {
         actions: [{
@@ -131,6 +149,7 @@ function getTemplates() {
       name: 'Payment received thank-you',
       description: 'Thank customers after a payment is recorded.',
       triggerType: 'payment_received',
+      allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
       triggerConfig: {},
       actionConfig: {
         actions: [{
@@ -151,6 +170,7 @@ function getTemplates() {
       name: 'Job completed notification',
       description: 'Notify customers when a job is completed.',
       triggerType: 'job_completed',
+      allowedBusinessTypes: ['studio'],
       triggerConfig: {},
       actionConfig: {
         actions: [{
@@ -171,6 +191,7 @@ function getTemplates() {
       name: 'Daily sales summary',
       description: 'Send the team a daily sales recap.',
       triggerType: 'daily_sales_summary',
+      allowedBusinessTypes: ['shop'],
       triggerConfig: { summaryPeriod: 'yesterday' },
       conditionConfig: { runAfterTime: '06:00' },
       scheduleConfig: { cooldownHours: 20 },
@@ -193,6 +214,7 @@ function getTemplates() {
       name: 'Review request',
       description: 'Ask customers for a review after a job, sale, or paid invoice.',
       triggerType: 'review_request',
+      allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
       triggerConfig: {},
       scheduleConfig: { cooldownHours: 168 },
       actionConfig: {
@@ -214,6 +236,7 @@ function getTemplates() {
       name: 'Low profit margin alert',
       description: 'Create an internal alert when a sale margin is too low.',
       triggerType: 'low_profit_margin',
+      allowedBusinessTypes: ['shop'],
       triggerConfig: { minMarginPercent: 15 },
       actionConfig: {
         actions: [{
@@ -230,6 +253,7 @@ function getTemplates() {
       name: 'New lead notification',
       description: 'Notify the team when a new lead is created.',
       triggerType: 'new_lead',
+      allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
       triggerConfig: {},
       actionConfig: {
         actions: [{
@@ -250,6 +274,7 @@ function getTemplates() {
       name: 'High value invoice alert',
       description: 'Create an internal alert when an invoice exceeds a set amount.',
       triggerType: 'high_value_invoice',
+      allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
       triggerConfig: { minAmount: 1000 },
       actionConfig: {
         actions: [{
@@ -266,6 +291,7 @@ function getTemplates() {
       name: 'New customer welcome',
       description: 'Welcome new customers by email, SMS, or WhatsApp.',
       triggerType: 'customer_created',
+      allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
       triggerConfig: {},
       actionConfig: {
         actions: [{
@@ -283,6 +309,7 @@ function getTemplates() {
       name: 'Lead follow-up',
       description: 'Follow up when a lead has had no contact for a set time.',
       triggerType: 'lead_no_contact_days',
+      allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
       triggerConfig: { noContactDays: 3 },
       actionConfig: {
         actions: [{
@@ -303,6 +330,7 @@ function getTemplates() {
       name: 'Invoice sent',
       description: 'Notify the customer when an invoice is sent.',
       triggerType: 'invoice_sent',
+      allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
       triggerConfig: {},
       actionConfig: {
         actions: [{
@@ -323,6 +351,7 @@ function getTemplates() {
       name: 'Sale receipt',
       description: 'Send customers an order confirmation when a sale is completed.',
       triggerType: 'sale_completed',
+      allowedBusinessTypes: ['shop'],
       triggerConfig: {},
       actionConfig: {
         actions: [{
@@ -343,6 +372,7 @@ function getTemplates() {
       name: 'Low stock (real-time)',
       description: 'Alert when stock drops to reorder level after a sale or adjustment.',
       triggerType: 'low_stock_on_change',
+      allowedBusinessTypes: ['shop'],
       triggerConfig: { thresholdMode: 'reorder_level' },
       actionConfig: {
         actions: [{
@@ -359,6 +389,7 @@ function getTemplates() {
       name: 'Out of stock (real-time)',
       description: 'Alert when a product goes out of stock.',
       triggerType: 'out_of_stock_detected',
+      allowedBusinessTypes: ['shop'],
       triggerConfig: {},
       actionConfig: {
         actions: [{
@@ -380,6 +411,8 @@ function getTemplates() {
       name: 'Quote sent',
       description: 'Notify the customer when a quote is sent.',
       triggerType: 'quote_sent',
+      allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
+      requiresQuotes: true,
       triggerConfig: {},
       actionConfig: {
         actions: [{
@@ -400,6 +433,7 @@ function getTemplates() {
       name: 'Job due soon',
       description: 'Remind the assigned team member when a job is due within a set number of hours.',
       triggerType: 'job_due_in_hours',
+      allowedBusinessTypes: ['studio'],
       triggerConfig: { hoursBeforeDue: 24 },
       actionConfig: {
         actions: [{
@@ -420,6 +454,7 @@ function getTemplates() {
       name: 'Prescription refill due',
       description: 'Remind pharmacy customers when a prescription refill is due.',
       triggerType: 'prescription_refill_due',
+      allowedBusinessTypes: ['pharmacy'],
       triggerConfig: { daysBeforeDue: 3 },
       actionConfig: {
         actions: [{
@@ -437,6 +472,7 @@ function getTemplates() {
       name: 'Job created — tracking email',
       description: 'Email customers a tracking link when a job is created.',
       triggerType: 'job_created',
+      allowedBusinessTypes: ['studio'],
       triggerConfig: { channel: 'email' },
       conditionConfig: { customerHasEmail: true },
       actionConfig: {
@@ -452,6 +488,7 @@ function getTemplates() {
       name: 'Job created — tracking SMS',
       description: 'SMS customers a tracking link when a job is created.',
       triggerType: 'job_created',
+      allowedBusinessTypes: ['studio'],
       triggerConfig: { channel: 'sms' },
       conditionConfig: { customerHasPhone: true, smsConsent: true },
       actionConfig: {
@@ -466,10 +503,32 @@ function getTemplates() {
       name: 'Job created — send invoice',
       description: 'Automatically send an invoice when a job is created.',
       triggerType: 'job_created',
+      allowedBusinessTypes: ['studio'],
       triggerConfig: { action: 'send_invoice' },
       actionConfig: { actions: [] }
+    },
+    {
+      key: 'order_created_notification',
+      name: 'Order created — tracking notification',
+      description: 'Notify customers with an order tracking link when an order is created.',
+      triggerType: 'order_created',
+      allowedBusinessTypes: ['shop'],
+      requiresOrders: true,
+      triggerConfig: {},
+      conditionConfig: {},
+      actionConfig: {
+        actions: [{
+          type: 'send_sms',
+          body: 'Hi {{customerName}}, we received order {{orderNumber}} at {{businessName}}. Track your order: {{trackingLink}}',
+        }, {
+          type: 'send_email_platform',
+          subject: 'Order {{orderNumber}} received — {{businessName}}',
+          body: 'Hi {{customerName}},\n\nWe have received your order {{orderNumber}}.\n\n{{trackingLinkLine}}\n\nThank you,\n{{businessName}}',
+        }]
+      }
     }
   ];
+  return templates.map(annotateTemplateEligibility);
 }
 
 function getTemplateByKey(key) {
@@ -713,9 +772,7 @@ function conditionsAllowRun(rule, triggerContext, now = new Date()) {
   if (conditions.birthdayMatch) {
     const dob = triggerContext.dateOfBirth || triggerContext.customer?.dateOfBirth;
     if (!dob) return { allowed: false, reason: 'birthday_condition' };
-    const birthday = new Date(dob);
-    const sameMonth = birthday.getMonth() === now.getMonth();
-    const sameDay = birthday.getDate() === now.getDate();
+    const { sameMonth, sameDay } = matchBirthdayMonthDay(dob, now);
     if (conditions.birthdayMatch === 'today' && (!sameMonth || !sameDay)) return { allowed: false, reason: 'birthday_condition' };
     if (conditions.birthdayMatch === 'this_month' && !sameMonth) return { allowed: false, reason: 'birthday_condition' };
   }
@@ -2463,6 +2520,76 @@ function buildSaleCompletedTriggerContext(sale, customer = null) {
   };
 }
 
+/**
+ * Build trigger context when a sale/order is created for a customer.
+ * @param {object} params
+ * @param {object} params.sale
+ * @param {object|null} [params.customer]
+ * @param {string|null} [params.trackingLink]
+ * @returns {object}
+ */
+function buildOrderCreatedTriggerContext({
+  sale,
+  customer = null,
+  trackingLink = null,
+}) {
+  const customerObj = customer || sale?.customer || {};
+  const totalAmount = toNumber(sale?.total, 0);
+  const orderNumber = sale?.saleNumber || String(sale?.id || '');
+  const resolvedTrackingLink = trackingLink || null;
+  const trackingLinkLine = resolvedTrackingLink
+    ? `Track your order: ${resolvedTrackingLink}`
+    : '';
+
+  return {
+    subjectKey: `order_created:${sale.id}`,
+    saleId: sale.id,
+    saleNumber: sale.saleNumber || null,
+    orderNumber,
+    orderId: sale.id,
+    customerId: customerObj.id || sale.customerId || null,
+    customerName: customerObj.name || customerObj.company || 'Customer',
+    email: customerObj.email || null,
+    phone: customerObj.phone || null,
+    totalAmount,
+    totalAmountFormatted: whatsappTemplates.formatCurrency(totalAmount),
+    amount: totalAmount,
+    amountFormatted: whatsappTemplates.formatCurrency(totalAmount),
+    trackingLink: resolvedTrackingLink,
+    trackingUrl: resolvedTrackingLink,
+    trackingLinkLine,
+    hasTrackingLink: Boolean(resolvedTrackingLink),
+    customerHasPhone: Boolean(customerObj.phone),
+    customerHasEmail: Boolean(customerObj.email),
+    whatsappConsent: customerObj.whatsappConsent === true,
+    smsConsent: customerObj.smsConsent === true,
+    marketingConsent: customerObj.marketingConsent === true,
+    customer: {
+      id: customerObj.id || sale.customerId || null,
+      name: customerObj.name || null,
+      company: customerObj.company || null,
+      email: customerObj.email || null,
+      phone: customerObj.phone || null,
+      shopId: customerObj.shopId || null,
+      studioLocationId: customerObj.studioLocationId || null,
+      whatsappConsent: customerObj.whatsappConsent === true,
+      smsConsent: customerObj.smsConsent === true,
+      marketingConsent: customerObj.marketingConsent === true,
+    },
+    shopId: sale.shopId || customerObj.shopId || null,
+    studioLocationId: sale.studioLocationId || customerObj.studioLocationId || null,
+    sale: {
+      id: sale.id,
+      saleNumber: sale.saleNumber || null,
+      shopId: sale.shopId || null,
+      studioLocationId: sale.studioLocationId || null,
+    },
+    message: resolvedTrackingLink
+      ? `Order ${orderNumber} created. Track here: ${resolvedTrackingLink}`
+      : `Order ${orderNumber} created.`,
+  };
+}
+
 function buildQuoteSentTriggerContext(quote, customer = null, quoteLink = null) {
   const customerObj = customer || quote.customer || {};
   const totalAmount = toNumber(quote.totalAmount, 0);
@@ -2580,6 +2707,51 @@ async function runSaleCompletedAutomations({
     tenantId,
     triggerType: 'sale_completed',
     triggerContext: buildSaleCompletedTriggerContext(sale, customer),
+    actorUserId,
+  });
+}
+
+/**
+ * Run order-created customer notification automations (tracking SMS/email).
+ * @param {object} params
+ * @returns {Promise<object>}
+ */
+async function runOrderCreatedAutomations({
+  tenantId,
+  sale,
+  customer = null,
+  actorUserId = null,
+  trackingLink = null,
+}) {
+  if (!tenantId || !sale?.id) {
+    return { skipped: true, reason: 'missing_sale' };
+  }
+
+  const customerObj = customer || sale.customer || null;
+  if (!customerObj && !sale.customerId) {
+    return { skipped: true, reason: 'missing_customer' };
+  }
+
+  let resolvedTrackingLink = trackingLink || null;
+  if (!resolvedTrackingLink) {
+    try {
+      const { resolveOrderTrackingLink } = require('../utils/orderTrackingLink');
+      resolvedTrackingLink = await resolveOrderTrackingLink(tenantId, {
+        orderNumber: sale.saleNumber || sale.id,
+      });
+    } catch (_error) {
+      resolvedTrackingLink = null;
+    }
+  }
+
+  return executeMatchingRules({
+    tenantId,
+    triggerType: 'order_created',
+    triggerContext: buildOrderCreatedTriggerContext({
+      sale,
+      customer: customerObj,
+      trackingLink: resolvedTrackingLink,
+    }),
     actorUserId,
   });
 }
@@ -2726,6 +2898,8 @@ module.exports = {
   FREQUENCY_COOLDOWN_HOURS,
   getTemplates,
   getTemplateByKey,
+  filterTemplatesForTenant,
+  isTriggerAllowedForTenant,
   executeRule,
   executeMatchingRules,
   buildPaymentReceivedTriggerContext,
@@ -2738,6 +2912,7 @@ module.exports = {
   buildInvoiceSentTriggerContext,
   buildHighValueInvoiceTriggerContext,
   buildSaleCompletedTriggerContext,
+  buildOrderCreatedTriggerContext,
   buildQuoteSentTriggerContext,
   buildLowProfitMarginTriggerContext,
   calculateSaleProfitMargin,
@@ -2754,6 +2929,7 @@ module.exports = {
   runInvoiceSentAutomations,
   runHighValueInvoiceAutomations,
   runSaleCompletedAutomations,
+  runOrderCreatedAutomations,
   runQuoteSentAutomations,
   runStockChangeAutomations,
   runLowProfitMarginAutomations,

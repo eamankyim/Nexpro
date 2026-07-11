@@ -15,9 +15,23 @@ const { getPagination } = require('../utils/paginationUtils');
 const { invalidateCustomerListCache } = require('../middleware/cache');
 const { runCustomerCreatedAutomations } = require('../services/automationEngineService');
 const { assertCustomerContactUnique } = require('../utils/customerUniquenessUtils');
+const { normalizeBirthdayDate } = require('../utils/customerBirthday');
 
 const customerReadWhere = (req, extra = {}) =>
   applyShopReadFilter(req, applyStudioLocationFilter(req, applyTenantFilter(req.tenantId, extra)));
+
+/**
+ * Normalize optional birthday to DATEONLY `2000-MM-DD` (day + month only).
+ * @param {Record<string, unknown>} payload
+ */
+function normalizeCustomerBirthdayPayload(payload) {
+  if (!Object.prototype.hasOwnProperty.call(payload, 'dateOfBirth')) return;
+  if (payload.dateOfBirth === '' || payload.dateOfBirth == null) {
+    payload.dateOfBirth = null;
+    return;
+  }
+  payload.dateOfBirth = normalizeBirthdayDate(payload.dateOfBirth);
+}
 
 // @desc    Get customer stats (counts for summary cards) – single query, no row fetch
 // @route   GET /api/customers/stats
@@ -183,7 +197,7 @@ exports.createCustomer = async (req, res, next) => {
     const payload = sanitizePayload(req.body);
     if (payload.email === '') payload.email = null;
     if (payload.phone === '') payload.phone = null;
-    if (payload.dateOfBirth === '') payload.dateOfBirth = null;
+    normalizeCustomerBirthdayPayload(payload);
     await assertCustomerContactUnique(req, {
       phone: payload.phone,
       email: payload.email,
@@ -241,7 +255,7 @@ exports.updateCustomer = async (req, res, next) => {
     const payload = sanitizePayload(req.body);
     if (payload.email === '') payload.email = null;
     if (payload.phone === '') payload.phone = null;
-    if (payload.dateOfBirth === '') payload.dateOfBirth = null;
+    normalizeCustomerBirthdayPayload(payload);
     delete payload.studioLocationId;
     delete payload.shopId;
     await assertCustomerContactUnique(req, {

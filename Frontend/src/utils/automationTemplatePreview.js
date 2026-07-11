@@ -57,6 +57,8 @@ function formatPreviewAmount(amount) {
   return `${CURRENCY.CODE} ${formatDecimal(amount)}`;
 }
 
+import { formatBirthdayDisplay } from './customerBirthday';
+
 /**
  * Format an ISO date string for message previews (e.g. "15 Jul 2026").
  * @param {string|null|undefined} isoDate
@@ -146,6 +148,7 @@ export function buildPreviewContextFromForm({
     trackingLink: 'https://app.example.com/track-job/sample-token',
     trackingLinkLine: 'Track your order: https://app.example.com/track-job/sample-token',
     saleNumber: 'SALE-SAMPLE-0001',
+    orderNumber: 'SALE-SAMPLE-0001',
     sourceNumber: 'JOB-SAMPLE-0001',
     date: formatPreviewDate(new Date()),
     periodLabel: 'yesterday',
@@ -159,7 +162,7 @@ export function buildPreviewContextFromForm({
     lastPurchaseDaysAgo: String(base.lastPurchaseDaysAgo ?? 45),
     quantityOnHand: String(base.quantityOnHand ?? 2),
     reorderLevel: String(base.reorderLevel ?? 5),
-    dateOfBirth: formatPreviewDate(base.dateOfBirth),
+    dateOfBirth: formatBirthdayDisplay(base.dateOfBirth) || formatPreviewDate(base.dateOfBirth),
     email: 'john.doe@example.com',
     phone: '+233 20 123 4567',
     customer: {

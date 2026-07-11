@@ -12,11 +12,13 @@ const TEMPLATE_KEYS = {
   JOB_CREATED_TRACKING_EMAIL: 'job_created_tracking_email',
   JOB_CREATED_TRACKING_SMS: 'job_created_tracking_sms',
   JOB_CREATED_SEND_INVOICE: 'job_created_send_invoice',
+  ORDER_CREATED_NOTIFICATION: 'order_created_notification',
 };
 
 /** Template keys that should also match by trigger type (any custom overdue rule). */
 const TEMPLATE_KEY_TRIGGER_TYPES = {
   [TEMPLATE_KEYS.OVERDUE_INVOICE_REMINDER]: 'invoice_overdue',
+  [TEMPLATE_KEYS.ORDER_CREATED_NOTIFICATION]: 'order_created',
 };
 
 /**

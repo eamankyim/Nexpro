@@ -1599,7 +1599,7 @@ const saleReceiptEmail = (sale, company = {}, closingNote = '') => {
  * Customer order-created email (tenant sendMessage).
  * @returns {{ subject: string, html: string, text: string }}
  */
-const orderCreatedEmail = (sale, customer = {}, company = {}) => {
+const orderCreatedEmail = (sale, customer = {}, company = {}, trackingLink = null) => {
   const companyName = company.name || 'African Business Suite';
   const primaryColor = company.primaryColor || EMAIL_DESIGN.primaryColor;
   const logoUrl = company.logoUrl || company.logo || '';
@@ -1611,6 +1611,18 @@ const orderCreatedEmail = (sale, customer = {}, company = {}) => {
   const deliveryLine = delivery?.required
     ? `<tr><td style="padding: 12px; border-bottom: 1px solid ${d.borderColor};"><strong>Delivery</strong></td><td style="padding: 12px; border-bottom: 1px solid ${d.borderColor};">${escapeHtml(delivery.label || 'Selected')} - ${formatCurrency(delivery.fee || 0, sale?.currency || 'GHS')}</td></tr>`
     : '';
+  const trackUrl = String(trackingLink || '').trim();
+  const trackButton = trackUrl
+    ? `<table border="0" cellpadding="0" cellspacing="0" align="center" style="margin: 24px auto 16px;">
+      <tr>
+        <td align="center" style="border-radius: ${d.buttonRadius}; background-color: ${primaryColor};">
+          <a href="${escapeHtml(trackUrl)}" target="_blank" style="display: inline-block; padding: ${d.buttonPadding}; color: #ffffff !important; font-size: ${d.buttonSize}; font-weight: bold; text-decoration: none;">Track your order</a>
+        </td>
+      </tr>
+    </table>
+    <p style="margin: 0 0 8px 0; font-size: ${d.smallSize}; color: ${d.mutedColor}; text-align: center;">Use order number <strong>${escapeHtml(orderNumber)}</strong> and your phone on the tracking page.</p>
+    <p style="margin: 0 0 24px 0; font-size: ${d.smallSize}; word-break: break-all; text-align: center;"><a href="${escapeHtml(trackUrl)}" target="_blank" style="color: ${d.linkColor};">${escapeHtml(trackUrl)}</a></p>`
+    : '';
 
   const inner = `
     <h1 style="margin: 0 0 24px 0; font-size: ${d.headingSize}; font-weight: bold; color: ${d.headingColor}; line-height: 1.3;">Order received</h1>
@@ -1621,6 +1633,7 @@ const orderCreatedEmail = (sale, customer = {}, company = {}) => {
       <tr><td style="padding: 12px; border-bottom: 1px solid ${d.borderColor};"><strong>Total</strong></td><td style="padding: 12px; border-bottom: 1px solid ${d.borderColor};">${escapeHtml(total)}</td></tr>
       ${deliveryLine}
     </table>
+    ${trackButton}
     <p style="margin: 0; font-size: ${d.smallSize}; color: ${d.mutedColor}; text-align: center;">We will contact you with any updates.</p>
   `;
   const html = sellfyCardTemplate(inner, { companyName, primaryColor, logoUrl });
@@ -1631,6 +1644,7 @@ const orderCreatedEmail = (sale, customer = {}, company = {}) => {
     `Order number: ${orderNumber}`,
     `Total: ${total}`,
     delivery?.required ? `Delivery: ${delivery.label || 'Selected'} - ${formatCurrency(delivery.fee || 0, sale?.currency || 'GHS')}` : '',
+    trackUrl ? `Track your order: ${trackUrl}` : '',
     '',
     'We will contact you with any updates.',
     '',

@@ -83,7 +83,7 @@ const SMS_TEMPLATES_CATALOG = {
     variables: ['customerName', 'businessName', 'branchName', 'orderNumber', 'amount', 'trackingLink'],
     requiredVariables: ['orderNumber', 'amount'],
     defaultBody:
-      'Hi {customerName}, we received order {orderNumber} at {businessName}. Total: {amount}.',
+      'Hi {customerName}, we received order {orderNumber} at {businessName}. Total: {amount}. Track your order: {trackingLink}',
   },
   job_tracking_created: {
     key: 'job_tracking_created',

@@ -85,6 +85,11 @@ export const TRIGGER_OPTIONS = [
     hint: 'When a sale is completed (receipt / confirmation).',
   },
   {
+    value: 'order_created',
+    label: 'Order created',
+    hint: 'When an order/sale is created for a customer (includes tracking link).',
+  },
+  {
     value: 'low_stock_on_change',
     label: 'Low stock (real-time)',
     hint: 'When stock drops to reorder level after a sale or adjustment.',
@@ -220,6 +225,18 @@ export const TRIGGER_PLACEHOLDERS = {
   lead_no_contact_days: ['leadName', 'leadCompany', 'leadSource', 'noContactDays', 'businessName', 'email', 'phone'],
   invoice_sent: ['customerName', 'businessName', 'invoiceNumber', 'totalAmountFormatted', 'balance', 'paymentLink', 'dueDate', 'email', 'phone'],
   sale_completed: ['customerName', 'businessName', 'saleNumber', 'totalAmountFormatted', 'email', 'phone'],
+  order_created: [
+    'customerName',
+    'businessName',
+    'orderNumber',
+    'saleNumber',
+    'trackingLink',
+    'trackingUrl',
+    'trackingLinkLine',
+    'totalAmountFormatted',
+    'email',
+    'phone',
+  ],
   low_stock_on_change: ['productName', 'sku', 'quantityOnHand', 'reorderLevel', 'businessName'],
   out_of_stock_detected: ['productName', 'sku', 'quantityOnHand', 'reorderLevel', 'businessName'],
   quote_sent: ['customerName', 'businessName', 'quoteNumber', 'quoteTitle', 'quoteLink', 'totalAmountFormatted', 'email', 'phone'],
@@ -533,6 +550,28 @@ export const DEFAULT_ACTION_CONTENT = {
       title: 'Sale completed — {{saleNumber}}',
       priority: 'low',
       description: '{{customerName}} — {{totalAmountFormatted}}.',
+      link: '/sales',
+    },
+  },
+  order_created: {
+    send_sms: {
+      body:
+        'Hi {{customerName}}, we received order {{orderNumber}} at {{businessName}}. Track your order: {{trackingLink}}',
+    },
+    send_whatsapp: {
+      templateName: 'order_created',
+      language: 'en',
+      parametersText: '{{customerName}}, {{orderNumber}}, {{totalAmountFormatted}}, {{businessName}}',
+    },
+    send_email_platform: {
+      subject: 'Order {{orderNumber}} received — {{businessName}}',
+      body:
+        'Hi {{customerName}},\n\nWe have received your order {{orderNumber}}.\n\n{{trackingLinkLine}}\n\nThank you,\n{{businessName}}',
+    },
+    create_task: {
+      title: 'Order created — {{orderNumber}}',
+      priority: 'low',
+      description: 'Notify {{customerName}} about order {{orderNumber}}.',
       link: '/sales',
     },
   },
@@ -922,6 +961,8 @@ export function defaultTriggerForm(triggerType) {
       return {};
     case 'sale_completed':
       return {};
+    case 'order_created':
+      return {};
     case 'low_stock_on_change':
       return { thresholdMode: 'reorder_level', fixedThreshold: 5 };
     case 'out_of_stock_detected':
@@ -1023,6 +1064,7 @@ export function buildTriggerConfig(triggerType, triggerForm) {
     case 'customer_created':
     case 'invoice_sent':
     case 'sale_completed':
+    case 'order_created':
     case 'out_of_stock_detected':
     case 'quote_sent':
       return {};
@@ -1422,6 +1464,7 @@ export function buildTestContextFromForm({ name, triggerType, triggerForm, condi
     trackingLink: 'http://localhost:3000/track-job/sample-token',
     trackingLinkLine: 'Track your order: http://localhost:3000/track-job/sample-token',
     saleNumber: 'SALE-TEST-0001',
+    orderNumber: 'SALE-TEST-0001',
     sourceNumber: 'JOB-TEST-0001',
     leadName: 'Sample Lead',
     leadCompany: 'Sample Lead Co',

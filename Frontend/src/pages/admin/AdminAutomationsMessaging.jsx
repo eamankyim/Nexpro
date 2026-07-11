@@ -178,7 +178,7 @@ const AdminAutomationsMessaging = () => {
         <div className="text-center">
           <h3 className="text-lg font-semibold text-foreground mb-2">Access Denied</h3>
           <p className="text-muted-foreground">
-            You don&apos;t have permission to view Automations &amp; Messaging.
+            You don&apos;t have permission to view Automations.
           </p>
         </div>
       </div>
@@ -205,7 +205,7 @@ const AdminAutomationsMessaging = () => {
     <div>
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold text-foreground mb-1">Automations &amp; Messaging</h2>
+          <h2 className="text-2xl font-semibold text-foreground mb-1">Automations</h2>
           <p className="text-sm text-muted-foreground">
             Cross-tenant rule health and messaging usage. Message bodies and full rule configs are not shown.
           </p>

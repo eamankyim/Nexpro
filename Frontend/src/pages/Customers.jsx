@@ -65,11 +65,19 @@ import FormFieldGrid from '../components/FormFieldGrid';
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
+import {
+  BIRTHDAY_MONTH_OPTIONS,
+  daysInMonth,
+  formatBirthdayDisplay,
+  parseBirthdayParts,
+  toBirthdayStorageDate,
+} from '../utils/customerBirthday';
 import { Sheet } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import ResponsiveSheet from '../components/ResponsiveSheet';
@@ -102,12 +110,30 @@ const customerSchema = z.object({
   ),
   company: customerString,
   phone: customerString,
-  dateOfBirth: customerString,
+  birthdayMonth: customerString,
+  birthdayDay: customerString,
   address: customerString,
   city: customerString,
   state: customerString,
   howDidYouHear: customerString,
   referralName: customerString,
+}).superRefine((data, ctx) => {
+  const hasMonth = Boolean(data.birthdayMonth);
+  const hasDay = Boolean(data.birthdayDay);
+  if (hasMonth !== hasDay) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Select both day and month, or leave both empty',
+      path: hasMonth ? ['birthdayDay'] : ['birthdayMonth'],
+    });
+  }
+  if (hasMonth && hasDay && !toBirthdayStorageDate(data.birthdayMonth, data.birthdayDay)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Enter a valid birthday',
+      path: ['birthdayDay'],
+    });
+  }
 });
 
 const Customers = () => {
@@ -160,7 +186,8 @@ const Customers = () => {
       company: '',
       email: '',
       phone: '',
-      dateOfBirth: '',
+      birthdayMonth: '',
+      birthdayDay: '',
       address: '',
       city: '',
       state: '',
@@ -170,6 +197,7 @@ const Customers = () => {
   });
 
   const howDidYouHear = form.watch('howDidYouHear');
+  const birthdayMonth = form.watch('birthdayMonth');
 
   useEffect(() => {
     setPageSearchConfig({ scope: 'customers', placeholder: SEARCH_PLACEHOLDERS.CUSTOMERS });
@@ -321,7 +349,8 @@ const Customers = () => {
         company: '',
         email: '',
         phone: '',
-        dateOfBirth: '',
+        birthdayMonth: '',
+        birthdayDay: '',
         address: '',
         howDidYouHear: '',
         referralName: '',
@@ -357,7 +386,8 @@ const Customers = () => {
       company: '',
       email: '',
       phone: '',
-      dateOfBirth: '',
+      birthdayMonth: '',
+      birthdayDay: '',
       address: '',
       howDidYouHear: '',
       referralName: '',
@@ -370,9 +400,19 @@ const Customers = () => {
 
   const handleEdit = (customer) => {
     setEditingCustomer(customer);
+    const birthdayParts = parseBirthdayParts(customer.dateOfBirth);
     form.reset({
-      ...customer,
-      dateOfBirth: customer.dateOfBirth || '',
+      name: customer.name || '',
+      company: customer.company || '',
+      email: customer.email || '',
+      phone: customer.phone || '',
+      birthdayMonth: birthdayParts?.month || '',
+      birthdayDay: birthdayParts?.day || '',
+      address: customer.address || '',
+      city: customer.city || '',
+      state: customer.state || '',
+      howDidYouHear: customer.howDidYouHear || '',
+      referralName: customer.referralName || '',
     });
     setShowReferralName(customer.howDidYouHear === 'Referral');
     setModalVisible(true);
@@ -570,10 +610,16 @@ const Customers = () => {
       }
     }
 
+    const { birthdayMonth, birthdayDay, ...rest } = values;
+    const payload = {
+      ...rest,
+      dateOfBirth: toBirthdayStorageDate(birthdayMonth, birthdayDay) || null,
+    };
+
     if (editingCustomer) {
-      updateMutation.mutate({ id: editingCustomer.id, values });
+      updateMutation.mutate({ id: editingCustomer.id, values: payload });
     } else {
-      createMutation.mutate(values);
+      createMutation.mutate(payload);
     }
   };
 
@@ -914,19 +960,87 @@ const Customers = () => {
                   </FormItem>
                 )}
               />
-              <FormField
-                control={form.control}
-                name="dateOfBirth"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Date of birth (optional)</FormLabel>
-                    <FormControl>
-                      <Input {...field} type="date" />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              <FormItem>
+                <FormLabel>Birthday (optional)</FormLabel>
+                <div className="grid grid-cols-2 gap-2">
+                  <FormField
+                    control={form.control}
+                    name="birthdayMonth"
+                    render={({ field }) => (
+                      <FormItem className="space-y-0">
+                        <Select
+                          value={field.value || undefined}
+                          onValueChange={(month) => {
+                            if (month === '__clear__') {
+                              field.onChange('');
+                              form.setValue('birthdayDay', '');
+                              return;
+                            }
+                            field.onChange(month);
+                            const day = form.getValues('birthdayDay');
+                            if (day && Number(day) > daysInMonth(Number(month))) {
+                              form.setValue('birthdayDay', '');
+                            }
+                          }}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Month" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="__clear__">Clear</SelectItem>
+                            {BIRTHDAY_MONTH_OPTIONS.map((opt) => (
+                              <SelectItem key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="birthdayDay"
+                    render={({ field }) => {
+                      const maxDay = birthdayMonth ? daysInMonth(Number(birthdayMonth)) : 31;
+                      return (
+                        <FormItem className="space-y-0">
+                          <Select
+                            value={field.value || undefined}
+                            disabled={!birthdayMonth}
+                            onValueChange={(day) => {
+                              if (day === '__clear__') {
+                                field.onChange('');
+                                return;
+                              }
+                              field.onChange(day);
+                            }}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Day" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="__clear__">Clear</SelectItem>
+                              {Array.from({ length: maxDay }, (_, i) => String(i + 1)).map((day) => (
+                                <SelectItem key={day} value={day}>
+                                  {day}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      );
+                    }}
+                  />
+                </div>
+                <FormDescription>Day and month only</FormDescription>
+              </FormItem>
             </FormFieldGrid>
 
               <FormField
@@ -1146,7 +1260,7 @@ const Customers = () => {
                     </DescriptionItem>
                     <DescriptionItem label="Birthday">
                       <span className="text-foreground">
-                        {viewingCustomer.dateOfBirth ? dayjs(viewingCustomer.dateOfBirth).format('MMM DD') : '—'}
+                        {viewingCustomer.dateOfBirth ? formatBirthdayDisplay(viewingCustomer.dateOfBirth) : '—'}
                       </span>
                     </DescriptionItem>
                   </Descriptions>

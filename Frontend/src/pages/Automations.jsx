@@ -70,6 +70,11 @@ import {
   defaultFrequencyForTrigger,
   triggerLabel,
 } from '../utils/automationForm';
+import {
+  filterTriggerOptionsForTenant,
+  isTriggerAllowedForTenant,
+  resolveBusinessType,
+} from '../utils/automationBusinessType';
 import { handleApiError, showError, showSuccess } from '../utils/toast';
 import AutomationTestRecipientDialog from '../components/automations/AutomationTestRecipientDialog';
 import MessagePreview from '../components/automations/MessagePreview';
@@ -336,8 +341,6 @@ const AUTOMATION_CREATION_STEPS = [
   { key: 'review', label: 'Review', helper: 'Confirm and activate' },
 ];
 
-const TRIGGER_CATEGORIES = ['All triggers', 'Sales & CRM', 'Finance', 'Inventory', 'Marketing', 'People & HR', 'General'];
-
 const TRIGGER_CARD_DETAILS = {
   invoice_due_in_days: {
     category: 'Finance',
@@ -483,6 +486,15 @@ const TRIGGER_CARD_DETAILS = {
     bg: 'bg-emerald-50',
     color: 'text-emerald-700',
   },
+  order_created: {
+    category: 'Sales & CRM',
+    title: 'Order created',
+    description: 'Customer alert with order tracking link',
+    tag: 'New',
+    Icon: Package,
+    bg: 'bg-orange-50',
+    color: 'text-orange-700',
+  },
   low_stock_on_change: {
     category: 'Inventory',
     title: 'Low stock (real-time)',
@@ -575,7 +587,7 @@ const BIRTHDAY_MATCH_OPTIONS = [
 
 const INVOICE_TRIGGER_TYPES = ['invoice_due_in_days', 'invoice_overdue', 'payment_received'];
 const REVIEW_TRIGGER_TYPES = ['review_request'];
-const JOB_TRIGGER_TYPES = ['job_completed'];
+const JOB_TRIGGER_TYPES = ['job_completed', 'order_created'];
 const CUSTOMER_TRIGGER_TYPES = ['customer_inactive_days', 'customer_birthday'];
 const PRODUCT_TRIGGER_TYPES = ['low_stock_detected'];
 
@@ -981,17 +993,6 @@ const TAB_ITEMS = [
   { value: 'ai-builder', label: 'AI Builder' },
 ];
 
-const TEMPLATE_CATEGORIES = [
-  { value: 'all', label: 'All templates' },
-  { value: 'customer_communication', label: 'Customer communication' },
-  { value: 'finance_payments', label: 'Finance & payments' },
-  { value: 'sales_crm', label: 'Sales & CRM' },
-  { value: 'inventory_stock', label: 'Inventory & stock' },
-  { value: 'marketing', label: 'Marketing' },
-  { value: 'operations', label: 'Operations' },
-  { value: 'hr_team', label: 'HR & Team' },
-];
-
 const TEMPLATE_CHANNEL_OPTIONS = [
   { value: 'all', label: 'All channels' },
   { value: 'whatsapp', label: 'WhatsApp' },
@@ -1187,6 +1188,16 @@ const TEMPLATE_METADATA = {
     channels: ['whatsapp', 'email'],
     difficulty: 'medium',
     usage: 287,
+  },
+  order_created_notification: {
+    category: 'sales_crm',
+    title: 'Order created tracking',
+    description: 'SMS/email customers a tracking link when an order is created.',
+    Icon: Package,
+    accent: 'orange',
+    channels: ['sms', 'email'],
+    difficulty: 'easy',
+    usage: 0,
   },
   low_stock_on_change: {
     category: 'operations',
@@ -1465,9 +1476,10 @@ function TemplateChannelIcon({ channel }) {
 function TemplateCard({ template, onUse }) {
   const Icon = template.Icon || Zap;
   const accentClass = TEMPLATE_ACCENT_CLASSES[template.accent] || TEMPLATE_ACCENT_CLASSES.blue;
+  const unavailableLabel = template.unavailableReason || (template.disabled ? 'Not available yet.' : null);
 
   return (
-    <div className="flex min-h-[236px] w-[260px] shrink-0 flex-col rounded-2xl border border-border bg-background p-4">
+    <div className="flex h-full min-h-[236px] flex-col rounded-2xl border border-border bg-background p-4">
       <div className="flex items-start justify-between gap-3">
         <div className={`flex h-11 w-11 items-center justify-center rounded-2xl border ${accentClass}`}>
           <Icon className="h-5 w-5" aria-hidden />
@@ -1489,8 +1501,8 @@ function TemplateCard({ template, onUse }) {
         {template.usage ? `Used by ${template.usage.toLocaleString()} businesses` : triggerLabel(template.triggerType)}
       </p>
       {template.reviewNote && <p className="mt-2 line-clamp-2 text-xs text-amber-700">{template.reviewNote}</p>}
-      {template.disabled && (
-        <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{template.unavailableReason || 'Not available yet.'}</p>
+      {unavailableLabel && (
+        <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{unavailableLabel}</p>
       )}
       <Button
         type="button"
@@ -1499,7 +1511,7 @@ function TemplateCard({ template, onUse }) {
         onClick={() => onUse(template)}
         disabled={template.disabled}
       >
-        {template.disabled ? 'Not available yet' : 'Use template'}
+        {template.disabled ? 'Not available' : 'Use template'}
       </Button>
     </div>
   );
@@ -2014,11 +2026,10 @@ function AutomationCreationModal({
   setBuilder,
   step,
   setStep,
-  triggerCategory,
-  setTriggerCategory,
   conditionMode,
   setConditionMode,
   selectedTriggerMeta,
+  allowedTriggerOptions = TRIGGER_OPTIONS,
   patchTriggerForm,
   patchConditionForm,
   patchActionRow,
@@ -2038,16 +2049,12 @@ function AutomationCreationModal({
   const stepIndex = AUTOMATION_CREATION_STEPS.findIndex((item) => item.key === step);
   const currentStepIndex = stepIndex < 0 ? 0 : stepIndex;
   const triggerCards = useMemo(() => {
-    const base = TRIGGER_OPTIONS.map((option) => ({
+    return allowedTriggerOptions.map((option) => ({
       ...option,
       ...(TRIGGER_CARD_DETAILS[option.value] || {}),
       disabled: false,
     }));
-    return [...base, ...EXTRA_TRIGGER_CARDS].filter((item) => {
-      const categoryMatch = triggerCategory === 'All triggers' || item.category === triggerCategory;
-      return categoryMatch;
-    });
-  }, [triggerCategory]);
+  }, [allowedTriggerOptions]);
   const selectedDetails = TRIGGER_CARD_DETAILS[builder.triggerType] || {};
   const SelectedIcon = selectedDetails.Icon || selectedTriggerMeta?.Icon || Zap;
   const visibleConditionGroups = useMemo(() => getVisibleConditionGroups(builder.triggerType), [builder.triggerType]);
@@ -2151,38 +2158,7 @@ function AutomationCreationModal({
                       <CardDescription>This is the event that starts your automation.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <div className="grid gap-3 md:grid-cols-[minmax(0,180px)] lg:hidden">
-                        <Select value={triggerCategory} onValueChange={setTriggerCategory}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {TRIGGER_CATEGORIES.map((category) => (
-                              <SelectItem key={category} value={category}>
-                                {category}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="grid gap-4 lg:grid-cols-[130px_minmax(0,1fr)] lg:items-start">
-                        <div className="hidden space-y-1 lg:sticky lg:top-4 lg:block lg:self-start">
-                          {TRIGGER_CATEGORIES.map((category) => (
-                            <button
-                              key={category}
-                              type="button"
-                              className={`w-full rounded-lg border px-3 py-2 text-left text-xs font-medium ${
-                                triggerCategory === category
-                                  ? 'border-[#166534] bg-emerald-50 text-[#166534]'
-                                  : 'border-transparent bg-slate-50 text-slate-600 hover:bg-slate-100'
-                              }`}
-                              onClick={() => setTriggerCategory(category)}
-                            >
-                              {category}
-                            </button>
-                          ))}
-                        </div>
-                        <div className="grid max-h-[420px] gap-3 overflow-y-auto pr-1 md:grid-cols-2 lg:max-h-[520px]">
+                      <div className="grid max-h-[420px] gap-3 overflow-y-auto pr-1 md:grid-cols-2 lg:max-h-[520px]">
                           {triggerCards.map((item) => {
                             const Icon = item.Icon || Zap;
                             const selected = item.value === builder.triggerType;
@@ -2215,7 +2191,6 @@ function AutomationCreationModal({
                             );
                           })}
                         </div>
-                      </div>
                       <button type="button" className="text-xs font-medium text-[#166534]">
                         Can't find what you need? Suggest a trigger <ArrowRight className="inline h-3 w-3" aria-hidden />
                       </button>
@@ -2227,10 +2202,6 @@ function AutomationCreationModal({
                       <div>
                         <CardTitle className="text-base">Selected trigger</CardTitle>
                       </div>
-                      <Button type="button" variant="outline" size="sm" className="bg-white" onClick={() => setTriggerCategory('All triggers')}>
-                        <Pencil className="mr-2 h-3.5 w-3.5" aria-hidden />
-                        Change trigger
-                      </Button>
                     </CardHeader>
                     <CardContent className="space-y-5">
                       <div className="flex items-start gap-3">
@@ -2792,10 +2763,16 @@ function AutomationRuleDetailsDrawer({
               <SheetDescription>{rule?.description || 'View automation rule details and recent activity.'}</SheetDescription>
               {rule && (
                 <div className="flex flex-wrap items-center gap-2">
-                  <StatusChip
-                    status={rule.status}
-                    className={rule.status === 'active' ? 'border-green-100 bg-green-50 text-green-700' : ''}
-                  />
+                  {!rule.businessTypeCompatible ? (
+                    <span className="rounded-full border border-amber-100 bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-800">
+                      Not for your business type
+                    </span>
+                  ) : (
+                    <StatusChip
+                      status={rule.status}
+                      className={rule.status === 'active' ? 'border-green-100 bg-green-50 text-green-700' : ''}
+                    />
+                  )}
                   <span className="rounded-full border border-border bg-muted/30 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
                     {rule.enabled ? 'Enabled' : 'Paused'}
                   </span>
@@ -2949,7 +2926,10 @@ function AutomationRuleDetailsDrawer({
                     <Pencil className="mr-2 h-4 w-4" aria-hidden />
                     Edit
                   </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => onToggle(rule)} disabled={toggleInProgress}>
+                  <DropdownMenuItem
+                    onSelect={() => onToggle(rule)}
+                    disabled={toggleInProgress || (!rule.enabled && rule.businessTypeCompatible === false)}
+                  >
                     {toggleInProgress ? (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
                     ) : rule.enabled ? (
@@ -2994,7 +2974,6 @@ export default function Automations() {
   const [builder, setBuilder] = useState(createInitialBuilder);
   const [builderModalOpen, setBuilderModalOpen] = useState(false);
   const [builderStep, setBuilderStep] = useState('trigger');
-  const [triggerCategory, setTriggerCategory] = useState('All triggers');
   const [conditionMode, setConditionMode] = useState('All conditions');
   const [selectedRuleId, setSelectedRuleId] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -3004,7 +2983,6 @@ export default function Automations() {
   const [editingRuleId, setEditingRuleId] = useState('');
   const [aiInstruction, setAiInstruction] = useState('');
   const [activeTab, setActiveTab] = useState('rules');
-  const [templateCategory, setTemplateCategory] = useState('all');
   const [templateChannel, setTemplateChannel] = useState('all');
   const [templateDifficulty, setTemplateDifficulty] = useState('all');
   const [templateSort, setTemplateSort] = useState('popular');
@@ -3038,8 +3016,12 @@ export default function Automations() {
     if (useJsonOverride) setAdvancedOpen(true);
   }, [useJsonOverride]);
 
+  const businessType = resolveBusinessType(activeTenant?.businessType);
+  const shopType =
+    activeTenant?.metadata?.shopType || activeTenant?.metadata?.businessSubType || null;
+
   const templatesQuery = useQuery({
-    queryKey: ['automations', 'templates'],
+    queryKey: ['automations', 'templates', activeTenantId, businessType, shopType],
     queryFn: () => automationService.getTemplates(),
     enabled: !!activeTenantId,
   });
@@ -3122,23 +3104,18 @@ export default function Automations() {
   const suggestions = suggestionsQuery.data?.data || [];
   const whatsAppEvents = whatsAppEventsQuery.data?.data || [];
 
-  const templateCards = useMemo(() => templates.map(getTemplateCard), [templates]);
+  const allowedTriggerOptions = useMemo(
+    () => filterTriggerOptionsForTenant(TRIGGER_OPTIONS, activeTenant),
+    [activeTenant]
+  );
 
-  const templateCounts = useMemo(() => {
-    const counts = new Map(TEMPLATE_CATEGORIES.map((category) => [category.value, 0]));
-    counts.set('all', templateCards.length);
-    for (const template of templateCards) {
-      counts.set(template.category, (counts.get(template.category) || 0) + 1);
-    }
-    return counts;
-  }, [templateCards]);
+  const templateCards = useMemo(() => templates.map(getTemplateCard), [templates]);
 
   const filteredTemplateCards = useMemo(() => {
     const filtered = templateCards.filter((template) => {
-      const matchesCategory = templateCategory === 'all' || template.category === templateCategory;
       const matchesChannel = templateChannel === 'all' || template.channels.includes(templateChannel);
       const matchesDifficulty = templateDifficulty === 'all' || template.difficulty === templateDifficulty;
-      return matchesCategory && matchesChannel && matchesDifficulty;
+      return matchesChannel && matchesDifficulty;
     });
 
     return [...filtered].sort((a, b) => {
@@ -3148,21 +3125,7 @@ export default function Automations() {
       }
       return Number(b.popular) - Number(a.popular) || (b.usage || 0) - (a.usage || 0) || String(a.title || '').localeCompare(String(b.title || ''));
     });
-  }, [templateCards, templateCategory, templateChannel, templateDifficulty, templateSort]);
-
-  const templateSections = useMemo(() => {
-    const categories =
-      templateCategory === 'all'
-        ? TEMPLATE_CATEGORIES.filter((category) => category.value !== 'all')
-        : TEMPLATE_CATEGORIES.filter((category) => category.value === templateCategory);
-
-    return categories
-      .map((category) => ({
-        ...category,
-        templates: filteredTemplateCards.filter((template) => template.category === category.value),
-      }))
-      .filter((section) => section.templates.length > 0 || templateCategory !== 'all');
-  }, [filteredTemplateCards, templateCategory]);
+  }, [templateCards, templateChannel, templateDifficulty, templateSort]);
 
   const ruleNameById = useMemo(() => {
     const m = new Map();
@@ -3196,6 +3159,7 @@ export default function Automations() {
       const status = getRuleStatus(rule);
       const actions = getRuleActions(rule);
       const successRate = getSuccessRate(rule, runsByRuleId);
+      const businessTypeCompatible = isTriggerAllowedForTenant(rule.triggerType, activeTenant);
       return {
         ...rule,
         status,
@@ -3209,9 +3173,10 @@ export default function Automations() {
         recentRuns: (runsByRuleId.get(rule.id) || []).slice(0, 5),
         lastRunTime: rule?.lastRun?.createdAt || null,
         lastRunOutcome: formatRunOutcome(rule?.lastRun),
+        businessTypeCompatible,
       };
     });
-  }, [rules, runsByRuleId]);
+  }, [rules, runsByRuleId, activeTenant]);
 
   const aiBuilderRows = useMemo(() => {
     const rows = ruleRows.map((rule) => ({
@@ -3956,13 +3921,6 @@ export default function Automations() {
     [applyTemplate]
   );
 
-  const handleTemplateSectionScroll = useCallback((sectionValue, direction) => {
-    const el = document.getElementById(`automation-template-row-${sectionValue}`);
-    if (!el) return;
-    const distance = Math.min(560, Math.max(260, el.clientWidth * 0.75));
-    el.scrollBy({ left: direction === 'left' ? -distance : distance, behavior: 'smooth' });
-  }, []);
-
   const openAiDraftFlow = useCallback((prompt = '') => {
     if (prompt) setAiInstruction(prompt);
     setAiPromptOpen(true);
@@ -4127,7 +4085,6 @@ export default function Automations() {
     setAdvancedOpen(false);
     setAiDraftMetadata(null);
     setBuilderStep('trigger');
-    setTriggerCategory('All triggers');
     setBuilderModalOpen(true);
   }, []);
 
@@ -4351,8 +4308,10 @@ export default function Automations() {
   }, [pendingTestRun, buildAutomationPayloadFromCurrentForm, queryClient, testMutation]);
 
   const selectedTriggerMeta = useMemo(
-    () => TRIGGER_OPTIONS.find((o) => o.value === builder.triggerType),
-    [builder.triggerType]
+    () =>
+      allowedTriggerOptions.find((o) => o.value === builder.triggerType) ||
+      TRIGGER_OPTIONS.find((o) => o.value === builder.triggerType),
+    [allowedTriggerOptions, builder.triggerType]
   );
   const taskAutomationDirty = useMemo(() => {
     const cfg = organization?.taskAutomation || {};
@@ -4385,11 +4344,10 @@ export default function Automations() {
         setBuilder={setBuilder}
         step={builderStep}
         setStep={setBuilderStep}
-        triggerCategory={triggerCategory}
-        setTriggerCategory={setTriggerCategory}
         conditionMode={conditionMode}
         setConditionMode={setConditionMode}
         selectedTriggerMeta={selectedTriggerMeta}
+        allowedTriggerOptions={allowedTriggerOptions}
         patchTriggerForm={patchTriggerForm}
         patchConditionForm={patchConditionForm}
         patchActionRow={patchActionRow}
@@ -4645,7 +4603,7 @@ export default function Automations() {
                       <SelectValue placeholder="Select trigger" />
                     </SelectTrigger>
                     <SelectContent>
-                      {TRIGGER_OPTIONS.map((o) => (
+                      {allowedTriggerOptions.map((o) => (
                         <SelectItem key={o.value} value={o.value}>
                           {o.label}
                         </SelectItem>
@@ -4951,6 +4909,9 @@ export default function Automations() {
                                   <div className="min-w-0">
                                     <p className="font-medium text-foreground">{rule.name}</p>
                                     <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{rule.description}</p>
+                                    {!rule.businessTypeCompatible && (
+                                      <p className="mt-1 text-xs font-medium text-amber-700">Not for your business type</p>
+                                    )}
                                   </div>
                                 </div>
                               </TableCell>
@@ -4975,10 +4936,16 @@ export default function Automations() {
                                 </div>
                               </TableCell>
                               <TableCell>
-                                <StatusChip
-                                  status={rule.status}
-                                  className={rule.status === 'active' ? 'border-green-100 bg-green-50 text-green-700' : ''}
-                                />
+                                {!rule.businessTypeCompatible ? (
+                                  <span className="inline-flex rounded-full border border-amber-100 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800">
+                                    Not for your business type
+                                  </span>
+                                ) : (
+                                  <StatusChip
+                                    status={rule.status}
+                                    className={rule.status === 'active' ? 'border-green-100 bg-green-50 text-green-700' : ''}
+                                  />
+                                )}
                               </TableCell>
                               <TableCell>
                                 <p className="text-sm font-medium text-foreground">{formatDateTime(rule.lastRunTime)}</p>
@@ -5075,59 +5042,9 @@ export default function Automations() {
         </TabsContent>
 
         <TabsContent value="templates" className="mt-5">
-          <div className="grid grid-cols-1 gap-5 lg:grid-cols-[260px_minmax(0,1fr)]">
-            <div className="space-y-4 lg:sticky lg:top-6 lg:self-start">
-              <Card style={CARD_BORDER} className="rounded-2xl">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base">Categories</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-1">
-                  {TEMPLATE_CATEGORIES.map((category) => {
-                    const active = templateCategory === category.value;
-                    return (
-                      <button
-                        key={category.value}
-                        type="button"
-                        className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
-                          active ? 'bg-emerald-50 font-medium text-emerald-700' : 'text-foreground hover:bg-muted/60'
-                        }`}
-                        onClick={() => setTemplateCategory(category.value)}
-                      >
-                        <span>{category.label}</span>
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-xs ${
-                            active ? 'bg-white text-emerald-700' : 'bg-muted text-muted-foreground'
-                          }`}
-                        >
-                          {templateCounts.get(category.value) || 0}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </CardContent>
-              </Card>
-
-              <Card style={CARD_BORDER} className="rounded-2xl bg-emerald-50/50">
-                <CardContent className="space-y-3 p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-foreground">Can&apos;t find what you need?</p>
-                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        Describe what you want to automate and we&apos;ll help you build it with AI.
-                      </p>
-                    </div>
-                    <Sparkles className="h-5 w-5 shrink-0 text-emerald-700" aria-hidden />
-                  </div>
-                  <Button type="button" variant="outline" className="w-full bg-background" onClick={() => setActiveTab('ai-builder')}>
-                    <Sparkles className="mr-2 h-4 w-4" aria-hidden />
-                    Generate with AI
-                  </Button>
-                </CardContent>
-              </Card>
-            </div>
-
-            <div className="min-w-0 space-y-5">
-              <div className="grid grid-cols-1 gap-3 lg:grid-cols-[160px_190px_160px]">
+          <div className="space-y-5">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:max-w-2xl">
                 <Select value={templateChannel} onValueChange={setTemplateChannel}>
                   <SelectTrigger>
                     <SelectValue />
@@ -5166,86 +5083,40 @@ export default function Automations() {
                   </SelectContent>
                 </Select>
               </div>
-
-              {templatesQuery.isLoading && (
-                <Card style={CARD_BORDER} className="rounded-2xl">
-                  <CardContent className="flex items-center gap-2 p-6 text-sm text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                    Loading templates...
-                  </CardContent>
-                </Card>
-              )}
-
-              {!templatesQuery.isLoading && templates.length === 0 && (
-                <Card style={CARD_BORDER} className="rounded-2xl">
-                  <CardContent className="p-6 text-sm text-muted-foreground">No templates yet.</CardContent>
-                </Card>
-              )}
-
-              {!templatesQuery.isLoading && templates.length > 0 && templateSections.length === 0 && (
-                <Card style={CARD_BORDER} className="rounded-2xl">
-                  <CardContent className="p-6 text-sm text-muted-foreground">No templates match your filters.</CardContent>
-                </Card>
-              )}
-
-              {!templatesQuery.isLoading &&
-                templateSections.map((section) => (
-                  <section key={section.value} className="space-y-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <h2 className="text-base font-semibold text-foreground">{section.label}</h2>
-                      <div className="flex items-center gap-2">
-                        {templateCategory === 'all' && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 text-xs text-muted-foreground"
-                            onClick={() => setTemplateCategory(section.value)}
-                          >
-                            View all
-                          </Button>
-                        )}
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          className="h-8 w-8 rounded-full"
-                          onClick={() => handleTemplateSectionScroll(section.value, 'left')}
-                        >
-                          <ChevronLeft className="h-4 w-4" aria-hidden />
-                          <span className="sr-only">Scroll left</span>
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          className="h-8 w-8 rounded-full"
-                          onClick={() => handleTemplateSectionScroll(section.value, 'right')}
-                        >
-                          <ChevronRight className="h-4 w-4" aria-hidden />
-                          <span className="sr-only">Scroll right</span>
-                        </Button>
-                      </div>
-                    </div>
-                    {section.templates.length === 0 ? (
-                      <Card style={CARD_BORDER} className="rounded-2xl">
-                        <CardContent className="p-6 text-sm text-muted-foreground">
-                          No templates in this category match your filters.
-                        </CardContent>
-                      </Card>
-                    ) : (
-                      <div
-                        id={`automation-template-row-${section.value}`}
-                        className="flex gap-3 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                      >
-                        {section.templates.map((template) => (
-                          <TemplateCard key={template.key} template={template} onUse={handleUseTemplate} />
-                        ))}
-                      </div>
-                    )}
-                  </section>
-                ))}
+              <Button type="button" variant="outline" onClick={() => setActiveTab('ai-builder')}>
+                <Sparkles className="mr-2 h-4 w-4" aria-hidden />
+                Generate with AI
+              </Button>
             </div>
+
+            {templatesQuery.isLoading && (
+              <Card style={CARD_BORDER} className="rounded-2xl">
+                <CardContent className="flex items-center gap-2 p-6 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  Loading templates...
+                </CardContent>
+              </Card>
+            )}
+
+            {!templatesQuery.isLoading && templates.length === 0 && (
+              <Card style={CARD_BORDER} className="rounded-2xl">
+                <CardContent className="p-6 text-sm text-muted-foreground">No templates yet.</CardContent>
+              </Card>
+            )}
+
+            {!templatesQuery.isLoading && templates.length > 0 && filteredTemplateCards.length === 0 && (
+              <Card style={CARD_BORDER} className="rounded-2xl">
+                <CardContent className="p-6 text-sm text-muted-foreground">No templates match your filters.</CardContent>
+              </Card>
+            )}
+
+            {!templatesQuery.isLoading && filteredTemplateCards.length > 0 && (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                {filteredTemplateCards.map((template) => (
+                  <TemplateCard key={template.key} template={template} onUse={handleUseTemplate} />
+                ))}
+              </div>
+            )}
           </div>
         </TabsContent>
 
@@ -6256,7 +6127,7 @@ export default function Automations() {
                       <SelectValue placeholder="Select trigger" />
                     </SelectTrigger>
                     <SelectContent>
-                      {TRIGGER_OPTIONS.map((o) => (
+                      {allowedTriggerOptions.map((o) => (
                         <SelectItem key={o.value} value={o.value}>
                           {o.label}
                         </SelectItem>

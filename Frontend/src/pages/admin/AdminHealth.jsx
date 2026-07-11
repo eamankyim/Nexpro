@@ -21,6 +21,51 @@ import { Activity, Database, Bell, Users, Gauge, Timer } from 'lucide-react';
 
 dayjs.extend(relativeTime);
 
+/** Truncate UUID for secondary display next to email/name. */
+const shortId = (value) => {
+  if (!value || typeof value !== 'string') return null;
+  return value.length > 8 ? `${value.slice(0, 8)}…` : value;
+};
+
+/**
+ * Build a readable identity segment for slow ops (email preferred, UUID secondary).
+ * @param {{ label: string, email?: string|null, name?: string|null, id?: string|null }} parts
+ */
+const formatIdentity = ({ label, email, name, id }) => {
+  const primary = email || name || null;
+  const idSuffix = shortId(id);
+  if (primary && idSuffix) return `${label} ${primary} (${idSuffix})`;
+  if (primary) return `${label} ${primary}`;
+  if (idSuffix) return `${label} ${idSuffix}`;
+  return `${label} n/a`;
+};
+
+/**
+ * One-line tenant + user context for a slow operation row.
+ * @param {object} item
+ * @returns {string}
+ */
+const formatSlowOpContext = (item) => {
+  const parts = [dayjs(item.recordedAt).fromNow()];
+  if (item.tenantName) parts.push(item.tenantName);
+  parts.push(
+    formatIdentity({
+      label: 'tenant',
+      email: item.tenantEmail,
+      id: item.tenantId,
+    })
+  );
+  parts.push(
+    formatIdentity({
+      label: 'user',
+      email: item.userEmail,
+      name: item.userName,
+      id: item.userId,
+    })
+  );
+  return parts.join(' • ');
+};
+
 const AdminHealth = () => {
   const { hasPermission, loading: permissionsLoading } = usePlatformAdminPermissions();
   const [loading, setLoading] = useState(true);
@@ -201,7 +246,7 @@ const AdminHealth = () => {
                       {item.method || 'ANY'} {item.path || 'No path'}
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      {dayjs(item.recordedAt).fromNow()} • tenant {item.tenantId || 'n/a'} • user {item.userId || 'n/a'}
+                      {formatSlowOpContext(item)}
                     </p>
                   </div>
                 ))}

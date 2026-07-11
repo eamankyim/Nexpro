@@ -1,11 +1,18 @@
 const { Op, col, literal } = require('sequelize');
 const { sequelize } = require('../config/database');
 const { AutomationRule, AutomationRun, Invoice, Product, WhatsAppMessageEvent } = require('../models');
-const { getTemplates, executeRule } = require('../services/automationEngineService');
+const {
+  getTemplates,
+  executeRule,
+  filterTemplatesForTenant,
+  isTriggerAllowedForTenant,
+} = require('../services/automationEngineService');
 const { resolveBusinessNameForContext } = require('../utils/resolveBusinessNameForContext');
 const automationSchedulerService = require('../services/automationSchedulerService');
 const openaiService = require('../services/openaiService');
 const { getPagination } = require('../utils/paginationUtils');
+
+const DISALLOWED_TRIGGER_MESSAGE = 'This trigger is not available for your business type';
 
 function parseBoolean(value, fallback = false) {
   if (value === undefined || value === null) return fallback;
@@ -297,9 +304,10 @@ function buildTestTriggerContext(rule) {
   };
 }
 
-exports.getTemplates = async (_req, res, next) => {
+exports.getTemplates = async (req, res, next) => {
   try {
-    res.status(200).json({ success: true, data: getTemplates() });
+    const templates = filterTemplatesForTenant(getTemplates(), req.tenant);
+    res.status(200).json({ success: true, data: templates });
   } catch (error) {
     next(error);
   }
@@ -351,10 +359,14 @@ exports.createRule = async (req, res, next) => {
     if (!name || !triggerType) {
       return res.status(400).json({ success: false, error: 'name and triggerType are required' });
     }
+    const normalizedTriggerType = String(triggerType).trim();
+    if (!isTriggerAllowedForTenant(normalizedTriggerType, req.tenant)) {
+      return res.status(400).json({ success: false, error: DISALLOWED_TRIGGER_MESSAGE, errorCode: 'TRIGGER_NOT_ALLOWED' });
+    }
     const created = await AutomationRule.create({
       tenantId: req.tenantId,
       name: String(name).trim(),
-      triggerType: String(triggerType).trim(),
+      triggerType: normalizedTriggerType,
       triggerConfig,
       conditionConfig,
       actionConfig,
@@ -376,10 +388,17 @@ exports.updateRule = async (req, res, next) => {
     if (!rule) {
       return res.status(404).json({ success: false, error: 'Rule not found' });
     }
+    const body = req.body || {};
+    if (Object.prototype.hasOwnProperty.call(body, 'triggerType')) {
+      const nextTriggerType = String(body.triggerType || '').trim();
+      if (nextTriggerType !== rule.triggerType && !isTriggerAllowedForTenant(nextTriggerType, req.tenant)) {
+        return res.status(400).json({ success: false, error: DISALLOWED_TRIGGER_MESSAGE, errorCode: 'TRIGGER_NOT_ALLOWED' });
+      }
+    }
     const allowedFields = ['name', 'triggerType', 'triggerConfig', 'conditionConfig', 'actionConfig', 'scheduleConfig', 'enabled', 'metadata'];
     for (const key of allowedFields) {
-      if (Object.prototype.hasOwnProperty.call(req.body || {}, key)) {
-        rule[key] = key === 'enabled' ? parseBoolean(req.body[key], rule.enabled) : req.body[key];
+      if (Object.prototype.hasOwnProperty.call(body, key)) {
+        rule[key] = key === 'enabled' ? parseBoolean(body[key], rule.enabled) : body[key];
       }
     }
     rule.updatedBy = req.user?.id || null;
@@ -751,6 +770,7 @@ exports.draftRule = async (req, res, next) => {
     const draft = await openaiService.draftAutomationRule({
       instruction,
       businessType: req.tenant?.businessType || 'printing_press',
+      tenant: req.tenant,
       tenantId: req.tenantId,
       suggestionsContext: { tenantName: req.tenant?.name || null }
     });
