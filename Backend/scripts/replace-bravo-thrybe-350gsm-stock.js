@@ -5,30 +5,43 @@
  * Target shop is typically Bravo Thrybe (user: gilbertceyram@gmail.com).
  *
  * What it does:
- * 1. Deletes ALL products (and variants) for the resolved tenant — FK-safe order
+ * 1. Optionally purges tenant commerce docs (sales/invoices/quotes/stock/etc.) when
+ *    `--purge-tenant-commerce` / `--start-fresh` is set — FK-safe, THIS tenant only.
+ * 2. Deletes ALL products (and variants) for the resolved tenant — FK-safe order
  *    (barcodes / online listings / variants first, then products).
- * 2. Creates one product per color named `350GSM {Color}` with SIZE variants only
+ * 3. Creates one product per color named `350GSM {Color}` with SIZE variants only
  *    (3XL, 2XL, XL, L, M). Cost 100, selling 120 for all 350GSM variants.
- * 3. Creates a simple Printing product (no variants): qty 100, cost 0, sell 0.
+ * 4. Creates a simple Printing product (no variants): qty 100, cost 0, sell 0.
  *
  * Safety:
  * - Dry-run is the default (connects to DB, reports plan + existing counts; no writes).
  * - `--execute` writes; requires `--confirm-delete` to wipe products.
  * - `--email` is required for execute mode (tenant-id alone is not enough to write).
  * - Protected history (sale_items, quote_items, stock counts/transfers) blocks delete
- *   unless you pass the matching destructive flags after reviewing dry-run counts.
+ *   unless you pass granular destructive flags OR `--purge-tenant-commerce` / `--start-fresh`.
+ * - Start-fresh execute is a triple confirm: `--email` + `--execute` + `--confirm-delete`
+ *   + `--purge-tenant-commerce` (or `--start-fresh`).
+ * - No models use Sequelize paranoid; deletes are hard deletes scoped by tenantId.
  *
  * Usage (from Backend/):
- *   # Dry-run (default) — preview catalog + existing product counts
+ *   # Dry-run (default) — preview catalog + existing product / commerce counts
  *   node scripts/replace-bravo-thrybe-350gsm-stock.js --email gilbertceyram@gmail.com
  *
- *   # Dry-run by tenant id
- *   node scripts/replace-bravo-thrybe-350gsm-stock.js --tenant-id <uuid>
+ *   # Dry-run start-fresh plan (shows what commerce would be purged)
+ *   node scripts/replace-bravo-thrybe-350gsm-stock.js --email gilbertceyram@gmail.com --purge-tenant-commerce
  *
- *   # Execute replace (requires email + confirm-delete)
+ *   # Execute replace only (products; history must be clear or use granular flags)
  *   node scripts/replace-bravo-thrybe-350gsm-stock.js --email gilbertceyram@gmail.com --execute --confirm-delete
  *
- *   # If sale/quote/stock history blocks delete, review dry-run then add flags:
+ *   # START FRESH (VPS): purge tenant commerce + wipe products + import 350GSM catalog
+ *   node scripts/replace-bravo-thrybe-350gsm-stock.js --email gilbertceyram@gmail.com \
+ *     --execute --confirm-delete --purge-tenant-commerce
+ *
+ *   # Alias for the same start-fresh execute:
+ *   node scripts/replace-bravo-thrybe-350gsm-stock.js --email gilbertceyram@gmail.com \
+ *     --execute --confirm-delete --start-fresh
+ *
+ *   # Granular history flags (without full commerce purge), after reviewing dry-run:
  *   node scripts/replace-bravo-thrybe-350gsm-stock.js --email gilbertceyram@gmail.com \
  *     --execute --confirm-delete --delete-sale-items --detach-quote-items --delete-stock-history
  *
@@ -47,10 +60,27 @@ const {
   ProductVariant,
   Barcode,
   OnlineProductListing,
+  Sale,
   SaleItem,
+  SaleActivity,
+  Invoice,
+  Payment,
+  Quote,
   QuoteItem,
+  QuoteActivity,
+  Job,
+  Prescription,
+  StockCount,
   StockCountItem,
   StockTransfer,
+  StorefrontReview,
+  StorefrontWishlistItem,
+  MarketplaceDispute,
+  MarketplaceLedgerEntry,
+  MarketplacePayout,
+  MarketplaceOrderPayment,
+  DealerLedgerEntry,
+  DealerProductPrice,
 } = require('../models');
 const { syncParentQuantityFromVariants } = require('../utils/productStockUtils');
 
@@ -64,7 +94,7 @@ const SAMPLE_LIMIT = 20;
 const PROTECTED_HISTORY_MESSAGE = [
   'Protected history still references these products.',
   'Default execution will not delete sales/quote/stock-transfer history.',
-  'Review the dry-run counts before using any history deletion flags.',
+  'Review the dry-run counts, then either pass granular history flags or use --purge-tenant-commerce / --start-fresh.',
 ].join(' ');
 
 const argv = process.argv.slice(2);
@@ -88,6 +118,8 @@ const BOOLEAN_FLAGS = new Set([
   '--delete-sale-items',
   '--delete-stock-history',
   '--detach-quote-items',
+  '--purge-tenant-commerce',
+  '--start-fresh',
   '--help',
   '-h',
 ]);
@@ -99,9 +131,10 @@ const shopNameFilter = normalizeText(getArgValue('--shop-name', '')) || null;
 const isExecute = hasFlag('--execute');
 const isDryRun = !isExecute;
 const confirmDelete = hasFlag('--confirm-delete');
-const deleteSaleItems = hasFlag('--delete-sale-items');
-const deleteStockHistory = hasFlag('--delete-stock-history');
-const detachQuoteItems = hasFlag('--detach-quote-items');
+const purgeTenantCommerce = hasFlag('--purge-tenant-commerce') || hasFlag('--start-fresh');
+const deleteSaleItems = hasFlag('--delete-sale-items') || purgeTenantCommerce;
+const deleteStockHistory = hasFlag('--delete-stock-history') || purgeTenantCommerce;
+const detachQuoteItems = hasFlag('--detach-quote-items') || purgeTenantCommerce;
 
 /**
  * Color catalog: quantities ordered as [3XL, 2XL, XL, L, M].
@@ -134,12 +167,19 @@ Usage:
   node scripts/replace-bravo-thrybe-350gsm-stock.js --email <user-email> [--tenant-name <name>] [--shop-name <name>] [--dry-run]
   node scripts/replace-bravo-thrybe-350gsm-stock.js --tenant-id <uuid> [--shop-name <name>]   # dry-run only
   node scripts/replace-bravo-thrybe-350gsm-stock.js --email <user-email> --execute --confirm-delete
+  node scripts/replace-bravo-thrybe-350gsm-stock.js --email <user-email> --execute --confirm-delete --purge-tenant-commerce
 
 Examples:
   node scripts/replace-bravo-thrybe-350gsm-stock.js --email ${DEFAULT_HELP_EMAIL}
-  node scripts/replace-bravo-thrybe-350gsm-stock.js --email ${DEFAULT_HELP_EMAIL} --execute --confirm-delete
+  node scripts/replace-bravo-thrybe-350gsm-stock.js --email ${DEFAULT_HELP_EMAIL} --purge-tenant-commerce
+  node scripts/replace-bravo-thrybe-350gsm-stock.js --email ${DEFAULT_HELP_EMAIL} --execute --confirm-delete --purge-tenant-commerce
 
 Creates: 12 × 350GSM color products (5 size variants each = 60 variants) + 1 Printing product.
+
+Dangerous start-fresh flag:
+  --purge-tenant-commerce | --start-fresh
+    Deletes THIS tenant's sales/invoices/payments/quotes/stock history (and product-linked
+    storefront/marketplace/dealer rows) in FK-safe order, then products, then imports catalog.
 `;
 
 function validateArgs() {
@@ -167,6 +207,9 @@ function validateArgs() {
   if (isExecute) {
     if (!email) fail('Execute mode requires --email (tenant-id alone is not enough)');
     if (!confirmDelete) fail('Execute mode requires --confirm-delete to wipe existing products');
+    if (purgeTenantCommerce && (!email || !confirmDelete)) {
+      fail('Start-fresh execute requires --email + --execute + --confirm-delete + --purge-tenant-commerce');
+    }
   }
 }
 
@@ -389,6 +432,12 @@ async function countWhere(Model, where, options = {}) {
   return Model.count({ where, ...options });
 }
 
+async function findIds(Model, where, options = {}) {
+  if (!Model) return [];
+  const rows = await Model.findAll({ where, attributes: ['id'], ...options });
+  return getIds(rows);
+}
+
 async function collectTenantProductState(tenantId, options = {}) {
   const products = await Product.findAll({
     where: { tenantId },
@@ -403,6 +452,31 @@ async function collectTenantProductState(tenantId, options = {}) {
     : [];
   const variantIds = getIds(variantRows);
 
+  const linkedProductsOrVariants = productIds.length
+    ? {
+      [Op.or]: [
+        { productId: productIds },
+        ...(variantIds.length ? [{ productVariantId: variantIds }] : []),
+      ],
+    }
+    : null;
+
+  const stockTransferWhere = productIds.length
+    ? {
+      tenantId,
+      [Op.or]: [
+        { sourceProductId: productIds },
+        { destinationProductId: productIds },
+        ...(variantIds.length
+          ? [
+            { sourceVariantId: variantIds },
+            { destinationVariantId: variantIds },
+          ]
+          : []),
+      ],
+    }
+    : null;
+
   const counts = {
     products: productIds.length,
     variants: variantIds.length,
@@ -412,50 +486,89 @@ async function collectTenantProductState(tenantId, options = {}) {
     barcodes: productIds.length
       ? await countWhere(Barcode, {
         tenantId,
-        [Op.or]: [
-          { productId: productIds },
-          ...(variantIds.length ? [{ productVariantId: variantIds }] : []),
-        ],
+        ...linkedProductsOrVariants,
       }, options)
       : 0,
-    saleItems: productIds.length
-      ? await countWhere(SaleItem, {
-        [Op.or]: [
-          { productId: productIds },
-          ...(variantIds.length ? [{ productVariantId: variantIds }] : []),
-        ],
-      }, options)
+    saleItems: linkedProductsOrVariants
+      ? await countWhere(SaleItem, linkedProductsOrVariants, options)
       : 0,
     quoteItems: productIds.length
       ? await countWhere(QuoteItem, { tenantId, productId: productIds }, options)
       : 0,
-    stockCountItems: productIds.length
-      ? await countWhere(StockCountItem, {
-        tenantId,
-        [Op.or]: [
-          { productId: productIds },
-          ...(variantIds.length ? [{ productVariantId: variantIds }] : []),
-        ],
-      }, options)
+    stockCountItems: linkedProductsOrVariants
+      ? await countWhere(StockCountItem, { tenantId, ...linkedProductsOrVariants }, options)
       : 0,
-    stockTransfers: productIds.length
-      ? await countWhere(StockTransfer, {
-        tenantId,
-        [Op.or]: [
-          { sourceProductId: productIds },
-          { destinationProductId: productIds },
-          ...(variantIds.length
-            ? [
-              { sourceVariantId: variantIds },
-              { destinationVariantId: variantIds },
-            ]
-            : []),
-        ],
-      }, options)
+    stockTransfers: stockTransferWhere
+      ? await countWhere(StockTransfer, stockTransferWhere, options)
+      : 0,
+    dealerProductPrices: linkedProductsOrVariants
+      ? await countWhere(DealerProductPrice, { tenantId, ...linkedProductsOrVariants }, options)
+      : 0,
+    storefrontWishlistItems: linkedProductsOrVariants
+      ? await countWhere(StorefrontWishlistItem, { tenantId, ...linkedProductsOrVariants }, options)
+      : 0,
+    storefrontReviews: linkedProductsOrVariants
+      ? await countWhere(StorefrontReview, { tenantId, ...linkedProductsOrVariants }, options)
       : 0,
   };
 
   return { products, productIds, variantIds, counts };
+}
+
+async function collectTenantCommerceState(tenantId, productState, options = {}) {
+  const saleIds = await findIds(Sale, { tenantId }, options);
+  const quoteIds = await findIds(Quote, { tenantId }, options);
+  const stockCountIds = await findIds(StockCount, { tenantId }, options);
+
+  const saleItemCount = saleIds.length
+    ? await countWhere(SaleItem, { saleId: saleIds }, options)
+    : 0;
+  const quoteItemCount = quoteIds.length
+    ? await countWhere(QuoteItem, { quoteId: quoteIds }, options)
+    : productState.counts.quoteItems;
+
+  return {
+    saleIds,
+    quoteIds,
+    stockCountIds,
+    counts: {
+      sales: saleIds.length,
+      saleItems: Math.max(saleItemCount, productState.counts.saleItems),
+      saleActivities: await countWhere(SaleActivity, { tenantId }, options),
+      invoices: await countWhere(Invoice, { tenantId }, options),
+      payments: await countWhere(Payment, { tenantId }, options),
+      quotes: quoteIds.length,
+      quoteItems: quoteItemCount,
+      quoteActivities: await countWhere(QuoteActivity, { tenantId }, options),
+      stockCounts: stockCountIds.length,
+      stockCountItems: await countWhere(StockCountItem, { tenantId }, options),
+      stockTransfers: await countWhere(StockTransfer, { tenantId }, options),
+      marketplaceDisputes: await countWhere(MarketplaceDispute, { tenantId }, options),
+      marketplaceLedgerEntries: await countWhere(MarketplaceLedgerEntry, { tenantId }, options),
+      marketplacePayouts: await countWhere(MarketplacePayout, { tenantId }, options),
+      marketplaceOrderPayments: await countWhere(MarketplaceOrderPayment, { tenantId }, options),
+      dealerLedgerEntries: await countWhere(DealerLedgerEntry, { tenantId }, options),
+      dealerProductPrices: productState.counts.dealerProductPrices,
+      storefrontReviews: await countWhere(StorefrontReview, { tenantId }, options),
+      storefrontWishlistItems: productState.counts.storefrontWishlistItems,
+      prescriptionsWithInvoice: await countWhere(Prescription, {
+        tenantId,
+        invoiceId: { [Op.ne]: null },
+      }, options),
+      jobsWithQuote: await countWhere(Job, {
+        tenantId,
+        quoteId: { [Op.ne]: null },
+      }, options),
+      salesWithInvoice: await countWhere(Sale, {
+        tenantId,
+        invoiceId: { [Op.ne]: null },
+      }, options),
+      products: productState.counts.products,
+      variants: productState.counts.variants,
+      barcodes: productState.counts.barcodes,
+      onlineListings: productState.counts.onlineListings,
+    },
+  };
 }
 
 function printCounts(counts) {
@@ -471,7 +584,40 @@ function printCounts(counts) {
   printSummary('Stock transfers', counts.stockTransfers);
 }
 
+function printCommercePurgePlan(counts, flagged) {
+  const title = flagged
+    ? '\nStart-fresh purge plan (THIS tenant only):'
+    : '\nCommerce docs present (use --purge-tenant-commerce / --start-fresh to wipe):';
+  console.log(title);
+  printSummary('Sales', counts.sales);
+  printSummary('Sale items', counts.saleItems);
+  printSummary('Sale activities', counts.saleActivities);
+  printSummary('Invoices', counts.invoices);
+  printSummary('Payments', counts.payments);
+  printSummary('Quotes', counts.quotes);
+  printSummary('Quote items', counts.quoteItems);
+  printSummary('Quote activities', counts.quoteActivities);
+  printSummary('Stock counts', counts.stockCounts);
+  printSummary('Stock count items', counts.stockCountItems);
+  printSummary('Stock transfers', counts.stockTransfers);
+  printSummary('Marketplace disputes', counts.marketplaceDisputes);
+  printSummary('Marketplace ledger entries', counts.marketplaceLedgerEntries);
+  printSummary('Marketplace payouts', counts.marketplacePayouts);
+  printSummary('Marketplace order payments', counts.marketplaceOrderPayments);
+  printSummary('Dealer ledger entries', counts.dealerLedgerEntries);
+  printSummary('Dealer product prices', counts.dealerProductPrices);
+  printSummary('Storefront reviews', counts.storefrontReviews);
+  printSummary('Storefront wishlist items', counts.storefrontWishlistItems);
+  printSummary('Sales linked to invoices', counts.salesWithInvoice);
+  printSummary('Jobs linked to quotes', counts.jobsWithQuote);
+  printSummary('Prescriptions linked to invoices', counts.prescriptionsWithInvoice);
+  printSummary('Products (after commerce)', counts.products);
+  printSummary('Variants (after commerce)', counts.variants);
+}
+
 function assertDeleteAllowed(counts) {
+  if (purgeTenantCommerce) return;
+
   const blockers = [];
   if (counts.saleItems > 0 && !deleteSaleItems) blockers.push(`${counts.saleItems} sale_items`);
   if (counts.quoteItems > 0 && !detachQuoteItems) blockers.push(`${counts.quoteItems} quote_items`);
@@ -479,7 +625,11 @@ function assertDeleteAllowed(counts) {
   if (counts.stockTransfers > 0 && !deleteStockHistory) blockers.push(`${counts.stockTransfers} stock_transfers`);
 
   if (blockers.length > 0) {
-    throw new Error(`${PROTECTED_HISTORY_MESSAGE}\nBlocking references: ${blockers.join(', ')}`);
+    throw new Error(
+      `${PROTECTED_HISTORY_MESSAGE}\nBlocking references: ${blockers.join(', ')}\n`
+      + `Start-fresh CLI:\n  node ${SCRIPT_NAME} --email ${email || DEFAULT_HELP_EMAIL} `
+      + '--execute --confirm-delete --purge-tenant-commerce'
+    );
   }
 }
 
@@ -487,6 +637,94 @@ async function destroyWhere(Model, where, options, label) {
   const count = await Model.destroy({ where, ...options });
   console.log(`  Deleted ${count} ${label}`);
   return count;
+}
+
+async function updateWhere(Model, values, where, options, label) {
+  const [affectedRows] = await Model.update(values, { where, ...options });
+  console.log(`  Cleared ${affectedRows} ${label}`);
+  return affectedRows;
+}
+
+/**
+ * Purge tenant commerce documents in FK-safe order (hard delete; no paranoid models).
+ * Scoped strictly by tenantId / ids collected for this tenant.
+ */
+async function purgeTenantCommerceDocs(tenantId, commerce, productIds, variantIds, transaction) {
+  const options = { transaction };
+  const { saleIds, quoteIds, stockCountIds } = commerce;
+
+  console.log('\nPurging tenant commerce (start-fresh)...');
+
+  await destroyWhere(MarketplaceDispute, { tenantId }, options, 'marketplace_disputes');
+  await destroyWhere(MarketplaceLedgerEntry, { tenantId }, options, 'marketplace_ledger_entries');
+  await destroyWhere(MarketplacePayout, { tenantId }, options, 'marketplace_payouts');
+  await destroyWhere(MarketplaceOrderPayment, { tenantId }, options, 'marketplace_order_payments');
+  await destroyWhere(StorefrontReview, { tenantId }, options, 'storefront_reviews');
+  await destroyWhere(DealerLedgerEntry, { tenantId }, options, 'dealer_ledger_entries');
+  await destroyWhere(Payment, { tenantId }, options, 'payments');
+  await destroyWhere(SaleActivity, { tenantId }, options, 'sale_activities');
+
+  if (saleIds.length) {
+    await destroyWhere(SaleItem, { saleId: saleIds }, options, 'sale_items');
+  }
+
+  // Break Sale <-> Invoice circular FKs before deleting either side.
+  await updateWhere(Sale, { invoiceId: null }, { tenantId, invoiceId: { [Op.ne]: null } }, options, 'sales.invoiceId');
+  await updateWhere(
+    Prescription,
+    { invoiceId: null },
+    { tenantId, invoiceId: { [Op.ne]: null } },
+    options,
+    'prescriptions.invoiceId'
+  );
+  await updateWhere(
+    Invoice,
+    { saleId: null, quoteId: null, jobId: null },
+    { tenantId },
+    options,
+    'invoice FK refs'
+  );
+
+  await destroyWhere(Invoice, { tenantId }, options, 'invoices');
+  await destroyWhere(Sale, { tenantId }, options, 'sales');
+
+  await updateWhere(Job, { quoteId: null }, { tenantId, quoteId: { [Op.ne]: null } }, options, 'jobs.quoteId');
+  await destroyWhere(QuoteActivity, { tenantId }, options, 'quote_activities');
+  if (quoteIds.length) {
+    await destroyWhere(QuoteItem, { quoteId: quoteIds }, options, 'quote_items');
+  } else {
+    await destroyWhere(QuoteItem, { tenantId }, options, 'quote_items');
+  }
+  await destroyWhere(Quote, { tenantId }, options, 'quotes');
+
+  await destroyWhere(StockTransfer, { tenantId }, options, 'stock_transfers');
+  if (stockCountIds.length) {
+    await destroyWhere(StockCountItem, { stockCountId: stockCountIds }, options, 'stock_count_items');
+  } else {
+    await destroyWhere(StockCountItem, { tenantId }, options, 'stock_count_items');
+  }
+  await destroyWhere(StockCount, { tenantId }, options, 'stock_counts');
+
+  if (productIds.length) {
+    const linkedProductsOrVariants = {
+      [Op.or]: [
+        { productId: productIds },
+        ...(variantIds.length ? [{ productVariantId: variantIds }] : []),
+      ],
+    };
+    await destroyWhere(
+      StorefrontWishlistItem,
+      { tenantId, ...linkedProductsOrVariants },
+      options,
+      'storefront_wishlist_items'
+    );
+    await destroyWhere(
+      DealerProductPrice,
+      { tenantId, ...linkedProductsOrVariants },
+      options,
+      'dealer_product_prices'
+    );
+  }
 }
 
 async function deleteAllTenantProducts(tenantId, counts, productIds, variantIds, transaction) {
@@ -506,11 +744,12 @@ async function deleteAllTenantProducts(tenantId, counts, productIds, variantIds,
 
   console.log('\nDeleting existing tenant product catalog...');
 
-  if (deleteSaleItems && counts.saleItems > 0) {
+  // When start-fresh already purged sales/quotes/stock, these branches are no-ops.
+  if (!purgeTenantCommerce && deleteSaleItems && counts.saleItems > 0) {
     await destroyWhere(SaleItem, linkedProductsOrVariants, options, 'sale_items');
   }
 
-  if (detachQuoteItems && counts.quoteItems > 0) {
+  if (!purgeTenantCommerce && detachQuoteItems && counts.quoteItems > 0) {
     const [affectedRows] = await QuoteItem.update(
       { productId: null },
       { where: { tenantId, ...linkedProducts }, ...options },
@@ -518,7 +757,7 @@ async function deleteAllTenantProducts(tenantId, counts, productIds, variantIds,
     console.log(`  Detached ${affectedRows} quote_items`);
   }
 
-  if (deleteStockHistory) {
+  if (!purgeTenantCommerce && deleteStockHistory) {
     if (counts.stockTransfers > 0) {
       await destroyWhere(StockTransfer, {
         tenantId,
@@ -541,6 +780,31 @@ async function deleteAllTenantProducts(tenantId, counts, productIds, variantIds,
         ...linkedProductsOrVariants,
       }, options, 'stock_count_items');
     }
+  }
+
+  if (counts.dealerProductPrices > 0) {
+    await destroyWhere(
+      DealerProductPrice,
+      { tenantId, ...linkedProductsOrVariants },
+      options,
+      'dealer_product_prices'
+    );
+  }
+  if (counts.storefrontWishlistItems > 0) {
+    await destroyWhere(
+      StorefrontWishlistItem,
+      { tenantId, ...linkedProductsOrVariants },
+      options,
+      'storefront_wishlist_items'
+    );
+  }
+  if (counts.storefrontReviews > 0) {
+    await destroyWhere(
+      StorefrontReview,
+      { tenantId, ...linkedProductsOrVariants },
+      options,
+      'storefront_reviews'
+    );
   }
 
   await destroyWhere(Barcode, { tenantId, ...linkedProductsOrVariants }, options, 'barcodes');
@@ -602,6 +866,7 @@ async function main() {
 
   console.log('\n=== Bravo Thrybe 350GSM Stock Replace ===');
   printSummary('Mode', isDryRun ? 'DRY RUN' : 'EXECUTE');
+  printSummary('Purge tenant commerce', purgeTenantCommerce ? 'YES (--purge-tenant-commerce/--start-fresh)' : 'no');
   if (email) printSummary('Email', email);
   if (tenantIdFilter) printSummary('Tenant id filter', tenantIdFilter);
   if (tenantNameFilter) printSummary('Tenant name filter', tenantNameFilter);
@@ -630,15 +895,18 @@ async function main() {
   const { user, tenant, tenantId, membershipRole } = resolved;
   const shop = await resolveShop(tenantId, shopNameFilter);
   const existing = await collectTenantProductState(tenantId);
+  const commerce = await collectTenantCommerceState(tenantId, existing);
 
   console.log('\nTarget:');
   if (user) printSummary('User', `${user.name || 'Unknown'} <${user.email}>`);
   printSummary('Tenant', `${tenant?.name || 'Unknown'} (${tenantId})`);
   printSummary('Tenant status', tenant?.status || 'unknown');
+  printSummary('Business type', tenant?.businessType || 'unknown');
   if (membershipRole) printSummary('Membership role', membershipRole);
   printSummary('Shop', `${shop.name} (${shop.id})`);
 
   printCounts(existing.counts);
+  printCommercePurgePlan(commerce.counts, purgeTenantCommerce);
   if (existing.products.length) {
     printRows('Existing products sample', existing.products, (row) => (
       `${row.name} [sku=${row.sku || 'none'}] hasVariants=${row.hasVariants} qty=${row.quantityOnHand}`
@@ -647,7 +915,16 @@ async function main() {
 
   if (isDryRun) {
     console.log('\nDRY RUN ONLY. No rows were deleted or created.');
-    console.log('To execute, re-run with --email <user> --execute --confirm-delete after reviewing counts.');
+    if (purgeTenantCommerce) {
+      console.log('To execute start-fresh, re-run with:');
+      console.log(
+        `  node ${SCRIPT_NAME} --email ${email || DEFAULT_HELP_EMAIL} `
+        + '--execute --confirm-delete --purge-tenant-commerce'
+      );
+    } else {
+      console.log('To execute product replace only: --email <user> --execute --confirm-delete');
+      console.log('To wipe commerce then replace: add --purge-tenant-commerce (or --start-fresh).');
+    }
     return;
   }
 
@@ -655,6 +932,16 @@ async function main() {
 
   const transaction = await sequelize.transaction();
   try {
+    if (purgeTenantCommerce) {
+      await purgeTenantCommerceDocs(
+        tenantId,
+        commerce,
+        existing.productIds,
+        existing.variantIds,
+        transaction,
+      );
+    }
+
     await deleteAllTenantProducts(
       tenantId,
       existing.counts,
@@ -711,6 +998,12 @@ async function main() {
     await transaction.commit();
 
     console.log('\nReplace completed.');
+    if (purgeTenantCommerce) {
+      printSummary('Purged sales', commerce.counts.sales);
+      printSummary('Purged invoices', commerce.counts.invoices);
+      printSummary('Purged payments', commerce.counts.payments);
+      printSummary('Purged quotes', commerce.counts.quotes);
+    }
     printSummary('Deleted products', existing.counts.products);
     printSummary('Deleted variants', existing.counts.variants);
     printSummary('Created color products', createdParents);
