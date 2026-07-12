@@ -1234,22 +1234,39 @@ const emailOtpCode = ({
 };
 
 /**
- * Marketing broadcast: plain-text body from workspace, tenant-branded card.
+ * Audience-aware disclaimer for automation / marketing plain emails.
+ * @param {string} companyName - Escaped company name
+ * @param {string} [audience] - 'customer' (default) or 'internal' / 'staff'
+ * @returns {string}
+ */
+const marketingPlainMessageDisclaimer = (companyName, audience = 'customer') => {
+  const isInternal = audience === 'internal' || audience === 'staff';
+  if (isInternal) {
+    return `You are receiving this because you are a team member of ${companyName}.`;
+  }
+  return `You are receiving this because you are a customer of ${companyName}.`;
+};
+
+/**
+ * Marketing broadcast / automation plain-text body, tenant-branded card.
  * @param {string} plainBody
- * @param {Object} [company] - { name, primaryColor, logoUrl }
+ * @param {Object} [company] - { name, primaryColor, logoUrl, audience }
+ *   audience: 'customer' (default) | 'internal' | 'staff' — controls footer disclaimer
  * @returns {string} HTML
  */
 const marketingPlainMessageEmail = (plainBody, company = {}) => {
   const companyName = company.name || 'Your business';
   const primaryColor = company.primaryColor || EMAIL_DESIGN.primaryColor;
   const logoUrl = company.logoUrl || company.logo || '';
+  const audience = company.audience || 'customer';
   const d = EMAIL_DESIGN;
   const bodyHtml = escapeHtml(String(plainBody ?? '')).replace(/\r\n/g, '\n').replace(/\n/g, '<br/>');
+  const disclaimer = marketingPlainMessageDisclaimer(escapeHtml(companyName), audience);
 
   const inner = `
     <h1 style="margin: 0 0 24px 0; font-size: ${d.headingSize}; font-weight: bold; color: ${d.headingColor}; line-height: 1.3;">Message from ${escapeHtml(companyName)}</h1>
     <div style="margin: 0; font-size: ${d.bodySize}; line-height: 1.65; color: ${d.bodyColor}; text-align: left;">${bodyHtml}</div>
-    <p style="margin: 24px 0 0 0; font-size: ${d.footnoteSize}; color: ${d.footerColor}; text-align: center;">You are receiving this because you are a customer of ${escapeHtml(companyName)}.</p>
+    <p style="margin: 24px 0 0 0; font-size: ${d.footnoteSize}; color: ${d.footerColor}; text-align: center;">${disclaimer}</p>
   `;
   return sellfyCardTemplate(inner, { companyName, primaryColor, logoUrl });
 };
@@ -1715,6 +1732,7 @@ module.exports = {
   activityNotificationCard,
   emailOtpCode,
   marketingPlainMessageEmail,
+  marketingPlainMessageDisclaimer,
   paystackMomoLinkedEmail,
   paystackBankLinkedEmail,
   saleReceiptEmail,

@@ -19,6 +19,11 @@ const storeService = {
 
   checkSlugAvailability: async (slug) => api.get(`/store/slug-availability?slug=${encodeURIComponent(slug || '')}`),
 
+  // "Online Store" custom domain (customer-owned domain, independent of Sabito marketplace)
+  getDomainSettings: async () => api.get('/store/domain'),
+
+  updateDomain: async (customDomain) => api.put('/store/domain', { customDomain }),
+
   getListings: async (params = {}) => {
     const query = buildQuery(params);
     return api.get(query ? `/store/listings?${query}` : '/store/listings');

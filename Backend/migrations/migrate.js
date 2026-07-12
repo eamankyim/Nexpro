@@ -106,6 +106,8 @@ const addShopIdToDealers = require('./add-shop-id-to-dealers');
 const makeDealersTenantWide = require('./make-dealers-tenant-wide');
 const createTenantPlatformSmsUsage = require('./create-tenant-platform-sms-usage');
 const addPlatformSmsSettings = require('./add-platform-sms-settings');
+const addBranchFieldsToAutomationRules = require('./add-branch-fields-to-automation-rules');
+const addCustomDomainToOnlineStoreSettings = require('./add-custom-domain-to-online-store-settings');
 
 const migrate = async () => {
   try {
@@ -388,6 +390,12 @@ const migrate = async () => {
 
     await createTenantPlatformSmsUsage.up({ closeConnection: false });
     await addPlatformSmsSettings.up({ closeConnection: false });
+
+    // Branch-specific automations: null shopId/studioLocationId = applies to all branches
+    await addBranchFieldsToAutomationRules();
+
+    // "Online Store" custom domain product (customer-owned domain -> single-store template)
+    await addCustomDomainToOnlineStoreSettings();
 
     console.log('\n✅ Database migration completed successfully!');
     console.log('📊 Incremental schema updates applied.');

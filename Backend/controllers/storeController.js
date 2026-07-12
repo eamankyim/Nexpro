@@ -1961,6 +1961,155 @@ exports.checkSlugAvailability = async (req, res, next) => {
   }
 };
 
+// --- "Online Store" custom domain (customer-owned domain -> single-store template) ---
+// Independent of the Sabito marketplace `enabled` flag. See docs/CUSTOM_DOMAIN.md-style
+// notes inline below for what is and is not automated yet.
+
+/** Host the merchant must CNAME their custom domain to (documented, not auto-provisioned). */
+const getCustomDomainCnameTarget = () => (
+  process.env.STOREFRONT_CNAME_TARGET
+  || (process.env.STOREFRONT_URL || '').replace(/^https?:\/\//i, '').replace(/\/+$/g, '')
+  || 'store.abs.app'
+);
+
+/**
+ * Normalizes a user-entered domain: strips protocol/path/port, lowercases, trims.
+ * @param {string} value - Raw input, e.g. "https://Shop.MyClient.com/"
+ * @returns {string} Normalized hostname, e.g. "shop.myclient.com"
+ */
+const normalizeCustomDomain = (value) => {
+  let host = String(value || '').trim().toLowerCase();
+  if (!host) return '';
+  host = host.replace(/^https?:\/\//, '');
+  host = host.split('/')[0];
+  host = host.split(':')[0];
+  return host;
+};
+
+const DOMAIN_PATTERN = /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/;
+const RESERVED_DOMAIN_SUFFIXES = ['.abs.app', '.sabito.app', 'localhost'];
+
+const assertValidCustomDomain = (host) => {
+  if (!host || !DOMAIN_PATTERN.test(host)) {
+    const error = new Error('Enter a valid domain, e.g. shop.yourbusiness.com');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (RESERVED_DOMAIN_SUFFIXES.some((suffix) => host === suffix || host.endsWith(suffix))) {
+    const error = new Error('This domain is reserved and cannot be used as a custom domain');
+    error.statusCode = 400;
+    throw error;
+  }
+};
+
+const ensureCustomDomainAvailable = async ({ host, tenantId, currentId = null }) => {
+  const existing = await OnlineStoreSettings.findOne({
+    where: {
+      customDomain: { [Op.iLike]: host },
+      ...(currentId ? { id: { [Op.ne]: currentId } } : {}),
+    },
+    attributes: ['id', 'tenantId'],
+  });
+  if (existing && existing.tenantId !== tenantId) {
+    const error = new Error('This domain is already connected to another store');
+    error.statusCode = 400;
+    throw error;
+  }
+};
+
+const serializeDomainSettings = (settings) => ({
+  slug: settings?.slug || null,
+  displayName: settings?.displayName || null,
+  hasStoreSettings: Boolean(settings?.id),
+  enabled: Boolean(settings?.enabled),
+  customDomain: settings?.customDomain || null,
+  customDomainStatus: settings?.customDomainStatus || 'none',
+  cnameTarget: getCustomDomainCnameTarget(),
+});
+
+exports.getDomainSettings = async (req, res, next) => {
+  try {
+    const settings = await getCurrentStoreSettings(req);
+    res.status(200).json({ success: true, data: serializeDomainSettings(settings) });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.updateDomain = async (req, res, next) => {
+  try {
+    const settings = await getCurrentStoreSettings(req);
+    if (!settings) {
+      const error = new Error('Finish store setup before connecting a custom domain');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const rawDomain = req.body.customDomain;
+    // Empty string / null disconnects the domain.
+    if (rawDomain === null || rawDomain === undefined || String(rawDomain).trim() === '') {
+      await settings.update({ customDomain: null, customDomainStatus: 'none' });
+      return res.status(200).json({ success: true, data: serializeDomainSettings(settings) });
+    }
+
+    const host = normalizeCustomDomain(rawDomain);
+    assertValidCustomDomain(host);
+    await ensureCustomDomainAvailable({ host, tenantId: req.tenantId, currentId: settings.id });
+
+    // NOTE: DNS/SSL verification is not automated yet. Saving marks the domain
+    // "pending" — an operator (or a future scheduled job) should confirm the
+    // CNAME resolves to `getCustomDomainCnameTarget()` before flipping this to
+    // "verified". Until verified, `resolveStoreByDomain` below still serves the
+    // store (best-effort), since most CNAME setups work within minutes.
+    await settings.update({ customDomain: host, customDomainStatus: 'pending' });
+
+    res.status(200).json({ success: true, data: serializeDomainSettings(settings) });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Public: resolves a Host header / query param to a tenant's single-store
+ * template. Used by the storefront app on boot when it is not running on the
+ * shared marketplace domain, so a merchant's custom domain can render their
+ * store directly instead of the Sabito marketplace home page.
+ */
+exports.resolveStoreByDomain = async (req, res, next) => {
+  try {
+    const host = normalizeCustomDomain(req.query.host || req.headers['x-forwarded-host'] || req.headers.host);
+    if (!host) {
+      return res.status(200).json({ success: true, data: { matched: false } });
+    }
+
+    const settings = await OnlineStoreSettings.findOne({
+      where: { customDomain: { [Op.iLike]: host } },
+      attributes: ['id', 'tenantId', 'shopId', 'slug', 'displayName', 'enabled', 'customDomainStatus'],
+      include: [
+        { model: Tenant, as: 'tenant', attributes: ['id', 'businessType', 'status'], required: true },
+      ],
+    });
+
+    if (!settings || settings.tenant?.status !== 'active') {
+      return res.status(200).json({ success: true, data: { matched: false } });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        matched: true,
+        slug: settings.slug,
+        displayName: settings.displayName,
+        launched: Boolean(settings.enabled),
+        storeType: isStudioTenant(settings.tenant?.businessType) ? 'studio' : 'shop',
+        customDomainStatus: settings.customDomainStatus,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 exports.getListings = async (req, res, next) => {
   try {
     const { page, limit, offset } = getPagination(req);

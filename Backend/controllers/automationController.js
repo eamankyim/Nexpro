@@ -8,9 +8,58 @@ const {
   isTriggerAllowedForTenant,
 } = require('../services/automationEngineService');
 const { resolveBusinessNameForContext } = require('../utils/resolveBusinessNameForContext');
+const { applyScopedReadFilters } = require('../utils/shopUtils');
 const automationSchedulerService = require('../services/automationSchedulerService');
 const openaiService = require('../services/openaiService');
 const { getPagination } = require('../utils/paginationUtils');
+
+/**
+ * Resolve the rule's default branch scope from the active request context
+ * (mirrors how Job/Customer/Quote inherit the active shop/studio location on create).
+ * @param {object} req
+ * @returns {{ shopId: string|null, studioLocationId: string|null }}
+ */
+function defaultBranchIdsFromContext(req) {
+  return {
+    shopId: req.shopScoped ? (req.shopFilterId || req.defaultShopId || null) : null,
+    studioLocationId: req.studioLocationScoped ? (req.studioLocationFilterId || req.defaultStudioLocationId || null) : null,
+  };
+}
+
+/**
+ * Resolve shopId/studioLocationId for create/update, honoring an explicit `null`
+ * (meaning "all branches") while defaulting to the active branch context when the
+ * field is omitted entirely.
+ * @param {object} req
+ * @param {object} body
+ * @returns {{ shopId: string|null, studioLocationId: string|null }}
+ */
+function resolveBranchIdsForWrite(req, body = {}) {
+  const defaults = defaultBranchIdsFromContext(req);
+  const shopId = Object.prototype.hasOwnProperty.call(body, 'shopId')
+    ? (body.shopId || null)
+    : defaults.shopId;
+  const studioLocationId = Object.prototype.hasOwnProperty.call(body, 'studioLocationId')
+    ? (body.studioLocationId || null)
+    : defaults.studioLocationId;
+  return { shopId, studioLocationId };
+}
+
+/**
+ * Reject branch ids outside the requester's assigned shops/studio locations.
+ * @param {object} req
+ * @param {{ shopId: string|null, studioLocationId: string|null }} branchIds
+ * @returns {string|null} error message, or null if valid
+ */
+function validateBranchAccess(req, { shopId, studioLocationId }) {
+  if (shopId && req.shopScoped && !req.canAccessAllShops && !(req.allowedShopIds || []).includes(shopId)) {
+    return 'You do not have access to this shop';
+  }
+  if (studioLocationId && req.studioLocationScoped && !req.canAccessAllStudioLocations && !(req.allowedStudioLocationIds || []).includes(studioLocationId)) {
+    return 'You do not have access to this studio location';
+  }
+  return null;
+}
 
 const DISALLOWED_TRIGGER_MESSAGE = 'This trigger is not available for your business type';
 
@@ -316,8 +365,10 @@ exports.getTemplates = async (req, res, next) => {
 exports.listRules = async (req, res, next) => {
   try {
     const enabledOnly = parseBoolean(req.query.enabledOnly, false);
-    const where = { tenantId: req.tenantId };
+    let where = { tenantId: req.tenantId };
     if (enabledOnly) where.enabled = true;
+    // Show rules for the active branch plus rules that apply to all branches (null scope).
+    where = applyScopedReadFilters(req, where);
     const rows = await AutomationRule.findAll({ where, order: [['updatedAt', 'DESC']] });
     const ids = rows.map((row) => row.id);
     const runs = ids.length ? await AutomationRun.findAll({
@@ -363,6 +414,11 @@ exports.createRule = async (req, res, next) => {
     if (!isTriggerAllowedForTenant(normalizedTriggerType, req.tenant)) {
       return res.status(400).json({ success: false, error: DISALLOWED_TRIGGER_MESSAGE, errorCode: 'TRIGGER_NOT_ALLOWED' });
     }
+    const branchIds = resolveBranchIdsForWrite(req, req.body || {});
+    const branchError = validateBranchAccess(req, branchIds);
+    if (branchError) {
+      return res.status(403).json({ success: false, error: branchError, errorCode: 'BRANCH_ACCESS_DENIED' });
+    }
     const created = await AutomationRule.create({
       tenantId: req.tenantId,
       name: String(name).trim(),
@@ -373,6 +429,8 @@ exports.createRule = async (req, res, next) => {
       scheduleConfig,
       enabled: parseBoolean(enabled, true),
       metadata,
+      shopId: branchIds.shopId,
+      studioLocationId: branchIds.studioLocationId,
       createdBy: req.user?.id || null,
       updatedBy: req.user?.id || null
     });
@@ -394,6 +452,15 @@ exports.updateRule = async (req, res, next) => {
       if (nextTriggerType !== rule.triggerType && !isTriggerAllowedForTenant(nextTriggerType, req.tenant)) {
         return res.status(400).json({ success: false, error: DISALLOWED_TRIGGER_MESSAGE, errorCode: 'TRIGGER_NOT_ALLOWED' });
       }
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'shopId') || Object.prototype.hasOwnProperty.call(body, 'studioLocationId')) {
+      const branchIds = resolveBranchIdsForWrite(req, body);
+      const branchError = validateBranchAccess(req, branchIds);
+      if (branchError) {
+        return res.status(403).json({ success: false, error: branchError, errorCode: 'BRANCH_ACCESS_DENIED' });
+      }
+      rule.shopId = branchIds.shopId;
+      rule.studioLocationId = branchIds.studioLocationId;
     }
     const allowedFields = ['name', 'triggerType', 'triggerConfig', 'conditionConfig', 'actionConfig', 'scheduleConfig', 'enabled', 'metadata'];
     for (const key of allowedFields) {

@@ -81,7 +81,7 @@ const LiveProductPreview = ({ listing, product, settings }) => {
 
           <div className="mt-4 space-y-3">
             <div className="flex items-center justify-between gap-3">
-              <Badge variant="outline">{settings?.displayName || 'Online store'}</Badge>
+              <Badge variant="outline">{settings?.displayName || 'Sabito Store'}</Badge>
               <Badge variant="outline">{listing?.status || 'published'}</Badge>
             </div>
             <div>

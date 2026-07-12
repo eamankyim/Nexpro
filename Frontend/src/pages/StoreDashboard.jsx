@@ -33,7 +33,7 @@ const toCount = (value) => {
 const getOrderTotal = (order) => toCount(order?.total ?? order?.amount ?? order?.grandTotal);
 
 const getOrderChannelLabel = (order) => (
-  order?.orderType === 'service' ? 'Service order' : 'Online store'
+  order?.orderType === 'service' ? 'Service order' : 'Sabito Store'
 );
 
 const getOrderStatus = (order) => (
@@ -105,10 +105,10 @@ const StoreDashboard = () => {
       icon: Package,
     },
     {
-      label: isStudioStore ? 'Studio store status' : 'Store status',
+      label: 'Sabito Store status',
       value: checklist.launched ? 'Live' : 'Draft',
       description: checklist.launched
-        ? (isStudioStore ? 'Public studio storefront is active' : 'Public storefront is active')
+        ? (isStudioStore ? 'Public Sabito studio storefront is active' : 'Public Sabito storefront is active')
         : 'Finish setup to launch',
       icon: Store,
     },
@@ -119,7 +119,7 @@ const StoreDashboard = () => {
       icon: Clock3,
     },
     {
-      label: 'Total online revenue',
+      label: 'Total Sabito revenue',
       value: isOrderStatsFetching && !hasLoadedOrderStats ? '...' : formatAmount(orderStats?.totalRevenue || 0),
       description: `${formatInteger(totalOrders)} online ${totalOrders === 1 ? 'order' : 'orders'} received`,
       icon: WalletCards,
@@ -143,9 +143,9 @@ const StoreDashboard = () => {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">{isStudioStore ? 'Studio store dashboard' : 'Store dashboard'}</h1>
+          <h1 className="text-2xl font-semibold">Sabito Store dashboard</h1>
           <p className="text-muted-foreground">
-            {settings?.displayName || (isStudioStore ? 'Studio store' : 'Online store')} {checklist.launched ? 'is live' : 'is not launched yet'}.
+            {settings?.displayName || 'Your Sabito Store'} {checklist.launched ? 'is live' : 'is not launched yet'}.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

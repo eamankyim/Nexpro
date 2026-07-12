@@ -285,7 +285,9 @@ const WelcomeStoreMockup = ({ copy }) => (
 );
 
 /**
- * Online Store welcome intro shown before the setup wizard.
+ * Sabito Store welcome intro shown before the setup wizard. This is the Sabito
+ * marketplace-backed storefront (trade assurance, marketplace discovery) — distinct
+ * from the "Online Store" custom-domain product (see pages/OnlineStore.jsx).
  * @param {{ onStartSetup: () => void, onSeeHowItWorks?: () => void, className?: string }} props
  */
 const OnlineStoreWelcome = ({ onStartSetup, onSeeHowItWorks, className }) => {
@@ -317,11 +319,11 @@ const OnlineStoreWelcome = ({ onStartSetup, onSeeHowItWorks, className }) => {
             <div className="flex flex-col">
               <span className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">
                 <ShoppingBag className="h-3.5 w-3.5" />
-                Online Store
+                Sabito Store
               </span>
 
             <h1 className="mt-5 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl lg:text-[2.65rem] lg:leading-tight">
-              Welcome to Online Store! 🎉
+              Welcome to Sabito Store! 🎉
             </h1>
             <p className="mt-3 max-w-xl text-base leading-relaxed text-slate-600 sm:text-lg">
               {copy.subtitle}

@@ -1066,7 +1066,7 @@ const MobileStoreTopBar = ({ onBack }) => (
         <ChevronLeft className="mr-1 h-4 w-4" />
         Back
       </Button>
-      <p className="text-center text-base font-semibold">Store Setup</p>
+      <p className="text-center text-base font-semibold">Sabito Store Setup</p>
       <Button type="button" variant="ghost" size="icon" className="-mr-2 h-10 w-10" aria-label="Open menu">
         <Menu className="h-5 w-5" />
       </Button>
@@ -2320,7 +2320,7 @@ const StoreSetup = () => {
 
       <div className="hidden flex-col gap-4 md:flex lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="text-sm font-medium uppercase tracking-wide text-green-700">Online Store</p>
+          <p className="text-sm font-medium uppercase tracking-wide text-green-700">Sabito Store</p>
           <h1 className="text-2xl font-semibold">Setup wizard</h1>
           <p className="mt-1 text-muted-foreground">Build your customer-facing store from information to launch.</p>
         </div>

@@ -10,6 +10,10 @@ const buildPublicQuery = (params = {}) => {
 };
 
 const storeService = {
+  // "Online Store" custom domain resolution: is the current Host a merchant's connected
+  // custom domain (single-store mode) or the shared marketplace domain?
+  resolveDomain: async (host) => api.get(`/public/storefront/resolve-domain?host=${encodeURIComponent(host || '')}`),
+
   getPublicStore: async (slug) => api.get(`/public/store/${encodeURIComponent(slug || '')}`),
 
   getPublicStoreProducts: async (slug) => api.get(`/public/store/${encodeURIComponent(slug || '')}/products`),

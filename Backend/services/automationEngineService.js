@@ -23,7 +23,7 @@ const smsService = require('./smsService');
 const whatsappService = require('./whatsappService');
 const emailTemplates = require('./emailTemplates');
 const whatsappTemplates = require('./whatsappTemplates');
-const { resolveBusinessNameForContext } = require('../utils/resolveBusinessNameForContext');
+const { resolveBusinessNameForContext, extractBranchIdsFromContext } = require('../utils/resolveBusinessNameForContext');
 const { matchBirthdayMonthDay } = require('../utils/customerBirthday');
 const {
   annotateTemplateEligibility,
@@ -68,6 +68,41 @@ const FREQUENCY_COOLDOWN_HOURS = {
   weekly: 168,
   monthly: 720,
 };
+
+/**
+ * Whether a rule's branch scope (shopId/studioLocationId) matches the subject/context
+ * a trigger fired for. A rule with both fields null applies to all branches.
+ * @param {{ shopId?: string|null, studioLocationId?: string|null }} rule
+ * @param {object} context - trigger context (or subject-shaped object) carrying branch hints
+ * @returns {boolean}
+ */
+function ruleMatchesContextBranch(rule, context = {}) {
+  const ruleShopId = rule?.shopId || null;
+  const ruleStudioLocationId = rule?.studioLocationId || null;
+  if (!ruleShopId && !ruleStudioLocationId) return true;
+  const ids = extractBranchIdsFromContext(context);
+  if (ruleShopId && ruleShopId !== ids.shopId) return false;
+  if (ruleStudioLocationId && ruleStudioLocationId !== ids.studioLocationId) return false;
+  return true;
+}
+
+/**
+ * Sequelize `where` fragment restricting a shopId column to a rule's branch scope.
+ * @param {{ shopId?: string|null }} rule
+ * @returns {object}
+ */
+function shopBranchWhere(rule) {
+  return rule?.shopId ? { shopId: rule.shopId } : {};
+}
+
+/**
+ * Sequelize `where` fragment restricting a studioLocationId column to a rule's branch scope.
+ * @param {{ studioLocationId?: string|null }} rule
+ * @returns {object}
+ */
+function studioBranchWhere(rule) {
+  return rule?.studioLocationId ? { studioLocationId: rule.studioLocationId } : {};
+}
 
 /**
  * Catalog of automation templates. Each entry is annotated with allowedBusinessTypes
@@ -1541,6 +1576,76 @@ async function executeRule({
     const results = [];
 
     /**
+     * Map messaging action type to channel key for delivery history.
+     * @param {string} type
+     * @returns {'sms'|'email'|'whatsapp'|null}
+     */
+    const channelForActionType = (type) => {
+      if (type === 'send_sms') return 'sms';
+      if (type === 'send_email_platform') return 'email';
+      if (type === 'send_whatsapp') return 'whatsapp';
+      return null;
+    };
+
+    /**
+     * Resolve display name and address from contact context for a channel.
+     * @param {object} contactContext
+     * @param {'sms'|'email'|'whatsapp'|null} channel
+     * @returns {{ recipientName: string|null, recipientAddress: string|null, recipientUserId: string|null, customerId: string|null }}
+     */
+    const resolveDeliveryRecipient = (contactContext, channel) => {
+      const recipientName =
+        contactContext?.recipientName ||
+        contactContext?.assigneeName ||
+        contactContext?.customerName ||
+        contactContext?.companyName ||
+        null;
+      const recipientAddress =
+        channel === 'email'
+          ? (contactContext?.email || null)
+          : (contactContext?.phone || null);
+      return {
+        recipientName,
+        recipientAddress,
+        recipientUserId: contactContext?.recipientUserId || contactContext?.assigneeId || null,
+        customerId: contactContext?.customerId || null,
+      };
+    };
+
+    /**
+     * Build a messaging action result with delivery metadata (no message body).
+     * @param {object} params
+     * @returns {object}
+     */
+    const buildMessagingResult = ({
+      type,
+      success,
+      error = null,
+      contactContext = null,
+      messageId = undefined,
+      errorCode = undefined,
+      extras = {},
+    }) => {
+      const channel = channelForActionType(type);
+      const recipient = resolveDeliveryRecipient(contactContext, channel);
+      const result = {
+        type,
+        channel,
+        success,
+        error: error || null,
+        recipientName: recipient.recipientName,
+        recipientAddress: recipient.recipientAddress,
+        recipientUserId: recipient.recipientUserId,
+        customerId: recipient.customerId,
+        sentAt: new Date().toISOString(),
+        ...extras,
+      };
+      if (messageId !== undefined) result.messageId = messageId;
+      if (errorCode !== undefined) result.errorCode = errorCode;
+      return result;
+    };
+
+    /**
      * Send one messaging action to a single contact context.
      * @param {object} action
      * @param {object} contactContext
@@ -1549,19 +1654,20 @@ async function executeRule({
     const sendMessagingAction = async (action, contactContext) => {
       if (action.type === 'send_email_platform') {
         if (!contactContext?.email) {
-          return {
+          return buildMessagingResult({
             type: 'send_email_platform',
             success: false,
             error: 'No recipient email available',
-            recipientUserId: contactContext?.recipientUserId || null,
-          };
+            contactContext,
+          });
         }
         const rawSubject = action.subject || `${rule.name}`;
         const rawBody = action.body || contactContext.message || '';
         const subject = applyTemplateValues([rawSubject], contactContext)[0];
         const body = applyTemplateValues([rawBody], contactContext)[0];
         const html = emailTemplates.marketingPlainMessageEmail(body, {
-          name: contactContext.businessName || 'Business'
+          name: contactContext.businessName || 'Business',
+          audience: contactContext.audience || 'customer',
         });
         const response = await emailService.sendPlatformMessage(
           contactContext.email,
@@ -1569,23 +1675,24 @@ async function executeRule({
           html,
           body
         );
-        return {
+        return buildMessagingResult({
           type: 'send_email_platform',
           success: !!response?.success,
           error: response?.error || null,
-          recipientUserId: contactContext?.recipientUserId || null,
-          email: contactContext.email,
-        };
+          contactContext,
+          // Keep legacy `email` field for older UI consumers.
+          extras: { email: contactContext.email },
+        });
       }
 
       if (action.type === 'send_sms') {
         if (!contactContext?.phone) {
-          return {
+          return buildMessagingResult({
             type: 'send_sms',
             success: false,
             error: 'No staff phone available — SMS skipped',
-            recipientUserId: contactContext?.recipientUserId || null,
-          };
+            contactContext,
+          });
         }
         try {
           const rawBody = action.body || contactContext.message || '';
@@ -1593,32 +1700,32 @@ async function executeRule({
             ? applyTemplateValues([rawBody], contactContext)[0]
             : rawBody;
           const response = await smsService.sendMessage(tenantId, contactContext.phone, message, action.fromNumber || null);
-          return {
+          return buildMessagingResult({
             type: 'send_sms',
             success: !!response?.success,
             messageId: response?.messageId || null,
             error: response?.error || null,
             errorCode: response?.errorCode || null,
-            recipientUserId: contactContext?.recipientUserId || null,
-          };
+            contactContext,
+          });
         } catch (error) {
-          return {
+          return buildMessagingResult({
             type: 'send_sms',
             success: false,
             error: error?.message || 'send_failed',
-            recipientUserId: contactContext?.recipientUserId || null,
-          };
+            contactContext,
+          });
         }
       }
 
       if (action.type === 'send_whatsapp') {
         if (!contactContext?.phone) {
-          return {
+          return buildMessagingResult({
             type: 'send_whatsapp',
             success: false,
             error: 'No staff phone available — WhatsApp skipped',
-            recipientUserId: contactContext?.recipientUserId || null,
-          };
+            contactContext,
+          });
         }
         try {
           const response = await whatsappService.sendMessage(
@@ -1638,24 +1745,24 @@ async function executeRule({
               buttonIndex: action.buttonIndex
             }
           );
-          return {
+          return buildMessagingResult({
             type: 'send_whatsapp',
             success: !!response?.success,
             messageId: response?.messageId || null,
             error: response?.error || null,
-            recipientUserId: contactContext?.recipientUserId || null,
-          };
+            contactContext,
+          });
         } catch (error) {
-          return {
+          return buildMessagingResult({
             type: 'send_whatsapp',
             success: false,
             error: error?.message || 'send_failed',
-            recipientUserId: contactContext?.recipientUserId || null,
-          };
+            contactContext,
+          });
         }
       }
 
-      return { type: action.type, success: false, error: 'unsupported_action' };
+      return { type: action.type, success: false, error: 'unsupported_action', sentAt: new Date().toISOString() };
     };
 
     for (const action of actions) {
@@ -1707,9 +1814,15 @@ async function executeRule({
         if (!staffRecipients.length) {
           results.push({
             type: action.type,
+            channel: channelForActionType(action.type),
             success: false,
             error: 'No staff recipients resolved',
             audience: 'internal',
+            recipientName: null,
+            recipientAddress: null,
+            recipientUserId: null,
+            customerId: null,
+            sentAt: new Date().toISOString(),
           });
           continue;
         }
@@ -1723,6 +1836,7 @@ async function executeRule({
             recipientName: staff.name || null,
             recipientUserId: staff.userId,
             assigneeName: triggerContext.assigneeName || staff.name || null,
+            audience: 'internal',
           };
           results.push(await sendMessagingAction(action, contactContext));
         }
@@ -1730,7 +1844,10 @@ async function executeRule({
       }
 
       // Customer-facing path: single implied recipient from trigger context.
-      results.push(await sendMessagingAction(action, triggerContext));
+      results.push(await sendMessagingAction(action, {
+        ...triggerContext,
+        audience: 'customer',
+      }));
     }
 
     const allSucceeded = results.length > 0 && results.every((result) => result.success !== false);
@@ -2130,7 +2247,9 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
         tenantId,
         status: { [Op.in]: ['sent', 'partial', 'overdue'] },
         balance: { [Op.gt]: 0 },
-        dueDate: { [Op.between]: [startOfDay(target), endOfDay(target)] }
+        dueDate: { [Op.between]: [startOfDay(target), endOfDay(target)] },
+        ...shopBranchWhere(rule),
+        ...studioBranchWhere(rule)
       },
       include: [{ model: Customer, as: 'customer', attributes: ['id', 'name', 'company', 'phone', 'email', 'whatsappConsent', 'smsConsent', 'marketingConsent'] }],
       limit: MAX_SUBJECTS_PER_RULE,
@@ -2150,7 +2269,9 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
         tenantId,
         status: { [Op.in]: ['sent', 'partial', 'overdue'] },
         balance: { [Op.gt]: 0 },
-        dueDate: { [Op.lte]: cutoff }
+        dueDate: { [Op.lte]: cutoff },
+        ...shopBranchWhere(rule),
+        ...studioBranchWhere(rule)
       },
       include: [{ model: Customer, as: 'customer', attributes: ['id', 'name', 'company', 'phone', 'email', 'whatsappConsent', 'smsConsent', 'marketingConsent'] }],
       limit: MAX_SUBJECTS_PER_RULE,
@@ -2187,7 +2308,8 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
         trackStock: { [Op.ne]: false },
         ...(mode === 'fixed'
           ? { quantityOnHand: { [Op.lte]: fixedThreshold } }
-          : { reorderLevel: { [Op.gt]: 0 } })
+          : { reorderLevel: { [Op.gt]: 0 } }),
+        ...shopBranchWhere(rule)
       },
       limit: MAX_SUBJECTS_PER_RULE,
       order: [['updatedAt', 'DESC']]
@@ -2222,7 +2344,9 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
       where: {
         tenantId,
         status: 'sent',
-        updatedAt: { [Op.lte]: cutoff }
+        updatedAt: { [Op.lte]: cutoff },
+        ...shopBranchWhere(rule),
+        ...studioBranchWhere(rule)
       },
       include: [{ model: Customer, as: 'customer', attributes: ['id', 'name', 'company', 'phone', 'email', 'whatsappConsent', 'smsConsent', 'marketingConsent'] }],
       limit: MAX_SUBJECTS_PER_RULE,
@@ -2270,6 +2394,8 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
       where: {
         tenantId,
         isActive: true,
+        ...shopBranchWhere(rule),
+        ...studioBranchWhere(rule)
       },
       limit: MAX_SUBJECTS_PER_RULE * 3,
       order: [['updatedAt', 'ASC']]
@@ -2309,6 +2435,8 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
         tenantId,
         isActive: true,
         dateOfBirth: { [Op.ne]: null },
+        ...shopBranchWhere(rule),
+        ...studioBranchWhere(rule),
         [Op.and]: [
           sequelizeWhere(fn('to_char', col('dateOfBirth'), 'MM-DD'), monthDay)
         ]
@@ -2336,6 +2464,7 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
       periodEnd,
       periodLabel: period,
       now,
+      shopId: rule.shopId || null,
     });
     return finalizeTriggerContexts(tenantId, [context]);
   }
@@ -2352,6 +2481,8 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
           { lastContactedAt: { [Op.lte]: cutoff } },
           { lastContactedAt: null, createdAt: { [Op.lte]: cutoff } },
         ],
+        ...shopBranchWhere(rule),
+        ...studioBranchWhere(rule)
       },
       limit: MAX_SUBJECTS_PER_RULE,
       order: [['updatedAt', 'ASC']],
@@ -2383,6 +2514,7 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
         dueDate: { [Op.between]: [now, windowEnd] },
         status: { [Op.notIn]: ['completed', 'cancelled'] },
         assignedTo: { [Op.ne]: null },
+        ...studioBranchWhere(rule)
       },
       include: [
         { model: Customer, as: 'customer', attributes: ['id', 'name', 'company'], required: false },
@@ -2419,13 +2551,20 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
   if (triggerType === 'prescription_refill_due') {
     const daysBeforeDue = toNumber(triggerConfig.daysBeforeDue, 3);
     const windowEnd = endOfDay(addDays(now, daysBeforeDue));
+    // Pharmacy branches are modeled as Shop rows; Prescription has no shopId of its own,
+    // so branch scope is inferred from the linked customer's shopId.
     const prescriptions = await Prescription.findAll({
       where: {
         tenantId,
         status: { [Op.in]: ['filled', 'partially_filled'] },
       },
       include: [
-        { model: Customer, as: 'customer', attributes: ['id', 'name', 'company', 'phone', 'email', 'whatsappConsent', 'smsConsent', 'marketingConsent'] },
+        {
+          model: Customer,
+          as: 'customer',
+          attributes: ['id', 'name', 'company', 'phone', 'email', 'shopId', 'whatsappConsent', 'smsConsent', 'marketingConsent'],
+          ...(rule.shopId ? { where: { shopId: rule.shopId }, required: true } : {}),
+        },
         { model: PrescriptionItem, as: 'items', attributes: ['id', 'duration', 'drugName'] },
       ],
       limit: MAX_SUBJECTS_PER_RULE,
@@ -2452,6 +2591,7 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
         whatsappConsent: customer.whatsappConsent === true,
         smsConsent: customer.smsConsent === true,
         marketingConsent: customer.marketingConsent === true,
+        shopId: customer.shopId || null,
         message: `Prescription ${prescription.prescriptionNumber} refill is due on ${formatAutomationDate(refillDueDate)}.`,
       });
     }
@@ -2490,6 +2630,10 @@ async function executeMatchingRules({
   const summary = { rulesChecked: rules.length, executed: 0, skipped: 0, failed: 0, delayed: 0 };
 
   for (const rule of rules) {
+    if (!ruleMatchesContextBranch(rule, enrichedContext)) {
+      summary.skipped += 1;
+      continue;
+    }
     const result = await executeRule({
       rule,
       tenantId,
@@ -2981,12 +3125,14 @@ async function buildDailySalesSummaryContext(tenantId, {
   periodEnd,
   periodLabel = 'yesterday',
   now = new Date(),
+  shopId = null,
 }) {
   const dateKey = formatAutomationDate(periodEnd);
   const salesWhere = {
     tenantId,
     status: { [Op.notIn]: ['cancelled', 'refunded'] },
     createdAt: { [Op.between]: [periodStart, periodEnd] },
+    ...(shopId ? { shopId } : {}),
   };
 
   const salesAgg = await Sale.findOne({
@@ -3487,6 +3633,10 @@ async function runLowProfitMarginAutomations({
   const summary = { rulesChecked: rules.length, executed: 0, skipped: 0, failed: 0 };
 
   for (const rule of rules) {
+    if (!ruleMatchesContextBranch(rule, { shopId: sale.shopId || null })) {
+      summary.skipped += 1;
+      continue;
+    }
     const minMargin = toNumber(rule.triggerConfig?.minMarginPercent, 15);
     if (marginMeta.profitMargin >= minMargin) {
       summary.skipped += 1;
@@ -3544,6 +3694,13 @@ async function runDueAutomations({ now = new Date(), limit = MAX_RULES_PER_TICK 
     }
 
     for (const triggerContext of contexts) {
+      // Belt-and-suspenders: most subject queries above already filter by the rule's
+      // branch scope, but this guards trigger types (e.g. prescription refills, daily
+      // sales summary) that don't push the filter into their query.
+      if (!ruleMatchesContextBranch(rule, triggerContext)) {
+        summary.skipped += 1;
+        continue;
+      }
       const result = await executeRule({
         rule,
         tenantId: rule.tenantId,

@@ -32,7 +32,8 @@ const {
   getMarketplaceProduct,
   getMarketplaceCategories,
   getPublicStore,
-  getPublicStoreProducts
+  getPublicStoreProducts,
+  resolveStoreByDomain
 } = require('../controllers/storeController');
 const {
   getMarketplaceStudios,
@@ -242,6 +243,11 @@ router.get('/storefront/disputes', requireStorefrontCustomer, listStorefrontCust
 router.get('/storefront/disputes/:id', requireStorefrontCustomer, getStorefrontCustomerDispute);
 router.get('/store/:slug', getPublicStore);
 router.get('/store/:slug/products', getPublicStoreProducts);
+
+// "Online Store" custom domain resolution: storefront app calls this on boot to check
+// whether the current Host is a merchant's connected custom domain (single-store mode)
+// or the shared marketplace domain.
+router.get('/storefront/resolve-domain', resolveStoreByDomain);
 
 module.exports = router;
 

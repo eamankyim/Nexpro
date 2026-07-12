@@ -102,6 +102,19 @@ const OnlineStoreSettings = sequelize.define('OnlineStoreSettings', {
     allowNull: false,
     defaultValue: {},
   },
+  // Custom domain ("Online Store" product): lets a merchant point their own
+  // domain at their single-store template, independent of the Sabito
+  // marketplace (`enabled`) flag above. Nullable — most tenants never set this.
+  customDomain: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+  },
+  // 'none' | 'pending' (saved, DNS/SSL not verified yet) | 'verified' (DNS confirmed pointing at us)
+  customDomainStatus: {
+    type: DataTypes.STRING(20),
+    allowNull: false,
+    defaultValue: 'none',
+  },
 }, {
   tableName: 'online_store_settings',
   timestamps: true,
@@ -111,6 +124,7 @@ const OnlineStoreSettings = sequelize.define('OnlineStoreSettings', {
     { fields: ['studioLocationId'] },
     { unique: true, fields: ['slug'] },
     { fields: ['enabled'] },
+    { unique: true, fields: ['customDomain'] },
   ],
 });
 

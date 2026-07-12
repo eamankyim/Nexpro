@@ -649,6 +649,10 @@ const quickVendorSchema = z.object({
 const Products = () => {
   const { activeTenant, activeTenantId, tenantRole, isManager, hasFeature } = useAuth();
   const dealersAccountEnabled = hasFeature('dealersAccount');
+  // Catalog wholesale price is for shop/pharmacy products. Do not gate on dealersAccount —
+  // that flag unlocks the Dealers module / dealer POS, not the ability to set a wholesale list price.
+  const showWholesalePriceField = ['shop', 'pharmacy'].includes(activeTenant?.businessType)
+    || dealersAccountEnabled;
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
   const { scopeReady, activeStudioLocationId } = useWorkspaceScope();
@@ -1726,7 +1730,7 @@ const Products = () => {
         imageUrl: values.imageUrl || undefined,
         metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
       };
-      if (dealersAccountEnabled) {
+      if (showWholesalePriceField) {
         payload.wholesalePrice = values.wholesalePrice === '' || values.wholesalePrice == null
           ? null
           : Number(values.wholesalePrice);
@@ -3336,9 +3340,9 @@ const Products = () => {
                 <h4 className="font-medium text-sm text-muted-foreground">Pricing</h4>
                 <div className={cn(
                   'grid grid-cols-1 gap-4',
-                  canViewProductSensitiveFields && dealersAccountEnabled
+                  canViewProductSensitiveFields && showWholesalePriceField
                     ? 'md:grid-cols-2 lg:grid-cols-4'
-                    : canViewProductSensitiveFields || dealersAccountEnabled
+                    : canViewProductSensitiveFields || showWholesalePriceField
                       ? 'md:grid-cols-3'
                       : 'md:grid-cols-2'
                 )}>
@@ -3386,13 +3390,13 @@ const Products = () => {
                       </FormItem>
                     )}
                   />
-                  {dealersAccountEnabled && (
+                  {showWholesalePriceField && (
                     <FormField
                       control={form.control}
                       name="wholesalePrice"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Wholesale / dealer price (optional)</FormLabel>
+                          <FormLabel>Wholesale Price (optional)</FormLabel>
                           <FormControl>
                             <Input
                               type="number"
@@ -4122,10 +4126,10 @@ const Products = () => {
                 <DescriptionItem label="Selling Price">
                   {valueFormatter(selectedProduct.sellingPrice)}
                 </DescriptionItem>
-                {dealersAccountEnabled
+                {showWholesalePriceField
                   && selectedProduct.wholesalePrice != null
                   && selectedProduct.wholesalePrice !== '' && (
-                  <DescriptionItem label="Wholesale / dealer price">
+                  <DescriptionItem label="Wholesale Price">
                     {valueFormatter(selectedProduct.wholesalePrice)}
                   </DescriptionItem>
                 )}

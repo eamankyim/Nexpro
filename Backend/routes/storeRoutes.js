@@ -4,6 +4,8 @@ const {
   upsertSettings,
   getSetupStatus,
   checkSlugAvailability,
+  getDomainSettings,
+  updateDomain,
   getListings,
   createListing,
   updateListing,
@@ -54,6 +56,11 @@ router.route('/settings')
 
 router.get('/setup-status', getSetupStatus);
 router.get('/slug-availability', checkSlugAvailability);
+
+// "Online Store" custom domain (customer-owned domain, independent of Sabito marketplace)
+router.route('/domain')
+  .get(getDomainSettings)
+  .put(authorize('admin', 'manager'), updateDomain);
 
 router.get('/orders/stats', getStoreOrderStats);
 router.get('/orders/export', authorize('admin', 'manager', 'staff'), exportStoreOrders);

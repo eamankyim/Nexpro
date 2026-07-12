@@ -113,6 +113,7 @@ const StoreServices = lazy(() => import('./pages/StoreServices'));
 const StoreServiceEditor = lazy(() => import('./pages/StoreServiceEditor'));
 const OnlineOrders = lazy(() => import('./pages/OnlineOrders'));
 const StoreSettings = lazy(() => import('./pages/StoreSettings'));
+const OnlineStore = lazy(() => import('./pages/OnlineStore'));
 
 const WorkspaceRoot = () => {
   const { user, isSupportAccessActive, isDriver } = useAuth();
@@ -343,6 +344,7 @@ function AppContent() {
             <Route path="store/services/:serviceId/edit" element={<StoreServiceEditor />} />
             <Route path="store/orders" element={<OnlineOrders />} />
             <Route path="store/settings" element={<RequireWorkspaceManager><StoreSettings /></RequireWorkspaceManager>} />
+            <Route path="online-store" element={<OnlineStore />} />
             <Route path="studio-locations" element={<FeatureRoute featureKey="studioLocationsModule"><RequireWorkspaceManager><StudioLocations /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="pharmacies" element={<FeatureRoute featureKey="pharmacyOps"><Pharmacies /></FeatureRoute>} />
             <Route path="products" element={<FeatureRoute featureKey="products"><Products /></FeatureRoute>} />

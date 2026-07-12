@@ -1,6 +1,8 @@
 const express = require('express');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
+const { shopContext } = require('../middleware/shopContext');
+const { studioLocationContext } = require('../middleware/studioLocationContext');
 const {
   getTemplates,
   listRules,
@@ -21,6 +23,15 @@ const router = express.Router();
 
 router.use(protect);
 router.use(tenantContext);
+router.use(studioLocationContext);
+// Automation rules are a workspace-wide management surface: unlike operational
+// pages (jobs/invoices), admins/managers may view/manage rules for all branches,
+// not just the currently active shop.
+router.use((req, _res, next) => {
+  req.allowAllShopScope = true;
+  next();
+});
+router.use(shopContext);
 router.use(authorize('admin', 'manager'));
 
 router.get('/templates', getTemplates);

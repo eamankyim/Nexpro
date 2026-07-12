@@ -99,9 +99,9 @@ const REPORTS_CHILD_KEYS = [
 export const SIDEBAR_MENU_GROUPS = [
   {
     id: 'store',
-    label: 'Online store',
+    label: 'Sabito Store',
     items: [
-      { key: 'store', label: 'Store section', description: 'Hide the entire store menu group' },
+      { key: 'store', label: 'Sabito Store section', description: 'Hide the entire Sabito Store menu group' },
       { key: '/store', label: 'Store dashboard' },
       { key: '/store/listings', label: 'Store listings' },
       { key: '/store/services', label: 'Studio services' },

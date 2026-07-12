@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
@@ -44,11 +44,14 @@ import {
   Zap,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useShopOptional } from '../context/ShopContext';
+import { useStudioLocationOptional } from '../context/StudioLocationContext';
 import automationService from '../services/automationService';
 import settingsService from '../services/settingsService';
 import whatsappService from '../services/whatsappService';
 import {
   ACTION_TYPE_OPTIONS,
+  ALL_BRANCHES_VALUE,
   FREQUENCY_OPTIONS,
   TASK_PRIORITY_OPTIONS,
   THRESHOLD_MODE_OPTIONS,
@@ -66,7 +69,9 @@ import {
   formatPlaceholderHint,
   isInternalStaffTrigger,
   isStickyTrigger,
+  resolveAutomationBranchLabel,
   supportsSendAfter,
+  usesDailySchedule,
   DELAY_MINUTES_PRESETS,
   mergeTriggerForm,
   parseJsonObject,
@@ -75,6 +80,10 @@ import {
   scheduleFormFromConfig,
   defaultFrequencyForTrigger,
   defaultDelayMinutesForTrigger,
+  formatScheduleTimeDisplay,
+  getEventTimingCopy,
+  getReviewAdditionalSettingsLines,
+  getWhatHappensNextTiming,
   triggerLabel,
 } from '../utils/automationForm';
 import {
@@ -82,6 +91,11 @@ import {
   isTriggerAllowedForTenant,
   resolveBusinessType,
 } from '../utils/automationBusinessType';
+import {
+  buildDeliveryMatrix,
+  buildWhatsAppStatusByMessageId,
+  CHANNEL_ORDER,
+} from '../utils/automationDelivery';
 import { handleApiError, showError, showSuccess } from '../utils/toast';
 import AutomationTestRecipientDialog from '../components/automations/AutomationTestRecipientDialog';
 import MessagePreview from '../components/automations/MessagePreview';
@@ -142,6 +156,9 @@ function createInitialBuilder() {
     triggerForm: defaultTriggerForm(triggerType),
     conditionForm: conditionFormFromConfig({}, {}, triggerType),
     actionRows: [defaultActionFormRow('create_task', triggerType)],
+    // null = applies to all branches (default for new rules).
+    shopId: null,
+    studioLocationId: null,
   };
 }
 
@@ -438,6 +455,15 @@ const TRIGGER_CARD_DETAILS = {
     bg: 'bg-green-50',
     color: 'text-green-700',
   },
+  job_created: {
+    category: 'General',
+    title: 'Job created',
+    description: 'When a new job is created',
+    tag: 'New',
+    Icon: ClipboardList,
+    bg: 'bg-blue-50',
+    color: 'text-blue-700',
+  },
   daily_sales_summary: {
     category: 'Finance',
     title: 'Daily sales summary',
@@ -602,7 +628,7 @@ const BIRTHDAY_MATCH_OPTIONS = [
 
 const INVOICE_TRIGGER_TYPES = ['invoice_due_in_days', 'invoice_overdue', 'payment_received'];
 const REVIEW_TRIGGER_TYPES = ['review_request'];
-const JOB_TRIGGER_TYPES = ['job_completed', 'order_created'];
+const JOB_TRIGGER_TYPES = ['job_completed', 'job_created', 'order_created'];
 const CUSTOMER_TRIGGER_TYPES = ['customer_inactive_days', 'customer_birthday'];
 const PRODUCT_TRIGGER_TYPES = ['low_stock_detected'];
 
@@ -1038,7 +1064,6 @@ const TEMPLATE_METADATA = {
     accent: 'amber',
     channels: ['email'],
     difficulty: 'easy',
-    usage: 214,
   },
   overdue_invoice_reminder: {
     category: 'finance_payments',
@@ -1048,7 +1073,6 @@ const TEMPLATE_METADATA = {
     accent: 'green',
     channels: ['whatsapp'],
     difficulty: 'easy',
-    usage: 432,
     popular: true,
   },
   quote_follow_up: {
@@ -1059,7 +1083,6 @@ const TEMPLATE_METADATA = {
     accent: 'purple',
     channels: ['email'],
     difficulty: 'easy',
-    usage: 336,
     popular: true,
   },
   low_stock_alert: {
@@ -1070,7 +1093,6 @@ const TEMPLATE_METADATA = {
     accent: 'amber',
     channels: ['email', 'task'],
     difficulty: 'easy',
-    usage: 188,
     audience: 'internal',
   },
   win_back_campaign: {
@@ -1081,7 +1103,6 @@ const TEMPLATE_METADATA = {
     accent: 'purple',
     channels: ['email'],
     difficulty: 'medium',
-    usage: 276,
   },
   birthday_greeting: {
     category: 'customer_communication',
@@ -1091,7 +1112,6 @@ const TEMPLATE_METADATA = {
     accent: 'pink',
     channels: ['whatsapp'],
     difficulty: 'easy',
-    usage: 318,
     popular: true,
   },
   payment_received_thank_you: {
@@ -1102,7 +1122,6 @@ const TEMPLATE_METADATA = {
     accent: 'green',
     channels: ['whatsapp', 'email'],
     difficulty: 'medium',
-    usage: 389,
   },
   job_completed_notification: {
     category: 'operations',
@@ -1112,7 +1131,6 @@ const TEMPLATE_METADATA = {
     accent: 'green',
     channels: ['whatsapp', 'email'],
     difficulty: 'medium',
-    usage: 247,
   },
   daily_sales_summary: {
     category: 'operations',
@@ -1122,7 +1140,6 @@ const TEMPLATE_METADATA = {
     accent: 'blue',
     channels: ['email', 'task'],
     difficulty: 'advanced',
-    usage: 171,
     audience: 'internal',
   },
   review_request: {
@@ -1133,7 +1150,6 @@ const TEMPLATE_METADATA = {
     accent: 'amber',
     channels: ['whatsapp', 'email'],
     difficulty: 'medium',
-    usage: 294,
     popular: true,
   },
   low_profit_margin_alert: {
@@ -1144,7 +1160,6 @@ const TEMPLATE_METADATA = {
     accent: 'red',
     channels: ['task'],
     difficulty: 'advanced',
-    usage: 142,
   },
   new_lead_notification: {
     category: 'sales_crm',
@@ -1154,7 +1169,6 @@ const TEMPLATE_METADATA = {
     accent: 'pink',
     channels: ['email', 'task'],
     difficulty: 'easy',
-    usage: 198,
     audience: 'internal',
   },
   new_lead_staff: {
@@ -1165,7 +1179,6 @@ const TEMPLATE_METADATA = {
     accent: 'pink',
     channels: ['email'],
     difficulty: 'easy',
-    usage: 120,
     audience: 'internal',
   },
   high_value_invoice_alert: {
@@ -1176,7 +1189,6 @@ const TEMPLATE_METADATA = {
     accent: 'amber',
     channels: ['email', 'task'],
     difficulty: 'medium',
-    usage: 156,
     audience: 'internal',
   },
   job_assigned_staff: {
@@ -1187,7 +1199,6 @@ const TEMPLATE_METADATA = {
     accent: 'blue',
     channels: ['email'],
     difficulty: 'easy',
-    usage: 210,
     audience: 'internal',
   },
   payment_received_staff: {
@@ -1198,7 +1209,6 @@ const TEMPLATE_METADATA = {
     accent: 'green',
     channels: ['email'],
     difficulty: 'easy',
-    usage: 180,
     audience: 'internal',
   },
   invoice_paid_staff: {
@@ -1209,7 +1219,6 @@ const TEMPLATE_METADATA = {
     accent: 'green',
     channels: ['email'],
     difficulty: 'easy',
-    usage: 165,
     audience: 'internal',
   },
   invoice_overdue_staff: {
@@ -1220,7 +1229,6 @@ const TEMPLATE_METADATA = {
     accent: 'amber',
     channels: ['email'],
     difficulty: 'easy',
-    usage: 190,
     audience: 'internal',
   },
   order_created_staff: {
@@ -1231,7 +1239,6 @@ const TEMPLATE_METADATA = {
     accent: 'blue',
     channels: ['email'],
     difficulty: 'easy',
-    usage: 140,
     audience: 'internal',
   },
   order_status_staff: {
@@ -1242,7 +1249,6 @@ const TEMPLATE_METADATA = {
     accent: 'blue',
     channels: ['email'],
     difficulty: 'easy',
-    usage: 130,
     audience: 'internal',
   },
   quote_accepted_staff: {
@@ -1253,7 +1259,6 @@ const TEMPLATE_METADATA = {
     accent: 'green',
     channels: ['email'],
     difficulty: 'easy',
-    usage: 175,
     audience: 'internal',
   },
   job_created_staff: {
@@ -1264,7 +1269,6 @@ const TEMPLATE_METADATA = {
     accent: 'blue',
     channels: ['email'],
     difficulty: 'easy',
-    usage: 110,
     audience: 'internal',
   },
   job_completed_staff: {
@@ -1275,7 +1279,6 @@ const TEMPLATE_METADATA = {
     accent: 'green',
     channels: ['email'],
     difficulty: 'easy',
-    usage: 105,
     audience: 'internal',
   },
   sale_completed_staff: {
@@ -1286,7 +1289,6 @@ const TEMPLATE_METADATA = {
     accent: 'blue',
     channels: ['email'],
     difficulty: 'easy',
-    usage: 90,
     audience: 'internal',
   },
   lead_assigned_staff: {
@@ -1297,7 +1299,6 @@ const TEMPLATE_METADATA = {
     accent: 'pink',
     channels: ['email'],
     difficulty: 'easy',
-    usage: 100,
     audience: 'internal',
   },
   customer_created_welcome: {
@@ -1308,7 +1309,6 @@ const TEMPLATE_METADATA = {
     accent: 'purple',
     channels: ['email', 'sms'],
     difficulty: 'easy',
-    usage: 221,
   },
   lead_no_contact_follow_up: {
     category: 'sales_crm',
@@ -1318,7 +1318,6 @@ const TEMPLATE_METADATA = {
     accent: 'pink',
     channels: ['email', 'task'],
     difficulty: 'medium',
-    usage: 134,
   },
   invoice_sent_notification: {
     category: 'finance_payments',
@@ -1328,7 +1327,6 @@ const TEMPLATE_METADATA = {
     accent: 'green',
     channels: ['whatsapp', 'email'],
     difficulty: 'medium',
-    usage: 312,
   },
   sale_completed_receipt: {
     category: 'finance_payments',
@@ -1338,7 +1336,6 @@ const TEMPLATE_METADATA = {
     accent: 'green',
     channels: ['whatsapp', 'email'],
     difficulty: 'medium',
-    usage: 287,
   },
   order_created_notification: {
     category: 'sales_crm',
@@ -1348,7 +1345,6 @@ const TEMPLATE_METADATA = {
     accent: 'orange',
     channels: ['sms', 'email'],
     difficulty: 'easy',
-    usage: 0,
   },
   low_stock_on_change: {
     category: 'operations',
@@ -1358,7 +1354,6 @@ const TEMPLATE_METADATA = {
     accent: 'amber',
     channels: ['email', 'task'],
     difficulty: 'medium',
-    usage: 176,
     audience: 'internal',
   },
   out_of_stock_alert: {
@@ -1369,7 +1364,6 @@ const TEMPLATE_METADATA = {
     accent: 'red',
     channels: ['email', 'task', 'whatsapp'],
     difficulty: 'medium',
-    usage: 163,
     audience: 'internal',
   },
   quote_sent_notification: {
@@ -1380,7 +1374,6 @@ const TEMPLATE_METADATA = {
     accent: 'blue',
     channels: ['whatsapp', 'email'],
     difficulty: 'medium',
-    usage: 245,
   },
   job_due_reminder: {
     category: 'operations',
@@ -1390,7 +1383,6 @@ const TEMPLATE_METADATA = {
     accent: 'green',
     channels: ['task', 'email'],
     difficulty: 'medium',
-    usage: 118,
     audience: 'internal',
   },
   prescription_refill_reminder: {
@@ -1401,7 +1393,6 @@ const TEMPLATE_METADATA = {
     accent: 'purple',
     channels: ['sms', 'email'],
     difficulty: 'advanced',
-    usage: 89,
   },
 };
 
@@ -1475,6 +1466,94 @@ function formatTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'Just now';
   return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+const CHANNEL_COLUMN_LABELS = {
+  sms: 'SMS',
+  email: 'Email',
+  whatsapp: 'WhatsApp',
+};
+
+/**
+ * Compact cell for one channel attempt in the delivery matrix.
+ */
+function DeliveryChannelCell({ cell }) {
+  if (!cell) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+  const statusLabel = cell.success ? 'Sent' : 'Failed';
+  const statusClass = cell.success ? 'text-emerald-700' : 'text-red-600';
+  const waBadge =
+    cell.whatsappStatus === 'read' || cell.whatsappStatus === 'delivered'
+      ? cell.whatsappStatus
+      : null;
+
+  return (
+    <div className="space-y-0.5">
+      <p className={`text-xs font-medium ${statusClass}`}>
+        {statusLabel}
+        {cell.sentAt ? <span className="font-normal text-muted-foreground"> · {formatTime(cell.sentAt)}</span> : null}
+      </p>
+      {cell.maskedAddress ? (
+        <p className="text-[11px] text-muted-foreground">{cell.maskedAddress}</p>
+      ) : null}
+      {cell.error ? <p className="line-clamp-2 text-[11px] text-red-600">{cell.error}</p> : null}
+      {waBadge ? (
+        <span className="inline-flex rounded border border-emerald-100 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium capitalize text-emerald-700">
+          {waBadge}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Expandable delivery detail: who received what on which channel.
+ */
+function DeliveryDetailPanel({ run, waStatusByMessageId, className = '' }) {
+  const rows = useMemo(
+    () => buildDeliveryMatrix(run, { waStatusByMessageId }),
+    [run, waStatusByMessageId]
+  );
+
+  if (!rows.length) {
+    return (
+      <div className={`rounded-lg border border-dashed border-border bg-muted/20 px-3 py-3 text-sm text-muted-foreground ${className}`}>
+        No messaging delivery details for this run.
+      </div>
+    );
+  }
+
+  return (
+    <div className={`overflow-x-auto rounded-lg border border-border bg-white ${className}`}>
+      <Table>
+        <TableHeader>
+          <TableRow className="bg-muted/30 hover:bg-muted/30">
+            <TableHead className="min-w-[140px]">Recipient</TableHead>
+            {CHANNEL_ORDER.map((channel) => (
+              <TableHead key={channel} className="min-w-[120px]">
+                {CHANNEL_COLUMN_LABELS[channel]}
+              </TableHead>
+            ))}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((row) => (
+            <TableRow key={row.key}>
+              <TableCell>
+                <p className="text-sm font-medium text-foreground">{row.recipientName}</p>
+              </TableCell>
+              {CHANNEL_ORDER.map((channel) => (
+                <TableCell key={channel}>
+                  <DeliveryChannelCell cell={row.cells[channel]} />
+                </TableCell>
+              ))}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
 }
 
 function formatRelativeTime(value) {
@@ -1595,7 +1674,6 @@ function getTemplateCard(template) {
     accent: metadata.accent || 'blue',
     channels: getTemplateChannels(template),
     difficulty: metadata.difficulty || 'medium',
-    usage: metadata.usage,
     popular: Boolean(metadata.popular),
   };
 }
@@ -1652,7 +1730,7 @@ function TemplateCard({ template, onUse }) {
         ))}
       </div>
       <p className="mt-3 text-xs text-muted-foreground">
-        {template.usage ? `Used by ${template.usage.toLocaleString()} businesses` : triggerLabel(template.triggerType)}
+        {triggerLabel(template.triggerType)}
       </p>
       {unavailableLabel && (
         <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{unavailableLabel}</p>
@@ -2354,17 +2432,21 @@ function getTriggerPreview(builder) {
     actionRows: builder.actionRows,
   });
   const trigger = triggerLabel(builder.triggerType);
+  const scheduleTime = formatScheduleTimeDisplay(builder.conditionForm?.runAfterTime || '09:00');
   if (builder.triggerType === 'invoice_overdue' || builder.triggerType === 'invoice_overdue_staff') {
-    return `An invoice is overdue for more than ${payload.triggerConfig.daysAfterDue || 0} days at 09:00 AM (GMT+00:00) Accra`;
+    return `An invoice is overdue for more than ${payload.triggerConfig.daysAfterDue || 0} days at ${scheduleTime} (GMT+00:00) Accra`;
   }
   if (builder.triggerType === 'invoice_due_in_days') {
-    return `An invoice is due in ${payload.triggerConfig.daysBeforeDue || 0} days at 09:00 AM (GMT+00:00) Accra`;
+    return `An invoice is due in ${payload.triggerConfig.daysBeforeDue || 0} days at ${scheduleTime} (GMT+00:00) Accra`;
   }
   if (builder.triggerType === 'payment_received') {
     return 'A payment is recorded on an invoice';
   }
   if (builder.triggerType === 'review_request') {
     return 'A job is completed, a sale is completed, or a standalone invoice is fully paid';
+  }
+  if (!usesDailySchedule(builder.triggerType)) {
+    return getEventTimingCopy(builder.triggerType, builder.conditionForm);
   }
   return `${trigger} matches the configured trigger settings.`;
 }
@@ -2441,6 +2523,10 @@ function AutomationCreationModal({
   );
   const visibleConditionGroups = useMemo(() => getVisibleConditionGroups(builder.triggerType), [builder.triggerType]);
   const conditionLines = useMemo(() => getConditionLines(builder.conditionForm), [builder.conditionForm]);
+  const whatHappensNextTiming = useMemo(
+    () => getWhatHappensNextTiming(builder.triggerType, builder.conditionForm),
+    [builder.triggerType, builder.conditionForm]
+  );
   const activeConditionCount = conditionLines.length;
   const primaryLabel =
     step === 'trigger'
@@ -2604,6 +2690,29 @@ function AutomationCreationModal({
                           placeholder="e.g. Invoice overdue reminder"
                         />
                       </div>
+                      {showBranchSelector && (
+                        <div className="space-y-1.5">
+                          <Label htmlFor="automation-modal-branch">Branch</Label>
+                          <Select value={branchSelectValue} onValueChange={handleBranchChange}>
+                            <SelectTrigger id="automation-modal-branch">
+                              <SelectValue placeholder="All branches" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value={ALL_BRANCHES_VALUE}>All branches</SelectItem>
+                              {branchOptions.map((branch) => (
+                                <SelectItem key={branch.id} value={branch.id}>
+                                  {branch.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <p className="text-xs text-slate-500">
+                            {branchSelectValue === ALL_BRANCHES_VALUE
+                              ? 'This automation runs for every branch.'
+                              : 'This automation only runs for the selected branch.'}
+                          </p>
+                        </div>
+                      )}
                       <div className="space-y-3">
                         <p className="text-sm font-semibold text-slate-950">Trigger settings</p>
                         <AutomationTriggerFields triggerType={builder.triggerType} value={builder.triggerForm} onPatch={patchTriggerForm} />
@@ -2617,30 +2726,39 @@ function AutomationCreationModal({
                           conditionForm={builder.conditionForm}
                           onPatch={patchConditionForm}
                         />
-                        <div className="space-y-1.5">
-                          <Label>Trigger time</Label>
-                          <Select value="09:00 AM" onValueChange={() => {}}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="09:00 AM">09:00 AM</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <p className="text-xs text-slate-500">Time of day to check and trigger this automation.</p>
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label>Time zone</Label>
-                          <Select value="GMT+00:00 Accra" onValueChange={() => {}}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="GMT+00:00 Accra">(GMT+00:00) Accra</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <p className="text-xs text-slate-500">Time zone for the trigger schedule.</p>
-                        </div>
+                        {usesDailySchedule(builder.triggerType) ? (
+                          <>
+                            <div className="space-y-1.5">
+                              <Label>Trigger time</Label>
+                              <Select
+                                value={formatScheduleTimeDisplay(builder.conditionForm?.runAfterTime || '09:00')}
+                                onValueChange={() => {}}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value={formatScheduleTimeDisplay(builder.conditionForm?.runAfterTime || '09:00')}>
+                                    {formatScheduleTimeDisplay(builder.conditionForm?.runAfterTime || '09:00')}
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <p className="text-xs text-slate-500">Time of day to check and trigger this automation. Set earliest run time under Conditions for a different hour.</p>
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label>Time zone</Label>
+                              <Select value="GMT+00:00 Accra" onValueChange={() => {}}>
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="GMT+00:00 Accra">(GMT+00:00) Accra</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <p className="text-xs text-slate-500">Time zone for the trigger schedule.</p>
+                            </div>
+                          </>
+                        ) : null}
                       </div>
                       <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
                         <p className="text-sm font-semibold text-slate-950">Trigger preview</p>
@@ -2984,10 +3102,20 @@ function AutomationCreationModal({
                   </CardHeader>
                   <CardContent className="space-y-4">
                     {[
-                      { key: 'trigger', title: 'Trigger', Icon: Clock3, step: 'trigger', lines: [selectedDetails.title || triggerLabel(builder.triggerType), getTriggerPreview(builder)] },
+                      {
+                        key: 'trigger',
+                        title: 'Trigger',
+                        Icon: Clock3,
+                        step: 'trigger',
+                        lines: [
+                          selectedDetails.title || triggerLabel(builder.triggerType),
+                          getTriggerPreview(builder),
+                          ...(showBranchSelector ? [`Branch: ${resolveAutomationBranchLabel(builder, branchLists)}`] : []),
+                        ],
+                      },
                       { key: 'conditions', title: 'Conditions', Icon: Filter, step: 'conditions', lines: conditionLines.length ? [`${conditionLines.length} conditions`, ...conditionLines] : ['No additional conditions'] },
                       { key: 'actions', title: 'Actions', Icon: Zap, step: 'actions', lines: [`${builder.actionRows.length} actions`, ...builder.actionRows.map(actionSummary)] },
-                      { key: 'settings', title: 'Additional settings', Icon: SlidersHorizontal, step: 'trigger', lines: ['Time zone: (GMT+00:00) Accra', 'Runs every day at 09:00 AM'] },
+                      { key: 'settings', title: 'Additional settings', Icon: SlidersHorizontal, step: 'trigger', lines: getReviewAdditionalSettingsLines(builder.triggerType, builder.conditionForm) },
                     ].map((section) => {
                       const SectionIcon = section.Icon;
                       return (
@@ -3067,7 +3195,7 @@ function AutomationCreationModal({
                     <CardContent className="space-y-4">
                       {[
                         ['Automation will be active immediately', 'This rule starts running as soon as you activate it.', PlayCircle],
-                        ['It will run every day at 09:00 AM', 'And perform actions for matching records.', Clock3],
+                        [whatHappensNextTiming.title, whatHappensNextTiming.text, Clock3],
                         ["You'll get notified if something fails", "We'll alert you if any action doesn't complete successfully.", Bell],
                       ].map(([title, text, Icon]) => (
                         <div key={title} className="flex gap-3">
@@ -3126,6 +3254,7 @@ function AutomationRuleDetailsDrawer({
   testInProgress,
   toggleInProgress,
   deleteInProgress,
+  waStatusByMessageId = {},
 }) {
   const actions = rule ? getRuleActions(rule) : [];
   const TriggerIcon = rule?.triggerDisplay?.Icon || Zap;
@@ -3134,6 +3263,20 @@ function AutomationRuleDetailsDrawer({
   const metadataRows = rule ? getSourceMetadataRows(rule) : [];
   const recentRuns = rule?.recentRuns || [];
   const totalRuns = rule?.totalRuns ?? recentRuns.length;
+  const [expandedRunIds, setExpandedRunIds] = useState(() => new Set());
+
+  const toggleRunExpand = useCallback((runId) => {
+    setExpandedRunIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(runId)) next.delete(runId);
+      else next.add(runId);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!open) setExpandedRunIds(new Set());
+  }, [open, rule?.id]);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -3165,6 +3308,12 @@ function AutomationRuleDetailsDrawer({
                   <span className="rounded-full border border-border bg-muted/30 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
                     {rule.enabled ? 'Enabled' : 'Paused'}
                   </span>
+                  {rule.branchLabel && (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/30 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                      <MapPin className="h-3 w-3" aria-hidden />
+                      {rule.branchLabel}
+                    </span>
+                  )}
                   <span className="rounded-full border border-border bg-muted/30 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
                     {getRuleAiSource(rule)}
                   </span>
@@ -3282,16 +3431,36 @@ function AutomationRuleDetailsDrawer({
                     recentRuns.map((run) => {
                       const durationMs = getRunDurationMs(run);
                       const actionCount = getRunActions(run).length || actions.length;
+                      const expanded = expandedRunIds.has(run.id);
                       return (
                         <div key={run.id} className="rounded-lg border border-border bg-muted/20 px-3 py-2">
                           <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="text-sm font-medium text-foreground">{buildRunMessage(run, actionCount)}</p>
-                              <p className="mt-1 text-xs text-muted-foreground">{formatDateTime(run.finishedAt || run.createdAt || run.startedAt)}</p>
-                            </div>
+                            <button
+                              type="button"
+                              className="flex min-w-0 flex-1 items-start gap-2 text-left"
+                              onClick={() => toggleRunExpand(run.id)}
+                              aria-expanded={expanded}
+                              aria-label={expanded ? 'Collapse delivery details' : 'Expand delivery details'}
+                            >
+                              <ChevronDown
+                                className={`mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`}
+                                aria-hidden
+                              />
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium text-foreground">{buildRunMessage(run, actionCount)}</p>
+                                <p className="mt-1 text-xs text-muted-foreground">{formatDateTime(run.finishedAt || run.createdAt || run.startedAt)}</p>
+                              </div>
+                            </button>
                             <StatusChip status={normalizeRunStatus(run.status)} />
                           </div>
                           <p className="mt-2 text-xs text-muted-foreground">Duration: {formatDuration(durationMs)}</p>
+                          {expanded ? (
+                            <DeliveryDetailPanel
+                              run={run}
+                              waStatusByMessageId={waStatusByMessageId}
+                              className="mt-3"
+                            />
+                          ) : null}
                         </div>
                       );
                     })
@@ -3359,6 +3528,16 @@ function AutomationRuleDetailsDrawer({
 
 export default function Automations() {
   const { activeTenantId, activeTenant } = useAuth();
+  const shopContext = useShopOptional();
+  const studioLocationContext = useStudioLocationOptional();
+  const isShopWorkspace = !!shopContext?.isShopWorkspace;
+  const isStudioWorkspace = !!studioLocationContext?.isStudioWorkspace;
+  const shopBranches = shopContext?.shops || [];
+  const studioLocationBranches = studioLocationContext?.locations || [];
+  const branchLists = useMemo(
+    () => ({ shops: shopBranches, studioLocations: studioLocationBranches }),
+    [shopBranches, studioLocationBranches]
+  );
   const queryClient = useQueryClient();
   const [builder, setBuilder] = useState(createInitialBuilder);
   const [builderModalOpen, setBuilderModalOpen] = useState(false);
@@ -3377,6 +3556,7 @@ export default function Automations() {
   const [templateSort, setTemplateSort] = useState('popular');
   const [ruleStatusFilter, setRuleStatusFilter] = useState('all');
   const [ruleSort, setRuleSort] = useState('recent');
+  const [ruleBranchFilter, setRuleBranchFilter] = useState('any');
   const [rulesPageSize, setRulesPageSize] = useState(10);
   const [rulesPage, setRulesPage] = useState(1);
   const [historyStatusFilter, setHistoryStatusFilter] = useState('all');
@@ -3384,6 +3564,7 @@ export default function Automations() {
   const [historyDateRange, setHistoryDateRange] = useState('all');
   const [historyPageSize, setHistoryPageSize] = useState(10);
   const [historyPage, setHistoryPage] = useState(1);
+  const [expandedHistoryIds, setExpandedHistoryIds] = useState(() => new Set());
   const [logRuleFilter, setLogRuleFilter] = useState('all');
   const [logStatusFilter, setLogStatusFilter] = useState('all');
   const [logLevelFilter, setLogLevelFilter] = useState('all');
@@ -3499,6 +3680,19 @@ export default function Automations() {
   const tenantSlug = activeTenant?.slug || '';
   const suggestions = suggestionsQuery.data?.data || [];
   const whatsAppEvents = whatsAppEventsQuery.data?.data || [];
+  const waStatusByMessageId = useMemo(
+    () => buildWhatsAppStatusByMessageId(whatsAppEvents),
+    [whatsAppEvents]
+  );
+
+  const toggleHistoryExpand = useCallback((runId) => {
+    setExpandedHistoryIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(runId)) next.delete(runId);
+      else next.add(runId);
+      return next;
+    });
+  }, []);
 
   const allowedTriggerOptions = useMemo(
     () => filterTriggerOptionsForTenant(TRIGGER_OPTIONS, activeTenant),
@@ -3519,7 +3713,7 @@ export default function Automations() {
       if (templateSort === 'difficulty') {
         return (TEMPLATE_DIFFICULTY_RANK[a.difficulty] || 99) - (TEMPLATE_DIFFICULTY_RANK[b.difficulty] || 99);
       }
-      return Number(b.popular) - Number(a.popular) || (b.usage || 0) - (a.usage || 0) || String(a.title || '').localeCompare(String(b.title || ''));
+      return Number(b.popular) - Number(a.popular) || String(a.title || '').localeCompare(String(b.title || ''));
     });
   }, [templateCards, templateChannel, templateDifficulty, templateSort]);
 
@@ -3570,9 +3764,10 @@ export default function Automations() {
         lastRunTime: rule?.lastRun?.createdAt || null,
         lastRunOutcome: formatRunOutcome(rule?.lastRun),
         businessTypeCompatible,
+        branchLabel: resolveAutomationBranchLabel(rule, branchLists),
       };
     });
-  }, [rules, runsByRuleId, activeTenant]);
+  }, [rules, runsByRuleId, activeTenant, branchLists]);
 
   const aiBuilderRows = useMemo(() => {
     const rows = ruleRows.map((rule) => ({
@@ -3627,7 +3822,12 @@ export default function Automations() {
   const filteredRuleRows = useMemo(() => {
     const filtered = ruleRows.filter((rule) => {
       const matchesStatus = ruleStatusFilter === 'all' || rule.status === ruleStatusFilter;
-      return matchesStatus;
+      const matchesBranch =
+        ruleBranchFilter === 'any' ||
+        (ruleBranchFilter === ALL_BRANCHES_VALUE
+          ? !rule.shopId && !rule.studioLocationId
+          : rule.shopId === ruleBranchFilter || rule.studioLocationId === ruleBranchFilter);
+      return matchesStatus && matchesBranch;
     });
 
     return [...filtered].sort((a, b) => {
@@ -3636,7 +3836,7 @@ export default function Automations() {
       if (ruleSort === 'lastRun') return new Date(b.lastRunTime || 0).getTime() - new Date(a.lastRunTime || 0).getTime();
       return new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime();
     });
-  }, [ruleRows, ruleSort, ruleStatusFilter]);
+  }, [ruleRows, ruleSort, ruleStatusFilter, ruleBranchFilter]);
 
   const rulesTotalPages = Math.max(1, Math.ceil(filteredRuleRows.length / rulesPageSize));
   const visibleRuleRows = useMemo(() => {
@@ -3652,7 +3852,7 @@ export default function Automations() {
 
   useEffect(() => {
     setRulesPage(1);
-  }, [ruleStatusFilter, ruleSort, rulesPageSize]);
+  }, [ruleStatusFilter, ruleSort, ruleBranchFilter, rulesPageSize]);
 
   useEffect(() => {
     setRulesPage((page) => Math.min(page, rulesTotalPages));
@@ -4233,6 +4433,8 @@ export default function Automations() {
         triggerForm: mergeTriggerForm(draft.triggerType || 'invoice_due_in_days', draft.triggerConfig || {}),
         conditionForm: conditionFormFromConfig(draft.conditionConfig || {}, draft.scheduleConfig || {}, draft.triggerType || 'invoice_due_in_days'),
         actionRows: actionRowsFromConfig(draft.actionConfig),
+        shopId: null,
+        studioLocationId: null,
       });
       setUseJsonOverride(false);
       setEditingRuleId('');
@@ -4300,6 +4502,8 @@ export default function Automations() {
       triggerForm: mergeTriggerForm(tt, t.triggerConfig || {}),
       conditionForm: conditionFormFromConfig(t.conditionConfig || {}, t.scheduleConfig || {}, t.triggerType),
       actionRows: actionRowsFromConfig(t.actionConfig),
+      shopId: null,
+      studioLocationId: null,
     });
     setUseJsonOverride(false);
     setEditingRuleId('');
@@ -4356,6 +4560,8 @@ export default function Automations() {
       triggerForm: mergeTriggerForm(tt, rule.triggerConfig || {}),
       conditionForm: conditionFormFromConfig(rule.conditionConfig || {}, rule.scheduleConfig || {}, rule.triggerType),
       actionRows: actionRowsFromConfig(rule.actionConfig),
+      shopId: rule.shopId || null,
+      studioLocationId: rule.studioLocationId || null,
     });
     setRawJson({
       triggerConfig: JSON.stringify(rule.triggerConfig || {}, null, 2),
@@ -4452,6 +4658,29 @@ export default function Automations() {
       actionRows: prefillActionRows(b.actionRows, triggerType),
     }));
   }, []);
+
+  /**
+   * Update which branch (shop or studio location) the rule applies to.
+   * @param {string} value - a shop id, studio location id, or ALL_BRANCHES_VALUE
+   */
+  const handleBranchChange = useCallback(
+    (value) => {
+      if (value === ALL_BRANCHES_VALUE) {
+        setBuilder((b) => ({ ...b, shopId: null, studioLocationId: null }));
+        return;
+      }
+      if (isShopWorkspace) {
+        setBuilder((b) => ({ ...b, shopId: value, studioLocationId: null }));
+      } else if (isStudioWorkspace) {
+        setBuilder((b) => ({ ...b, shopId: null, studioLocationId: value }));
+      }
+    },
+    [isShopWorkspace, isStudioWorkspace]
+  );
+
+  const branchSelectValue = builder.shopId || builder.studioLocationId || ALL_BRANCHES_VALUE;
+  const branchOptions = isShopWorkspace ? shopBranches : isStudioWorkspace ? studioLocationBranches : [];
+  const showBranchSelector = (isShopWorkspace || isStudioWorkspace) && branchOptions.length > 0;
 
   const setActionType = useCallback((index, type) => {
     setBuilder((b) => {
@@ -4555,6 +4784,8 @@ export default function Automations() {
         actionConfig,
         scheduleConfig,
         enabled,
+        shopId: builder.shopId || null,
+        studioLocationId: builder.studioLocationId || null,
       };
       if (!editingRuleId && aiDraftMetadata) {
         payload.metadata = aiDraftMetadata;
@@ -4570,6 +4801,8 @@ export default function Automations() {
       actionRows: builder.actionRows,
     });
     payload.enabled = enabled;
+    payload.shopId = builder.shopId || null;
+    payload.studioLocationId = builder.studioLocationId || null;
     if (!editingRuleId && aiDraftMetadata) {
       payload.metadata = aiDraftMetadata;
     }
@@ -4776,6 +5009,7 @@ export default function Automations() {
         testInProgress={testMutation.isPending}
         toggleInProgress={toggleMutation.isPending}
         deleteInProgress={deleteMutation.isPending}
+        waStatusByMessageId={waStatusByMessageId}
       />
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -5252,6 +5486,23 @@ export default function Automations() {
                         ))}
                       </SelectContent>
                     </Select>
+                    {showBranchSelector && (
+                      <Select value={ruleBranchFilter} onValueChange={setRuleBranchFilter}>
+                        <SelectTrigger className="sm:w-40">
+                          <MapPin className="mr-2 h-4 w-4" aria-hidden />
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="any">All rules</SelectItem>
+                          <SelectItem value={ALL_BRANCHES_VALUE}>All branches</SelectItem>
+                          {branchOptions.map((branch) => (
+                            <SelectItem key={branch.id} value={branch.id}>
+                              {branch.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
                     <Select value={ruleSort} onValueChange={setRuleSort}>
                       <SelectTrigger className="sm:w-32">
                         <SlidersHorizontal className="mr-2 h-4 w-4" aria-hidden />
@@ -5290,6 +5541,7 @@ export default function Automations() {
                         <TableRow className="bg-muted/30 hover:bg-muted/30">
                           <TableHead className="min-w-[260px]">Rule name</TableHead>
                           <TableHead className="min-w-[180px]">Trigger</TableHead>
+                          {showBranchSelector && <TableHead className="min-w-[140px]">Branch</TableHead>}
                           <TableHead>Actions</TableHead>
                           <TableHead>Channel</TableHead>
                           <TableHead>Status</TableHead>
@@ -5327,6 +5579,14 @@ export default function Automations() {
                                   </div>
                                 </div>
                               </TableCell>
+                              {showBranchSelector && (
+                                <TableCell>
+                                  <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700">
+                                    <MapPin className="h-3 w-3" aria-hidden />
+                                    {rule.branchLabel}
+                                  </span>
+                                </TableCell>
+                              )}
                               <TableCell>
                                 <div className="flex items-center gap-1.5 text-sm text-foreground">
                                   <Zap className="h-4 w-4 text-muted-foreground" aria-hidden />
@@ -5659,71 +5919,97 @@ export default function Automations() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {visibleHistoryRows.map((row) => (
-                          <TableRow key={row.id}>
-                            <TableCell>
-                              <div className="flex items-center gap-2">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7 shrink-0 text-muted-foreground"
-                                  aria-label={`Expand ${row.ruleName}`}
-                                >
-                                  <ChevronDown className="h-4 w-4" aria-hidden />
-                                </Button>
-                                <div>
-                                  <p className="text-sm font-medium text-foreground">{formatDateTime(row.createdAt)}</p>
-                                  <p className="text-xs text-muted-foreground">{formatRelativeTime(row.createdAt)}</p>
-                                </div>
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <p className="font-medium text-foreground">{row.ruleName}</p>
-                              {row.error && <p className="mt-1 line-clamp-1 text-xs text-red-600">{row.error}</p>}
-                            </TableCell>
-                            <TableCell>
-                              <p className="text-sm text-foreground">{row.trigger}</p>
-                            </TableCell>
-                            <TableCell>
-                              <p className="text-sm font-medium text-foreground">{row.recipientName}</p>
-                              {row.recordLabel && <p className="mt-1 text-xs text-muted-foreground">{row.recordLabel}</p>}
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-1.5">
-                                {row.channels.map((channel) => {
-                                  const meta = channelMeta(channel);
-                                  const ChannelIcon = meta.Icon;
-                                  return (
-                                    <span
-                                      key={channel}
-                                      className={`inline-flex h-7 w-7 items-center justify-center rounded-lg border ${meta.className}`}
-                                      title={meta.label}
+                        {visibleHistoryRows.map((row) => {
+                          const expanded = expandedHistoryIds.has(row.id);
+                          return (
+                            <Fragment key={row.id}>
+                              <TableRow>
+                                <TableCell>
+                                  <div className="flex items-center gap-2">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7 shrink-0 text-muted-foreground"
+                                      aria-label={expanded ? `Collapse ${row.ruleName}` : `Expand ${row.ruleName}`}
+                                      aria-expanded={expanded}
+                                      onClick={() => toggleHistoryExpand(row.id)}
                                     >
-                                      <ChannelIcon className="h-3.5 w-3.5" aria-hidden />
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <StatusChip status={row.status} />
-                            </TableCell>
-                            <TableCell>
-                              <span className="text-sm font-medium text-foreground">{row.durationLabel}</span>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex justify-end gap-2">
-                                <Button type="button" variant="outline" size="icon" aria-label={`View ${row.ruleName}`}>
-                                  <Eye className="h-4 w-4" aria-hidden />
-                                </Button>
-                                <Button type="button" variant="outline" size="icon" aria-label={`More actions for ${row.ruleName}`}>
-                                  <MoreVertical className="h-4 w-4" aria-hidden />
-                                </Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                                      <ChevronDown
+                                        className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`}
+                                        aria-hidden
+                                      />
+                                    </Button>
+                                    <div>
+                                      <p className="text-sm font-medium text-foreground">{formatDateTime(row.createdAt)}</p>
+                                      <p className="text-xs text-muted-foreground">{formatRelativeTime(row.createdAt)}</p>
+                                    </div>
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  <p className="font-medium text-foreground">{row.ruleName}</p>
+                                  {row.error && <p className="mt-1 line-clamp-1 text-xs text-red-600">{row.error}</p>}
+                                </TableCell>
+                                <TableCell>
+                                  <p className="text-sm text-foreground">{row.trigger}</p>
+                                </TableCell>
+                                <TableCell>
+                                  <p className="text-sm font-medium text-foreground">{row.recipientName}</p>
+                                  {row.recordLabel && <p className="mt-1 text-xs text-muted-foreground">{row.recordLabel}</p>}
+                                </TableCell>
+                                <TableCell>
+                                  <div className="flex items-center gap-1.5">
+                                    {row.channels.map((channel) => {
+                                      const meta = channelMeta(channel);
+                                      const ChannelIcon = meta.Icon;
+                                      return (
+                                        <span
+                                          key={channel}
+                                          className={`inline-flex h-7 w-7 items-center justify-center rounded-lg border ${meta.className}`}
+                                          title={meta.label}
+                                        >
+                                          <ChannelIcon className="h-3.5 w-3.5" aria-hidden />
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  <StatusChip status={row.status} />
+                                </TableCell>
+                                <TableCell>
+                                  <span className="text-sm font-medium text-foreground">{row.durationLabel}</span>
+                                </TableCell>
+                                <TableCell>
+                                  <div className="flex justify-end gap-2">
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="icon"
+                                      aria-label={`View delivery details for ${row.ruleName}`}
+                                      onClick={() => toggleHistoryExpand(row.id)}
+                                    >
+                                      <Eye className="h-4 w-4" aria-hidden />
+                                    </Button>
+                                    <Button type="button" variant="outline" size="icon" aria-label={`More actions for ${row.ruleName}`}>
+                                      <MoreVertical className="h-4 w-4" aria-hidden />
+                                    </Button>
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                              {expanded ? (
+                                <TableRow className="hover:bg-transparent">
+                                  <TableCell colSpan={8} className="bg-muted/20 px-4 py-3">
+                                    <DeliveryDetailPanel
+                                      run={row.raw}
+                                      waStatusByMessageId={waStatusByMessageId}
+                                    />
+                                  </TableCell>
+                                </TableRow>
+                              ) : null}
+                            </Fragment>
+                          );
+                        })}
                       </TableBody>
                     </Table>
                   </div>

@@ -1266,7 +1266,7 @@ const Dashboard = () => {
               {showOnlineOrderBanner && (
                 <li className="flex items-center justify-between gap-2 text-sm">
                   <span className="text-foreground font-medium truncate">
-                    Online store
+                    Sabito Store
                   </span>
                   <span className="text-emerald-700 shrink-0">
                     {pendingOrderCount === 1 ? '1 order needs attention' : `${pendingOrderCount} orders need attention`}

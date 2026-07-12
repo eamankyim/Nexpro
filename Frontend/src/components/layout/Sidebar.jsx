@@ -29,6 +29,7 @@ import {
   Star,
   Truck,
   Building2,
+  Globe,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
@@ -116,11 +117,12 @@ const MENU_HINTS = {
   '/pricing': 'Set your prices',
   '/tasks': 'Track follow-ups, meetings, and team tasks',
   '/automations': 'Set rules that run business actions automatically',
-  '/store': 'Manage your online shop',
-  '/store/listings': 'Products published online',
-  '/store/services': 'Services published on your studio storefront',
-  '/store/orders': 'Orders from your online shop',
-  '/store/settings': 'Online shop setup and contact details',
+  '/store': 'Manage your Sabito marketplace storefront',
+  '/store/listings': 'Products published on Sabito Store',
+  '/store/services': 'Services published on your Sabito studio storefront',
+  '/store/orders': 'Orders from your Sabito Store',
+  '/store/settings': 'Sabito Store setup and contact details',
+  '/online-store': 'Your own storefront on your domain — not Sabito',
 };
 
 /**
@@ -191,10 +193,12 @@ const getMenuItems = (
 
   if (!isPlatformAdmin) {
     const isStudioStore = STUDIO_LIKE_TYPES.includes(businessType);
+    // "Sabito Store" = the Sabito marketplace-backed storefront channel (trade assurance,
+    // marketplace discovery). Kept separate from "Online Store" (custom domain, direct-pay) below.
     baseItems.push({
       key: 'store',
       icon: Store,
-      label: isStudioStore ? 'Studio store' : 'Store',
+      label: 'Sabito Store',
       tooltip: MENU_HINTS['/store'],
       children: [
         { key: '/store', label: 'Dashboard', tooltip: MENU_HINTS['/store'] },
@@ -204,6 +208,14 @@ const getMenuItems = (
         ...(!isStudioStore ? [{ key: '/store/orders', label: 'Online orders', tooltip: MENU_HINTS['/store/orders'] }] : []),
         { key: '/store/settings', label: isStudioStore ? 'Studio settings' : 'Store settings', tooltip: MENU_HINTS['/store/settings'], managerOnly: true },
       ],
+    });
+
+    // "Online Store" = customer-owned custom domain storefront (not Sabito, not trade assurance).
+    baseItems.push({
+      key: '/online-store',
+      icon: Globe,
+      label: 'Online Store',
+      tooltip: MENU_HINTS['/online-store'],
     });
   }
 
@@ -474,6 +486,7 @@ export function Sidebar({ collapsed, onCollapse }) {
     '/store/services': () => import('../../pages/StoreServices'),
     '/store/orders': () => import('../../pages/OnlineOrders'),
     '/store/settings': () => import('../../pages/StoreSettings'),
+    '/online-store': () => import('../../pages/OnlineStore'),
   }), []);
 
   const handlePrefetch = useCallback((key) => {

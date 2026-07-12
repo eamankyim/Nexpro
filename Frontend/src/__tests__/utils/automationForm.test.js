@@ -8,11 +8,16 @@ import {
   defaultDelayMinutesForTrigger,
   defaultFrequencyForTrigger,
   formatPlaceholderHint,
+  getEventTimingCopy,
+  getReviewAdditionalSettingsLines,
+  getWhatHappensNextTiming,
   isStickyTrigger,
   prefillActionRow,
   prefillActionRows,
+  resolveAutomationBranchLabel,
   scheduleFormFromConfig,
   supportsSendAfter,
+  usesDailySchedule,
 } from '../../utils/automationForm';
 
 describe('automationForm action prefill', () => {
@@ -196,6 +201,58 @@ describe('automationForm Send after / delayMinutes', () => {
       actionRows: [{ type: 'send_sms', body: 'Please review {{businessName}}' }],
     });
     expect(payload.scheduleConfig).toEqual({ delayMinutes: 60 });
+  });
+});
+
+describe('automationForm review timing copy', () => {
+  it('uses event-based copy for job_created, not a daily 09:00 schedule', () => {
+    expect(usesDailySchedule('job_created')).toBe(false);
+    expect(getEventTimingCopy('job_created', {})).toBe('Runs immediately when a job is created');
+    expect(getEventTimingCopy('job_created', { delayMinutes: '0' })).toBe('Runs immediately when a job is created');
+    expect(getEventTimingCopy('job_created', { delayMinutes: '60' })).toBe('Runs 1 hour after a job is created');
+    expect(getReviewAdditionalSettingsLines('job_created', {})).toEqual([
+      'Runs immediately when a job is created',
+    ]);
+    expect(getWhatHappensNextTiming('job_created', {}).title).toBe(
+      'It will run immediately when a job is created'
+    );
+  });
+
+  it('keeps daily schedule copy for sticky/scheduler triggers', () => {
+    expect(usesDailySchedule('daily_sales_summary')).toBe(true);
+    expect(usesDailySchedule('invoice_overdue')).toBe(true);
+    expect(getReviewAdditionalSettingsLines('daily_sales_summary', { runAfterTime: '06:00' })).toEqual([
+      'Time zone: (GMT+00:00) Accra',
+      'Runs every day at 06:00 AM',
+    ]);
+    expect(getWhatHappensNextTiming('invoice_due_in_days', {}).title).toBe(
+      'It will run every day at 09:00 AM'
+    );
+  });
+});
+
+describe('resolveAutomationBranchLabel', () => {
+  const branches = {
+    shops: [{ id: 'shop-1', name: 'Downtown shop' }],
+    studioLocations: [{ id: 'loc-1', name: 'Uptown studio' }],
+  };
+
+  it('returns "All branches" when both branch fields are unset', () => {
+    expect(resolveAutomationBranchLabel({}, branches)).toBe('All branches');
+    expect(resolveAutomationBranchLabel({ shopId: null, studioLocationId: null }, branches)).toBe('All branches');
+  });
+
+  it('resolves the shop name when shopId matches', () => {
+    expect(resolveAutomationBranchLabel({ shopId: 'shop-1' }, branches)).toBe('Downtown shop');
+  });
+
+  it('resolves the studio location name when studioLocationId matches', () => {
+    expect(resolveAutomationBranchLabel({ studioLocationId: 'loc-1' }, branches)).toBe('Uptown studio');
+  });
+
+  it('falls back to "Unknown branch" when the id has no match in the list', () => {
+    expect(resolveAutomationBranchLabel({ shopId: 'shop-missing' }, branches)).toBe('Unknown branch');
+    expect(resolveAutomationBranchLabel({ studioLocationId: 'loc-missing' }, branches)).toBe('Unknown branch');
   });
 });
 

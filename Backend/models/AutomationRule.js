@@ -27,6 +27,22 @@ const AutomationRule = sequelize.define('AutomationRule', {
     type: DataTypes.STRING(80),
     allowNull: false
   },
+  // Branch scope: null = applies to all branches (shop/pharmacy workspaces use shopId,
+  // studio-like workspaces use studioLocationId; at most one is set per tenant business type).
+  shopId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: { model: 'shops', key: 'id' },
+    onDelete: 'SET NULL',
+    onUpdate: 'CASCADE'
+  },
+  studioLocationId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: { model: 'studio_locations', key: 'id' },
+    onDelete: 'SET NULL',
+    onUpdate: 'CASCADE'
+  },
   triggerConfig: {
     type: DataTypes.JSONB,
     allowNull: false,

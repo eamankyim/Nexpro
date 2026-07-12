@@ -50,6 +50,11 @@ export const TRIGGER_OPTIONS = [
     hint: 'When a job or service is marked complete.',
   },
   {
+    value: 'job_created',
+    label: 'Job created',
+    hint: 'When a new job is created.',
+  },
+  {
     value: 'daily_sales_summary',
     label: 'Daily sales summary',
     hint: 'Scheduled recap of sales activity for your team.',
@@ -1023,6 +1028,149 @@ export function supportsSendAfter(triggerType) {
 }
 
 /**
+ * Sticky/scheduler triggers use a daily clock window; event triggers fire when the event happens.
+ * @param {string} triggerType
+ * @returns {boolean}
+ */
+export function usesDailySchedule(triggerType) {
+  const type = String(triggerType || '');
+  return isStickyTrigger(type) || isSchedulerTrigger(type);
+}
+
+/** Event noun phrase for timing copy: "Runs immediately when {phrase}" / "Runs 1 hour after {phrase}". */
+const EVENT_TIMING_PHRASE = {
+  job_created: 'a job is created',
+  job_created_staff: 'a job is created',
+  job_completed: 'a job is completed',
+  job_completed_staff: 'a job is completed',
+  job_assigned_staff: 'a job is assigned',
+  payment_received: 'a payment is received',
+  payment_received_staff: 'a payment is received',
+  sale_completed: 'a sale is completed',
+  sale_completed_staff: 'a sale is completed',
+  invoice_sent: 'an invoice is sent',
+  invoice_paid_staff: 'an invoice is fully paid',
+  quote_sent: 'a quote is sent',
+  quote_accepted_staff: 'a quote is accepted',
+  customer_created: 'a customer is created',
+  new_lead: 'a new lead is created',
+  new_lead_staff: 'a new lead is created',
+  order_created: 'an order is created',
+  order_created_staff: 'an order is created',
+  order_status_staff: 'an order status changes',
+  high_value_invoice: 'a high-value invoice is created',
+  review_request: 'a job, sale, or invoice is fully paid',
+  low_stock_on_change: 'stock drops to reorder level',
+  out_of_stock_detected: 'a product goes out of stock',
+  low_profit_margin: 'a sale has a low profit margin',
+  lead_assigned_staff: 'a lead is assigned',
+};
+
+/**
+ * Format HH:mm (24h) for review/schedule UI, e.g. "09:00" → "09:00 AM".
+ * @param {string} [timeValue]
+ * @returns {string}
+ */
+export function formatScheduleTimeDisplay(timeValue) {
+  const raw = String(timeValue || '09:00').trim();
+  if (/am|pm/i.test(raw)) return raw.replace(/\s+/g, ' ').toUpperCase().replace(/AM|PM/, (m) => m);
+  const match = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return '09:00 AM';
+  let hours = Number(match[1]);
+  const minutes = match[2];
+  if (!Number.isFinite(hours) || hours < 0 || hours > 23) return '09:00 AM';
+  const period = hours >= 12 ? 'PM' : 'AM';
+  const hour12 = hours % 12 || 12;
+  return `${String(hour12).padStart(2, '0')}:${minutes} ${period}`;
+}
+
+/**
+ * @param {number} delayMinutes
+ * @returns {string} e.g. "3 minutes", "1 hour", "1 day"
+ */
+export function formatDelayDurationLabel(delayMinutes) {
+  const mins = Math.max(0, Math.floor(Number(delayMinutes) || 0));
+  if (mins === 60) return '1 hour';
+  if (mins === 1440) return '1 day';
+  if (mins === 1) return '1 minute';
+  return `${mins} minutes`;
+}
+
+/**
+ * Resolve delayMinutes from condition form for event triggers.
+ * @param {Record<string, unknown>} [conditionForm]
+ * @param {string} triggerType
+ * @returns {number}
+ */
+export function resolveDelayMinutes(conditionForm = {}, triggerType) {
+  if (!supportsSendAfter(triggerType)) return 0;
+  const raw = conditionForm?.delayMinutes;
+  if (raw !== '' && raw != null) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0) return Math.floor(n);
+  }
+  return defaultDelayMinutesForTrigger(triggerType);
+}
+
+/**
+ * Event-based timing line for Review / What happens next (not a daily clock).
+ * @param {string} triggerType
+ * @param {Record<string, unknown>} [conditionForm]
+ * @returns {string} e.g. "Runs immediately when a job is created"
+ * @example
+ * getEventTimingCopy('job_created', {}) // "Runs immediately when a job is created"
+ * getEventTimingCopy('job_created', { delayMinutes: '60' }) // "Runs 1 hour after a job is created"
+ */
+export function getEventTimingCopy(triggerType, conditionForm = {}) {
+  const type = String(triggerType || '');
+  const eventPhrase = EVENT_TIMING_PHRASE[type]
+    || String(triggerLabel(type) || type).replace(/_/g, ' ').toLowerCase();
+  const delayMinutes = resolveDelayMinutes(conditionForm, type);
+  if (delayMinutes > 0) {
+    return `Runs ${formatDelayDurationLabel(delayMinutes)} after ${eventPhrase}`;
+  }
+  return `Runs immediately when ${eventPhrase}`;
+}
+
+/**
+ * Additional settings lines for the Review step.
+ * Daily clock copy only for sticky/scheduler; event triggers get event-based timing.
+ * @param {string} triggerType
+ * @param {Record<string, unknown>} [conditionForm]
+ * @returns {string[]}
+ */
+export function getReviewAdditionalSettingsLines(triggerType, conditionForm = {}) {
+  if (usesDailySchedule(triggerType)) {
+    const time = formatScheduleTimeDisplay(conditionForm?.runAfterTime || '09:00');
+    return [`Time zone: (GMT+00:00) Accra`, `Runs every day at ${time}`];
+  }
+  return [getEventTimingCopy(triggerType, conditionForm)];
+}
+
+/**
+ * Middle "What happens next?" bullet for Review.
+ * @param {string} triggerType
+ * @param {Record<string, unknown>} [conditionForm]
+ * @returns {{ title: string, text: string }}
+ */
+export function getWhatHappensNextTiming(triggerType, conditionForm = {}) {
+  if (usesDailySchedule(triggerType)) {
+    const time = formatScheduleTimeDisplay(conditionForm?.runAfterTime || '09:00');
+    return {
+      title: `It will run every day at ${time}`,
+      text: 'And perform actions for matching records.',
+    };
+  }
+  const timing = getEventTimingCopy(triggerType, conditionForm);
+  // "Runs …" → "It will run …"
+  const title = timing.replace(/^Runs\b/, 'It will run');
+  return {
+    title,
+    text: 'And perform the configured actions for matching records.',
+  };
+}
+
+/**
  * Default delayMinutes when creating/switching to a trigger.
  * @param {string} triggerType
  * @returns {number}
@@ -1677,6 +1825,29 @@ export function buildRulePayloadFromForm({ name, triggerType, triggerForm, condi
     actionConfig: { actions },
     scheduleConfig,
   };
+}
+
+/** Sentinel Select value meaning "no branch scope" (rule applies to every branch). */
+export const ALL_BRANCHES_VALUE = 'all';
+
+/**
+ * Resolve a human-readable branch label for an automation rule, given the
+ * shop/studio-location lists available in the current workspace.
+ * A rule with both shopId and studioLocationId unset applies to all branches.
+ * @param {{ shopId?: string|null, studioLocationId?: string|null }} rule
+ * @param {{ shops?: Array<{id: string, name: string}>, studioLocations?: Array<{id: string, name: string}> }} [branches]
+ * @returns {string}
+ */
+export function resolveAutomationBranchLabel(rule = {}, branches = {}) {
+  const shopId = rule.shopId || null;
+  const studioLocationId = rule.studioLocationId || null;
+  if (!shopId && !studioLocationId) return 'All branches';
+  if (shopId) {
+    const shop = (branches.shops || []).find((s) => s.id === shopId);
+    return shop?.name || 'Unknown branch';
+  }
+  const location = (branches.studioLocations || []).find((l) => l.id === studioLocationId);
+  return location?.name || 'Unknown branch';
 }
 
 /**
