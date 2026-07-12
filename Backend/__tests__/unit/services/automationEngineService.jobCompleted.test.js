@@ -133,7 +133,7 @@ describe('automationEngineService job_completed', () => {
           trackingLink: 'https://app.example.com/track-job/token-abc',
         })
       );
-      expect(summary).toEqual({ rulesChecked: 0, executed: 0, skipped: 0, failed: 0 });
+      expect(summary).toEqual({ rulesChecked: 0, executed: 0, skipped: 0, failed: 0, delayed: 0 });
     });
 
     it('skips when job has no customer', async () => {

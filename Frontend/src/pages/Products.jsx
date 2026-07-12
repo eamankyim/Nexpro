@@ -86,6 +86,7 @@ import ReceiveStockModal from '../components/ReceiveStockModal';
 import StockTransferModal from '../components/StockTransferModal';
 import ProductQRGenerateModal from '../components/ProductQRGenerateModal';
 import ViewToggle from '../components/ViewToggle';
+import ResponsiveSheet from '../components/ResponsiveSheet';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -93,7 +94,6 @@ import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
 import {
@@ -450,6 +450,11 @@ const productSchema = z.object({
   categoryId: z.string().optional(),
   costPrice: numberOrEmpty,
   sellingPrice: numberOrEmpty,
+  wholesalePrice: z.union([
+    z.number().min(0),
+    z.literal(''),
+    z.null(),
+  ]).optional().transform((v) => (v === '' || v == null ? null : v)),
   quantityOnHand: numberOrEmpty,
   reorderLevel: numberOrEmpty,
   reorderQuantity: numberOrEmpty,
@@ -642,7 +647,8 @@ const quickVendorSchema = z.object({
 // =============================================
 
 const Products = () => {
-  const { activeTenant, activeTenantId, tenantRole, isManager } = useAuth();
+  const { activeTenant, activeTenantId, tenantRole, isManager, hasFeature } = useAuth();
+  const dealersAccountEnabled = hasFeature('dealersAccount');
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
   const { scopeReady, activeStudioLocationId } = useWorkspaceScope();
@@ -692,7 +698,7 @@ const Products = () => {
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [stockFilter, setStockFilter] = useState('all');
   const [sortBy, setSortBy] = useState('name_asc');
-  const [isFilterVisible, setIsFilterVisible] = useState(false);
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
 
   // UI state
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -893,6 +899,7 @@ const Products = () => {
       categoryId: '',
       costPrice: 0,
       sellingPrice: 0,
+      wholesalePrice: null,
       quantityOnHand: 0,
       reorderLevel: 0,
       reorderQuantity: 0,
@@ -1252,6 +1259,9 @@ const Products = () => {
       categoryId: productForEdit.categoryId ? String(productForEdit.categoryId) : '',
       costPrice: parseFloat(productForEdit.costPrice) || 0,
       sellingPrice: parseFloat(productForEdit.sellingPrice) || 0,
+      wholesalePrice: productForEdit.wholesalePrice != null && productForEdit.wholesalePrice !== ''
+        ? parseFloat(productForEdit.wholesalePrice)
+        : null,
       quantityOnHand: parseFloat(productForEdit.quantityOnHand) || 0,
       reorderLevel: parseFloat(productForEdit.reorderLevel) || 0,
       reorderQuantity: parseFloat(productForEdit.reorderQuantity) || 0,
@@ -1433,6 +1443,7 @@ const Products = () => {
       categoryId: '',
       costPrice: 0,
       sellingPrice: 0,
+      wholesalePrice: null,
       quantityOnHand: 0,
       reorderLevel: 0,
       reorderQuantity: 0,
@@ -1715,6 +1726,11 @@ const Products = () => {
         imageUrl: values.imageUrl || undefined,
         metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
       };
+      if (dealersAccountEnabled) {
+        payload.wholesalePrice = values.wholesalePrice === '' || values.wholesalePrice == null
+          ? null
+          : Number(values.wholesalePrice);
+      }
       if (canViewProductSensitiveFields) {
         payload.costPrice = values.costPrice === '' ? 0 : (Number(values.costPrice) ?? 0);
         payload.supplier = values.supplier || undefined;
@@ -2002,12 +2018,17 @@ const Products = () => {
     setSearchValue('');
     setCategoryFilter('all');
     setStockFilter('all');
+    setSortBy('name_asc');
     setPagination((prev) => ({ ...prev, current: 1 }));
   }, [setSearchValue]);
 
   const hasActiveProductFilters = useMemo(
-    () => !!debouncedSearch || categoryFilter !== 'all' || stockFilter !== 'all',
-    [debouncedSearch, categoryFilter, stockFilter]
+    () =>
+      !!debouncedSearch ||
+      categoryFilter !== 'all' ||
+      stockFilter !== 'all' ||
+      sortBy !== 'name_asc',
+    [debouncedSearch, categoryFilter, stockFilter, sortBy]
   );
 
   const productsEmptyState = useMemo(() => {
@@ -2706,13 +2727,13 @@ const Products = () => {
               <Button
                 variant="outline"
                 size={isMobile ? 'icon' : 'default'}
-                onClick={() => setIsFilterVisible(!isFilterVisible)}
+                onClick={() => setFilterDrawerOpen(true)}
               >
                 <Filter className="h-4 w-4" />
                 {!isMobile && <span className="ml-2">Filter</span>}
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Filter products by category or stock level</TooltipContent>
+            <TooltipContent>Filter products by category, stock level, or sort</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -2823,88 +2844,6 @@ const Products = () => {
         )}
       </div>
 
-      {/* Filters */}
-      {isFilterVisible && (
-        <Card>
-          <CardContent className="p-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div>
-                <Label className="mb-2 block">Search</Label>
-                <Input
-                  placeholder="Search products..."
-                  value={searchValue}
-                  onChange={(e) => setSearchValue(e.target.value)}
-                />
-              </div>
-              <div>
-                <Label className="mb-2 block">Category</Label>
-                <Select
-                  value={categoryFilter}
-                  onValueChange={setCategoryFilter}
-                  onOpenChange={(open) => { if (!open) setCategoryFilterSearchTerm(''); }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="All categories" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <div className="p-2 border-b border-border sticky top-0 bg-popover z-10" onPointerDown={(e) => e.stopPropagation()}>
-                      <Input
-                        placeholder="Search categories..."
-                        value={categoryFilterSearchTerm}
-                        onChange={(e) => setCategoryFilterSearchTerm(e.target.value)}
-                        className="h-8"
-                      />
-                    </div>
-                    <SelectItem value="all">All categories</SelectItem>
-                    {(() => {
-                      const term = (categoryFilterSearchTerm || '').trim().toLowerCase();
-                      const filtered = term
-                        ? categories.filter((cat) => (cat.name || '').toLowerCase().includes(term))
-                        : categories;
-                      return filtered.map((cat) => (
-                        <SelectItem key={cat.id} value={String(cat.id)}>
-                          {cat.name}
-                        </SelectItem>
-                      ));
-                    })()}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="mb-2 block">Stock Status</Label>
-                <Select value={stockFilter} onValueChange={setStockFilter}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="All stock levels" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All stock levels</SelectItem>
-                    <SelectItem value="low">Low Stock</SelectItem>
-                    <SelectItem value="out">Out of Stock</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="mb-2 block">Sort by</Label>
-                <Select value={sortBy} onValueChange={setSortBy}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Name A–Z" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="name_asc">Name A–Z</SelectItem>
-                    <SelectItem value="created_desc">Newest added</SelectItem>
-                    <SelectItem value="updated_desc">Recently updated</SelectItem>
-                    <SelectItem value="stock_desc">Stock high–low</SelectItem>
-                    <SelectItem value="stock_asc">Stock low–high</SelectItem>
-                    <SelectItem value="price_asc">Price low–high</SelectItem>
-                    <SelectItem value="price_desc">Price high–low</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       {/* Products list — DashboardTable handles loading + empty state (table on desktop, cards on mobile) */}
       <DashboardTable
         data={products}
@@ -2918,6 +2857,89 @@ const Products = () => {
         viewMode={tableViewMode}
         onViewModeChange={setTableViewMode}
       />
+
+      {/* Filter Drawer */}
+      <ResponsiveSheet
+        open={filterDrawerOpen}
+        onOpenChange={setFilterDrawerOpen}
+        title="Filter Products"
+        contentClassName="space-y-4 md:space-y-6 mt-4 md:mt-6"
+      >
+        <div className="space-y-4 md:space-y-6 mt-0">
+          <div className="space-y-2">
+            <Label>Category</Label>
+            <Select
+              value={categoryFilter}
+              onValueChange={setCategoryFilter}
+              onOpenChange={(open) => { if (!open) setCategoryFilterSearchTerm(''); }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="All categories" />
+              </SelectTrigger>
+              <SelectContent>
+                <div className="p-2 border-b border-border sticky top-0 bg-popover z-10" onPointerDown={(e) => e.stopPropagation()}>
+                  <Input
+                    placeholder="Search categories..."
+                    value={categoryFilterSearchTerm}
+                    onChange={(e) => setCategoryFilterSearchTerm(e.target.value)}
+                    className="h-8"
+                  />
+                </div>
+                <SelectItem value="all">All categories</SelectItem>
+                {(() => {
+                  const term = (categoryFilterSearchTerm || '').trim().toLowerCase();
+                  const filtered = term
+                    ? categories.filter((cat) => (cat.name || '').toLowerCase().includes(term))
+                    : categories;
+                  return filtered.map((cat) => (
+                    <SelectItem key={cat.id} value={String(cat.id)}>
+                      {cat.name}
+                    </SelectItem>
+                  ));
+                })()}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Stock Status</Label>
+            <Select value={stockFilter} onValueChange={setStockFilter}>
+              <SelectTrigger>
+                <SelectValue placeholder="All stock levels" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All stock levels</SelectItem>
+                <SelectItem value="low">Low Stock</SelectItem>
+                <SelectItem value="out">Out of Stock</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Sort by</Label>
+            <Select value={sortBy} onValueChange={setSortBy}>
+              <SelectTrigger>
+                <SelectValue placeholder="Name A–Z" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="name_asc">Name A–Z</SelectItem>
+                <SelectItem value="created_desc">Newest added</SelectItem>
+                <SelectItem value="updated_desc">Recently updated</SelectItem>
+                <SelectItem value="stock_desc">Stock high–low</SelectItem>
+                <SelectItem value="stock_asc">Stock low–high</SelectItem>
+                <SelectItem value="price_asc">Price low–high</SelectItem>
+                <SelectItem value="price_desc">Price high–low</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {hasActiveProductFilters && (
+            <Button variant="outline" onClick={handleClearProductFilters} className="w-full">
+              Clear Filters
+            </Button>
+          )}
+        </div>
+      </ResponsiveSheet>
 
       <Sheet open={storeListingOpen} onOpenChange={handleStoreListingCloseRequest}>
         <SheetContent side="right" className="flex w-full min-w-0 flex-col overflow-hidden sm:max-w-xl">
@@ -3312,7 +3334,14 @@ const Products = () => {
               {/* Pricing */}
               <div className="space-y-4">
                 <h4 className="font-medium text-sm text-muted-foreground">Pricing</h4>
-                <div className={cn('grid grid-cols-1 gap-4', canViewProductSensitiveFields ? 'md:grid-cols-3' : 'md:grid-cols-2')}>
+                <div className={cn(
+                  'grid grid-cols-1 gap-4',
+                  canViewProductSensitiveFields && dealersAccountEnabled
+                    ? 'md:grid-cols-2 lg:grid-cols-4'
+                    : canViewProductSensitiveFields || dealersAccountEnabled
+                      ? 'md:grid-cols-3'
+                      : 'md:grid-cols-2'
+                )}>
                   {canViewProductSensitiveFields && (
                     <FormField
                       control={form.control}
@@ -3357,6 +3386,36 @@ const Products = () => {
                       </FormItem>
                     )}
                   />
+                  {dealersAccountEnabled && (
+                    <FormField
+                      control={form.control}
+                      name="wholesalePrice"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Wholesale / dealer price (optional)</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              {...field}
+                              value={numberInputValue(field.value ?? '')}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                if (raw === '') {
+                                  field.onChange(null);
+                                  return;
+                                }
+                                handleNumberChange(e, field.onChange);
+                              }}
+                              placeholder="Uses selling price if empty"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
                   {canViewProductSensitiveFields && (
                     <div>
                       <Label className="mb-2 block">Profit Margin</Label>
@@ -4063,6 +4122,13 @@ const Products = () => {
                 <DescriptionItem label="Selling Price">
                   {valueFormatter(selectedProduct.sellingPrice)}
                 </DescriptionItem>
+                {dealersAccountEnabled
+                  && selectedProduct.wholesalePrice != null
+                  && selectedProduct.wholesalePrice !== '' && (
+                  <DescriptionItem label="Wholesale / dealer price">
+                    {valueFormatter(selectedProduct.wholesalePrice)}
+                  </DescriptionItem>
+                )}
                 {canViewProductSensitiveFields && (
                   <>
                     <DescriptionItem label="Cost Price">

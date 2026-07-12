@@ -66,12 +66,15 @@ import {
   formatPlaceholderHint,
   isInternalStaffTrigger,
   isStickyTrigger,
+  supportsSendAfter,
+  DELAY_MINUTES_PRESETS,
   mergeTriggerForm,
   parseJsonObject,
   prefillActionRows,
   ruleHasMessagingActions,
   scheduleFormFromConfig,
   defaultFrequencyForTrigger,
+  defaultDelayMinutesForTrigger,
   triggerLabel,
 } from '../utils/automationForm';
 import {
@@ -1832,14 +1835,14 @@ function AutomationTriggerFields({ triggerType, value, onPatch }) {
     case 'payment_received':
       return (
         <p className="text-xs text-muted-foreground">
-          Runs immediately when a payment is recorded on an invoice (partial or full).
+          Runs when a payment is recorded on an invoice (partial or full). Use Send after to space this from other messages on the same event.
         </p>
       );
     case 'review_request':
       return (
         <p className="text-xs text-muted-foreground">
           Runs when a job is marked complete, a sale is completed with a customer, or a standalone invoice is fully paid.
-          Use the cooldown condition to avoid sending too often to the same customer.
+          Defaults to Send after 1 hour so thank-you or receipt messages can go first. Cooldown still limits how often the same customer is asked.
         </p>
       );
     case 'job_completed':
@@ -1919,6 +1922,78 @@ function AutomationFrequencyFields({ triggerType, conditionForm, onPatch }) {
             onChange={(e) => onPatch({ intervalDays: e.target.value === '' ? '' : String(Math.max(1, Number(e.target.value) || 1)) })}
           />
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Send after (delayMinutes) for event-driven automations — hidden for sticky/scheduler triggers.
+ */
+function AutomationSendAfterFields({ triggerType, conditionForm, onPatch }) {
+  if (!supportsSendAfter(triggerType)) return null;
+
+  const delayMinutesNum = Number(conditionForm?.delayMinutes);
+  const delayMinutes = Number.isFinite(delayMinutesNum) && delayMinutesNum >= 0
+    ? Math.floor(delayMinutesNum)
+    : defaultDelayMinutesForTrigger(triggerType);
+  const presetMatch = DELAY_MINUTES_PRESETS.some((p) => p.value === delayMinutes);
+  const selectValue = presetMatch ? String(delayMinutes) : 'custom';
+
+  return (
+    <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+      <div className="space-y-1.5">
+        <Label>Send after</Label>
+        <Select
+          value={selectValue}
+          onValueChange={(value) => {
+            if (value === 'custom') {
+              onPatch({ delayMinutes: String(delayMinutes || 15) });
+              return;
+            }
+            onPatch({ delayMinutes: String(Number(value) || 0) });
+          }}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {DELAY_MINUTES_PRESETS.map((option) => (
+              <SelectItem key={option.value} value={String(option.value)}>
+                {option.label}
+              </SelectItem>
+            ))}
+            <SelectItem value="custom">Custom minutes</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-slate-500">
+          Spaces this message from other automations that fire on the same event.
+        </p>
+      </div>
+      {selectValue === 'custom' && (
+        <div className="space-y-1.5">
+          <Label htmlFor="auto-delay-minutes">Delay (minutes)</Label>
+          <Input
+            id="auto-delay-minutes"
+            type="number"
+            min={0}
+            max={10080}
+            value={conditionForm?.delayMinutes ?? String(delayMinutes)}
+            onChange={(e) => {
+              const raw = e.target.value;
+              if (raw === '') {
+                onPatch({ delayMinutes: '' });
+                return;
+              }
+              onPatch({ delayMinutes: String(Math.max(0, Math.min(10080, Math.floor(Number(raw) || 0)))) });
+            }}
+          />
+        </div>
+      )}
+      {triggerType === 'review_request' && (
+        <p className="text-xs text-slate-500">
+          Tip: If you also send a payment thank-you or receipt on the same journey, keep review requests delayed (e.g. 1 hour) so customers are not messaged twice at once.
+        </p>
       )}
     </div>
   );
@@ -2258,6 +2333,13 @@ function getConditionLines(conditionForm = {}) {
   } else if (conditionForm.cooldownDays !== '' && conditionForm.cooldownDays != null && Number(conditionForm.cooldownDays) > 0) {
     lines.push(`Does not repeat for the same record for ${Number(conditionForm.cooldownDays)} days`);
   }
+  if (conditionForm.delayMinutes !== '' && conditionForm.delayMinutes != null && Number(conditionForm.delayMinutes) > 0) {
+    const mins = Number(conditionForm.delayMinutes);
+    if (mins === 60) lines.push('Sends 1 hour after the event');
+    else if (mins === 1440) lines.push('Sends 1 day after the event');
+    else if (mins === 3) lines.push('Sends 3 minutes after the event');
+    else lines.push(`Sends ${mins} minutes after the event`);
+  }
   if (conditionForm.stockBelowReorderLevel) lines.push('Stock is below reorder level');
   numberLine('Quantity on hand', 'quantityOperator', 'quantityValue');
   return lines;
@@ -2526,6 +2608,11 @@ function AutomationCreationModal({
                         <p className="text-sm font-semibold text-slate-950">Trigger settings</p>
                         <AutomationTriggerFields triggerType={builder.triggerType} value={builder.triggerForm} onPatch={patchTriggerForm} />
                         <AutomationFrequencyFields
+                          triggerType={builder.triggerType}
+                          conditionForm={builder.conditionForm}
+                          onPatch={patchConditionForm}
+                        />
+                        <AutomationSendAfterFields
                           triggerType={builder.triggerType}
                           conditionForm={builder.conditionForm}
                           onPatch={patchConditionForm}
@@ -4349,16 +4436,18 @@ export default function Automations() {
 
   const changeTriggerType = useCallback((triggerType) => {
     const defaultFrequency = defaultFrequencyForTrigger(triggerType);
+    const scheduleSeed = defaultFrequency
+      ? { frequency: defaultFrequency }
+      : supportsSendAfter(triggerType)
+        ? { delayMinutes: defaultDelayMinutesForTrigger(triggerType) }
+        : {};
     setBuilder((b) => ({
       ...b,
       triggerType,
       triggerForm: defaultTriggerForm(triggerType),
       conditionForm: {
         ...b.conditionForm,
-        ...scheduleFormFromConfig(
-          defaultFrequency ? { frequency: defaultFrequency } : {},
-          triggerType
-        ),
+        ...scheduleFormFromConfig(scheduleSeed, triggerType),
       },
       actionRows: prefillActionRows(b.actionRows, triggerType),
     }));
@@ -4934,6 +5023,11 @@ export default function Automations() {
                         onPatch={patchTriggerForm}
                       />
                       <AutomationFrequencyFields
+                        triggerType={builder.triggerType}
+                        conditionForm={builder.conditionForm}
+                        onPatch={patchConditionForm}
+                      />
+                      <AutomationSendAfterFields
                         triggerType={builder.triggerType}
                         conditionForm={builder.conditionForm}
                         onPatch={patchConditionForm}
@@ -6450,6 +6544,11 @@ export default function Automations() {
                   <p className="text-sm font-medium text-foreground">Trigger settings</p>
                   <AutomationTriggerFields triggerType={builder.triggerType} value={builder.triggerForm} onPatch={patchTriggerForm} />
                   <AutomationFrequencyFields
+                    triggerType={builder.triggerType}
+                    conditionForm={builder.conditionForm}
+                    onPatch={patchConditionForm}
+                  />
+                  <AutomationSendAfterFields
                     triggerType={builder.triggerType}
                     conditionForm={builder.conditionForm}
                     onPatch={patchConditionForm}

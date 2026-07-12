@@ -5,12 +5,14 @@ import {
   buildScheduleConfigFromForm,
   conditionFormFromConfig,
   defaultActionFormRow,
+  defaultDelayMinutesForTrigger,
   defaultFrequencyForTrigger,
   formatPlaceholderHint,
   isStickyTrigger,
   prefillActionRow,
   prefillActionRows,
   scheduleFormFromConfig,
+  supportsSendAfter,
 } from '../../utils/automationForm';
 
 describe('automationForm action prefill', () => {
@@ -144,6 +146,56 @@ describe('automationForm frequency / schedule', () => {
       actionRows: [{ type: 'send_email_platform', subject: 'Overdue', body: 'Pay now' }],
     });
     expect(payload.scheduleConfig).toEqual({ frequency: 'weekly', cooldownHours: 168 });
+  });
+});
+
+describe('automationForm Send after / delayMinutes', () => {
+  it('supports Send after on event triggers only', () => {
+    expect(supportsSendAfter('review_request')).toBe(true);
+    expect(supportsSendAfter('payment_received')).toBe(true);
+    expect(supportsSendAfter('job_completed')).toBe(true);
+    expect(supportsSendAfter('invoice_overdue')).toBe(false);
+    expect(supportsSendAfter('customer_birthday')).toBe(false);
+    expect(supportsSendAfter('daily_sales_summary')).toBe(false);
+  });
+
+  it('defaults review_request to 60 minutes and transactional to 0', () => {
+    expect(defaultDelayMinutesForTrigger('review_request')).toBe(60);
+    expect(defaultDelayMinutesForTrigger('payment_received')).toBe(0);
+    expect(defaultDelayMinutesForTrigger('invoice_sent')).toBe(0);
+  });
+
+  it('maps delayMinutes into scheduleConfig for event triggers', () => {
+    expect(buildScheduleConfigFromForm({ delayMinutes: '60' }, 'review_request')).toEqual({
+      delayMinutes: 60,
+    });
+    expect(buildScheduleConfigFromForm({ delayMinutes: '3', cooldownDays: '7' }, 'payment_received')).toEqual({
+      cooldownHours: 168,
+      delayMinutes: 3,
+    });
+    expect(buildScheduleConfigFromForm({ delayMinutes: '60' }, 'invoice_overdue')).toEqual({
+      frequency: 'weekly',
+      cooldownHours: 168,
+    });
+  });
+
+  it('round-trips delayMinutes through scheduleFormFromConfig', () => {
+    expect(scheduleFormFromConfig({ delayMinutes: 60, cooldownHours: 168 }, 'review_request')).toMatchObject({
+      delayMinutes: '60',
+      cooldownDays: '7',
+    });
+    expect(conditionFormFromConfig({}, { delayMinutes: 60 }, 'review_request').delayMinutes).toBe('60');
+  });
+
+  it('includes delayMinutes in buildRulePayloadFromForm for review_request', () => {
+    const payload = buildRulePayloadFromForm({
+      name: 'Ask for review',
+      triggerType: 'review_request',
+      triggerForm: {},
+      conditionForm: { delayMinutes: '60' },
+      actionRows: [{ type: 'send_sms', body: 'Please review {{businessName}}' }],
+    });
+    expect(payload.scheduleConfig).toEqual({ delayMinutes: 60 });
   });
 });
 

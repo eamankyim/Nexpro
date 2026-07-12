@@ -35,6 +35,12 @@ const ProductVariant = sequelize.define('ProductVariant', {
     type: DataTypes.DECIMAL(12, 2),
     allowNull: true
   },
+  /** Optional dealer/wholesale unit price; null inherits product.wholesalePrice. */
+  wholesalePrice: {
+    type: DataTypes.DECIMAL(12, 2),
+    allowNull: true,
+    defaultValue: null
+  },
   // Variant-specific stock
   quantityOnHand: {
     type: DataTypes.DECIMAL(12, 2),

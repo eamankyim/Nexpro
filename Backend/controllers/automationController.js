@@ -752,7 +752,9 @@ exports.testRule = async (req, res, next) => {
       options: {
         ignoreEnabled: force,
         alwaysRecordRun: true,
-        skipDedupe: true
+        skipDedupe: true,
+        // Manual / force tests run immediately (do not enqueue delayMinutes).
+        skipDelay: true,
       }
     });
     res.status(200).json({ success: true, data: result });

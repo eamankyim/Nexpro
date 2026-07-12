@@ -962,6 +962,32 @@ export const FREQUENCY_OPTIONS = [
   { value: 'monthly', label: 'Monthly' },
 ];
 
+/** Scheduler-polled triggers (daysBeforeDue etc.) — hide Send after. */
+export const SCHEDULER_TRIGGER_TYPES = [
+  'invoice_due_in_days',
+  'invoice_overdue',
+  'invoice_overdue_staff',
+  'low_stock_detected',
+  'quote_no_response',
+  'customer_inactive_days',
+  'customer_birthday',
+  'daily_sales_summary',
+  'lead_no_contact_days',
+  'job_due_in_hours',
+  'prescription_refill_due',
+];
+
+/** UI presets for event-driven Send after (delayMinutes). */
+export const DELAY_MINUTES_PRESETS = [
+  { value: 0, label: 'Immediate' },
+  { value: 3, label: '3 minutes' },
+  { value: 60, label: '1 hour' },
+  { value: 1440, label: '1 day' },
+];
+
+/** Default Send-after delay for review_request (1 hour). */
+export const DEFAULT_REVIEW_REQUEST_DELAY_MINUTES = 60;
+
 const FREQUENCY_COOLDOWN_HOURS = {
   daily: 24,
   weekly: 168,
@@ -974,6 +1000,36 @@ const FREQUENCY_COOLDOWN_HOURS = {
  */
 export function isStickyTrigger(triggerType) {
   return STICKY_TRIGGER_TYPES.includes(String(triggerType || ''));
+}
+
+/**
+ * @param {string} triggerType
+ * @returns {boolean}
+ */
+export function isSchedulerTrigger(triggerType) {
+  return SCHEDULER_TRIGGER_TYPES.includes(String(triggerType || ''));
+}
+
+/**
+ * Event-driven customer/staff templates support Send after; sticky/scheduler do not.
+ * @param {string} triggerType
+ * @returns {boolean}
+ */
+export function supportsSendAfter(triggerType) {
+  const type = String(triggerType || '');
+  if (!type) return false;
+  if (isStickyTrigger(type) || isSchedulerTrigger(type)) return false;
+  return true;
+}
+
+/**
+ * Default delayMinutes when creating/switching to a trigger.
+ * @param {string} triggerType
+ * @returns {number}
+ */
+export function defaultDelayMinutesForTrigger(triggerType) {
+  if (String(triggerType || '') === 'review_request') return DEFAULT_REVIEW_REQUEST_DELAY_MINUTES;
+  return 0;
 }
 
 /**
@@ -990,7 +1046,7 @@ export function defaultFrequencyForTrigger(triggerType) {
 
 /**
  * Map frequency form fields to engine scheduleConfig (including derived cooldownHours / maxSends).
- * @param {{ frequency?: string, intervalDays?: string|number, cooldownDays?: string|number }} form
+ * @param {{ frequency?: string, intervalDays?: string|number, cooldownDays?: string|number, delayMinutes?: string|number, delayPreset?: string }} form
  * @param {string} triggerType
  * @returns {Record<string, unknown>}
  */
@@ -1014,11 +1070,21 @@ export function buildScheduleConfigFromForm(form = {}, triggerType) {
     return schedule;
   }
 
-  // Non-sticky: preserve optional legacy cooldown days only.
+  // Non-sticky: optional cooldown days + Send after (delayMinutes) for event triggers.
   const scheduleConfig = {};
   if (form?.cooldownDays !== '' && form?.cooldownDays != null) {
     const n = Number(form.cooldownDays);
     if (!Number.isNaN(n) && n > 0) scheduleConfig.cooldownHours = Math.round(n * 24);
+  }
+  if (supportsSendAfter(triggerType)) {
+    let delayMinutes = 0;
+    if (form?.delayMinutes !== '' && form?.delayMinutes != null) {
+      const n = Number(form.delayMinutes);
+      if (!Number.isNaN(n) && n >= 0) delayMinutes = Math.floor(n);
+    } else {
+      delayMinutes = defaultDelayMinutesForTrigger(triggerType);
+    }
+    scheduleConfig.delayMinutes = Math.max(0, delayMinutes);
   }
   return scheduleConfig;
 }
@@ -1027,21 +1093,30 @@ export function buildScheduleConfigFromForm(form = {}, triggerType) {
  * Infer frequency UI state from a saved scheduleConfig.
  * @param {Record<string, unknown>} scheduleConfig
  * @param {string} [triggerType]
- * @returns {{ frequency: string, intervalDays: string, cooldownDays: string }}
+ * @returns {{ frequency: string, intervalDays: string, cooldownDays: string, delayMinutes: string }}
  */
 export function scheduleFormFromConfig(scheduleConfig = {}, triggerType = '') {
   const s = scheduleConfig && typeof scheduleConfig === 'object' ? scheduleConfig : {};
   const cooldownHours = Number(s.cooldownHours) > 0 ? Number(s.cooldownHours) : 0;
   const sticky = isStickyTrigger(triggerType);
+  const delayMinutesRaw = Number(s.delayMinutes);
+  const delayMinutes = supportsSendAfter(triggerType)
+    ? String(
+        Number.isFinite(delayMinutesRaw) && delayMinutesRaw >= 0
+          ? Math.floor(delayMinutesRaw)
+          : defaultDelayMinutesForTrigger(triggerType)
+      )
+    : '';
 
   if (s.frequency === 'once' || Number(s.maxSends) === 1) {
-    return { frequency: 'once', intervalDays: '1', cooldownDays: '' };
+    return { frequency: 'once', intervalDays: '1', cooldownDays: '', delayMinutes };
   }
   if (FREQUENCY_OPTIONS.some((o) => o.value === s.frequency)) {
     return {
       frequency: s.frequency,
       intervalDays: String(Math.max(1, Number(s.intervalDays) || 1)),
       cooldownDays: cooldownHours > 0 ? String(cooldownHours / 24) : '',
+      delayMinutes,
     };
   }
 
@@ -1052,19 +1127,21 @@ export function scheduleFormFromConfig(scheduleConfig = {}, triggerType = '') {
       frequency: 'daily',
       intervalDays: '1',
       cooldownDays: '',
+      delayMinutes,
     };
   }
 
   // Infer from legacy cooldownHours when frequency is missing.
   if (sticky && cooldownHours > 0) {
-    if (cooldownHours === 24) return { frequency: 'daily', intervalDays: '1', cooldownDays: '1' };
-    if (cooldownHours === 168) return { frequency: 'weekly', intervalDays: '1', cooldownDays: '7' };
-    if (cooldownHours === 720) return { frequency: 'monthly', intervalDays: '1', cooldownDays: '30' };
+    if (cooldownHours === 24) return { frequency: 'daily', intervalDays: '1', cooldownDays: '1', delayMinutes };
+    if (cooldownHours === 168) return { frequency: 'weekly', intervalDays: '1', cooldownDays: '7', delayMinutes };
+    if (cooldownHours === 720) return { frequency: 'monthly', intervalDays: '1', cooldownDays: '30', delayMinutes };
     if (cooldownHours % 24 === 0) {
       return {
         frequency: 'every_n_days',
         intervalDays: String(cooldownHours / 24),
         cooldownDays: String(cooldownHours / 24),
+        delayMinutes,
       };
     }
   }
@@ -1073,6 +1150,7 @@ export function scheduleFormFromConfig(scheduleConfig = {}, triggerType = '') {
     frequency: sticky ? 'daily' : '',
     intervalDays: '1',
     cooldownDays: cooldownHours > 0 ? String(cooldownHours / 24) : '',
+    delayMinutes,
   };
 }
 
@@ -1551,6 +1629,7 @@ export function conditionFormFromConfig(conditionConfig, scheduleConfig = {}, tr
     cooldownDays: scheduleForm.cooldownDays,
     frequency: scheduleForm.frequency,
     intervalDays: scheduleForm.intervalDays,
+    delayMinutes: scheduleForm.delayMinutes ?? '',
     stockBelowReorderLevel: c.stockBelowReorderLevel === true,
     quantityOperator: c.quantityOperator || 'less_than',
     quantityValue: c.quantityValue != null ? String(c.quantityValue) : '',

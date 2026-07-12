@@ -80,6 +80,7 @@ const SupportTicket = require('./SupportTicket');
 const SupportAccessSession = require('./SupportAccessSession');
 const AutomationRule = require('./AutomationRule');
 const AutomationRun = require('./AutomationRun');
+const AutomationDelayedRun = require('./AutomationDelayedRun');
 const WhatsAppMessageEvent = require('./WhatsAppMessageEvent');
 const MarketingCampaign = require('./MarketingCampaign');
 const StudioLocation = require('./StudioLocation');
@@ -826,6 +827,10 @@ AutomationRule.hasMany(AutomationRun, { foreignKey: 'ruleId', as: 'runs' });
 AutomationRun.belongsTo(AutomationRule, { foreignKey: 'ruleId', as: 'rule' });
 Tenant.hasMany(AutomationRun, { foreignKey: 'tenantId', as: 'automationRuns' });
 AutomationRun.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+AutomationRule.hasMany(AutomationDelayedRun, { foreignKey: 'ruleId', as: 'delayedRuns' });
+AutomationDelayedRun.belongsTo(AutomationRule, { foreignKey: 'ruleId', as: 'rule' });
+Tenant.hasMany(AutomationDelayedRun, { foreignKey: 'tenantId', as: 'automationDelayedRuns' });
+AutomationDelayedRun.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 Tenant.hasMany(WhatsAppMessageEvent, { foreignKey: 'tenantId', as: 'whatsAppMessageEvents' });
 WhatsAppMessageEvent.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 Tenant.hasMany(MarketingCampaign, { foreignKey: 'tenantId', as: 'marketingCampaigns' });
@@ -916,6 +921,7 @@ module.exports = {
   SupportAccessSession,
   AutomationRule,
   AutomationRun,
+  AutomationDelayedRun,
   WhatsAppMessageEvent,
   MarketingCampaign,
   StudioLocation,

@@ -272,6 +272,10 @@ const migrate = async () => {
     // Automations V1 tables
     await createAutomationsTables.up({ closeConnection: false });
 
+    // Delayed event-driven automation runs (Send after / delayMinutes)
+    const createAutomationDelayedRuns = require('./create-automation-delayed-runs');
+    await createAutomationDelayedRuns.up({ closeConnection: false });
+
     // Customer communication consent and WhatsApp webhook/send event history
     await addCommunicationConsentAndWhatsAppEvents.up({ closeConnection: false });
 
@@ -378,6 +382,9 @@ const migrate = async () => {
     await createDealersAccountTables.up({ closeConnection: false });
     await addShopIdToDealers({ closeConnection: false });
     await makeDealersTenantWide({ closeConnection: false });
+
+    const addWholesalePriceToProducts = require('./add-wholesale-price-to-products');
+    await addWholesalePriceToProducts({ closeConnection: false });
 
     await createTenantPlatformSmsUsage.up({ closeConnection: false });
     await addPlatformSmsSettings.up({ closeConnection: false });

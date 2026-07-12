@@ -76,6 +76,7 @@ const DealerPricing = () => {
       name: product.name,
       sku: product.sku,
       retailPrice: product.sellingPrice,
+      wholesalePrice: product.wholesalePrice,
       dealerPrice: draft ?? existing?.unitPrice ?? '',
     };
   }), [products, priceByProductKey, draftPrices]);
@@ -85,10 +86,18 @@ const DealerPricing = () => {
     { key: 'sku', label: 'SKU', render: (value) => value || '—' },
     { key: 'retailPrice', label: 'Retail', render: (value) => formatAmount(value) },
     {
+      key: 'wholesalePrice',
+      label: 'Wholesale',
+      render: (value) => (value != null && value !== '' ? formatAmount(value) : '—'),
+    },
+    {
       key: 'dealerPrice',
       label: 'Dealer price',
       render: (_, row) => {
         const key = `${row.id}:`;
+        const placeholder = row.wholesalePrice != null && row.wholesalePrice !== ''
+          ? 'Wholesale'
+          : 'Retail';
         return (
           <Input
             type="number"
@@ -97,7 +106,7 @@ const DealerPricing = () => {
             className="h-8 w-28"
             value={draftPrices[key] ?? row.dealerPrice}
             onChange={(e) => setDraftPrices((prev) => ({ ...prev, [key]: e.target.value }))}
-            placeholder="Retail"
+            placeholder={placeholder}
           />
         );
       },
@@ -144,7 +153,7 @@ const DealerPricing = () => {
       </div>
 
       {productsLoading || pricesLoading ? (
-        <TableSkeleton rows={8} cols={4} />
+        <TableSkeleton rows={8} cols={5} />
       ) : (
         <DashboardTable columns={columns} data={rows} pageSize={20} />
       )}

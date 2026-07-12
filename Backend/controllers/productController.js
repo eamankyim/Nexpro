@@ -32,6 +32,31 @@ const PRODUCT_STAFF_SENSITIVE_FIELDS = [
   'costValue',
 ];
 
+/**
+ * Normalize optional wholesalePrice on create/update payloads.
+ * Empty string / undefined → null; invalid or negative → 400-style Error.
+ * @param {object} payload
+ * @returns {object} payload
+ */
+const normalizeWholesalePrice = (payload) => {
+  if (!payload || !Object.prototype.hasOwnProperty.call(payload, 'wholesalePrice')) {
+    return payload;
+  }
+  const raw = payload.wholesalePrice;
+  if (raw === '' || raw === null || raw === undefined) {
+    payload.wholesalePrice = null;
+    return payload;
+  }
+  const n = typeof raw === 'number' ? raw : Number.parseFloat(raw);
+  if (Number.isNaN(n) || n < 0) {
+    const err = new Error('wholesalePrice must be a non-negative number');
+    err.statusCode = 400;
+    throw err;
+  }
+  payload.wholesalePrice = n;
+  return payload;
+};
+
 const canViewProductSensitiveFields = (req) => {
   const role = req.tenantRole || req.user?.role || null;
   return role !== 'staff';
@@ -401,7 +426,7 @@ exports.getProducts = async (req, res, next) => {
           as: 'variants',
           required: false,
           where: { isActive: true },
-          attributes: ['id', 'productId', 'name', 'sku', 'barcode', 'sellingPrice', 'quantityOnHand', 'attributes', 'isActive', 'trackStock']
+          attributes: ['id', 'productId', 'name', 'sku', 'barcode', 'sellingPrice', 'wholesalePrice', 'quantityOnHand', 'attributes', 'isActive', 'trackStock']
         }] : [])
       ],
       distinct: true,
@@ -798,6 +823,16 @@ exports.createProduct = async (req, res, next) => {
       attachShopToPayload(req, req.body)
     );
     stripStaffProductWritePayload(payload, req);
+    try {
+      normalizeWholesalePrice(payload);
+    } catch (validationErr) {
+      await transaction.rollback();
+      transactionFinished = true;
+      return res.status(400).json({
+        success: false,
+        message: validationErr.message,
+      });
+    }
     const { hasAliasPayload, aliases } = extractProductAliasBarcodes(payload);
     const product = await Product.create({
       ...payload,
@@ -874,6 +909,16 @@ exports.updateProduct = async (req, res, next) => {
 
     const payload = sanitizePayload(req.body);
     stripStaffProductWritePayload(payload, req);
+    try {
+      normalizeWholesalePrice(payload);
+    } catch (validationErr) {
+      await transaction.rollback();
+      transactionFinished = true;
+      return res.status(400).json({
+        success: false,
+        message: validationErr.message,
+      });
+    }
     const { hasAliasPayload, aliases } = extractProductAliasBarcodes(payload);
     if (payload.shopId && !userCanAccessShopId(req, payload.shopId)) {
       await transaction.rollback();
@@ -1093,7 +1138,7 @@ exports.getProductByBarcode = async (req, res, next) => {
         as: 'variants',
         required: false,
         where: { isActive: true },
-        attributes: ['id', 'productId', 'name', 'sku', 'barcode', 'sellingPrice', 'quantityOnHand', 'attributes', 'isActive', 'trackStock']
+        attributes: ['id', 'productId', 'name', 'sku', 'barcode', 'sellingPrice', 'wholesalePrice', 'quantityOnHand', 'attributes', 'isActive', 'trackStock']
       }]
     });
 
@@ -1118,7 +1163,7 @@ exports.getProductByBarcode = async (req, res, next) => {
             as: 'variants',
             required: false,
             where: { isActive: true },
-            attributes: ['id', 'productId', 'name', 'sku', 'barcode', 'sellingPrice', 'quantityOnHand', 'attributes', 'isActive', 'trackStock']
+            attributes: ['id', 'productId', 'name', 'sku', 'barcode', 'sellingPrice', 'wholesalePrice', 'quantityOnHand', 'attributes', 'isActive', 'trackStock']
           }]
         }]
       });
@@ -1145,7 +1190,7 @@ exports.getProductByBarcode = async (req, res, next) => {
               as: 'variants',
               required: false,
               where: { isActive: true },
-              attributes: ['id', 'productId', 'name', 'sku', 'barcode', 'sellingPrice', 'quantityOnHand', 'attributes', 'isActive', 'trackStock']
+              attributes: ['id', 'productId', 'name', 'sku', 'barcode', 'sellingPrice', 'wholesalePrice', 'quantityOnHand', 'attributes', 'isActive', 'trackStock']
             }]
           },
           {
@@ -1163,7 +1208,7 @@ exports.getProductByBarcode = async (req, res, next) => {
                 as: 'variants',
                 required: false,
                 where: { isActive: true },
-                attributes: ['id', 'productId', 'name', 'sku', 'barcode', 'sellingPrice', 'quantityOnHand', 'attributes', 'isActive', 'trackStock']
+                attributes: ['id', 'productId', 'name', 'sku', 'barcode', 'sellingPrice', 'wholesalePrice', 'quantityOnHand', 'attributes', 'isActive', 'trackStock']
               }]
             }]
           }
@@ -1260,7 +1305,15 @@ exports.createProductVariant = async (req, res, next) => {
 
     const payload = sanitizePayload(req.body);
     stripStaffProductWritePayload(payload, req);
-    
+    try {
+      normalizeWholesalePrice(payload);
+    } catch (validationErr) {
+      return res.status(400).json({
+        success: false,
+        message: validationErr.message,
+      });
+    }
+
     // Create the variant
     const variant = await ProductVariant.create({
       ...payload,
@@ -1317,6 +1370,14 @@ exports.updateProductVariant = async (req, res, next) => {
 
     const payload = sanitizePayload(req.body);
     stripStaffProductWritePayload(payload, req);
+    try {
+      normalizeWholesalePrice(payload);
+    } catch (validationErr) {
+      return res.status(400).json({
+        success: false,
+        message: validationErr.message,
+      });
+    }
     await variant.update(payload);
     await syncParentQuantityFromVariants(variant.productId);
     invalidateProductListCache(req.tenantId);

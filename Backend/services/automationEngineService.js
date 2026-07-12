@@ -2,6 +2,7 @@ const { Op, col, fn, where: sequelizeWhere } = require('sequelize');
 const {
   AutomationRule,
   AutomationRun,
+  AutomationDelayedRun,
   Customer,
   Invoice,
   Job,
@@ -38,6 +39,9 @@ const {
 const DEDUPE_WINDOW_HOURS = 24;
 const MAX_RULES_PER_TICK = 100;
 const MAX_SUBJECTS_PER_RULE = 50;
+const MAX_DELAYED_RUNS_PER_TICK = 100;
+/** Default Send-after delay (minutes) for review_request templates. */
+const DEFAULT_REVIEW_REQUEST_DELAY_MINUTES = 60;
 
 /** Sticky (condition-while-true) triggers that support repeat frequency. */
 const STICKY_TRIGGER_TYPES = new Set([
@@ -243,7 +247,7 @@ function getTemplates() {
       triggerType: 'review_request',
       allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
       triggerConfig: {},
-      scheduleConfig: { cooldownHours: 168 },
+      scheduleConfig: { cooldownHours: 168, delayMinutes: DEFAULT_REVIEW_REQUEST_DELAY_MINUTES },
       actionConfig: {
         actions: [{
           type: 'send_whatsapp',
@@ -1141,6 +1145,180 @@ function isStickyTriggerType(triggerType) {
 }
 
 /**
+ * Resolve Send-after delay in minutes for event-driven rules.
+ * Sticky / scheduler paths ignore delayMinutes (return 0).
+ * @param {{ triggerType?: string, scheduleConfig?: object }} rule
+ * @returns {number}
+ */
+function getDelayMinutes(rule) {
+  if (isStickyTriggerType(rule?.triggerType)) return 0;
+  const schedule = (rule?.scheduleConfig && typeof rule.scheduleConfig === 'object')
+    ? rule.scheduleConfig
+    : {};
+  const n = toNumber(schedule.delayMinutes, 0);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.floor(n);
+}
+
+/**
+ * Enqueue a delayed automation run. Dedupes pending rows for the same rule + subjectKey.
+ * @param {{ tenantId: string, ruleId: string, triggerContext?: object, delayMinutes: number, actorUserId?: string|null }} params
+ * @returns {Promise<{ delayed: true, delayedRunId: string|null, runAt: Date, reason?: string }>}
+ */
+async function enqueueDelayedRun({
+  tenantId,
+  ruleId,
+  triggerContext = {},
+  delayMinutes,
+  actorUserId = null,
+}) {
+  const minutes = Math.max(0, Math.floor(toNumber(delayMinutes, 0)));
+  const runAt = new Date(Date.now() + minutes * 60 * 1000);
+  const subjectKey = triggerContext?.subjectKey ? String(triggerContext.subjectKey) : null;
+  const contextPayload = {
+    ...triggerContext,
+    delayed: true,
+    delayMinutes: minutes,
+    enqueuedAt: new Date().toISOString(),
+    actorUserId: actorUserId || triggerContext?.actorUserId || null,
+  };
+
+  if (subjectKey) {
+    const existing = await AutomationDelayedRun.findOne({
+      where: {
+        tenantId,
+        ruleId,
+        subjectKey,
+        status: 'pending',
+      },
+      attributes: ['id', 'runAt'],
+    });
+    if (existing) {
+      return {
+        delayed: true,
+        delayedRunId: existing.id,
+        runAt: existing.runAt,
+        reason: 'already_pending',
+      };
+    }
+  }
+
+  try {
+    const row = await AutomationDelayedRun.create({
+      tenantId,
+      ruleId,
+      triggerContext: contextPayload,
+      runAt,
+      status: 'pending',
+      subjectKey,
+    });
+    return { delayed: true, delayedRunId: row.id, runAt: row.runAt };
+  } catch (error) {
+    // Unique pending subject race — treat as already queued.
+    if (error?.name === 'SequelizeUniqueConstraintError' && subjectKey) {
+      const existing = await AutomationDelayedRun.findOne({
+        where: { tenantId, ruleId, subjectKey, status: 'pending' },
+        attributes: ['id', 'runAt'],
+      });
+      return {
+        delayed: true,
+        delayedRunId: existing?.id || null,
+        runAt: existing?.runAt || runAt,
+        reason: 'already_pending',
+      };
+    }
+    throw error;
+  }
+}
+
+/**
+ * Process due delayed event-driven automation runs (DB queue + 1-min cron).
+ * Re-checks rule enabled / conditions / dedupe via executeRule(skipDelay: true).
+ * @param {{ now?: Date, limit?: number }} [params]
+ * @returns {Promise<{ checked: number, executed: number, skipped: number, failed: number, cancelled: number }>}
+ */
+async function processDueDelayedRuns({ now = new Date(), limit = MAX_DELAYED_RUNS_PER_TICK } = {}) {
+  const due = await AutomationDelayedRun.findAll({
+    where: {
+      status: 'pending',
+      runAt: { [Op.lte]: now },
+    },
+    order: [['runAt', 'ASC']],
+    limit,
+  });
+
+  const summary = {
+    checked: due.length,
+    executed: 0,
+    skipped: 0,
+    failed: 0,
+    cancelled: 0,
+  };
+
+  for (const delayed of due) {
+    const [claimed] = await AutomationDelayedRun.update(
+      { status: 'processing', updatedAt: new Date() },
+      { where: { id: delayed.id, status: 'pending' } }
+    );
+    if (!claimed) continue;
+
+    try {
+      const rule = await AutomationRule.findByPk(delayed.ruleId);
+      if (!rule || !rule.enabled) {
+        await delayed.update({
+          status: 'cancelled',
+          error: rule ? 'rule_disabled' : 'rule_missing',
+        });
+        summary.cancelled += 1;
+        continue;
+      }
+
+      const triggerContext = {
+        ...(delayed.triggerContext && typeof delayed.triggerContext === 'object'
+          ? delayed.triggerContext
+          : {}),
+        delayedRunId: delayed.id,
+        delayedFire: true,
+      };
+      const actorUserId = triggerContext.actorUserId || rule.createdBy || rule.updatedBy || null;
+
+      const result = await executeRule({
+        rule,
+        tenantId: delayed.tenantId,
+        triggerContext,
+        actorUserId,
+        options: { skipDelay: true },
+      });
+
+      if (result.skipped) {
+        await delayed.update({
+          status: 'done',
+          error: result.reason || 'skipped',
+        });
+        summary.skipped += 1;
+      } else if (result.success) {
+        await delayed.update({ status: 'done', error: null });
+        summary.executed += 1;
+      } else {
+        await delayed.update({
+          status: 'failed',
+          error: result.error || 'execution_failed',
+        });
+        summary.failed += 1;
+      }
+    } catch (error) {
+      await delayed.update({
+        status: 'failed',
+        error: error?.message || String(error),
+      });
+      summary.failed += 1;
+    }
+  }
+
+  return summary;
+}
+
+/**
  * Resolve schedule frequency / cooldown for a rule.
  * once / maxSends:1 → lifetime success gate; else frequency → cooldownHours;
  * fallback legacy cooldownHours, sticky empty → daily, else DEDUPE_WINDOW_HOURS.
@@ -1275,7 +1453,8 @@ async function executeRule({
   const {
     ignoreEnabled = false,
     alwaysRecordRun = false,
-    skipDedupe = false
+    skipDedupe = false,
+    skipDelay = false,
   } = options;
   const startedAt = new Date();
 
@@ -1335,6 +1514,27 @@ async function executeRule({
       if (await isDuplicateRun({ tenantId, ruleId: rule.id, subjectKey })) {
         return recordSkipped('duplicate_window');
       }
+    }
+
+    // Event-driven Send after: enqueue instead of running immediately.
+    // Scheduler sticky path ignores delayMinutes; manual tests pass skipDelay: true.
+    const isSchedulerPath = Boolean(options.scheduler || triggerContext?.scheduler);
+    const delayMinutes = getDelayMinutes(rule);
+    if (!skipDelay && !isSchedulerPath && delayMinutes > 0) {
+      const delayed = await enqueueDelayedRun({
+        tenantId,
+        ruleId: rule.id,
+        triggerContext,
+        delayMinutes,
+        actorUserId,
+      });
+      return {
+        delayed: true,
+        reason: delayed.reason || 'delayed',
+        delayedRunId: delayed.delayedRunId,
+        runAt: delayed.runAt,
+        delayMinutes,
+      };
     }
 
     const actions = normalizeActions(rule.actionConfig);
@@ -2287,7 +2487,7 @@ async function executeMatchingRules({
     triggerType,
     scheduler: false,
   });
-  const summary = { rulesChecked: rules.length, executed: 0, skipped: 0, failed: 0 };
+  const summary = { rulesChecked: rules.length, executed: 0, skipped: 0, failed: 0, delayed: 0 };
 
   for (const rule of rules) {
     const result = await executeRule({
@@ -2297,7 +2497,8 @@ async function executeMatchingRules({
       actorUserId,
       options,
     });
-    if (result.skipped) summary.skipped += 1;
+    if (result.delayed) summary.delayed += 1;
+    else if (result.skipped) summary.skipped += 1;
     else if (result.success) summary.executed += 1;
     else summary.failed += 1;
   }
@@ -3654,12 +3855,17 @@ module.exports = {
   DEDUPE_WINDOW_HOURS,
   STICKY_TRIGGER_TYPES,
   FREQUENCY_COOLDOWN_HOURS,
+  DEFAULT_REVIEW_REQUEST_DELAY_MINUTES,
+  MAX_DELAYED_RUNS_PER_TICK,
   getTemplates,
   getTemplateByKey,
   filterTemplatesForTenant,
   isTriggerAllowedForTenant,
   executeRule,
   executeMatchingRules,
+  enqueueDelayedRun,
+  processDueDelayedRuns,
+  getDelayMinutes,
   buildPaymentReceivedTriggerContext,
   buildReviewRequestTriggerContext,
   buildJobCreatedTriggerContext,

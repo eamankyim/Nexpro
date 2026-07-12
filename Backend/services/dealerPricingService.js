@@ -12,7 +12,8 @@ const variantWhere = (variantId) => (
 );
 
 /**
- * Resolve unit price for a dealer at a branch: dealer-specific → tier → retail sellingPrice.
+ * Resolve unit price for a dealer at a branch:
+ * dealer-specific → tier → wholesalePrice → retail sellingPrice.
  * @param {object} params
  * @param {string} params.tenantId
  * @param {string} params.shopId
@@ -20,7 +21,7 @@ const variantWhere = (variantId) => (
  * @param {string} params.productId
  * @param {string|null} [params.productVariantId]
  * @param {string|null} [params.priceTierId]
- * @returns {Promise<{ unitPrice: number, source: 'dealer'|'tier'|'retail', retailPrice: number|null }>}
+ * @returns {Promise<{ unitPrice: number, source: 'dealer'|'tier'|'wholesale'|'retail', retailPrice: number|null }>}
  */
 const resolvePrice = async ({
   tenantId,
@@ -69,23 +70,43 @@ const resolvePrice = async ({
     }
   }
 
-  let retailPrice = null;
+  let variantWholesale = null;
+  let variantRetail = null;
   if (productVariantId) {
     const variant = await ProductVariant.findOne({
-      where: applyTenantFilter(tenantId, { id: productVariantId, productId }),
-      attributes: ['sellingPrice'],
+      where: { id: productVariantId, productId },
+      attributes: ['wholesalePrice', 'sellingPrice'],
     });
-    retailPrice = variant ? roundMoney(variant.sellingPrice) : null;
+    if (variant) {
+      if (variant.wholesalePrice != null && variant.wholesalePrice !== '') {
+        variantWholesale = roundMoney(variant.wholesalePrice);
+      }
+      if (variant.sellingPrice != null && variant.sellingPrice !== '') {
+        variantRetail = roundMoney(variant.sellingPrice);
+      }
+    }
   }
 
-  if (retailPrice == null) {
-    const product = await Product.findOne({
-      where: applyTenantFilter(tenantId, { id: productId, shopId }),
-      attributes: ['sellingPrice'],
-    });
-    retailPrice = product ? roundMoney(product.sellingPrice) : 0;
+  const product = await Product.findOne({
+    where: applyTenantFilter(tenantId, { id: productId, shopId }),
+    attributes: ['wholesalePrice', 'sellingPrice'],
+  });
+
+  const productWholesale = product && product.wholesalePrice != null && product.wholesalePrice !== ''
+    ? roundMoney(product.wholesalePrice)
+    : null;
+  const productRetail = product ? roundMoney(product.sellingPrice) : 0;
+
+  const wholesalePrice = variantWholesale != null ? variantWholesale : productWholesale;
+  if (wholesalePrice != null) {
+    return {
+      unitPrice: wholesalePrice,
+      source: 'wholesale',
+      retailPrice: variantRetail != null ? variantRetail : productRetail,
+    };
   }
 
+  const retailPrice = variantRetail != null ? variantRetail : productRetail;
   return {
     unitPrice: retailPrice,
     source: 'retail',
@@ -128,7 +149,7 @@ const listDealerPrices = async ({ tenantId, shopId, dealerId, search = '' }) => 
     {
       model: Product,
       as: 'product',
-      attributes: ['id', 'name', 'sku', 'sellingPrice', 'shopId'],
+      attributes: ['id', 'name', 'sku', 'sellingPrice', 'wholesalePrice', 'shopId'],
       where: search
         ? {
           [Op.or]: [
@@ -142,7 +163,7 @@ const listDealerPrices = async ({ tenantId, shopId, dealerId, search = '' }) => 
     {
       model: ProductVariant,
       as: 'variant',
-      attributes: ['id', 'name', 'sku', 'sellingPrice'],
+      attributes: ['id', 'name', 'sku', 'sellingPrice', 'wholesalePrice'],
       required: false,
     },
   ];

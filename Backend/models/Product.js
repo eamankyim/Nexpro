@@ -55,6 +55,12 @@ const Product = sequelize.define('Product', {
     allowNull: false,
     defaultValue: 0
   },
+  /** Optional dealer/wholesale unit price; used when dealersAccount price resolve has no dealer/tier override. */
+  wholesalePrice: {
+    type: DataTypes.DECIMAL(12, 2),
+    allowNull: true,
+    defaultValue: null
+  },
   // Stock management
   quantityOnHand: {
     type: DataTypes.DECIMAL(12, 2),
