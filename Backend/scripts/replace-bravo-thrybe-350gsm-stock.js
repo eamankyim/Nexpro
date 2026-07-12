@@ -1,21 +1,25 @@
 #!/usr/bin/env node
 /**
- * Replace ALL products for a tenant with the Bravo Thrybe 350GSM stock catalog + Printing.
+ * Replace or append Bravo Thrybe GSM stock catalogs + Printing for a tenant.
  *
  * Target shop is typically Bravo Thrybe (user: gilbertceyram@gmail.com).
  *
  * What it does:
- * 1. Optionally purges tenant commerce docs (sales/invoices/quotes/stock/etc.) when
- *    `--purge-tenant-commerce` / `--start-fresh` is set — FK-safe, THIS tenant only.
- * 2. Deletes ALL products (and variants) for the resolved tenant — FK-safe order
- *    (barcodes / online listings / variants first, then products).
- * 3. Creates one product per color named `350GSM {Color}` with SIZE variants only
- *    (3XL, 2XL, XL, L, M). Cost 100, selling 120 for all 350GSM variants.
- * 4. Creates a simple Printing product (no variants): qty 100, cost 0, sell 0.
+ * 1. Optionally purges tenant commerce docs (sales/invoices/quotes/stock/expenses/etc.)
+ *    when `--purge-tenant-commerce` / `--start-fresh` is set — FK-safe, THIS tenant only.
+ * 2. Full replace: deletes ALL products (and variants) for the resolved tenant — FK-safe
+ *    order (barcodes / online listings / variants first, then products).
+ * 3. Creates catalogs:
+ *    - 350GSM {Color}: sizes 3XL–M, cost 100 / sell 120 (per-size qty from COLOR_STOCK)
+ *    - 320GSM {Color}: sizes 2XL–M, cost 80 / sell 100, qty 20 each size
+ *    - 230GSM {Color}: sizes 4XL–L, cost 45 / sell 60, qty 20 each size
+ *    - Printing (simple): qty 100, cost 0, sell 0
+ * 4. `--append` / `--import-only`: skip product delete; create missing 320/230 lines only
+ *    (idempotent by SKU/name). Does not require `--confirm-delete`.
  *
  * Safety:
  * - Dry-run is the default (connects to DB, reports plan + existing counts; no writes).
- * - `--execute` writes; requires `--confirm-delete` to wipe products.
+ * - `--execute` writes; full replace requires `--confirm-delete` to wipe products.
  * - `--email` is required for execute mode (tenant-id alone is not enough to write).
  * - Protected history (sale_items, quote_items, stock counts/transfers) blocks delete
  *   unless you pass granular destructive flags OR `--purge-tenant-commerce` / `--start-fresh`.
@@ -24,16 +28,19 @@
  * - No models use Sequelize paranoid; deletes are hard deletes scoped by tenantId.
  *
  * Usage (from Backend/):
- *   # Dry-run (default) — preview catalog + existing product / commerce counts
+ *   # Dry-run (default) — preview full catalog + existing product / commerce counts
  *   node scripts/replace-bravo-thrybe-350gsm-stock.js --email gilbertceyram@gmail.com
  *
- *   # Dry-run start-fresh plan (shows what commerce would be purged)
+ *   # Dry-run start-fresh plan (shows what commerce would be purged, incl. expenses)
  *   node scripts/replace-bravo-thrybe-350gsm-stock.js --email gilbertceyram@gmail.com --purge-tenant-commerce
+ *
+ *   # Append 320+230 only (keep existing 350)
+ *   node scripts/replace-bravo-thrybe-350gsm-stock.js --email gilbertceyram@gmail.com --execute --append
  *
  *   # Execute replace only (products; history must be clear or use granular flags)
  *   node scripts/replace-bravo-thrybe-350gsm-stock.js --email gilbertceyram@gmail.com --execute --confirm-delete
  *
- *   # START FRESH (VPS): purge tenant commerce + wipe products + import 350GSM catalog
+ *   # Full wipe + all catalogs + expenses
  *   node scripts/replace-bravo-thrybe-350gsm-stock.js --email gilbertceyram@gmail.com \
  *     --execute --confirm-delete --purge-tenant-commerce
  *
@@ -45,7 +52,9 @@
  *   node scripts/replace-bravo-thrybe-350gsm-stock.js --email gilbertceyram@gmail.com \
  *     --execute --confirm-delete --delete-sale-items --detach-quote-items --delete-stock-history
  *
- * Catalog counts: 12 color parents + 1 Printing = 13 products; 60 size variants.
+ * Catalog counts (full): 12×350 + 6×320 + 8×230 + 1 Printing = 27 products;
+ *   60 + 24 + 40 = 124 size variants.
+ * Append (320+230): 14 products, 64 variants.
  */
 require('dotenv').config();
 
@@ -81,15 +90,69 @@ const {
   MarketplaceOrderPayment,
   DealerLedgerEntry,
   DealerProductPrice,
+  Expense,
+  ExpenseActivity,
 } = require('../models');
 const { syncParentQuantityFromVariants } = require('../utils/productStockUtils');
 
 const SCRIPT_NAME = 'scripts/replace-bravo-thrybe-350gsm-stock.js';
 const DEFAULT_HELP_EMAIL = 'gilbertceyram@gmail.com';
-const COST_PRICE = 100;
-const SELLING_PRICE = 120;
-const SIZES = ['3XL', '2XL', 'XL', 'L', 'M'];
+const IMPORT_SOURCE = 'bravo-thrybe-gsm-replace';
 const SAMPLE_LIMIT = 20;
+
+/** 350GSM */
+const GSM_350 = {
+  label: '350GSM',
+  costPrice: 100,
+  sellingPrice: 120,
+  sizes: ['3XL', '2XL', 'XL', 'L', 'M'],
+  colors: [
+    { color: 'Black', quantities: [7, 16, 14, 0, 0] },
+    { color: 'Khaki', quantities: [14, 25, 22, 0, 0] },
+    { color: 'Cream', quantities: [19, 28, 27, 10, 1] },
+    { color: 'Blue', quantities: [5, 8, 0, 0, 0] },
+    { color: 'Red', quantities: [2, 9, 21, 0, 0] },
+    { color: 'Pink', quantities: [1, 6, 0, 0, 0] },
+    { color: 'Purple', quantities: [10, 12, 12, 0, 0] },
+    { color: 'Brown', quantities: [25, 18, 10, 0, 0] },
+    { color: 'White', quantities: [9, 35, 17, 4, 1] },
+    { color: 'Deep green', quantities: [0, 6, 0, 0, 0] },
+    { color: 'Light green', quantities: [16, 16, 10, 0, 0] },
+    { color: 'Ash', quantities: [0, 2, 0, 0, 1] },
+  ],
+};
+
+/** 320GSM — qty 20 each size */
+const GSM_320 = {
+  label: '320GSM',
+  costPrice: 80,
+  sellingPrice: 100,
+  sizes: ['2XL', 'XL', 'L', 'M'],
+  colors: ['Black', 'White', 'Pink', 'Brown', 'Cream', 'Ash'].map((color) => ({
+    color,
+    quantities: [20, 20, 20, 20],
+  })),
+};
+
+/** 230GSM — qty 20 each size (placeholder) */
+const GSM_230 = {
+  label: '230GSM',
+  costPrice: 45,
+  sellingPrice: 60,
+  sizes: ['4XL', '3XL', '2XL', 'XL', 'L'],
+  colors: ['Black', 'White', 'Cream', 'Pink', 'Blue', 'Green', 'Wine', 'Khaki'].map((color) => ({
+    color,
+    quantities: [20, 20, 20, 20, 20],
+  })),
+};
+
+const PRINTING_PRODUCT = {
+  name: 'Printing',
+  sku: 'PRINTING',
+  quantityOnHand: 100,
+  costPrice: 0,
+  sellingPrice: 0,
+};
 
 const PROTECTED_HISTORY_MESSAGE = [
   'Protected history still references these products.',
@@ -120,6 +183,8 @@ const BOOLEAN_FLAGS = new Set([
   '--detach-quote-items',
   '--purge-tenant-commerce',
   '--start-fresh',
+  '--append',
+  '--import-only',
   '--help',
   '-h',
 ]);
@@ -131,55 +196,38 @@ const shopNameFilter = normalizeText(getArgValue('--shop-name', '')) || null;
 const isExecute = hasFlag('--execute');
 const isDryRun = !isExecute;
 const confirmDelete = hasFlag('--confirm-delete');
+const isAppend = hasFlag('--append') || hasFlag('--import-only');
 const purgeTenantCommerce = hasFlag('--purge-tenant-commerce') || hasFlag('--start-fresh');
 const deleteSaleItems = hasFlag('--delete-sale-items') || purgeTenantCommerce;
 const deleteStockHistory = hasFlag('--delete-stock-history') || purgeTenantCommerce;
 const detachQuoteItems = hasFlag('--detach-quote-items') || purgeTenantCommerce;
 
-/**
- * Color catalog: quantities ordered as [3XL, 2XL, XL, L, M].
- */
-const COLOR_STOCK = [
-  { color: 'Black', quantities: [7, 16, 14, 0, 0] },
-  { color: 'Khaki', quantities: [14, 25, 22, 0, 0] },
-  { color: 'Cream', quantities: [19, 28, 27, 10, 1] },
-  { color: 'Blue', quantities: [5, 8, 0, 0, 0] },
-  { color: 'Red', quantities: [2, 9, 21, 0, 0] },
-  { color: 'Pink', quantities: [1, 6, 0, 0, 0] },
-  { color: 'Purple', quantities: [10, 12, 12, 0, 0] },
-  { color: 'Brown', quantities: [25, 18, 10, 0, 0] },
-  { color: 'White', quantities: [9, 35, 17, 4, 1] },
-  { color: 'Deep green', quantities: [0, 6, 0, 0, 0] },
-  { color: 'Light green', quantities: [16, 16, 10, 0, 0] },
-  { color: 'Ash', quantities: [0, 2, 0, 0, 1] },
-];
-
-const PRINTING_PRODUCT = {
-  name: 'Printing',
-  sku: 'PRINTING',
-  quantityOnHand: 100,
-  costPrice: 0,
-  sellingPrice: 0,
-};
-
 const USAGE = `
 Usage:
   node scripts/replace-bravo-thrybe-350gsm-stock.js --email <user-email> [--tenant-name <name>] [--shop-name <name>] [--dry-run]
   node scripts/replace-bravo-thrybe-350gsm-stock.js --tenant-id <uuid> [--shop-name <name>]   # dry-run only
+  node scripts/replace-bravo-thrybe-350gsm-stock.js --email <user-email> --execute --append
   node scripts/replace-bravo-thrybe-350gsm-stock.js --email <user-email> --execute --confirm-delete
   node scripts/replace-bravo-thrybe-350gsm-stock.js --email <user-email> --execute --confirm-delete --purge-tenant-commerce
 
 Examples:
+  # Dry-run full catalog plan
   node scripts/replace-bravo-thrybe-350gsm-stock.js --email ${DEFAULT_HELP_EMAIL}
-  node scripts/replace-bravo-thrybe-350gsm-stock.js --email ${DEFAULT_HELP_EMAIL} --purge-tenant-commerce
+
+  # Append 320+230 only (keep existing 350)
+  node scripts/replace-bravo-thrybe-350gsm-stock.js --email ${DEFAULT_HELP_EMAIL} --execute --append
+
+  # Full wipe + all catalogs + expenses
   node scripts/replace-bravo-thrybe-350gsm-stock.js --email ${DEFAULT_HELP_EMAIL} --execute --confirm-delete --purge-tenant-commerce
 
-Creates: 12 × 350GSM color products (5 size variants each = 60 variants) + 1 Printing product.
+Creates (full): 12×350GSM + 6×320GSM + 8×230GSM + 1 Printing; 124 size variants.
+Append: 6×320GSM + 8×230GSM only (64 variants); skips existing by SKU/name.
 
 Dangerous start-fresh flag:
   --purge-tenant-commerce | --start-fresh
-    Deletes THIS tenant's sales/invoices/payments/quotes/stock history (and product-linked
-    storefront/marketplace/dealer rows) in FK-safe order, then products, then imports catalog.
+    Deletes THIS tenant's sales/invoices/payments/quotes/expenses/stock history (and
+    product-linked storefront/marketplace/dealer rows) in FK-safe order, then products,
+    then imports full catalog.
 `;
 
 function validateArgs() {
@@ -204,9 +252,19 @@ function validateArgs() {
     fail('Provide --email, --tenant-id, or --tenant-name');
   }
 
+  if (isAppend && purgeTenantCommerce) {
+    fail('Cannot combine --append/--import-only with --purge-tenant-commerce/--start-fresh');
+  }
+
+  if (isAppend && confirmDelete) {
+    fail('Cannot combine --append/--import-only with --confirm-delete (append never deletes products)');
+  }
+
   if (isExecute) {
     if (!email) fail('Execute mode requires --email (tenant-id alone is not enough)');
-    if (!confirmDelete) fail('Execute mode requires --confirm-delete to wipe existing products');
+    if (!isAppend && !confirmDelete) {
+      fail('Execute mode requires --confirm-delete to wipe existing products (or use --append)');
+    }
     if (purgeTenantCommerce && (!email || !confirmDelete)) {
       fail('Start-fresh execute requires --email + --execute + --confirm-delete + --purge-tenant-commerce');
     }
@@ -250,37 +308,44 @@ function getIds(rows) {
   return rows.map((row) => row.id);
 }
 
-function buildCatalog() {
-  const parents = COLOR_STOCK.map((entry) => {
-    const skuPrefix = `350GSM-${slugifyToken(entry.color)}`;
+/**
+ * Build parent + variant plans for one GSM line.
+ * @param {{ label: string, costPrice: number, sellingPrice: number, sizes: string[], colors: Array<{ color: string, quantities: number[] }> }} line
+ */
+function buildGsmLine(line) {
+  const parents = line.colors.map((entry) => {
+    const skuPrefix = `${line.label}-${slugifyToken(entry.color)}`;
     const variantQtySum = entry.quantities.reduce((sum, qty) => sum + qty, 0);
     return {
       type: 'parent',
-      name: `350GSM ${entry.color}`,
+      gsmLabel: line.label,
+      name: `${line.label} ${entry.color}`,
       sku: skuPrefix,
       hasVariants: true,
-      costPrice: COST_PRICE,
-      sellingPrice: SELLING_PRICE,
+      costPrice: line.costPrice,
+      sellingPrice: line.sellingPrice,
       quantityOnHand: variantQtySum,
       trackStock: true,
       unit: 'pcs',
       color: entry.color,
       quantities: entry.quantities,
+      sizes: line.sizes,
     };
   });
 
   const variants = [];
   for (const parent of parents) {
-    SIZES.forEach((size, index) => {
+    parent.sizes.forEach((size, index) => {
       const qty = parent.quantities[index] ?? 0;
       const sku = `${parent.sku}-${slugifyToken(size)}`;
       variants.push({
         parentName: parent.name,
+        parentSku: parent.sku,
         name: size,
         sku,
         attributes: { size, color: parent.color },
-        costPrice: COST_PRICE,
-        sellingPrice: SELLING_PRICE,
+        costPrice: parent.costPrice,
+        sellingPrice: parent.sellingPrice,
         quantityOnHand: qty,
         trackStock: true,
         isActive: true,
@@ -288,24 +353,57 @@ function buildCatalog() {
     });
   }
 
-  const simple = {
-    type: 'simple',
-    name: PRINTING_PRODUCT.name,
-    sku: PRINTING_PRODUCT.sku,
-    hasVariants: false,
-    costPrice: PRINTING_PRODUCT.costPrice,
-    sellingPrice: PRINTING_PRODUCT.sellingPrice,
-    quantityOnHand: PRINTING_PRODUCT.quantityOnHand,
-    trackStock: true,
-    unit: 'pcs',
-  };
+  return { parents, variants };
+}
+
+/**
+ * @param {{ append?: boolean }} options
+ * Full replace: 350 + 320 + 230 + Printing.
+ * Append: 320 + 230 only.
+ */
+function buildCatalog(options = {}) {
+  const append = Boolean(options.append);
+  const lines = append ? [GSM_320, GSM_230] : [GSM_350, GSM_320, GSM_230];
+
+  const parents = [];
+  const variants = [];
+  const byLabel = {};
+
+  for (const line of lines) {
+    const built = buildGsmLine(line);
+    parents.push(...built.parents);
+    variants.push(...built.variants);
+    byLabel[line.label] = {
+      parents: built.parents.length,
+      variants: built.variants.length,
+      costPrice: line.costPrice,
+      sellingPrice: line.sellingPrice,
+      sizes: line.sizes,
+    };
+  }
+
+  const simple = append
+    ? null
+    : {
+      type: 'simple',
+      name: PRINTING_PRODUCT.name,
+      sku: PRINTING_PRODUCT.sku,
+      hasVariants: false,
+      costPrice: PRINTING_PRODUCT.costPrice,
+      sellingPrice: PRINTING_PRODUCT.sellingPrice,
+      quantityOnHand: PRINTING_PRODUCT.quantityOnHand,
+      trackStock: true,
+      unit: 'pcs',
+    };
 
   return {
     parents,
     variants,
     simple,
-    productCount: parents.length + 1,
+    byLabel,
+    productCount: parents.length + (simple ? 1 : 0),
     variantCount: variants.length,
+    append,
   };
 }
 
@@ -519,6 +617,7 @@ async function collectTenantCommerceState(tenantId, productState, options = {}) 
   const saleIds = await findIds(Sale, { tenantId }, options);
   const quoteIds = await findIds(Quote, { tenantId }, options);
   const stockCountIds = await findIds(StockCount, { tenantId }, options);
+  const expenseIds = await findIds(Expense, { tenantId }, options);
 
   const saleItemCount = saleIds.length
     ? await countWhere(SaleItem, { saleId: saleIds }, options)
@@ -526,11 +625,20 @@ async function collectTenantCommerceState(tenantId, productState, options = {}) 
   const quoteItemCount = quoteIds.length
     ? await countWhere(QuoteItem, { quoteId: quoteIds }, options)
     : productState.counts.quoteItems;
+  const expenseActivityCount = expenseIds.length
+    ? await countWhere(ExpenseActivity, {
+      [Op.or]: [
+        { tenantId },
+        { expenseId: expenseIds },
+      ],
+    }, options)
+    : await countWhere(ExpenseActivity, { tenantId }, options);
 
   return {
     saleIds,
     quoteIds,
     stockCountIds,
+    expenseIds,
     counts: {
       sales: saleIds.length,
       saleItems: Math.max(saleItemCount, productState.counts.saleItems),
@@ -540,6 +648,8 @@ async function collectTenantCommerceState(tenantId, productState, options = {}) 
       quotes: quoteIds.length,
       quoteItems: quoteItemCount,
       quoteActivities: await countWhere(QuoteActivity, { tenantId }, options),
+      expenses: expenseIds.length,
+      expenseActivities: expenseActivityCount,
       stockCounts: stockCountIds.length,
       stockCountItems: await countWhere(StockCountItem, { tenantId }, options),
       stockTransfers: await countWhere(StockTransfer, { tenantId }, options),
@@ -597,6 +707,8 @@ function printCommercePurgePlan(counts, flagged) {
   printSummary('Quotes', counts.quotes);
   printSummary('Quote items', counts.quoteItems);
   printSummary('Quote activities', counts.quoteActivities);
+  printSummary('Expenses', counts.expenses);
+  printSummary('Expense activities', counts.expenseActivities);
   printSummary('Stock counts', counts.stockCounts);
   printSummary('Stock count items', counts.stockCountItems);
   printSummary('Stock transfers', counts.stockTransfers);
@@ -648,10 +760,11 @@ async function updateWhere(Model, values, where, options, label) {
 /**
  * Purge tenant commerce documents in FK-safe order (hard delete; no paranoid models).
  * Scoped strictly by tenantId / ids collected for this tenant.
+ * Includes expenses + expense_activities (no ExpenseItem model in this codebase).
  */
 async function purgeTenantCommerceDocs(tenantId, commerce, productIds, variantIds, transaction) {
   const options = { transaction };
-  const { saleIds, quoteIds, stockCountIds } = commerce;
+  const { saleIds, quoteIds, stockCountIds, expenseIds } = commerce;
 
   console.log('\nPurging tenant commerce (start-fresh)...');
 
@@ -663,6 +776,24 @@ async function purgeTenantCommerceDocs(tenantId, commerce, productIds, variantId
   await destroyWhere(DealerLedgerEntry, { tenantId }, options, 'dealer_ledger_entries');
   await destroyWhere(Payment, { tenantId }, options, 'payments');
   await destroyWhere(SaleActivity, { tenantId }, options, 'sale_activities');
+
+  // Expenses: activities first (FK to expenses), then expenses.
+  if (expenseIds.length) {
+    await destroyWhere(
+      ExpenseActivity,
+      {
+        [Op.or]: [
+          { tenantId },
+          { expenseId: expenseIds },
+        ],
+      },
+      options,
+      'expense_activities'
+    );
+  } else {
+    await destroyWhere(ExpenseActivity, { tenantId }, options, 'expense_activities');
+  }
+  await destroyWhere(Expense, { tenantId }, options, 'expenses');
 
   if (saleIds.length) {
     await destroyWhere(SaleItem, { saleId: saleIds }, options, 'sale_items');
@@ -832,9 +963,10 @@ async function createParentProduct({ tenantId, shopId, parentPlan, transaction }
     trackStock: parentPlan.trackStock,
     hasVariants: parentPlan.hasVariants,
     metadata: {
-      importSource: 'bravo-thrybe-350gsm-replace',
+      importSource: IMPORT_SOURCE,
       importedByScript: SCRIPT_NAME,
       parentType: parentPlan.type,
+      gsmLabel: parentPlan.gsmLabel || null,
       color: parentPlan.color || null,
     },
   }, { transaction, validate: true });
@@ -853,37 +985,190 @@ async function createVariant({ parentProductId, variantPlan, transaction }) {
     isActive: true,
     trackStock: true,
     metadata: {
-      importSource: 'bravo-thrybe-350gsm-replace',
+      importSource: IMPORT_SOURCE,
       importedByScript: SCRIPT_NAME,
     },
   }, { transaction, validate: true });
 }
 
+/**
+ * Idempotent append: create missing parents/variants by SKU (then name); skip existing.
+ */
+async function appendCatalogProducts({ tenantId, shopId, catalog, transaction }) {
+  const options = { transaction };
+  const existingProducts = await Product.findAll({
+    where: { tenantId },
+    attributes: ['id', 'name', 'sku', 'hasVariants'],
+    ...options,
+  });
+
+  const productBySku = new Map();
+  const productByName = new Map();
+  for (const product of existingProducts) {
+    if (product.sku) productBySku.set(normalizedKey(product.sku), product);
+    productByName.set(normalizedKey(product.name), product);
+  }
+
+  const existingVariants = existingProducts.length
+    ? await ProductVariant.findAll({
+      where: { productId: getIds(existingProducts) },
+      attributes: ['id', 'productId', 'name', 'sku'],
+      ...options,
+    })
+    : [];
+  const variantBySku = new Map();
+  for (const variant of existingVariants) {
+    if (variant.sku) variantBySku.set(normalizedKey(variant.sku), variant);
+  }
+
+  let createdParents = 0;
+  let skippedParents = 0;
+  let createdVariants = 0;
+  let skippedVariants = 0;
+  const parentIdByName = new Map();
+  const parentsNeedingSync = new Set();
+
+  for (const parentPlan of catalog.parents) {
+    const bySku = productBySku.get(normalizedKey(parentPlan.sku));
+    const byName = productByName.get(normalizedKey(parentPlan.name));
+    let parent = bySku || byName;
+
+    if (parent) {
+      skippedParents += 1;
+      parentIdByName.set(normalizedKey(parentPlan.name), parent.id);
+      console.log(`  Skip parent (exists): ${parentPlan.name} [sku=${parent.sku || parentPlan.sku}]`);
+    } else {
+      parent = await createParentProduct({
+        tenantId,
+        shopId,
+        parentPlan,
+        transaction,
+      });
+      createdParents += 1;
+      productBySku.set(normalizedKey(parentPlan.sku), parent);
+      productByName.set(normalizedKey(parentPlan.name), parent);
+      parentIdByName.set(normalizedKey(parentPlan.name), parent.id);
+      console.log(`  Created parent: ${parentPlan.name} [sku=${parentPlan.sku}]`);
+    }
+  }
+
+  for (const variantPlan of catalog.variants) {
+    const existingVariant = variantBySku.get(normalizedKey(variantPlan.sku));
+    if (existingVariant) {
+      skippedVariants += 1;
+      continue;
+    }
+
+    const parentId = parentIdByName.get(normalizedKey(variantPlan.parentName));
+    if (!parentId) {
+      throw new Error(`Missing parent product for variant parent "${variantPlan.parentName}"`);
+    }
+
+    await createVariant({
+      parentProductId: parentId,
+      variantPlan,
+      transaction,
+    });
+    createdVariants += 1;
+    parentsNeedingSync.add(parentId);
+  }
+
+  for (const parentId of parentsNeedingSync) {
+    await syncParentQuantityFromVariants(parentId, transaction);
+  }
+
+  return {
+    createdParents,
+    skippedParents,
+    createdVariants,
+    skippedVariants,
+  };
+}
+
+async function createFullCatalogProducts({ tenantId, shopId, catalog, transaction }) {
+  let createdParents = 0;
+  let createdVariants = 0;
+  let createdSimple = 0;
+  const parentIdByName = new Map();
+
+  for (const parentPlan of catalog.parents) {
+    const saved = await createParentProduct({
+      tenantId,
+      shopId,
+      parentPlan,
+      transaction,
+    });
+    parentIdByName.set(normalizedKey(parentPlan.name), saved.id);
+    createdParents += 1;
+  }
+
+  for (const variantPlan of catalog.variants) {
+    const parentId = parentIdByName.get(normalizedKey(variantPlan.parentName));
+    if (!parentId) {
+      throw new Error(`Missing parent product for variant parent "${variantPlan.parentName}"`);
+    }
+    await createVariant({
+      parentProductId: parentId,
+      variantPlan,
+      transaction,
+    });
+    createdVariants += 1;
+  }
+
+  for (const parentPlan of catalog.parents) {
+    const parentId = parentIdByName.get(normalizedKey(parentPlan.name));
+    if (parentId) {
+      await syncParentQuantityFromVariants(parentId, transaction);
+    }
+  }
+
+  if (catalog.simple) {
+    await createParentProduct({
+      tenantId,
+      shopId,
+      parentPlan: catalog.simple,
+      transaction,
+    });
+    createdSimple += 1;
+  }
+
+  return { createdParents, createdVariants, createdSimple };
+}
+
 async function main() {
   validateArgs();
 
-  const catalog = buildCatalog();
+  const catalog = buildCatalog({ append: isAppend });
 
-  console.log('\n=== Bravo Thrybe 350GSM Stock Replace ===');
+  console.log(`\n=== Bravo Thrybe GSM Stock ${isAppend ? 'Append' : 'Replace'} ===`);
   printSummary('Mode', isDryRun ? 'DRY RUN' : 'EXECUTE');
+  printSummary('Append / import-only', isAppend ? 'YES (320+230 only; no product wipe)' : 'no');
   printSummary('Purge tenant commerce', purgeTenantCommerce ? 'YES (--purge-tenant-commerce/--start-fresh)' : 'no');
   if (email) printSummary('Email', email);
   if (tenantIdFilter) printSummary('Tenant id filter', tenantIdFilter);
   if (tenantNameFilter) printSummary('Tenant name filter', tenantNameFilter);
   if (shopNameFilter) printSummary('Shop name filter', shopNameFilter);
-  printSummary('350GSM cost / sell', `${COST_PRICE} / ${SELLING_PRICE}`);
+
+  for (const [label, stats] of Object.entries(catalog.byLabel)) {
+    printSummary(
+      `${label} cost / sell`,
+      `${stats.costPrice} / ${stats.sellingPrice} (${stats.parents} colors × ${stats.sizes.length} sizes = ${stats.variants} variants)`
+    );
+  }
   printSummary('Color products', catalog.parents.length);
   printSummary('Size variants', catalog.variantCount);
-  printSummary('Simple products', 1);
+  printSummary('Simple products', catalog.simple ? 1 : 0);
   printSummary('Total products to create', catalog.productCount);
 
   printRows('Color products preview', catalog.parents, (row) => (
-    `${row.name} [sku=${row.sku}] qtySum=${row.quantityOnHand} sizes=${SIZES.map((size, i) => `${size}:${row.quantities[i]}`).join(' ')}`
+    `${row.name} [sku=${row.sku}] qtySum=${row.quantityOnHand} sizes=${row.sizes.map((size, i) => `${size}:${row.quantities[i]}`).join(' ')}`
   ));
   printRows('Variant preview', catalog.variants, (row) => (
     `${row.parentName} -> ${row.name} [sku=${row.sku}] qty=${row.quantityOnHand} price=${row.sellingPrice}`
   ), 15);
-  console.log(`\nSimple product:\n- ${catalog.simple.name} [sku=${catalog.simple.sku}] qty=${catalog.simple.quantityOnHand} cost=${catalog.simple.costPrice} sell=${catalog.simple.sellingPrice}`);
+  if (catalog.simple) {
+    console.log(`\nSimple product:\n- ${catalog.simple.name} [sku=${catalog.simple.sku}] qty=${catalog.simple.quantityOnHand} cost=${catalog.simple.costPrice} sell=${catalog.simple.sellingPrice}`);
+  }
 
   if (!process.env.DATABASE_URL) fail('DATABASE_URL is required');
   await testConnection();
@@ -906,7 +1191,12 @@ async function main() {
   printSummary('Shop', `${shop.name} (${shop.id})`);
 
   printCounts(existing.counts);
-  printCommercePurgePlan(commerce.counts, purgeTenantCommerce);
+  if (!isAppend) {
+    printCommercePurgePlan(commerce.counts, purgeTenantCommerce);
+  } else {
+    console.log('\nAppend mode: commerce purge and product wipe are skipped.');
+    printSummary('Existing expenses (untouched)', commerce.counts.expenses);
+  }
   if (existing.products.length) {
     printRows('Existing products sample', existing.products, (row) => (
       `${row.name} [sku=${row.sku || 'none'}] hasVariants=${row.hasVariants} qty=${row.quantityOnHand}`
@@ -915,23 +1205,49 @@ async function main() {
 
   if (isDryRun) {
     console.log('\nDRY RUN ONLY. No rows were deleted or created.');
-    if (purgeTenantCommerce) {
+    if (isAppend) {
+      console.log('To append 320+230 (keep existing 350), re-run with:');
+      console.log(
+        `  node ${SCRIPT_NAME} --email ${email || DEFAULT_HELP_EMAIL} --execute --append`
+      );
+    } else if (purgeTenantCommerce) {
       console.log('To execute start-fresh, re-run with:');
       console.log(
         `  node ${SCRIPT_NAME} --email ${email || DEFAULT_HELP_EMAIL} `
         + '--execute --confirm-delete --purge-tenant-commerce'
       );
     } else {
+      console.log('To append 320+230 only: --email <user> --execute --append');
       console.log('To execute product replace only: --email <user> --execute --confirm-delete');
-      console.log('To wipe commerce then replace: add --purge-tenant-commerce (or --start-fresh).');
+      console.log('To wipe commerce (incl. expenses) then replace: add --purge-tenant-commerce (or --start-fresh).');
     }
     return;
   }
 
-  assertDeleteAllowed(existing.counts);
+  if (!isAppend) {
+    assertDeleteAllowed(existing.counts);
+  }
 
   const transaction = await sequelize.transaction();
   try {
+    if (isAppend) {
+      console.log('\nAppending 320GSM + 230GSM catalog (skip existing by SKU/name)...');
+      const result = await appendCatalogProducts({
+        tenantId,
+        shopId: shop.id,
+        catalog,
+        transaction,
+      });
+      await transaction.commit();
+
+      console.log('\nAppend completed.');
+      printSummary('Created color products', result.createdParents);
+      printSummary('Skipped color products', result.skippedParents);
+      printSummary('Created variants', result.createdVariants);
+      printSummary('Skipped variants', result.skippedVariants);
+      return;
+    }
+
     if (purgeTenantCommerce) {
       await purgeTenantCommerceDocs(
         tenantId,
@@ -950,50 +1266,13 @@ async function main() {
       transaction,
     );
 
-    console.log('\nCreating 350GSM catalog + Printing...');
-    let createdParents = 0;
-    let createdVariants = 0;
-    let createdSimple = 0;
-    const parentIdByName = new Map();
-
-    for (const parentPlan of catalog.parents) {
-      const saved = await createParentProduct({
-        tenantId,
-        shopId: shop.id,
-        parentPlan,
-        transaction,
-      });
-      parentIdByName.set(normalizedKey(parentPlan.name), saved.id);
-      createdParents += 1;
-    }
-
-    for (const variantPlan of catalog.variants) {
-      const parentId = parentIdByName.get(normalizedKey(variantPlan.parentName));
-      if (!parentId) {
-        throw new Error(`Missing parent product for variant parent "${variantPlan.parentName}"`);
-      }
-      await createVariant({
-        parentProductId: parentId,
-        variantPlan,
-        transaction,
-      });
-      createdVariants += 1;
-    }
-
-    for (const parentPlan of catalog.parents) {
-      const parentId = parentIdByName.get(normalizedKey(parentPlan.name));
-      if (parentId) {
-        await syncParentQuantityFromVariants(parentId, transaction);
-      }
-    }
-
-    await createParentProduct({
+    console.log('\nCreating full GSM catalog (350 + 320 + 230) + Printing...');
+    const created = await createFullCatalogProducts({
       tenantId,
       shopId: shop.id,
-      parentPlan: catalog.simple,
+      catalog,
       transaction,
     });
-    createdSimple += 1;
 
     await transaction.commit();
 
@@ -1003,13 +1282,15 @@ async function main() {
       printSummary('Purged invoices', commerce.counts.invoices);
       printSummary('Purged payments', commerce.counts.payments);
       printSummary('Purged quotes', commerce.counts.quotes);
+      printSummary('Purged expenses', commerce.counts.expenses);
+      printSummary('Purged expense activities', commerce.counts.expenseActivities);
     }
     printSummary('Deleted products', existing.counts.products);
     printSummary('Deleted variants', existing.counts.variants);
-    printSummary('Created color products', createdParents);
-    printSummary('Created variants', createdVariants);
-    printSummary('Created simple products', createdSimple);
-    printSummary('Total products now', createdParents + createdSimple);
+    printSummary('Created color products', created.createdParents);
+    printSummary('Created variants', created.createdVariants);
+    printSummary('Created simple products', created.createdSimple);
+    printSummary('Total products now', created.createdParents + created.createdSimple);
   } catch (error) {
     await transaction.rollback();
     throw error;
@@ -1018,7 +1299,7 @@ async function main() {
 
 main()
   .catch((error) => {
-    console.error('\nReplace failed:', error?.message || error);
+    console.error(`\n${isAppend ? 'Append' : 'Replace'} failed:`, error?.message || error);
     process.exitCode = 1;
   })
   .finally(async () => {
