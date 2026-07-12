@@ -636,26 +636,50 @@ exports.respondToQuoteByToken = async (req, res, next) => {
 
     // Notify tenant by email when quote is accepted (use business/org email; don't fail response if send fails)
     try {
-      const organization = await resolveDocumentOrganization({
+      const {
+        shouldUseAutomationInsteadOfBuiltIn,
+        TEMPLATE_KEYS,
+      } = require('../services/customerNotificationBridgeService');
+      const useAutomation = await shouldUseAutomationInsteadOfBuiltIn(
         tenantId,
-        shop: updatedQuote.shop || null,
-        studioLocation: updatedQuote.studioLocation || null,
-      });
-      const tenantEmail = organization.email || null;
-      if (tenantEmail && typeof tenantEmail === 'string' && tenantEmail.includes('@')) {
-        const emailService = require('../services/emailService');
-        const emailTemplates = require('../services/emailTemplates');
-        const frontendUrl = process.env.FRONTEND_URL || '';
-        const { subject, html, text } = emailTemplates.quoteAcceptedNotifyTenant(
-          updatedQuote,
-          organizationToEmailCompany(organization),
-          frontendUrl
-        );
-        await emailService.sendMessage(tenantId, tenantEmail, subject, html, text);
+        TEMPLATE_KEYS.QUOTE_ACCEPTED_STAFF
+      );
+      if (!useAutomation) {
+        const organization = await resolveDocumentOrganization({
+          tenantId,
+          shop: updatedQuote.shop || null,
+          studioLocation: updatedQuote.studioLocation || null,
+        });
+        const tenantEmail = organization.email || null;
+        if (tenantEmail && typeof tenantEmail === 'string' && tenantEmail.includes('@')) {
+          const emailService = require('../services/emailService');
+          const emailTemplates = require('../services/emailTemplates');
+          const frontendUrl = process.env.FRONTEND_URL || '';
+          const { subject, html, text } = emailTemplates.quoteAcceptedNotifyTenant(
+            updatedQuote,
+            organizationToEmailCompany(organization),
+            frontendUrl
+          );
+          await emailService.sendMessage(tenantId, tenantEmail, subject, html, text);
+        }
       }
     } catch (emailErr) {
       console.error('[Quote] respondToQuoteByToken notify-tenant email failed:', emailErr?.message);
     }
+
+    setImmediate(async () => {
+      try {
+        const { runQuoteAcceptedStaffAutomations } = require('../services/automationEngineService');
+        await runQuoteAcceptedStaffAutomations({
+          tenantId,
+          quote: updatedQuote,
+          customer: updatedQuote.customer || null,
+          actorUserId: null,
+        });
+      } catch (automationErr) {
+        console.error('[Quote] quote_accepted_staff automations failed:', automationErr?.message || automationErr);
+      }
+    });
 
     const message = invoiceId
       ? (isShop
@@ -1384,6 +1408,33 @@ exports.convertQuoteToJob = async (req, res, next) => {
         job: jobWithDetails,
         assignee: jobWithDetails.assignedUser,
         assignedByUser: req.user || null
+      });
+    }
+
+    if (jobWithDetails.assignedTo) {
+      setImmediate(async () => {
+        try {
+          const {
+            runJobAssignedStaffAutomations,
+            runJobCreatedStaffAutomations,
+          } = require('../services/automationEngineService');
+          await runJobAssignedStaffAutomations({
+            tenantId: req.tenantId,
+            job: jobWithDetails,
+            assignee: jobWithDetails.assignedUser || null,
+            customer: jobWithDetails.customer || null,
+            assignedByUser: req.user || null,
+            actorUserId: req.user?.id || null,
+          });
+          await runJobCreatedStaffAutomations({
+            tenantId: req.tenantId,
+            job: jobWithDetails,
+            customer: jobWithDetails.customer || null,
+            actorUserId: req.user?.id || null,
+          });
+        } catch (automationErr) {
+          console.error('[convertQuoteToJob] staff automations failed:', automationErr?.message || automationErr);
+        }
       });
     }
 

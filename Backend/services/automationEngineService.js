@@ -29,6 +29,11 @@ const {
   filterTemplatesForTenant,
   isTriggerAllowedForTenant,
 } = require('../utils/automationBusinessType');
+const {
+  isInternalAudience,
+  resolveStaffRecipients,
+  getActionRecipientConfig,
+} = require('./automationRecipientService');
 
 const DEDUPE_WINDOW_HOURS = 24;
 const MAX_RULES_PER_TICK = 100;
@@ -37,6 +42,7 @@ const MAX_SUBJECTS_PER_RULE = 50;
 /** Sticky (condition-while-true) triggers that support repeat frequency. */
 const STICKY_TRIGGER_TYPES = new Set([
   'invoice_overdue',
+  'invoice_overdue_staff',
   'invoice_due_in_days',
   'quote_no_response',
   'lead_no_contact_days',
@@ -45,6 +51,12 @@ const STICKY_TRIGGER_TYPES = new Set([
   'out_of_stock_detected',
   'low_stock_on_change',
   'job_due_in_hours',
+]);
+
+const MESSAGING_ACTION_TYPES = new Set([
+  'send_email_platform',
+  'send_sms',
+  'send_whatsapp',
 ]);
 
 const FREQUENCY_COOLDOWN_HOURS = {
@@ -74,12 +86,26 @@ function getTemplates() {
     {
       key: 'low_stock_alert',
       name: 'Low-stock alert',
-      description: 'Create a task when stock reaches the reorder level.',
+      description: 'Create a task and email staff when stock reaches the reorder level.',
       triggerType: 'low_stock_detected',
+      audience: 'internal',
       allowedBusinessTypes: ['shop'],
       triggerConfig: { thresholdMode: 'reorder_level' },
       actionConfig: {
-        actions: [{ type: 'create_task', title: 'Restock low item', priority: 'high', link: '/materials' }]
+        audience: 'internal',
+        defaultRecipient: { type: 'role', roles: ['owner', 'manager'] },
+        actions: [{
+          type: 'create_task',
+          title: 'Restock low item',
+          priority: 'high',
+          link: '/materials'
+        }, {
+          type: 'send_email_platform',
+          audience: 'internal',
+          recipient: { type: 'role', roles: ['owner', 'manager'] },
+          subject: 'Low stock: {{productName}}',
+          body: 'Stock alert for {{productName}} (SKU: {{sku}}).\n\nQuantity on hand: {{quantityOnHand}}\nReorder level: {{reorderLevel}}\n\n— {{businessName}}',
+        }]
       }
     },
     {
@@ -187,13 +213,18 @@ function getTemplates() {
       name: 'Daily sales summary',
       description: 'Send the team a daily sales recap.',
       triggerType: 'daily_sales_summary',
+      audience: 'internal',
       allowedBusinessTypes: ['shop'],
       triggerConfig: { summaryPeriod: 'yesterday' },
       conditionConfig: { runAfterTime: '06:00' },
       scheduleConfig: { cooldownHours: 20 },
       actionConfig: {
+        audience: 'internal',
+        defaultRecipient: { type: 'role', roles: ['owner', 'manager'] },
         actions: [{
           type: 'send_email_platform',
+          audience: 'internal',
+          recipient: { type: 'role', roles: ['owner', 'manager'] },
           subject: 'Daily sales summary — {{date}}',
           body: 'Daily sales recap for {{date}} ({{periodLabel}}):\n\nTotal sales: {{totalSalesFormatted}}\nTransactions: {{transactionCount}}\nTop products: {{topProducts}}\n\n— {{businessName}}'
         }, {
@@ -248,36 +279,70 @@ function getTemplates() {
       name: 'New lead notification',
       description: 'Notify the team when a new lead is created.',
       triggerType: 'new_lead',
+      audience: 'internal',
       allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
       triggerConfig: {},
       actionConfig: {
+        audience: 'internal',
+        defaultRecipient: { type: 'role', roles: ['owner', 'manager'] },
         actions: [{
           type: 'create_task',
           title: 'Follow up new lead — {{leadName}}',
           priority: 'medium',
-          description: 'New lead {{leadName}} from {{leadSource}}. Phone: {{phone}}. Email: {{email}}.',
+          description: 'New lead {{leadName}} from {{leadSource}}. Phone: {{leadPhone}}. Email: {{leadEmail}}.',
           link: '/leads',
         }, {
           type: 'send_email_platform',
+          audience: 'internal',
+          recipient: { type: 'role', roles: ['owner', 'manager'] },
           subject: 'New lead: {{leadName}}',
-          body: 'A new lead was added:\n\nName: {{leadName}}\nCompany: {{leadCompany}}\nPhone: {{phone}}\nEmail: {{email}}\nSource: {{leadSource}}\n\n— {{businessName}}',
+          body: 'A new lead was added:\n\nName: {{leadName}}\nCompany: {{leadCompany}}\nPhone: {{leadPhone}}\nEmail: {{leadEmail}}\nSource: {{leadSource}}\n\n— {{businessName}}',
+        }]
+      }
+    },
+    {
+      key: 'new_lead_staff',
+      name: 'New lead — staff alert',
+      description: 'Email staff when a new lead is created (does not message the lead).',
+      triggerType: 'new_lead_staff',
+      audience: 'internal',
+      allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
+      triggerConfig: {},
+      actionConfig: {
+        audience: 'internal',
+        defaultRecipient: { type: 'role', roles: ['owner', 'manager', 'staff'] },
+        actions: [{
+          type: 'send_email_platform',
+          audience: 'internal',
+          recipient: { type: 'role', roles: ['owner', 'manager', 'staff'] },
+          subject: 'New lead: {{leadName}}',
+          body: 'A new lead was added:\n\nName: {{leadName}}\nCompany: {{leadCompany}}\nPhone: {{leadPhone}}\nEmail: {{leadEmail}}\nSource: {{leadSource}}\n\n— {{businessName}}',
         }]
       }
     },
     {
       key: 'high_value_invoice_alert',
       name: 'High value invoice alert',
-      description: 'Create an internal alert when an invoice exceeds a set amount.',
+      description: 'Alert managers when an invoice exceeds a set amount.',
       triggerType: 'high_value_invoice',
+      audience: 'internal',
       allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
       triggerConfig: { minAmount: 1000 },
       actionConfig: {
+        audience: 'internal',
+        defaultRecipient: { type: 'role', roles: ['owner', 'manager'] },
         actions: [{
           type: 'create_task',
           title: 'High value invoice — {{invoiceNumber}}',
           priority: 'high',
           description: 'Invoice {{invoiceNumber}} for {{customerName}} is {{totalAmountFormatted}}.',
           link: '/invoices',
+        }, {
+          type: 'send_email_platform',
+          audience: 'internal',
+          recipient: { type: 'role', roles: ['owner', 'manager'] },
+          subject: 'High value invoice {{invoiceNumber}}',
+          body: 'Invoice {{invoiceNumber}} for {{customerName}} totals {{totalAmountFormatted}}.\n\n— {{businessName}}',
         }]
       }
     },
@@ -363,28 +428,40 @@ function getTemplates() {
     {
       key: 'low_stock_on_change',
       name: 'Low stock (real-time)',
-      description: 'Alert when stock drops to reorder level after a sale or adjustment.',
+      description: 'Alert staff when stock drops to reorder level after a sale or adjustment.',
       triggerType: 'low_stock_on_change',
+      audience: 'internal',
       allowedBusinessTypes: ['shop'],
       triggerConfig: { thresholdMode: 'reorder_level' },
       actionConfig: {
+        audience: 'internal',
+        defaultRecipient: { type: 'role', roles: ['owner', 'manager'] },
         actions: [{
           type: 'create_task',
           title: 'Restock {{productName}}',
           priority: 'high',
           description: '{{productName}} is low ({{quantityOnHand}} on hand, reorder at {{reorderLevel}}).',
           link: '/materials',
+        }, {
+          type: 'send_email_platform',
+          audience: 'internal',
+          recipient: { type: 'role', roles: ['owner', 'manager'] },
+          subject: 'Low stock: {{productName}}',
+          body: '{{productName}} ({{sku}}) is low.\n\nOn hand: {{quantityOnHand}}\nReorder level: {{reorderLevel}}\n\n— {{businessName}}',
         }]
       }
     },
     {
       key: 'out_of_stock_alert',
       name: 'Out of stock (real-time)',
-      description: 'Alert when a product goes out of stock.',
+      description: 'Alert staff when a product goes out of stock.',
       triggerType: 'out_of_stock_detected',
+      audience: 'internal',
       allowedBusinessTypes: ['shop'],
       triggerConfig: {},
       actionConfig: {
+        audience: 'internal',
+        defaultRecipient: { type: 'role', roles: ['owner', 'manager'] },
         actions: [{
           type: 'create_task',
           title: 'Out of stock — {{productName}}',
@@ -392,7 +469,15 @@ function getTemplates() {
           description: '{{productName}} ({{sku}}) is out of stock.',
           link: '/materials',
         }, {
+          type: 'send_email_platform',
+          audience: 'internal',
+          recipient: { type: 'role', roles: ['owner', 'manager'] },
+          subject: 'Out of stock: {{productName}}',
+          body: '{{productName}} ({{sku}}) is out of stock.\n\n— {{businessName}}',
+        }, {
           type: 'send_whatsapp',
+          audience: 'internal',
+          recipient: { type: 'role', roles: ['owner', 'manager'] },
           templateName: 'low_stock_alert',
           language: 'en',
           parameters: ['{{productName}}', '{{quantityOnHand}}', '{{reorderLevel}}'],
@@ -425,9 +510,12 @@ function getTemplates() {
       name: 'Job due soon',
       description: 'Remind the assigned team member when a job is due within a set number of hours.',
       triggerType: 'job_due_in_hours',
+      audience: 'internal',
       allowedBusinessTypes: ['studio'],
       triggerConfig: { hoursBeforeDue: 24 },
       actionConfig: {
+        audience: 'internal',
+        defaultRecipient: { type: 'assignee' },
         actions: [{
           type: 'create_task',
           title: 'Job due soon — {{jobNumber}}',
@@ -436,6 +524,8 @@ function getTemplates() {
           link: '/jobs',
         }, {
           type: 'send_email_platform',
+          audience: 'internal',
+          recipient: { type: 'assignee' },
           subject: 'Job {{jobNumber}} due soon',
           body: 'Hi {{assigneeName}},\n\nJob {{jobNumber}} for {{customerName}} is due on {{dueDate}}.\n\nPlease prioritize this work before the due date.\n\n— {{businessName}}',
         }]
@@ -518,7 +608,231 @@ function getTemplates() {
           body: 'Hi {{customerName}},\n\nWe have received your order {{orderNumber}}.\n\n{{trackingLinkLine}}\n\nThank you,\n{{businessName}}',
         }]
       }
-    }
+    },
+    {
+      key: 'job_assigned_staff',
+      name: 'Job assigned — staff notify',
+      description: 'Notify the assignee when a job is assigned or reassigned.',
+      triggerType: 'job_assigned_staff',
+      audience: 'internal',
+      allowedBusinessTypes: ['studio'],
+      triggerConfig: {},
+      actionConfig: {
+        audience: 'internal',
+        defaultRecipient: { type: 'assignee' },
+        actions: [{
+          type: 'send_email_platform',
+          audience: 'internal',
+          recipient: { type: 'assignee' },
+          subject: 'You were assigned job {{jobNumber}}',
+          body: 'Hi {{assigneeName}},\n\nYou have been assigned job {{jobNumber}} ({{jobTitle}}) for {{customerName}}.\n\nDue: {{dueDate}}\n\n— {{businessName}}',
+        }]
+      }
+    },
+    {
+      key: 'payment_received_staff',
+      name: 'Payment received — staff alert',
+      description: 'Notify owners and managers when a payment is recorded.',
+      triggerType: 'payment_received_staff',
+      audience: 'internal',
+      allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
+      triggerConfig: {},
+      actionConfig: {
+        audience: 'internal',
+        defaultRecipient: { type: 'role', roles: ['owner', 'manager'] },
+        actions: [{
+          type: 'send_email_platform',
+          audience: 'internal',
+          recipient: { type: 'role', roles: ['owner', 'manager'] },
+          subject: 'Payment received — {{invoiceNumber}}',
+          body: 'Payment of {{amount}} received for invoice {{invoiceNumber}} ({{customerName}}).\n\nRemaining balance: {{balance}}\nMethod: {{paymentMethod}}\n\n— {{businessName}}',
+        }]
+      }
+    },
+    {
+      key: 'invoice_paid_staff',
+      name: 'Invoice fully paid — staff alert',
+      description: 'Notify owners and managers when an invoice is fully paid.',
+      triggerType: 'invoice_paid_staff',
+      audience: 'internal',
+      allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
+      triggerConfig: {},
+      actionConfig: {
+        audience: 'internal',
+        defaultRecipient: { type: 'role', roles: ['owner', 'manager'] },
+        actions: [{
+          type: 'send_email_platform',
+          audience: 'internal',
+          recipient: { type: 'role', roles: ['owner', 'manager'] },
+          subject: 'Invoice paid — {{invoiceNumber}}',
+          body: 'Invoice {{invoiceNumber}} for {{customerName}} is fully paid ({{totalAmountFormatted}}).\n\n— {{businessName}}',
+        }]
+      }
+    },
+    {
+      key: 'invoice_overdue_staff',
+      name: 'Overdue invoice — staff alert',
+      description: 'Notify staff when an invoice becomes overdue.',
+      triggerType: 'invoice_overdue_staff',
+      audience: 'internal',
+      allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
+      triggerConfig: { daysAfterDue: 1 },
+      scheduleConfig: { frequency: 'weekly', cooldownHours: 168 },
+      actionConfig: {
+        audience: 'internal',
+        defaultRecipient: { type: 'role', roles: ['owner', 'manager'] },
+        actions: [{
+          type: 'send_email_platform',
+          audience: 'internal',
+          recipient: { type: 'role', roles: ['owner', 'manager'] },
+          subject: 'Overdue invoice {{invoiceNumber}}',
+          body: 'Invoice {{invoiceNumber}} for {{customerName}} is {{overdueDays}} days overdue.\n\nBalance due: {{balance}}\nDue date: {{dueDate}}\n\n— {{businessName}}',
+        }]
+      }
+    },
+    {
+      key: 'order_created_staff',
+      name: 'Order created — staff alert',
+      description: 'Notify kitchen managers and staff when a restaurant order is created.',
+      triggerType: 'order_created_staff',
+      audience: 'internal',
+      allowedBusinessTypes: ['shop'],
+      requiresOrders: true,
+      triggerConfig: {},
+      actionConfig: {
+        audience: 'internal',
+        defaultRecipient: { type: 'role', roles: ['owner', 'manager', 'staff'] },
+        actions: [{
+          type: 'send_email_platform',
+          audience: 'internal',
+          recipient: { type: 'role', roles: ['owner', 'manager', 'staff'] },
+          subject: 'New order {{orderNumber}}',
+          body: 'New order {{orderNumber}} for {{customerName}} — {{totalAmountFormatted}}.\n\n— {{businessName}}',
+        }]
+      }
+    },
+    {
+      key: 'order_status_staff',
+      name: 'Order status — staff alert',
+      description: 'Notify staff when kitchen order status changes (especially ready).',
+      triggerType: 'order_status_staff',
+      audience: 'internal',
+      allowedBusinessTypes: ['shop'],
+      requiresOrders: true,
+      triggerConfig: {},
+      actionConfig: {
+        audience: 'internal',
+        defaultRecipient: { type: 'role', roles: ['owner', 'manager', 'staff'] },
+        actions: [{
+          type: 'send_email_platform',
+          audience: 'internal',
+          recipient: { type: 'role', roles: ['owner', 'manager', 'staff'] },
+          subject: 'Order {{orderNumber}} is {{orderStatus}}',
+          body: 'Order {{orderNumber}} for {{customerName}} is now {{orderStatus}}.\n\n— {{businessName}}',
+        }]
+      }
+    },
+    {
+      key: 'quote_accepted_staff',
+      name: 'Quote accepted — staff alert',
+      description: 'Notify the team when a customer accepts a quote.',
+      triggerType: 'quote_accepted_staff',
+      audience: 'internal',
+      allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
+      requiresQuotes: true,
+      triggerConfig: {},
+      actionConfig: {
+        audience: 'internal',
+        defaultRecipient: { type: 'role', roles: ['owner', 'manager'] },
+        actions: [{
+          type: 'send_email_platform',
+          audience: 'internal',
+          recipient: { type: 'role', roles: ['owner', 'manager'] },
+          subject: 'Quote {{quoteNumber}} accepted',
+          body: '{{customerName}} accepted quote {{quoteNumber}} ({{totalAmountFormatted}}).\n\n— {{businessName}}',
+        }]
+      }
+    },
+    {
+      key: 'job_created_staff',
+      name: 'Job created — staff alert',
+      description: 'Notify managers when a new job is created.',
+      triggerType: 'job_created_staff',
+      audience: 'internal',
+      allowedBusinessTypes: ['studio'],
+      triggerConfig: {},
+      actionConfig: {
+        audience: 'internal',
+        defaultRecipient: { type: 'role', roles: ['owner', 'manager'] },
+        actions: [{
+          type: 'send_email_platform',
+          audience: 'internal',
+          recipient: { type: 'role', roles: ['owner', 'manager'] },
+          subject: 'New job {{jobNumber}}',
+          body: 'Job {{jobNumber}} ({{jobTitle}}) was created for {{customerName}}.\n\n— {{businessName}}',
+        }]
+      }
+    },
+    {
+      key: 'job_completed_staff',
+      name: 'Job completed — staff alert',
+      description: 'Notify managers when a job is completed.',
+      triggerType: 'job_completed_staff',
+      audience: 'internal',
+      allowedBusinessTypes: ['studio'],
+      triggerConfig: {},
+      actionConfig: {
+        audience: 'internal',
+        defaultRecipient: { type: 'role', roles: ['owner', 'manager'] },
+        actions: [{
+          type: 'send_email_platform',
+          audience: 'internal',
+          recipient: { type: 'role', roles: ['owner', 'manager'] },
+          subject: 'Job {{jobNumber}} completed',
+          body: 'Job {{jobNumber}} for {{customerName}} has been completed.\n\n— {{businessName}}',
+        }]
+      }
+    },
+    {
+      key: 'sale_completed_staff',
+      name: 'Sale completed — staff alert',
+      description: 'Optionally notify managers when a sale is completed (off by default — enable when needed).',
+      triggerType: 'sale_completed_staff',
+      audience: 'internal',
+      allowedBusinessTypes: ['shop'],
+      triggerConfig: {},
+      actionConfig: {
+        audience: 'internal',
+        defaultRecipient: { type: 'role', roles: ['owner', 'manager'] },
+        actions: [{
+          type: 'send_email_platform',
+          audience: 'internal',
+          recipient: { type: 'role', roles: ['owner', 'manager'] },
+          subject: 'Sale {{saleNumber}} completed',
+          body: 'Sale {{saleNumber}} for {{customerName}} completed — {{totalAmountFormatted}}.\n\n— {{businessName}}',
+        }]
+      }
+    },
+    {
+      key: 'lead_assigned_staff',
+      name: 'Lead assigned — staff notify',
+      description: 'Notify the assignee when a lead is assigned.',
+      triggerType: 'lead_assigned_staff',
+      audience: 'internal',
+      allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
+      triggerConfig: {},
+      actionConfig: {
+        audience: 'internal',
+        defaultRecipient: { type: 'assignee' },
+        actions: [{
+          type: 'send_email_platform',
+          audience: 'internal',
+          recipient: { type: 'assignee' },
+          subject: 'Lead assigned: {{leadName}}',
+          body: 'Hi {{assigneeName}},\n\nYou were assigned lead {{leadName}} ({{leadCompany}}).\n\nPhone: {{leadPhone}}\nEmail: {{leadEmail}}\n\n— {{businessName}}',
+        }]
+      }
+    },
   ];
   return templates.map(annotateTemplateEligibility);
 }
@@ -1026,6 +1340,124 @@ async function executeRule({
     const actions = normalizeActions(rule.actionConfig);
     const results = [];
 
+    /**
+     * Send one messaging action to a single contact context.
+     * @param {object} action
+     * @param {object} contactContext
+     * @returns {Promise<object>}
+     */
+    const sendMessagingAction = async (action, contactContext) => {
+      if (action.type === 'send_email_platform') {
+        if (!contactContext?.email) {
+          return {
+            type: 'send_email_platform',
+            success: false,
+            error: 'No recipient email available',
+            recipientUserId: contactContext?.recipientUserId || null,
+          };
+        }
+        const rawSubject = action.subject || `${rule.name}`;
+        const rawBody = action.body || contactContext.message || '';
+        const subject = applyTemplateValues([rawSubject], contactContext)[0];
+        const body = applyTemplateValues([rawBody], contactContext)[0];
+        const html = emailTemplates.marketingPlainMessageEmail(body, {
+          name: contactContext.businessName || 'Business'
+        });
+        const response = await emailService.sendPlatformMessage(
+          contactContext.email,
+          subject,
+          html,
+          body
+        );
+        return {
+          type: 'send_email_platform',
+          success: !!response?.success,
+          error: response?.error || null,
+          recipientUserId: contactContext?.recipientUserId || null,
+          email: contactContext.email,
+        };
+      }
+
+      if (action.type === 'send_sms') {
+        if (!contactContext?.phone) {
+          return {
+            type: 'send_sms',
+            success: false,
+            error: 'No staff phone available — SMS skipped',
+            recipientUserId: contactContext?.recipientUserId || null,
+          };
+        }
+        try {
+          const rawBody = action.body || contactContext.message || '';
+          const message = typeof rawBody === 'string'
+            ? applyTemplateValues([rawBody], contactContext)[0]
+            : rawBody;
+          const response = await smsService.sendMessage(tenantId, contactContext.phone, message, action.fromNumber || null);
+          return {
+            type: 'send_sms',
+            success: !!response?.success,
+            messageId: response?.messageId || null,
+            error: response?.error || null,
+            errorCode: response?.errorCode || null,
+            recipientUserId: contactContext?.recipientUserId || null,
+          };
+        } catch (error) {
+          return {
+            type: 'send_sms',
+            success: false,
+            error: error?.message || 'send_failed',
+            recipientUserId: contactContext?.recipientUserId || null,
+          };
+        }
+      }
+
+      if (action.type === 'send_whatsapp') {
+        if (!contactContext?.phone) {
+          return {
+            type: 'send_whatsapp',
+            success: false,
+            error: 'No staff phone available — WhatsApp skipped',
+            recipientUserId: contactContext?.recipientUserId || null,
+          };
+        }
+        try {
+          const response = await whatsappService.sendMessage(
+            tenantId,
+            contactContext.phone,
+            action.templateName || contactContext.templateName || 'hello_world',
+            applyTemplateValues(Array.isArray(action.parameters) ? action.parameters : [], contactContext),
+            action.language || 'en',
+            {
+              category: action.category || action.messageCategory || 'transactional',
+              metadata: {
+                automationRuleId: rule.id,
+                triggerType: rule.triggerType,
+                subjectKey
+              },
+              buttonParameters: Array.isArray(action.buttonParameters) ? action.buttonParameters : undefined,
+              buttonIndex: action.buttonIndex
+            }
+          );
+          return {
+            type: 'send_whatsapp',
+            success: !!response?.success,
+            messageId: response?.messageId || null,
+            error: response?.error || null,
+            recipientUserId: contactContext?.recipientUserId || null,
+          };
+        } catch (error) {
+          return {
+            type: 'send_whatsapp',
+            success: false,
+            error: error?.message || 'send_failed',
+            recipientUserId: contactContext?.recipientUserId || null,
+          };
+        }
+      }
+
+      return { type: action.type, success: false, error: 'unsupported_action' };
+    };
+
     for (const action of actions) {
       if (action.type === 'create_task') {
         const taskAssigneeId = triggerContext.assigneeId || actorUserId;
@@ -1037,8 +1469,11 @@ async function executeRule({
           tenantId,
           userId: actorUserId || taskAssigneeId,
           assigneeId: taskAssigneeId,
-          title: action.title || `Automation task: ${rule.name}`,
-          description: action.description || triggerContext?.message || null,
+          title: applyTemplateValues([action.title || `Automation task: ${rule.name}`], triggerContext)[0],
+          description: applyTemplateValues(
+            [action.description || triggerContext?.message || ''],
+            triggerContext
+          )[0] || null,
           status: 'todo',
           priority: action.priority || 'medium',
           dueDate: action.dueDate || new Date().toISOString().slice(0, 10),
@@ -1055,80 +1490,47 @@ async function executeRule({
         continue;
       }
 
-      if (action.type === 'send_email_platform') {
-        if (!triggerContext?.email) {
-          results.push({ type: 'send_email_platform', success: false, error: 'No recipient email available' });
-          continue;
-        }
-        const rawSubject = action.subject || `${rule.name}`;
-        const rawBody = action.body || triggerContext.message || '';
-        const subject = applyTemplateValues([rawSubject], triggerContext)[0];
-        const body = applyTemplateValues([rawBody], triggerContext)[0];
-        const html = emailTemplates.marketingPlainMessageEmail(body, {
-          name: triggerContext.businessName || 'Business'
+      if (!MESSAGING_ACTION_TYPES.has(action.type)) {
+        continue;
+      }
+
+      const internal = isInternalAudience({ action, rule });
+      const recipientConfig = getActionRecipientConfig(action, rule);
+
+      if (internal || recipientConfig) {
+        const staffRecipients = await resolveStaffRecipients({
+          tenantId,
+          recipient: recipientConfig || { type: 'role', roles: ['owner', 'manager'] },
+          triggerContext,
         });
-        const response = await emailService.sendPlatformMessage(
-          triggerContext.email,
-          subject,
-          html,
-          body
-        );
-        results.push({ type: 'send_email_platform', success: !!response?.success, error: response?.error || null });
-        continue;
-      }
 
-      if (action.type === 'send_sms') {
-        if (!triggerContext?.phone) {
-          results.push({ type: 'send_sms', success: false, error: 'No recipient phone available' });
-          continue;
-        }
-        try {
-          const rawBody = action.body || triggerContext.message || '';
-          const message = typeof rawBody === 'string'
-            ? applyTemplateValues([rawBody], triggerContext)[0]
-            : rawBody;
-          const response = await smsService.sendMessage(tenantId, triggerContext.phone, message, action.fromNumber || null);
+        if (!staffRecipients.length) {
           results.push({
-            type: 'send_sms',
-            success: !!response?.success,
-            messageId: response?.messageId || null,
-            error: response?.error || null,
-            errorCode: response?.errorCode || null,
+            type: action.type,
+            success: false,
+            error: 'No staff recipients resolved',
+            audience: 'internal',
           });
-        } catch (error) {
-          results.push({ type: 'send_sms', success: false, error: error?.message || 'send_failed' });
+          continue;
+        }
+
+        // Never fall back to customer/lead contacts for internal messaging.
+        for (const staff of staffRecipients) {
+          const contactContext = {
+            ...triggerContext,
+            email: staff.email || null,
+            phone: staff.phone || null,
+            recipientName: staff.name || null,
+            recipientUserId: staff.userId,
+            assigneeName: triggerContext.assigneeName || staff.name || null,
+          };
+          results.push(await sendMessagingAction(action, contactContext));
         }
         continue;
       }
 
-      if (action.type === 'send_whatsapp') {
-        if (!triggerContext?.phone) {
-          results.push({ type: 'send_whatsapp', success: false, error: 'No recipient phone available' });
-          continue;
-        }
-        try {
-          const response = await whatsappService.sendMessage(
-            tenantId,
-            triggerContext.phone,
-            action.templateName || triggerContext.templateName || 'hello_world',
-            applyTemplateValues(Array.isArray(action.parameters) ? action.parameters : [], triggerContext),
-            action.language || 'en',
-            {
-              category: action.category || action.messageCategory || 'transactional',
-              metadata: {
-                automationRuleId: rule.id,
-                triggerType: rule.triggerType,
-                subjectKey
-              },
-              buttonParameters: Array.isArray(action.buttonParameters) ? action.buttonParameters : undefined,
-              buttonIndex: action.buttonIndex
-            }
-          );
-          results.push({ type: 'send_whatsapp', success: !!response?.success, messageId: response?.messageId || null, error: response?.error || null });
-        } catch (error) {
-          results.push({ type: 'send_whatsapp', success: false, error: error?.message || 'send_failed' });
-        }
-      }
+      // Customer-facing path: single implied recipient from trigger context.
+      results.push(await sendMessagingAction(action, triggerContext));
     }
 
     const allSucceeded = results.length > 0 && results.every((result) => result.success !== false);
@@ -1540,7 +1942,7 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
     })));
   }
 
-  if (triggerType === 'invoice_overdue') {
+  if (triggerType === 'invoice_overdue' || triggerType === 'invoice_overdue_staff') {
     const daysAfterDue = toNumber(triggerConfig.daysAfterDue, 0);
     const cutoff = endOfDay(addDays(now, -daysAfterDue));
     const invoices = await Invoice.findAll({
@@ -1555,9 +1957,24 @@ async function getTriggerContextsForRule(rule, now = new Date()) {
       order: [['dueDate', 'ASC']]
     });
     const overdueCustomerIds = await overdueInvoiceCustomerIds(tenantId, invoices.map((invoice) => invoice.customerId), now);
-    return finalizeTriggerContexts(tenantId, invoices.map((invoice) => invoiceContext(invoice, rule, 'invoice_overdue', now, {
-      hasOverdueInvoices: overdueCustomerIds.has(invoice.customerId)
-    })));
+    const kind = triggerType === 'invoice_overdue_staff' ? 'invoice_overdue_staff' : 'invoice_overdue';
+    return finalizeTriggerContexts(tenantId, invoices.map((invoice) => {
+      const ctx = invoiceContext(invoice, rule, kind, now, {
+        hasOverdueInvoices: overdueCustomerIds.has(invoice.customerId)
+      });
+      if (triggerType === 'invoice_overdue_staff') {
+        // Staff twin: keep customer fields as data placeholders, clear messaging contacts.
+        return {
+          ...ctx,
+          subjectKey: `invoice_overdue_staff:${invoice.id}`,
+          customerEmail: ctx.email || null,
+          customerPhone: ctx.phone || null,
+          email: null,
+          phone: null,
+        };
+      }
+      return ctx;
+    }));
   }
 
   if (triggerType === 'low_stock_detected') {
@@ -1914,12 +2331,53 @@ async function runPaymentReceivedAutomations({
     paymentMethod,
   });
 
-  return executeMatchingRules({
+  const customerSummary = await executeMatchingRules({
     tenantId,
     triggerType: 'payment_received',
     triggerContext,
     actorUserId,
   });
+
+  const staffContext = {
+    ...triggerContext,
+    subjectKey: `payment_received_staff:${invoice.id}:${payment?.id || payment?.paymentNumber || Date.now()}`,
+    customerEmail: triggerContext.email || null,
+    customerPhone: triggerContext.phone || null,
+    email: null,
+    phone: null,
+  };
+
+  const staffSummary = await executeMatchingRules({
+    tenantId,
+    triggerType: 'payment_received_staff',
+    triggerContext: staffContext,
+    actorUserId,
+  });
+
+  const balance = toNumber(invoice?.balance, 0);
+  const isFullyPaid = balance <= 0 || invoice?.status === 'paid';
+  let invoicePaidSummary = { skipped: true, reason: 'not_fully_paid' };
+  if (isFullyPaid) {
+    invoicePaidSummary = await executeMatchingRules({
+      tenantId,
+      triggerType: 'invoice_paid_staff',
+      triggerContext: {
+        ...staffContext,
+        subjectKey: `invoice_paid_staff:${invoice.id}`,
+        totalAmountFormatted: whatsappTemplates.formatCurrency(
+          toNumber(invoice.totalAmount, triggerContext.totalAmount)
+        ),
+        message: `Invoice ${invoice.invoiceNumber || invoice.id} is fully paid.`,
+      },
+      actorUserId,
+    });
+  }
+
+  return {
+    payment_received: customerSummary,
+    payment_received_staff: staffSummary,
+    invoice_paid_staff: invoicePaidSummary,
+  };
 }
 
 /**
@@ -2405,8 +2863,13 @@ function buildLeadTriggerContext(lead) {
     leadCompany: lead.company || lead.name,
     leadSource: lead.source || 'unknown',
     customerName: lead.name,
-    email: lead.email || null,
-    phone: lead.phone || null,
+    // Lead contact stored separately — internal staff messaging must not use these as recipients.
+    leadEmail: lead.email || null,
+    leadPhone: lead.phone || null,
+    email: null,
+    phone: null,
+    assigneeId: lead.assignedTo || lead.assigneeId || null,
+    assigneeName: lead.assigneeName || null,
     customerHasPhone: Boolean(lead.phone),
     customerHasEmail: Boolean(lead.email),
     shopId: lead.shopId || null,
@@ -2637,12 +3100,23 @@ function buildLowProfitMarginTriggerContext(sale, marginMeta, customer = null) {
 
 async function runNewLeadAutomations({ tenantId, lead, actorUserId = null }) {
   if (!tenantId || !lead?.id) return { skipped: true, reason: 'missing_lead' };
-  return executeMatchingRules({
+  const triggerContext = buildLeadTriggerContext(lead);
+  const newLead = await executeMatchingRules({
     tenantId,
     triggerType: 'new_lead',
-    triggerContext: buildLeadTriggerContext(lead),
+    triggerContext,
     actorUserId,
   });
+  const newLeadStaff = await executeMatchingRules({
+    tenantId,
+    triggerType: 'new_lead_staff',
+    triggerContext: {
+      ...triggerContext,
+      subjectKey: `new_lead_staff:${lead.id}`,
+    },
+    actorUserId,
+  });
+  return { new_lead: newLead, new_lead_staff: newLeadStaff };
 }
 
 async function runCustomerCreatedAutomations({ tenantId, customer, actorUserId = null }) {
@@ -2884,6 +3358,298 @@ async function runDueAutomations({ now = new Date(), limit = MAX_RULES_PER_TICK 
   return summary;
 }
 
+/**
+ * Build staff-facing context when a job is assigned/reassigned.
+ * @param {object} params
+ * @returns {object}
+ */
+function buildJobAssignedStaffTriggerContext({
+  job,
+  assignee = null,
+  customer = null,
+  assignedByUser = null,
+}) {
+  const assigneeUser = assignee || job?.assignedUser || {};
+  const customerObj = customer || job?.customer || {};
+  const dueDate = job?.dueDate ? formatAutomationDate(job.dueDate) : null;
+  return {
+    subjectKey: `job_assigned_staff:${job.id}:${assigneeUser.id || job.assignedTo || 'none'}`,
+    jobId: job.id,
+    jobNumber: job.jobNumber || null,
+    jobTitle: job.title || job.description || null,
+    dueDate,
+    customerId: customerObj.id || job.customerId || null,
+    customerName: customerObj.name || customerObj.company || 'Customer',
+    assigneeId: assigneeUser.id || job.assignedTo || null,
+    assigneeName: assigneeUser.name || 'Team member',
+    assignedByName: assignedByUser?.name || null,
+    email: null,
+    phone: null,
+    shopId: job.shopId || null,
+    studioLocationId: job.studioLocationId || null,
+    message: `Job ${job.jobNumber || job.id} assigned to ${assigneeUser.name || 'team member'}.`,
+  };
+}
+
+/**
+ * Build staff-facing context when a quote is accepted.
+ * @param {object} quote
+ * @param {object|null} [customer]
+ * @returns {object}
+ */
+function buildQuoteAcceptedStaffTriggerContext(quote, customer = null) {
+  const customerObj = customer || quote?.customer || {};
+  const totalAmount = toNumber(quote?.totalAmount, 0);
+  return {
+    subjectKey: `quote_accepted_staff:${quote.id}`,
+    quoteId: quote.id,
+    quoteNumber: quote.quoteNumber || null,
+    quoteTitle: quote.title || 'Quote',
+    customerId: customerObj.id || quote.customerId || null,
+    customerName: customerObj.name || customerObj.company || 'Customer',
+    totalAmount,
+    totalAmountFormatted: whatsappTemplates.formatCurrency(totalAmount),
+    amount: totalAmount,
+    email: null,
+    phone: null,
+    shopId: quote.shopId || null,
+    studioLocationId: quote.studioLocationId || null,
+    message: `Quote ${quote.quoteNumber || quote.id} was accepted.`,
+  };
+}
+
+/**
+ * Build staff-facing context for order status changes.
+ * @param {object} params
+ * @returns {object}
+ */
+function buildOrderStatusStaffTriggerContext({
+  sale,
+  customer = null,
+  orderStatus = null,
+  previousStatus = null,
+}) {
+  const customerObj = customer || sale?.customer || {};
+  const totalAmount = toNumber(sale?.total, 0);
+  const orderNumber = sale?.saleNumber || String(sale?.id || '');
+  const status = orderStatus || sale?.orderStatus || null;
+  return {
+    subjectKey: `order_status_staff:${sale.id}:${status || 'unknown'}`,
+    saleId: sale.id,
+    saleNumber: sale.saleNumber || null,
+    orderNumber,
+    orderStatus: status,
+    previousStatus: previousStatus || null,
+    customerId: customerObj.id || sale.customerId || null,
+    customerName: customerObj.name || customerObj.company || 'Customer',
+    totalAmount,
+    totalAmountFormatted: whatsappTemplates.formatCurrency(totalAmount),
+    email: null,
+    phone: null,
+    shopId: sale.shopId || null,
+    studioLocationId: sale.studioLocationId || null,
+    message: `Order ${orderNumber} is now ${status || 'updated'}.`,
+  };
+}
+
+/**
+ * Build staff-facing context when a lead is assigned.
+ * @param {object} params
+ * @returns {object}
+ */
+function buildLeadAssignedStaffTriggerContext({ lead, assignee = null }) {
+  const base = buildLeadTriggerContext(lead);
+  const assigneeUser = assignee || {};
+  return {
+    ...base,
+    subjectKey: `lead_assigned_staff:${lead.id}:${assigneeUser.id || lead.assignedTo || 'none'}`,
+    assigneeId: assigneeUser.id || lead.assignedTo || base.assigneeId || null,
+    assigneeName: assigneeUser.name || base.assigneeName || 'Team member',
+    email: null,
+    phone: null,
+    message: `Lead ${lead.name} assigned to ${assigneeUser.name || 'team member'}.`,
+  };
+}
+
+async function runJobAssignedStaffAutomations({
+  tenantId,
+  job,
+  assignee = null,
+  customer = null,
+  assignedByUser = null,
+  actorUserId = null,
+}) {
+  if (!tenantId || !job?.id) return { skipped: true, reason: 'missing_job' };
+  const assigneeUser = assignee || job.assignedUser || null;
+  if (!assigneeUser?.id && !job.assignedTo) {
+    return { skipped: true, reason: 'missing_assignee' };
+  }
+  return executeMatchingRules({
+    tenantId,
+    triggerType: 'job_assigned_staff',
+    triggerContext: buildJobAssignedStaffTriggerContext({
+      job,
+      assignee: assigneeUser,
+      customer: customer || job.customer || null,
+      assignedByUser,
+    }),
+    actorUserId,
+  });
+}
+
+async function runQuoteAcceptedStaffAutomations({
+  tenantId,
+  quote,
+  customer = null,
+  actorUserId = null,
+}) {
+  if (!tenantId || !quote?.id) return { skipped: true, reason: 'missing_quote' };
+  return executeMatchingRules({
+    tenantId,
+    triggerType: 'quote_accepted_staff',
+    triggerContext: buildQuoteAcceptedStaffTriggerContext(quote, customer || quote.customer || null),
+    actorUserId,
+  });
+}
+
+async function runOrderCreatedStaffAutomations({
+  tenantId,
+  sale,
+  customer = null,
+  actorUserId = null,
+  trackingLink = null,
+}) {
+  if (!tenantId || !sale?.id) return { skipped: true, reason: 'missing_sale' };
+  const customerCtx = buildOrderCreatedTriggerContext({
+    sale,
+    customer: customer || sale.customer || null,
+    trackingLink,
+  });
+  return executeMatchingRules({
+    tenantId,
+    triggerType: 'order_created_staff',
+    triggerContext: {
+      ...customerCtx,
+      subjectKey: `order_created_staff:${sale.id}`,
+      customerEmail: customerCtx.email || null,
+      customerPhone: customerCtx.phone || null,
+      email: null,
+      phone: null,
+    },
+    actorUserId,
+  });
+}
+
+async function runOrderStatusStaffAutomations({
+  tenantId,
+  sale,
+  customer = null,
+  orderStatus = null,
+  previousStatus = null,
+  actorUserId = null,
+}) {
+  if (!tenantId || !sale?.id) return { skipped: true, reason: 'missing_sale' };
+  return executeMatchingRules({
+    tenantId,
+    triggerType: 'order_status_staff',
+    triggerContext: buildOrderStatusStaffTriggerContext({
+      sale,
+      customer: customer || sale.customer || null,
+      orderStatus,
+      previousStatus,
+    }),
+    actorUserId,
+  });
+}
+
+async function runJobCreatedStaffAutomations({
+  tenantId,
+  job,
+  customer = null,
+  actorUserId = null,
+}) {
+  if (!tenantId || !job?.id) return { skipped: true, reason: 'missing_job' };
+  const base = buildJobCreatedTriggerContext({ job, customer: customer || job.customer || null });
+  return executeMatchingRules({
+    tenantId,
+    triggerType: 'job_created_staff',
+    triggerContext: {
+      ...base,
+      subjectKey: `job_created_staff:${job.id}`,
+      customerEmail: base.email || null,
+      customerPhone: base.phone || null,
+      email: null,
+      phone: null,
+      assigneeId: job.assignedTo || null,
+    },
+    actorUserId,
+  });
+}
+
+async function runJobCompletedStaffAutomations({
+  tenantId,
+  job,
+  customer = null,
+  actorUserId = null,
+}) {
+  if (!tenantId || !job?.id) return { skipped: true, reason: 'missing_job' };
+  const base = buildJobCompletedTriggerContext({ job, customer: customer || job.customer || null });
+  return executeMatchingRules({
+    tenantId,
+    triggerType: 'job_completed_staff',
+    triggerContext: {
+      ...base,
+      subjectKey: `job_completed_staff:${job.id}`,
+      customerEmail: base.email || null,
+      customerPhone: base.phone || null,
+      email: null,
+      phone: null,
+      assigneeId: job.assignedTo || null,
+    },
+    actorUserId,
+  });
+}
+
+async function runSaleCompletedStaffAutomations({
+  tenantId,
+  sale,
+  customer = null,
+  actorUserId = null,
+}) {
+  if (!tenantId || !sale?.id || sale.status !== 'completed') {
+    return { skipped: true, reason: 'missing_or_incomplete_sale' };
+  }
+  const base = buildSaleCompletedTriggerContext(sale, customer);
+  return executeMatchingRules({
+    tenantId,
+    triggerType: 'sale_completed_staff',
+    triggerContext: {
+      ...base,
+      subjectKey: `sale_completed_staff:${sale.id}`,
+      customerEmail: base.email || null,
+      customerPhone: base.phone || null,
+      email: null,
+      phone: null,
+    },
+    actorUserId,
+  });
+}
+
+async function runLeadAssignedStaffAutomations({
+  tenantId,
+  lead,
+  assignee = null,
+  actorUserId = null,
+}) {
+  if (!tenantId || !lead?.id) return { skipped: true, reason: 'missing_lead' };
+  return executeMatchingRules({
+    tenantId,
+    triggerType: 'lead_assigned_staff',
+    triggerContext: buildLeadAssignedStaffTriggerContext({ lead, assignee }),
+    actorUserId,
+  });
+}
+
 module.exports = {
   DEDUPE_WINDOW_HOURS,
   STICKY_TRIGGER_TYPES,
@@ -2898,6 +3664,10 @@ module.exports = {
   buildReviewRequestTriggerContext,
   buildJobCreatedTriggerContext,
   buildJobCompletedTriggerContext,
+  buildJobAssignedStaffTriggerContext,
+  buildQuoteAcceptedStaffTriggerContext,
+  buildOrderStatusStaffTriggerContext,
+  buildLeadAssignedStaffTriggerContext,
   buildDailySalesSummaryContext,
   buildLeadTriggerContext,
   buildCustomerCreatedTriggerContext,
@@ -2916,6 +3686,14 @@ module.exports = {
   runReviewRequestAutomations,
   runJobCreatedAutomations,
   runJobCompletedAutomations,
+  runJobAssignedStaffAutomations,
+  runJobCreatedStaffAutomations,
+  runJobCompletedStaffAutomations,
+  runQuoteAcceptedStaffAutomations,
+  runOrderCreatedStaffAutomations,
+  runOrderStatusStaffAutomations,
+  runSaleCompletedStaffAutomations,
+  runLeadAssignedStaffAutomations,
   runNewLeadAutomations,
   runCustomerCreatedAutomations,
   runInvoiceSentAutomations,

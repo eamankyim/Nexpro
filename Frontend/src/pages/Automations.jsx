@@ -54,6 +54,8 @@ import {
   THRESHOLD_MODE_OPTIONS,
   TRIGGER_OPTIONS,
   MESSAGING_ACTION_TYPES,
+  STAFF_RECIPIENT_TYPE_OPTIONS,
+  STAFF_ROLE_OPTIONS,
   actionRowsFromConfig,
   buildRulePayloadFromForm,
   buildTestContextFromForm,
@@ -62,6 +64,7 @@ import {
   defaultActionFormRow,
   defaultTriggerForm,
   formatPlaceholderHint,
+  isInternalStaffTrigger,
   isStickyTrigger,
   mergeTriggerForm,
   parseJsonObject,
@@ -265,6 +268,13 @@ const triggerMetaByType = {
   },
   invoice_overdue: {
     title: 'Invoice overdue',
+    description: (config = {}) => `${Number(config.daysAfterDue ?? 0)} days after due date`,
+    Icon: FileText,
+    color: 'text-amber-700',
+    bg: 'bg-amber-50',
+  },
+  invoice_overdue_staff: {
+    title: 'Invoice overdue (staff)',
     description: (config = {}) => `${Number(config.daysAfterDue ?? 0)} days after due date`,
     Icon: FileText,
     color: 'text-amber-700',
@@ -1052,12 +1062,13 @@ const TEMPLATE_METADATA = {
   low_stock_alert: {
     category: 'inventory_stock',
     title: 'Low stock alert',
-    description: 'Create a task when stock reaches the reorder level.',
+    description: 'Create a task and email staff when stock reaches the reorder level.',
     Icon: Package,
     accent: 'amber',
-    channels: ['task'],
+    channels: ['email', 'task'],
     difficulty: 'easy',
     usage: 188,
+    audience: 'internal',
   },
   win_back_campaign: {
     category: 'marketing',
@@ -1103,12 +1114,13 @@ const TEMPLATE_METADATA = {
   daily_sales_summary: {
     category: 'operations',
     title: 'Daily sales summary',
-    description: 'Send the team a daily recap of sales activity.',
+    description: 'Send owners and managers a daily recap of sales activity.',
     Icon: ClipboardList,
     accent: 'blue',
     channels: ['email', 'task'],
     difficulty: 'advanced',
     usage: 171,
+    audience: 'internal',
   },
   review_request: {
     category: 'sales_crm',
@@ -1134,22 +1146,156 @@ const TEMPLATE_METADATA = {
   new_lead_notification: {
     category: 'sales_crm',
     title: 'New lead notification',
-    description: 'Notify the team when a new lead is created.',
+    description: 'Notify the team when a new lead is created (staff email, not the lead).',
     Icon: Mail,
     accent: 'pink',
     channels: ['email', 'task'],
     difficulty: 'easy',
     usage: 198,
+    audience: 'internal',
+  },
+  new_lead_staff: {
+    category: 'sales_crm',
+    title: 'New lead — staff alert',
+    description: 'Email staff about a new lead without messaging the lead.',
+    Icon: Users,
+    accent: 'pink',
+    channels: ['email'],
+    difficulty: 'easy',
+    usage: 120,
+    audience: 'internal',
   },
   high_value_invoice_alert: {
     category: 'finance_payments',
     title: 'High value invoice alert',
-    description: 'Internal alert when an invoice exceeds a threshold.',
+    description: 'Alert managers when an invoice exceeds a threshold.',
     Icon: DollarSign,
     accent: 'amber',
-    channels: ['task'],
+    channels: ['email', 'task'],
     difficulty: 'medium',
     usage: 156,
+    audience: 'internal',
+  },
+  job_assigned_staff: {
+    category: 'operations',
+    title: 'Job assigned — staff',
+    description: 'Notify the assignee when a job is assigned or reassigned.',
+    Icon: UserPlus,
+    accent: 'blue',
+    channels: ['email'],
+    difficulty: 'easy',
+    usage: 210,
+    audience: 'internal',
+  },
+  payment_received_staff: {
+    category: 'finance_payments',
+    title: 'Payment received — staff',
+    description: 'Notify owners and managers when a payment is recorded.',
+    Icon: DollarSign,
+    accent: 'green',
+    channels: ['email'],
+    difficulty: 'easy',
+    usage: 180,
+    audience: 'internal',
+  },
+  invoice_paid_staff: {
+    category: 'finance_payments',
+    title: 'Invoice paid — staff',
+    description: 'Notify staff when an invoice is fully paid.',
+    Icon: CheckCircle2,
+    accent: 'green',
+    channels: ['email'],
+    difficulty: 'easy',
+    usage: 165,
+    audience: 'internal',
+  },
+  invoice_overdue_staff: {
+    category: 'finance_payments',
+    title: 'Invoice overdue — staff',
+    description: 'Notify staff when an invoice becomes overdue.',
+    Icon: AlertTriangle,
+    accent: 'amber',
+    channels: ['email'],
+    difficulty: 'easy',
+    usage: 190,
+    audience: 'internal',
+  },
+  order_created_staff: {
+    category: 'operations',
+    title: 'Order created — staff',
+    description: 'Notify kitchen managers and staff when an order is created.',
+    Icon: Bell,
+    accent: 'blue',
+    channels: ['email'],
+    difficulty: 'easy',
+    usage: 140,
+    audience: 'internal',
+  },
+  order_status_staff: {
+    category: 'operations',
+    title: 'Order status — staff',
+    description: 'Notify staff when kitchen order status changes.',
+    Icon: Activity,
+    accent: 'blue',
+    channels: ['email'],
+    difficulty: 'easy',
+    usage: 130,
+    audience: 'internal',
+  },
+  quote_accepted_staff: {
+    category: 'sales_crm',
+    title: 'Quote accepted — staff',
+    description: 'Notify the team when a customer accepts a quote.',
+    Icon: CheckCircle2,
+    accent: 'green',
+    channels: ['email'],
+    difficulty: 'easy',
+    usage: 175,
+    audience: 'internal',
+  },
+  job_created_staff: {
+    category: 'operations',
+    title: 'Job created — staff',
+    description: 'Notify managers when a new job is created.',
+    Icon: ClipboardList,
+    accent: 'blue',
+    channels: ['email'],
+    difficulty: 'easy',
+    usage: 110,
+    audience: 'internal',
+  },
+  job_completed_staff: {
+    category: 'operations',
+    title: 'Job completed — staff',
+    description: 'Notify managers when a job is completed.',
+    Icon: CheckCircle2,
+    accent: 'green',
+    channels: ['email'],
+    difficulty: 'easy',
+    usage: 105,
+    audience: 'internal',
+  },
+  sale_completed_staff: {
+    category: 'operations',
+    title: 'Sale completed — staff',
+    description: 'Optionally notify managers when a sale is completed.',
+    Icon: DollarSign,
+    accent: 'blue',
+    channels: ['email'],
+    difficulty: 'easy',
+    usage: 90,
+    audience: 'internal',
+  },
+  lead_assigned_staff: {
+    category: 'sales_crm',
+    title: 'Lead assigned — staff',
+    description: 'Notify the assignee when a lead is assigned.',
+    Icon: UserPlus,
+    accent: 'pink',
+    channels: ['email'],
+    difficulty: 'easy',
+    usage: 100,
+    audience: 'internal',
   },
   customer_created_welcome: {
     category: 'sales_crm',
@@ -1204,22 +1350,24 @@ const TEMPLATE_METADATA = {
   low_stock_on_change: {
     category: 'operations',
     title: 'Low stock (real-time)',
-    description: 'Alert when stock drops after a sale or adjustment.',
+    description: 'Email staff when stock drops after a sale or adjustment.',
     Icon: Package,
     accent: 'amber',
-    channels: ['task'],
+    channels: ['email', 'task'],
     difficulty: 'medium',
     usage: 176,
+    audience: 'internal',
   },
   out_of_stock_alert: {
     category: 'operations',
     title: 'Out of stock (real-time)',
-    description: 'Alert when a product goes out of stock.',
+    description: 'Alert staff when a product goes out of stock.',
     Icon: Package,
     accent: 'red',
-    channels: ['task', 'whatsapp'],
+    channels: ['email', 'task', 'whatsapp'],
     difficulty: 'medium',
     usage: 163,
+    audience: 'internal',
   },
   quote_sent_notification: {
     category: 'sales_crm',
@@ -1240,6 +1388,7 @@ const TEMPLATE_METADATA = {
     channels: ['task', 'email'],
     difficulty: 'medium',
     usage: 118,
+    audience: 'internal',
   },
   prescription_refill_reminder: {
     category: 'operations',
@@ -1597,6 +1746,7 @@ function AutomationTriggerFields({ triggerType, value, onPatch }) {
         </div>
       );
     case 'invoice_overdue':
+    case 'invoice_overdue_staff':
       return (
         <div className="space-y-1.5">
           <Label htmlFor="auto-days-after-due">Days after due date</Label>
@@ -1863,11 +2013,89 @@ function WhatsAppActionFields({ row, onPatch, placeholderHint }) {
   );
 }
 
+function StaffRecipientFields({ row, onPatch, triggerType }) {
+  const show = isInternalStaffTrigger(triggerType) || Boolean(row.recipientType);
+  if (!show || !MESSAGING_ACTION_TYPES.includes(row.type)) return null;
+
+  const recipientType = row.recipientType || '';
+  const roles = Array.isArray(row.recipientRoles) ? row.recipientRoles : [];
+
+  return (
+    <div className="space-y-2 rounded-md border border-border bg-muted/30 p-3">
+      <Label>Staff recipients</Label>
+      <Select
+        value={recipientType || 'role'}
+        onValueChange={(v) => onPatch({
+          recipientType: v,
+          recipientRoles: v === 'role' ? (roles.length ? roles : ['owner', 'manager']) : [],
+          recipientUserId: v === 'user' ? (row.recipientUserId || '') : '',
+        })}
+      >
+        <SelectTrigger>
+          <SelectValue placeholder="Who should receive this?" />
+        </SelectTrigger>
+        <SelectContent>
+          {STAFF_RECIPIENT_TYPE_OPTIONS.map((o) => (
+            <SelectItem key={o.value} value={o.value}>
+              {o.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {recipientType === 'role' || (!recipientType && isInternalStaffTrigger(triggerType)) ? (
+        <div className="flex flex-wrap gap-3 pt-1">
+          {STAFF_ROLE_OPTIONS.map((role) => {
+            const checked = roles.includes(role.value);
+            return (
+              <label key={role.value} className="flex items-center gap-2 text-sm text-foreground">
+                <Checkbox
+                  checked={checked}
+                  onCheckedChange={(next) => {
+                    const nextRoles = next
+                      ? [...new Set([...roles, role.value])]
+                      : roles.filter((r) => r !== role.value);
+                    onPatch({ recipientType: 'role', recipientRoles: nextRoles });
+                  }}
+                />
+                {role.label}
+              </label>
+            );
+          })}
+        </div>
+      ) : null}
+      {recipientType === 'user' ? (
+        <div className="space-y-1.5">
+          <Label htmlFor="auto-recipient-user">User ID</Label>
+          <Input
+            id="auto-recipient-user"
+            value={row.recipientUserId ?? ''}
+            onChange={(e) => onPatch({ recipientType: 'user', recipientUserId: e.target.value })}
+            placeholder="Staff user UUID"
+          />
+        </div>
+      ) : null}
+      {recipientType === 'assignee' ? (
+        <p className="text-xs text-muted-foreground">
+          Sends to the job or lead assignee from the trigger context.
+        </p>
+      ) : null}
+      {(row.type === 'send_sms' || row.type === 'send_whatsapp') ? (
+        <p className="text-xs text-muted-foreground">
+          SMS/WhatsApp send only when the staff member has a phone on their Employee profile; otherwise that channel is skipped.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function AutomationActionFields({ row, onPatch, triggerType }) {
   const r = row || {};
   const placeholderHint = triggerType && MESSAGING_ACTION_TYPES.includes(r.type)
     ? formatPlaceholderHint(triggerType)
     : '';
+  const recipientBlock = (
+    <StaffRecipientFields row={r} onPatch={onPatch} triggerType={triggerType} />
+  );
   switch (r.type) {
     case 'create_task':
       return (
@@ -1919,6 +2147,7 @@ function AutomationActionFields({ row, onPatch, triggerType }) {
     case 'send_email_platform':
       return (
         <div className="space-y-3 pt-2 border-t border-border">
+          {recipientBlock}
           <div className="space-y-1.5">
             <Label htmlFor="auto-email-subject">Subject</Label>
             <Input
@@ -1948,22 +2177,32 @@ function AutomationActionFields({ row, onPatch, triggerType }) {
       );
     case 'send_sms':
       return (
-        <div className="space-y-1.5 pt-2 border-t border-border">
-          <Label htmlFor="auto-sms-body">SMS message</Label>
-          <Textarea
-            id="auto-sms-body"
-            rows={3}
-            value={r.body ?? ''}
-            onChange={(e) => onPatch({ body: e.target.value })}
-          />
-          {placeholderHint ? (
-            <p className="text-xs text-muted-foreground">Available placeholders: {placeholderHint}</p>
-          ) : null}
-          <p className="text-xs text-muted-foreground">Requires customer phone on the record when the rule runs.</p>
+        <div className="space-y-3 pt-2 border-t border-border">
+          {recipientBlock}
+          <div className="space-y-1.5">
+            <Label htmlFor="auto-sms-body">SMS message</Label>
+            <Textarea
+              id="auto-sms-body"
+              rows={3}
+              value={r.body ?? ''}
+              onChange={(e) => onPatch({ body: e.target.value })}
+            />
+            {placeholderHint ? (
+              <p className="text-xs text-muted-foreground">Available placeholders: {placeholderHint}</p>
+            ) : null}
+            {!isInternalStaffTrigger(triggerType) ? (
+              <p className="text-xs text-muted-foreground">Requires customer phone on the record when the rule runs.</p>
+            ) : null}
+          </div>
         </div>
       );
     case 'send_whatsapp':
-      return <WhatsAppActionFields row={r} onPatch={onPatch} placeholderHint={placeholderHint} />;
+      return (
+        <div className="space-y-3 pt-2 border-t border-border">
+          {recipientBlock}
+          <WhatsAppActionFields row={r} onPatch={onPatch} placeholderHint={placeholderHint} />
+        </div>
+      );
     default:
       return null;
   }
@@ -2033,7 +2272,7 @@ function getTriggerPreview(builder) {
     actionRows: builder.actionRows,
   });
   const trigger = triggerLabel(builder.triggerType);
-  if (builder.triggerType === 'invoice_overdue') {
+  if (builder.triggerType === 'invoice_overdue' || builder.triggerType === 'invoice_overdue_staff') {
     return `An invoice is overdue for more than ${payload.triggerConfig.daysAfterDue || 0} days at 09:00 AM (GMT+00:00) Accra`;
   }
   if (builder.triggerType === 'invoice_due_in_days') {

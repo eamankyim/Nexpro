@@ -223,6 +223,15 @@ exports.createLead = async (req, res, next) => {
       } catch (error) {
         console.error('[LeadController] Failed to log lead activity:', error);
       }
+      const { runLeadAssignedStaffAutomations } = require('../services/automationEngineService');
+      runLeadAssignedStaffAutomations({
+        tenantId: req.tenantId,
+        lead: createdLead,
+        assignee: createdLead.assignee || null,
+        actorUserId: req.user?.id || null,
+      }).catch((error) =>
+        console.error('[LeadController] lead_assigned_staff automations failed:', error?.message || error)
+      );
     }
 
     runNewLeadAutomations({
@@ -253,6 +262,7 @@ exports.updateLead = async (req, res, next) => {
     }
 
     const previousStatus = lead.status;
+    const previousAssignedTo = lead.assignedTo;
 
     const fields = [
       'name', 'company', 'email', 'phone', 'source', 'status', 'priority',
@@ -456,6 +466,22 @@ exports.updateLead = async (req, res, next) => {
       } catch (error) {
         console.error('[LeadController] Failed to log lead conversion activity:', error);
       }
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(sanitized, 'assignedTo')
+      && sanitized.assignedTo
+      && sanitized.assignedTo !== previousAssignedTo
+    ) {
+      const { runLeadAssignedStaffAutomations } = require('../services/automationEngineService');
+      runLeadAssignedStaffAutomations({
+        tenantId: req.tenantId,
+        lead: updatedLead,
+        assignee: updatedLead.assignee || null,
+        actorUserId: req.user?.id || null,
+      }).catch((error) =>
+        console.error('[LeadController] lead_assigned_staff automations failed:', error?.message || error)
+      );
     }
 
     res.status(200).json({ success: true, data: updatedLead });

@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Mail, MessageSquare, Send } from 'lucide-react';
 import { useDebounce } from '../../hooks/useDebounce';
 import { DEBOUNCE_DELAYS } from '../../constants';
-import { MESSAGING_ACTION_TYPES } from '../../utils/automationForm';
+import { MESSAGING_ACTION_TYPES, isInternalStaffTrigger } from '../../utils/automationForm';
 import {
   buildPreviewContextFromForm,
   resolveAutomationTemplatePreview,
@@ -100,10 +100,16 @@ export default function MessagePreview({ builder, businessName, tenantSlug }) {
 
   if (!messagingPreviews.length) return null;
 
+  const staffPreview = isInternalStaffTrigger(builder.triggerType);
+
   return (
     <div className="rounded-xl border border-slate-200 p-4">
       <p className="text-sm font-semibold text-slate-950">Message preview</p>
-      <p className="mt-1 text-xs text-slate-500">Sample data for preview</p>
+      <p className="mt-1 text-xs text-slate-500">
+        {staffPreview
+          ? 'Staff context sample — messages fan out to configured recipients'
+          : 'Sample data for preview'}
+      </p>
       <div className="mt-3 space-y-3">
         {messagingPreviews.map((preview) => {
           const Icon = preview.Icon;

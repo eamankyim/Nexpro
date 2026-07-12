@@ -38,7 +38,7 @@ describe('automationEngineService new_lead', () => {
     AutomationRun.create.mockResolvedValue({ id: 'run-1' });
   });
 
-  it('builds lead context with contact fields', () => {
+  it('builds lead context with lead contact fields (not as messaging recipients)', () => {
     const context = buildLeadTriggerContext({
       id: 'lead-1',
       name: 'Kofi Asante',
@@ -52,8 +52,10 @@ describe('automationEngineService new_lead', () => {
       leadName: 'Kofi Asante',
       leadCompany: 'Asante Co',
       leadSource: 'website',
-      email: 'kofi@example.com',
-      phone: '+233201234567',
+      leadEmail: 'kofi@example.com',
+      leadPhone: '+233201234567',
+      email: null,
+      phone: null,
     });
   });
 
@@ -64,7 +66,7 @@ describe('automationEngineService new_lead', () => {
       lead: { id: 'lead-1', name: 'Ama', source: 'referral' },
       actorUserId: 'user-1',
     });
-    expect(summary.rulesChecked).toBe(1);
+    expect(summary.new_lead.rulesChecked).toBe(1);
     expect(AutomationRule.findAll).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ triggerType: 'new_lead' }) }));
   });
 

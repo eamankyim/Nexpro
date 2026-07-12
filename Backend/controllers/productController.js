@@ -925,27 +925,44 @@ exports.updateProduct = async (req, res, next) => {
             const config = await whatsappService.getConfig(tenantIdForAlert);
 
             if (config && tenant) {
-              const adminUsers = await UserTenant.findAll({
-                where: {
-                  tenantId: tenantIdForAlert,
-                  role: { [Op.in]: ['admin', 'manager', 'owner'] }
-                },
-                include: [{ model: require('../models').User, as: 'user', attributes: ['id', 'name', 'phone'] }]
-              });
+              const {
+                shouldUseAutomationInsteadOfBuiltIn,
+                TEMPLATE_KEYS,
+              } = require('../services/customerNotificationBridgeService');
+              const skipBuiltInWa = await shouldUseAutomationInsteadOfBuiltIn(
+                tenantIdForAlert,
+                TEMPLATE_KEYS.LOW_STOCK_ON_CHANGE
+              ) || await shouldUseAutomationInsteadOfBuiltIn(
+                tenantIdForAlert,
+                TEMPLATE_KEYS.OUT_OF_STOCK_ALERT
+              ) || await shouldUseAutomationInsteadOfBuiltIn(
+                tenantIdForAlert,
+                TEMPLATE_KEYS.LOW_STOCK_ALERT
+              );
 
-              for (const adminUser of adminUsers) {
-                if (adminUser.user && adminUser.user.phone) {
-                  const phoneNumber = whatsappService.validatePhoneNumber(adminUser.user.phone);
-                  if (phoneNumber) {
-                    const parameters = whatsappTemplates.prepareLowStockAlert(productForAlert);
-                    await whatsappService.sendMessage(
-                      tenantIdForAlert,
-                      phoneNumber,
-                      'low_stock_alert',
-                      parameters
-                    ).catch(error => {
-                      console.error('[Product] WhatsApp low stock alert failed:', error);
-                    });
+              if (!skipBuiltInWa) {
+                const adminUsers = await UserTenant.findAll({
+                  where: {
+                    tenantId: tenantIdForAlert,
+                    role: { [Op.in]: ['admin', 'manager', 'owner'] }
+                  },
+                  include: [{ model: require('../models').User, as: 'user', attributes: ['id', 'name', 'email'] }]
+                });
+
+                for (const adminUser of adminUsers) {
+                  if (adminUser.user && adminUser.user.phone) {
+                    const phoneNumber = whatsappService.validatePhoneNumber(adminUser.user.phone);
+                    if (phoneNumber) {
+                      const parameters = whatsappTemplates.prepareLowStockAlert(productForAlert);
+                      await whatsappService.sendMessage(
+                        tenantIdForAlert,
+                        phoneNumber,
+                        'low_stock_alert',
+                        parameters
+                      ).catch(error => {
+                        console.error('[Product] WhatsApp low stock alert failed:', error);
+                      });
+                    }
                   }
                 }
               }

@@ -119,6 +119,66 @@ export const TRIGGER_OPTIONS = [
     label: 'Low profit margin',
     hint: 'When a completed sale margin is below threshold.',
   },
+  {
+    value: 'job_assigned_staff',
+    label: 'Job assigned (staff)',
+    hint: 'Notify the assignee when a job is assigned or reassigned.',
+  },
+  {
+    value: 'payment_received_staff',
+    label: 'Payment received (staff)',
+    hint: 'Notify owners/managers when a payment is recorded.',
+  },
+  {
+    value: 'invoice_paid_staff',
+    label: 'Invoice fully paid (staff)',
+    hint: 'Notify staff when an invoice balance reaches zero.',
+  },
+  {
+    value: 'invoice_overdue_staff',
+    label: 'Invoice overdue (staff)',
+    hint: 'Notify staff when an invoice is past due.',
+  },
+  {
+    value: 'order_created_staff',
+    label: 'Order created (staff)',
+    hint: 'Notify kitchen managers/staff when a restaurant order is created.',
+  },
+  {
+    value: 'order_status_staff',
+    label: 'Order status changed (staff)',
+    hint: 'Notify staff when kitchen order status changes (e.g. ready).',
+  },
+  {
+    value: 'quote_accepted_staff',
+    label: 'Quote accepted (staff)',
+    hint: 'Notify the team when a customer accepts a quote.',
+  },
+  {
+    value: 'new_lead_staff',
+    label: 'New lead (staff)',
+    hint: 'Email staff about a new lead (does not message the lead).',
+  },
+  {
+    value: 'job_created_staff',
+    label: 'Job created (staff)',
+    hint: 'Notify managers when a new job is created.',
+  },
+  {
+    value: 'job_completed_staff',
+    label: 'Job completed (staff)',
+    hint: 'Notify managers when a job is completed.',
+  },
+  {
+    value: 'sale_completed_staff',
+    label: 'Sale completed (staff)',
+    hint: 'Optionally notify managers when a sale is completed.',
+  },
+  {
+    value: 'lead_assigned_staff',
+    label: 'Lead assigned (staff)',
+    hint: 'Notify the assignee when a lead is assigned.',
+  },
 ];
 
 export const THRESHOLD_MODE_OPTIONS = [
@@ -134,6 +194,51 @@ export const ACTION_TYPE_OPTIONS = [
 ];
 
 export const MESSAGING_ACTION_TYPES = ['send_sms', 'send_whatsapp', 'send_email_platform'];
+
+export const STAFF_RECIPIENT_TYPE_OPTIONS = [
+  { value: 'assignee', label: 'Job / lead assignee' },
+  { value: 'role', label: 'Staff roles' },
+  { value: 'user', label: 'Specific user' },
+];
+
+export const STAFF_ROLE_OPTIONS = [
+  { value: 'owner', label: 'Owner' },
+  { value: 'admin', label: 'Admin' },
+  { value: 'manager', label: 'Manager' },
+  { value: 'staff', label: 'Staff' },
+];
+
+/** Triggers that message internal staff (recipient model applies). */
+export const INTERNAL_TRIGGER_TYPES = new Set([
+  'job_assigned_staff',
+  'job_due_in_hours',
+  'job_created_staff',
+  'job_completed_staff',
+  'payment_received_staff',
+  'invoice_paid_staff',
+  'invoice_overdue_staff',
+  'low_stock_detected',
+  'low_stock_on_change',
+  'out_of_stock_detected',
+  'order_created_staff',
+  'order_status_staff',
+  'quote_accepted_staff',
+  'daily_sales_summary',
+  'new_lead',
+  'new_lead_staff',
+  'lead_assigned_staff',
+  'high_value_invoice',
+  'sale_completed_staff',
+  'low_profit_margin',
+]);
+
+/**
+ * @param {string} triggerType
+ * @returns {boolean}
+ */
+export function isInternalStaffTrigger(triggerType) {
+  return INTERNAL_TRIGGER_TYPES.has(String(triggerType || ''));
+}
 
 /** Placeholders available in trigger context when automations run (see automationEngineService). */
 export const TRIGGER_PLACEHOLDERS = {
@@ -187,6 +292,30 @@ export const TRIGGER_PLACEHOLDERS = {
     'email',
     'phone',
   ],
+  payment_received_staff: [
+    'customerName',
+    'businessName',
+    'invoiceNumber',
+    'amount',
+    'paymentMethod',
+    'balance',
+    'totalAmount',
+  ],
+  invoice_paid_staff: [
+    'customerName',
+    'businessName',
+    'invoiceNumber',
+    'totalAmountFormatted',
+    'amount',
+  ],
+  invoice_overdue_staff: [
+    'customerName',
+    'businessName',
+    'invoiceNumber',
+    'balance',
+    'dueDate',
+    'overdueDays',
+  ],
   review_request: [
     'customerName',
     'businessName',
@@ -209,6 +338,16 @@ export const TRIGGER_PLACEHOLDERS = {
     'email',
     'phone',
   ],
+  job_completed_staff: ['customerName', 'businessName', 'jobNumber', 'jobTitle'],
+  job_created_staff: ['customerName', 'businessName', 'jobNumber', 'jobTitle'],
+  job_assigned_staff: [
+    'assigneeName',
+    'businessName',
+    'jobNumber',
+    'jobTitle',
+    'dueDate',
+    'customerName',
+  ],
   daily_sales_summary: [
     'businessName',
     'date',
@@ -217,14 +356,24 @@ export const TRIGGER_PLACEHOLDERS = {
     'totalSalesFormatted',
     'transactionCount',
     'topProducts',
-    'email',
   ],
-  new_lead: ['leadName', 'leadCompany', 'leadSource', 'businessName', 'email', 'phone'],
-  high_value_invoice: ['customerName', 'businessName', 'invoiceNumber', 'totalAmount', 'totalAmountFormatted', 'email', 'phone'],
+  new_lead: ['leadName', 'leadCompany', 'leadSource', 'businessName', 'leadEmail', 'leadPhone'],
+  new_lead_staff: ['leadName', 'leadCompany', 'leadSource', 'businessName', 'leadEmail', 'leadPhone'],
+  lead_assigned_staff: [
+    'assigneeName',
+    'leadName',
+    'leadCompany',
+    'leadSource',
+    'businessName',
+    'leadEmail',
+    'leadPhone',
+  ],
+  high_value_invoice: ['customerName', 'businessName', 'invoiceNumber', 'totalAmount', 'totalAmountFormatted'],
   customer_created: ['customerName', 'businessName', 'email', 'phone'],
   lead_no_contact_days: ['leadName', 'leadCompany', 'leadSource', 'noContactDays', 'businessName', 'email', 'phone'],
   invoice_sent: ['customerName', 'businessName', 'invoiceNumber', 'totalAmountFormatted', 'balance', 'paymentLink', 'dueDate', 'email', 'phone'],
   sale_completed: ['customerName', 'businessName', 'saleNumber', 'totalAmountFormatted', 'email', 'phone'],
+  sale_completed_staff: ['customerName', 'businessName', 'saleNumber', 'totalAmountFormatted'],
   order_created: [
     'customerName',
     'businessName',
@@ -237,10 +386,13 @@ export const TRIGGER_PLACEHOLDERS = {
     'email',
     'phone',
   ],
+  order_created_staff: ['customerName', 'businessName', 'orderNumber', 'saleNumber', 'totalAmountFormatted'],
+  order_status_staff: ['customerName', 'businessName', 'orderNumber', 'orderStatus', 'previousStatus', 'totalAmountFormatted'],
   low_stock_on_change: ['productName', 'sku', 'quantityOnHand', 'reorderLevel', 'businessName'],
   out_of_stock_detected: ['productName', 'sku', 'quantityOnHand', 'reorderLevel', 'businessName'],
   quote_sent: ['customerName', 'businessName', 'quoteNumber', 'quoteTitle', 'quoteLink', 'totalAmountFormatted', 'email', 'phone'],
-  job_due_in_hours: ['assigneeName', 'businessName', 'jobNumber', 'jobTitle', 'dueDate', 'customerName', 'email'],
+  quote_accepted_staff: ['customerName', 'businessName', 'quoteNumber', 'quoteTitle', 'totalAmountFormatted'],
+  job_due_in_hours: ['assigneeName', 'businessName', 'jobNumber', 'jobTitle', 'dueDate', 'customerName'],
   prescription_refill_due: ['customerName', 'businessName', 'prescriptionNumber', 'refillDueDate', 'email', 'phone'],
   low_profit_margin: ['saleNumber', 'customerName', 'businessName', 'profitMargin', 'profitMarginFormatted', 'totalAmountFormatted', 'minMarginPercent'],
 };
@@ -791,6 +943,7 @@ export const TASK_PRIORITY_OPTIONS = [
 /** Sticky (condition-while-true) triggers that show the repeat-frequency control. */
 export const STICKY_TRIGGER_TYPES = [
   'invoice_overdue',
+  'invoice_overdue_staff',
   'invoice_due_in_days',
   'quote_no_response',
   'lead_no_contact_days',
@@ -830,7 +983,7 @@ export function isStickyTrigger(triggerType) {
  * @returns {string}
  */
 export function defaultFrequencyForTrigger(triggerType) {
-  if (triggerType === 'invoice_overdue') return 'weekly';
+  if (triggerType === 'invoice_overdue' || triggerType === 'invoice_overdue_staff') return 'weekly';
   if (isStickyTrigger(triggerType)) return 'daily';
   return '';
 }
@@ -932,6 +1085,7 @@ export function defaultTriggerForm(triggerType) {
     case 'invoice_due_in_days':
       return { daysBeforeDue: 2 };
     case 'invoice_overdue':
+    case 'invoice_overdue_staff':
       return { daysAfterDue: 1 };
     case 'low_stock_detected':
       return { thresholdMode: 'reorder_level', fixedThreshold: 5 };
@@ -1001,6 +1155,7 @@ export function buildTriggerConfig(triggerType, triggerForm) {
         daysBeforeDue: Math.max(0, Math.min(365, Number(merged.daysBeforeDue) || 0)),
       };
     case 'invoice_overdue':
+    case 'invoice_overdue_staff':
       return {
         daysAfterDue: Math.max(0, Math.min(365, Number(merged.daysAfterDue) || 0)),
       };
@@ -1074,6 +1229,89 @@ export function buildTriggerConfig(triggerType, triggerForm) {
 }
 
 /**
+ * Default recipient config for internal staff triggers.
+ * @param {string} triggerType
+ * @returns {{ recipientType: string, recipientRoles: string[], recipientUserId: string }}
+ */
+export function defaultRecipientFormForTrigger(triggerType) {
+  const type = String(triggerType || '');
+  if (
+    type === 'job_assigned_staff'
+    || type === 'job_due_in_hours'
+    || type === 'lead_assigned_staff'
+  ) {
+    return { recipientType: 'assignee', recipientRoles: [], recipientUserId: '' };
+  }
+  if (type === 'order_created_staff' || type === 'order_status_staff' || type === 'new_lead_staff') {
+    return { recipientType: 'role', recipientRoles: ['owner', 'manager', 'staff'], recipientUserId: '' };
+  }
+  if (isInternalStaffTrigger(type)) {
+    return { recipientType: 'role', recipientRoles: ['owner', 'manager'], recipientUserId: '' };
+  }
+  return { recipientType: '', recipientRoles: [], recipientUserId: '' };
+}
+
+/**
+ * Serialize recipient form fields onto an action payload.
+ * @param {Record<string, unknown>} row
+ * @param {Record<string, unknown>} out
+ */
+function attachRecipientToPayload(row, out) {
+  const recipientType = String(row.recipientType || '').trim();
+  if (!recipientType) return;
+  if (recipientType === 'assignee') {
+    out.audience = 'internal';
+    out.recipient = { type: 'assignee' };
+    return;
+  }
+  if (recipientType === 'user') {
+    const userId = String(row.recipientUserId || '').trim();
+    if (!userId) return;
+    out.audience = 'internal';
+    out.recipient = { type: 'user', userId };
+    return;
+  }
+  if (recipientType === 'role') {
+    const roles = Array.isArray(row.recipientRoles)
+      ? row.recipientRoles.map((r) => String(r).trim()).filter(Boolean)
+      : [];
+    if (!roles.length) return;
+    out.audience = 'internal';
+    out.recipient = { type: 'role', roles };
+  }
+}
+
+/**
+ * Parse recipient from a saved action into form fields.
+ * @param {object} action
+ * @returns {{ recipientType: string, recipientRoles: string[], recipientUserId: string }}
+ */
+export function recipientFormFromAction(action = {}) {
+  const recipient = action?.recipient;
+  if (!recipient || typeof recipient !== 'object') {
+    return { recipientType: '', recipientRoles: [], recipientUserId: '' };
+  }
+  if (recipient.type === 'assignee') {
+    return { recipientType: 'assignee', recipientRoles: [], recipientUserId: '' };
+  }
+  if (recipient.type === 'user') {
+    return {
+      recipientType: 'user',
+      recipientRoles: [],
+      recipientUserId: String(recipient.userId || ''),
+    };
+  }
+  if (recipient.type === 'role' || recipient.type === 'roles') {
+    return {
+      recipientType: 'role',
+      recipientRoles: Array.isArray(recipient.roles) ? recipient.roles.map(String) : [],
+      recipientUserId: '',
+    };
+  }
+  return { recipientType: '', recipientRoles: [], recipientUserId: '' };
+}
+
+/**
  * @param {string} [type]
  * @param {string} [triggerType] - When set, pre-fills messaging fields from DEFAULT_ACTION_CONTENT.
  */
@@ -1094,12 +1332,14 @@ export function defaultActionFormRow(type = 'create_task', triggerType = null) {
         type: 'send_email_platform',
         subject: '',
         body: '',
+        ...defaultRecipientFormForTrigger(triggerType),
       };
       break;
     case 'send_sms':
       row = {
         type: 'send_sms',
         body: '',
+        ...defaultRecipientFormForTrigger(triggerType),
       };
       break;
     case 'send_whatsapp':
@@ -1108,6 +1348,7 @@ export function defaultActionFormRow(type = 'create_task', triggerType = null) {
         templateName: '',
         language: 'en',
         parametersText: '',
+        ...defaultRecipientFormForTrigger(triggerType),
       };
       break;
     default:
@@ -1133,29 +1374,35 @@ export function actionFormRowToPayload(row) {
     return out;
   }
   if (t === 'send_email_platform') {
-    return {
+    const out = {
       type: 'send_email_platform',
       subject: String(row.subject || '').trim() || 'Notification',
       body: String(row.body || '').trim(),
     };
+    attachRecipientToPayload(row, out);
+    return out;
   }
   if (t === 'send_sms') {
-    return {
+    const out = {
       type: 'send_sms',
       body: String(row.body || '').trim(),
     };
+    attachRecipientToPayload(row, out);
+    return out;
   }
   if (t === 'send_whatsapp') {
     const params = String(row.parametersText ?? '')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-    return {
+    const out = {
       type: 'send_whatsapp',
       templateName: String(row.templateName || '').trim() || 'hello_world',
       language: String(row.language || 'en').trim() || 'en',
       parameters: params.length ? params : Array.isArray(row.parameters) ? row.parameters : [],
     };
+    attachRecipientToPayload(row, out);
+    return out;
   }
   return actionFormRowToPayload(defaultActionFormRow('create_task'));
 }
@@ -1185,12 +1432,14 @@ export function actionRowsFromConfig(actionConfig) {
         type: 'send_email_platform',
         subject: a.subject ?? '',
         body: a.body ?? '',
+        ...recipientFormFromAction(a),
       };
     }
     if (a.type === 'send_sms') {
       return {
         type: 'send_sms',
         body: a.body ?? '',
+        ...recipientFormFromAction(a),
       };
     }
     if (a.type === 'send_whatsapp') {
@@ -1200,6 +1449,7 @@ export function actionRowsFromConfig(actionConfig) {
         templateName: a.templateName ?? '',
         language: a.language ?? 'en',
         parametersText: params.length ? params.join(', ') : '',
+        ...recipientFormFromAction(a),
       };
     }
     return defaultActionFormRow();

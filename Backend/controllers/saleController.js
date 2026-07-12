@@ -870,6 +870,15 @@ const runPostSaleAutomation = async ({ sale, items, tenantId, userId, isRestaura
       }).catch((err) =>
         console.error('[CreateSale] order_created automations failed:', err?.message || err)
       );
+      const { runOrderCreatedStaffAutomations } = require('../services/automationEngineService');
+      await runOrderCreatedStaffAutomations({
+        tenantId,
+        sale: createdSale,
+        customer: createdSale.customer || null,
+        actorUserId: userId || null,
+      }).catch((err) =>
+        console.error('[CreateSale] order_created_staff automations failed:', err?.message || err)
+      );
       await notifyOrderCreatedForCustomer({
         tenantId,
         sale: createdSale
@@ -877,6 +886,16 @@ const runPostSaleAutomation = async ({ sale, items, tenantId, userId, isRestaura
         console.error('[CreateSale] Customer order-created alert failed:', alertError?.message || alertError)
       );
       mark('customer-order-alert:end');
+    } else if (isRestaurant && createdSale.orderStatus) {
+      const { runOrderCreatedStaffAutomations } = require('../services/automationEngineService');
+      await runOrderCreatedStaffAutomations({
+        tenantId,
+        sale: createdSale,
+        customer: null,
+        actorUserId: userId || null,
+      }).catch((err) =>
+        console.error('[CreateSale] order_created_staff automations failed:', err?.message || err)
+      );
     }
 
     if (isRestaurant && createdSale.orderStatus) {
@@ -947,6 +966,15 @@ const runPostSaleAutomation = async ({ sale, items, tenantId, userId, isRestaura
           actorUserId: userId || null,
         }).catch((err) =>
           console.error('[CreateSale] sale_completed automations failed:', err?.message || err)
+        );
+        const { runSaleCompletedStaffAutomations } = require('../services/automationEngineService');
+        await runSaleCompletedStaffAutomations({
+          tenantId,
+          sale: createdSale,
+          customer: createdSale.customer || null,
+          actorUserId: userId || null,
+        }).catch((err) =>
+          console.error('[CreateSale] sale_completed_staff automations failed:', err?.message || err)
         );
         mark('sale-completed:end');
       }
@@ -2406,6 +2434,25 @@ exports.updateOrderStatus = async (req, res, next) => {
       newStatus: orderStatus,
       triggeredBy: req.user?.id
     }).catch((err) => console.error('[updateOrderStatus] Notification failed:', err?.message));
+
+    setImmediate(async () => {
+      try {
+        const { runOrderStatusStaffAutomations } = require('../services/automationEngineService');
+        const saleForAutomation = await Sale.findByPk(sale.id, {
+          include: [{ model: Customer, as: 'customer' }],
+        });
+        await runOrderStatusStaffAutomations({
+          tenantId: req.tenantId,
+          sale: saleForAutomation || { ...sale.toJSON(), orderStatus },
+          customer: saleForAutomation?.customer || null,
+          orderStatus,
+          previousStatus: oldOrderStatus,
+          actorUserId: req.user?.id || null,
+        });
+      } catch (automationErr) {
+        console.error('[updateOrderStatus] order_status_staff automations failed:', automationErr?.message || automationErr);
+      }
+    });
 
     const updatedSale = await Sale.findByPk(sale.id, {
       include: [

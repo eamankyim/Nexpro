@@ -13,12 +13,22 @@ const TEMPLATE_KEYS = {
   JOB_CREATED_TRACKING_SMS: 'job_created_tracking_sms',
   JOB_CREATED_SEND_INVOICE: 'job_created_send_invoice',
   ORDER_CREATED_NOTIFICATION: 'order_created_notification',
+  JOB_ASSIGNED_STAFF: 'job_assigned_staff',
+  QUOTE_ACCEPTED_STAFF: 'quote_accepted_staff',
+  LOW_STOCK_ON_CHANGE: 'low_stock_on_change',
+  OUT_OF_STOCK_ALERT: 'out_of_stock_alert',
+  LOW_STOCK_ALERT: 'low_stock_alert',
 };
 
 /** Template keys that should also match by trigger type (any custom overdue rule). */
 const TEMPLATE_KEY_TRIGGER_TYPES = {
   [TEMPLATE_KEYS.OVERDUE_INVOICE_REMINDER]: 'invoice_overdue',
   [TEMPLATE_KEYS.ORDER_CREATED_NOTIFICATION]: 'order_created',
+  [TEMPLATE_KEYS.JOB_ASSIGNED_STAFF]: 'job_assigned_staff',
+  [TEMPLATE_KEYS.QUOTE_ACCEPTED_STAFF]: 'quote_accepted_staff',
+  [TEMPLATE_KEYS.LOW_STOCK_ON_CHANGE]: 'low_stock_on_change',
+  [TEMPLATE_KEYS.OUT_OF_STOCK_ALERT]: 'out_of_stock_detected',
+  [TEMPLATE_KEYS.LOW_STOCK_ALERT]: 'low_stock_detected',
 };
 
 /**

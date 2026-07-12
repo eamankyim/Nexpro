@@ -1050,6 +1050,44 @@ exports.createJob = async (req, res, next) => {
         });
       }
 
+      if (jobWithDetails.assignedTo) {
+        setImmediate(async () => {
+          try {
+            const { runJobAssignedStaffAutomations, runJobCreatedStaffAutomations } = require('../services/automationEngineService');
+            await runJobAssignedStaffAutomations({
+              tenantId: req.tenantId,
+              job: jobWithDetails,
+              assignee: jobWithDetails.assignedUser || null,
+              customer: jobWithDetails.customer || null,
+              assignedByUser: req.user || null,
+              actorUserId: req.user?.id || null,
+            });
+            await runJobCreatedStaffAutomations({
+              tenantId: req.tenantId,
+              job: jobWithDetails,
+              customer: jobWithDetails.customer || null,
+              actorUserId: req.user?.id || null,
+            });
+          } catch (automationErr) {
+            console.error('[CreateJob] staff automations failed:', automationErr?.message || automationErr);
+          }
+        });
+      } else {
+        setImmediate(async () => {
+          try {
+            const { runJobCreatedStaffAutomations } = require('../services/automationEngineService');
+            await runJobCreatedStaffAutomations({
+              tenantId: req.tenantId,
+              job: jobWithDetails,
+              customer: jobWithDetails.customer || null,
+              actorUserId: req.user?.id || null,
+            });
+          } catch (automationErr) {
+            console.error('[CreateJob] job_created_staff automations failed:', automationErr?.message || automationErr);
+          }
+        });
+      }
+
       await sendJobLifecycleWhatsApp({
         tenantId: req.tenantId,
         job: jobWithDetails,
@@ -1351,6 +1389,24 @@ exports.updateJob = async (req, res, next) => {
       });
     }
 
+    if (updatePayload.assignedTo && updatePayload.assignedTo !== oldAssignedTo) {
+      setImmediate(async () => {
+        try {
+          const { runJobAssignedStaffAutomations } = require('../services/automationEngineService');
+          await runJobAssignedStaffAutomations({
+            tenantId: req.tenantId,
+            job: updatedJob,
+            assignee: updatedJob.assignedUser || null,
+            customer: updatedJob.customer || null,
+            assignedByUser: req.user || null,
+            actorUserId: req.user?.id || null,
+          });
+        } catch (automationErr) {
+          console.error('[Job] job_assigned_staff automations failed:', automationErr?.message || automationErr);
+        }
+      });
+    }
+
     if (statusChanged) {
       await activityLogger.logJobStatusChanged(updatedJob, oldStatus, newStatus, req.user?.id || null);
       if (newStatus === 'completed') {
@@ -1374,6 +1430,17 @@ exports.updateJob = async (req, res, next) => {
               customer: updatedJob.customer || null,
               actorUserId: req.user?.id || null,
             });
+            try {
+              const { runJobCompletedStaffAutomations } = require('../services/automationEngineService');
+              await runJobCompletedStaffAutomations({
+                tenantId: req.tenantId,
+                job: updatedJob,
+                customer: updatedJob.customer || null,
+                actorUserId: req.user?.id || null,
+              });
+            } catch (staffErr) {
+              console.error('[Job] job_completed_staff automations failed:', staffErr?.message || staffErr);
+            }
           } catch (error) {
             console.error('[Job] job_completed automations failed:', error?.message || error);
           }
