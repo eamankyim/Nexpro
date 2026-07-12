@@ -46,6 +46,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import automationService from '../services/automationService';
 import settingsService from '../services/settingsService';
+import whatsappService from '../services/whatsappService';
 import {
   ACTION_TYPE_OPTIONS,
   FREQUENCY_OPTIONS,
@@ -79,6 +80,7 @@ import { handleApiError, showError, showSuccess } from '../utils/toast';
 import AutomationTestRecipientDialog from '../components/automations/AutomationTestRecipientDialog';
 import MessagePreview from '../components/automations/MessagePreview';
 import { useScopedWorkspaceName } from '../hooks/useScopedWorkspaceName';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -1028,7 +1030,7 @@ const TEMPLATE_METADATA = {
   overdue_invoice_reminder: {
     category: 'finance_payments',
     title: 'Invoice overdue reminder',
-    description: 'Send WhatsApp reminders when invoices are overdue.',
+    description: 'Send payment reminders when invoices are overdue.',
     Icon: MessageSquare,
     accent: 'green',
     channels: ['whatsapp'],
@@ -1070,7 +1072,7 @@ const TEMPLATE_METADATA = {
   birthday_greeting: {
     category: 'customer_communication',
     title: 'Birthday greeting',
-    description: 'Send WhatsApp birthday wishes to your customers.',
+    description: 'Send birthday wishes to your customers.',
     Icon: Gift,
     accent: 'pink',
     channels: ['whatsapp'],
@@ -1500,7 +1502,6 @@ function TemplateCard({ template, onUse }) {
       <p className="mt-3 text-xs text-muted-foreground">
         {template.usage ? `Used by ${template.usage.toLocaleString()} businesses` : triggerLabel(template.triggerType)}
       </p>
-      {template.reviewNote && <p className="mt-2 line-clamp-2 text-xs text-amber-700">{template.reviewNote}</p>}
       {unavailableLabel && (
         <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{unavailableLabel}</p>
       )}
@@ -1773,6 +1774,95 @@ function AutomationFrequencyFields({ triggerType, conditionForm, onPatch }) {
   );
 }
 
+function WhatsAppActionFields({ row, onPatch, placeholderHint }) {
+  const r = row || {};
+  const templateName = String(r.templateName || '').trim();
+  const [dismissedConfigWarning, setDismissedConfigWarning] = useState(false);
+  const [dismissedMetaTip, setDismissedMetaTip] = useState(false);
+
+  const whatsappSettingsQuery = useQuery({
+    queryKey: ['settings', 'whatsapp'],
+    queryFn: whatsappService.getSettings,
+    staleTime: 60_000,
+  });
+  const whatsappSettings = whatsappSettingsQuery.data?.data;
+  const whatsappConfigured = Boolean(
+    whatsappSettings?.enabled && whatsappSettings?.phoneNumberId
+  );
+  const showConfigWarning =
+    !dismissedConfigWarning &&
+    whatsappSettingsQuery.isSuccess &&
+    !whatsappConfigured;
+  const showMetaTip = !dismissedMetaTip && Boolean(templateName);
+
+  return (
+    <div className="space-y-3 pt-2 border-t border-border">
+      {showConfigWarning && (
+        <Alert className="relative border-amber-200 bg-amber-50 pr-10 text-amber-950">
+          <AlertTriangle className="h-4 w-4 text-amber-700" aria-hidden />
+          <AlertDescription className="text-xs leading-5 text-amber-900">
+            WhatsApp is not configured for this workspace. Connect it in Settings → WhatsApp before this action can send.
+          </AlertDescription>
+          <button
+            type="button"
+            className="absolute right-2 top-2 rounded-md p-1 text-amber-700 hover:bg-amber-100"
+            onClick={() => setDismissedConfigWarning(true)}
+            aria-label="Dismiss WhatsApp configuration warning"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        </Alert>
+      )}
+      {showMetaTip && (
+        <Alert className="relative border-sky-200 bg-sky-50 pr-10 text-sky-950">
+          <MessageSquare className="h-4 w-4 text-sky-700" aria-hidden />
+          <AlertDescription className="text-xs leading-5 text-sky-900">
+            This Meta template must be approved: <span className="font-medium">{templateName}</span>
+          </AlertDescription>
+          <button
+            type="button"
+            className="absolute right-2 top-2 rounded-md p-1 text-sky-700 hover:bg-sky-100"
+            onClick={() => setDismissedMetaTip(true)}
+            aria-label="Dismiss Meta template tip"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        </Alert>
+      )}
+      <div className="space-y-1.5">
+        <Label htmlFor="auto-wa-template">Template name</Label>
+        <Input
+          id="auto-wa-template"
+          value={r.templateName ?? ''}
+          onChange={(e) => onPatch({ templateName: e.target.value })}
+          placeholder="hello_world"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="auto-wa-lang">Language code</Label>
+        <Input
+          id="auto-wa-lang"
+          value={r.language ?? 'en'}
+          onChange={(e) => onPatch({ language: e.target.value })}
+          placeholder="en"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="auto-wa-params">Template parameters (optional)</Label>
+        <Input
+          id="auto-wa-params"
+          value={r.parametersText ?? ''}
+          onChange={(e) => onPatch({ parametersText: e.target.value })}
+          placeholder="Comma-separated values"
+        />
+        {placeholderHint ? (
+          <p className="text-xs text-muted-foreground">Available placeholders: {placeholderHint}</p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function AutomationActionFields({ row, onPatch, triggerType }) {
   const r = row || {};
   const placeholderHint = triggerType && MESSAGING_ACTION_TYPES.includes(r.type)
@@ -1873,40 +1963,7 @@ function AutomationActionFields({ row, onPatch, triggerType }) {
         </div>
       );
     case 'send_whatsapp':
-      return (
-        <div className="space-y-3 pt-2 border-t border-border">
-          <div className="space-y-1.5">
-            <Label htmlFor="auto-wa-template">Template name</Label>
-            <Input
-              id="auto-wa-template"
-              value={r.templateName ?? ''}
-              onChange={(e) => onPatch({ templateName: e.target.value })}
-              placeholder="hello_world"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="auto-wa-lang">Language code</Label>
-            <Input
-              id="auto-wa-lang"
-              value={r.language ?? 'en'}
-              onChange={(e) => onPatch({ language: e.target.value })}
-              placeholder="en"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="auto-wa-params">Template parameters (optional)</Label>
-            <Input
-              id="auto-wa-params"
-              value={r.parametersText ?? ''}
-              onChange={(e) => onPatch({ parametersText: e.target.value })}
-              placeholder="Comma-separated values"
-            />
-            {placeholderHint ? (
-              <p className="text-xs text-muted-foreground">Available placeholders: {placeholderHint}</p>
-            ) : null}
-          </div>
-        </div>
-      );
+      return <WhatsAppActionFields row={r} onPatch={onPatch} placeholderHint={placeholderHint} />;
     default:
       return null;
   }
@@ -2057,6 +2114,10 @@ function AutomationCreationModal({
   }, [allowedTriggerOptions]);
   const selectedDetails = TRIGGER_CARD_DETAILS[builder.triggerType] || {};
   const SelectedIcon = selectedDetails.Icon || selectedTriggerMeta?.Icon || Zap;
+  const hasWhatsAppAction = useMemo(
+    () => (builder.actionRows || []).some((row) => row?.type === 'send_whatsapp'),
+    [builder.actionRows]
+  );
   const visibleConditionGroups = useMemo(() => getVisibleConditionGroups(builder.triggerType), [builder.triggerType]);
   const conditionLines = useMemo(() => getConditionLines(builder.conditionForm), [builder.conditionForm]);
   const activeConditionCount = conditionLines.length;
@@ -2268,7 +2329,7 @@ function AutomationCreationModal({
                     </CardContent>
                   </Card>
                 </div>
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className={`grid gap-4 ${hasWhatsAppAction ? 'md:grid-cols-2' : ''}`}>
                   <Card style={CARD_BORDER} className="rounded-2xl bg-white">
                     <CardContent className="flex items-center justify-between gap-3 p-4">
                       <div className="flex items-center gap-3">
@@ -2285,22 +2346,24 @@ function AutomationCreationModal({
                       </Button>
                     </CardContent>
                   </Card>
-                  <Card style={CARD_BORDER} className="rounded-2xl bg-white">
-                    <CardContent className="flex items-center justify-between gap-3 p-4">
-                      <div className="flex items-center gap-3">
-                        <span className="rounded-xl border border-violet-100 bg-violet-50 p-2 text-violet-700">
-                          <MessageSquare className="h-4 w-4" aria-hidden />
-                        </span>
-                        <div>
-                          <p className="text-sm font-semibold">Using WhatsApp?</p>
-                          <p className="text-xs text-slate-500">Make sure you have approved templates for your messages.</p>
+                  {hasWhatsAppAction && (
+                    <Card style={CARD_BORDER} className="rounded-2xl bg-white">
+                      <CardContent className="flex items-center justify-between gap-3 p-4">
+                        <div className="flex items-center gap-3">
+                          <span className="rounded-xl border border-violet-100 bg-violet-50 p-2 text-violet-700">
+                            <MessageSquare className="h-4 w-4" aria-hidden />
+                          </span>
+                          <div>
+                            <p className="text-sm font-semibold">Using WhatsApp?</p>
+                            <p className="text-xs text-slate-500">Make sure you have approved templates for your messages.</p>
+                          </div>
                         </div>
-                      </div>
-                      <Button type="button" variant="outline" size="sm">
-                        Manage templates
-                      </Button>
-                    </CardContent>
-                  </Card>
+                        <Button type="button" variant="outline" size="sm">
+                          Manage templates
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  )}
                 </div>
               </div>
             )}
@@ -2482,7 +2545,7 @@ function AutomationCreationModal({
                                 <span className="font-semibold text-slate-950">{option.label}</span>
                                 <span className="mt-1 block text-xs text-slate-500">
                                   {option.value === 'send_whatsapp'
-                                    ? 'Send approved WhatsApp templates.'
+                                    ? 'Send a WhatsApp template message.'
                                     : option.value === 'send_sms'
                                       ? 'Send a short text message.'
                                       : option.value === 'send_email_platform'
@@ -3085,6 +3148,13 @@ export default function Automations() {
     queryKey: ['automations', 'whatsapp-events', activeTenantId, 200],
     queryFn: () => automationService.getWhatsAppEvents({ limit: 200 }),
     enabled: !!activeTenantId,
+  });
+  // Prefetch so WhatsApp action tips can read cached settings immediately.
+  useQuery({
+    queryKey: ['settings', 'whatsapp'],
+    queryFn: whatsappService.getSettings,
+    enabled: !!activeTenantId,
+    staleTime: 60_000,
   });
   const organizationQuery = useQuery({
     queryKey: ['settings', 'organization', activeTenantId],

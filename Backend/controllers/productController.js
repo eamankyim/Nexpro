@@ -76,6 +76,35 @@ const stripSensitiveProductListFields = (records, req) => {
 
 const PRODUCT_LIST_BARCODE_ATTRIBUTES = ['barcode', 'isActive'];
 
+/** Whitelisted product list sort keys → Sequelize order clauses (always include id tie-breaker). */
+const PRODUCT_LIST_SORT_ORDERS = {
+  name_asc: [['name', 'ASC'], ['id', 'ASC']],
+  created_desc: [['createdAt', 'DESC'], ['id', 'DESC']],
+  updated_desc: [['updatedAt', 'DESC'], ['id', 'DESC']],
+  stock_desc: [['quantityOnHand', 'DESC'], ['id', 'DESC']],
+  stock_asc: [['quantityOnHand', 'ASC'], ['id', 'ASC']],
+  price_asc: [['sellingPrice', 'ASC'], ['id', 'ASC']],
+  price_desc: [['sellingPrice', 'DESC'], ['id', 'DESC']],
+};
+
+const DEFAULT_PRODUCT_LIST_SORT = 'name_asc';
+
+/**
+ * Resolve list sort from `sort` / `sortBy` query. Unknown values fall back to name_asc.
+ * @param {string|undefined|null} rawSort
+ * @returns {{ sort: string, order: Array }}
+ */
+const resolveProductListSort = (rawSort) => {
+  const key = typeof rawSort === 'string' ? rawSort.trim() : '';
+  if (key && PRODUCT_LIST_SORT_ORDERS[key]) {
+    return { sort: key, order: PRODUCT_LIST_SORT_ORDERS[key] };
+  }
+  return {
+    sort: DEFAULT_PRODUCT_LIST_SORT,
+    order: PRODUCT_LIST_SORT_ORDERS[DEFAULT_PRODUCT_LIST_SORT],
+  };
+};
+
 const formatProductForList = (record, req) => {
   const stripped = stripSensitiveProductFields(record, req);
   const plain = typeof stripped?.get === 'function'
@@ -287,6 +316,7 @@ exports.getProducts = async (req, res, next) => {
     const categoryId = req.query.categoryId;
     const isActive = req.query.isActive;
     const includeVariants = req.query.includeVariants === 'true' || req.query.forPOS === 'true';
+    const { order } = resolveProductListSort(req.query.sort || req.query.sortBy);
 
     let where = applyTenantFilter(req.tenantId, {});
     if (req.shopScoped) {
@@ -375,7 +405,7 @@ exports.getProducts = async (req, res, next) => {
         }] : [])
       ],
       distinct: true,
-      order: [['createdAt', 'DESC']]
+      order,
     });
 
     res.status(200).json({
@@ -392,6 +422,9 @@ exports.getProducts = async (req, res, next) => {
     next(error);
   }
 };
+
+// Exported for unit tests
+exports._resolveProductListSort = resolveProductListSort;
 
 // @desc    Get product catalog statistics
 // @route   GET /api/products/stats

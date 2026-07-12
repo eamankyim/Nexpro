@@ -691,6 +691,7 @@ const Products = () => {
   // Filters
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [stockFilter, setStockFilter] = useState('all');
+  const [sortBy, setSortBy] = useState('name_asc');
   const [isFilterVisible, setIsFilterVisible] = useState(false);
 
   // UI state
@@ -762,6 +763,7 @@ const Products = () => {
       limit: pagination.pageSize,
       search: debouncedSearch,
       categoryId: categoryFilter === 'all' ? undefined : categoryFilter,
+      sort: sortBy || 'name_asc',
     };
 
     if (stockFilter === 'low') {
@@ -771,7 +773,7 @@ const Products = () => {
     }
 
     return params;
-  }, [pagination.current, pagination.pageSize, debouncedSearch, categoryFilter, stockFilter]);
+  }, [pagination.current, pagination.pageSize, debouncedSearch, categoryFilter, stockFilter, sortBy]);
 
   const productListQueryKey = useMemo(
     () => queryKeys.products.list(activeTenantId, activeShopId, activeStudioLocationId, productQueryParams),
@@ -1182,7 +1184,7 @@ const Products = () => {
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, current: 1 }));
-  }, [searchValue, categoryFilter, stockFilter]);
+  }, [searchValue, categoryFilter, stockFilter, sortBy]);
 
   // Open form when add=1 query param is present (e.g., from dashboard "Add Product" button)
   useEffect(() => {
@@ -2718,8 +2720,13 @@ const Products = () => {
                 variant="outline"
                 size={isMobile ? 'icon' : 'default'}
                 onClick={handleRefresh}
+                disabled={productsFetching}
               >
-                <RefreshCw className="h-4 w-4" />
+                {productsFetching ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
               </Button>
             </TooltipTrigger>
             <TooltipContent>Refresh products list</TooltipContent>
@@ -2820,7 +2827,7 @@ const Products = () => {
       {isFilterVisible && (
         <Card>
           <CardContent className="p-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <div>
                 <Label className="mb-2 block">Search</Label>
                 <Input
@@ -2876,6 +2883,23 @@ const Products = () => {
                   </SelectContent>
                 </Select>
               </div>
+              <div>
+                <Label className="mb-2 block">Sort by</Label>
+                <Select value={sortBy} onValueChange={setSortBy}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Name A–Z" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="name_asc">Name A–Z</SelectItem>
+                    <SelectItem value="created_desc">Newest added</SelectItem>
+                    <SelectItem value="updated_desc">Recently updated</SelectItem>
+                    <SelectItem value="stock_desc">Stock high–low</SelectItem>
+                    <SelectItem value="stock_asc">Stock low–high</SelectItem>
+                    <SelectItem value="price_asc">Price low–high</SelectItem>
+                    <SelectItem value="price_desc">Price high–low</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -2885,7 +2909,7 @@ const Products = () => {
       <DashboardTable
         data={products}
         columns={tableColumns}
-        loading={loading || productsFetching}
+        loading={loading}
         title={null}
         emptyState={productsEmptyState}
         pageSize={pagination.pageSize}

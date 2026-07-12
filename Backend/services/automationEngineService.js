@@ -96,7 +96,7 @@ function getTemplates() {
     {
       key: 'birthday_greeting',
       name: 'Birthday greeting',
-      description: 'Send customers a WhatsApp birthday message on their birthday.',
+      description: 'Send customers a birthday message on their birthday.',
       triggerType: 'customer_birthday',
       allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
       triggerConfig: {},
@@ -107,13 +107,12 @@ function getTemplates() {
           language: 'en',
           parameters: ['{{customerName}}']
         }]
-      },
-      reviewNote: 'Requires the birthday_greeting WhatsApp template to be approved in Meta.'
+      }
     },
     {
       key: 'overdue_invoice_reminder',
       name: 'Overdue invoice reminder',
-      description: 'Send a WhatsApp payment reminder after an invoice is overdue.',
+      description: 'Send a payment reminder after an invoice is overdue.',
       triggerType: 'invoice_overdue',
       allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
       triggerConfig: { daysAfterDue: 1 },
@@ -125,8 +124,7 @@ function getTemplates() {
           language: 'en',
           parameters: ['{{invoiceNumber}}', '{{balance}}', '{{paymentLink}}']
         }]
-      },
-      reviewNote: 'Requires the payment_reminder WhatsApp template to be approved in Meta.'
+      }
     },
     {
       key: 'quote_follow_up',
@@ -162,8 +160,7 @@ function getTemplates() {
           subject: 'Payment received — thank you',
           body: 'Hi {{customerName}},\n\nThank you! We have received your payment of {{amount}} for invoice {{invoiceNumber}}.\n\nRemaining balance: {{balance}}\n\n{{businessName}}'
         }]
-      },
-      reviewNote: 'Requires the payment_received WhatsApp template to be approved in Meta.'
+      }
     },
     {
       key: 'job_completed_notification',
@@ -183,8 +180,7 @@ function getTemplates() {
           subject: 'Your job {{jobNumber}} is complete',
           body: 'Hi {{customerName}},\n\nGood news! Your job {{jobNumber}} has been completed.\n\n{{trackingLinkLine}}\n\nThank you,\n{{businessName}}'
         }]
-      },
-      reviewNote: 'Requires the job_completed WhatsApp template to be approved in Meta.'
+      }
     },
     {
       key: 'daily_sales_summary',
@@ -228,8 +224,7 @@ function getTemplates() {
           subject: 'How did we do, {{customerName}}?',
           body: 'Hi {{customerName}},\n\nThank you for choosing {{businessName}}! We would love to hear about your experience.\n\nLeave a review here: {{reviewLink}}\n\nThank you,\n{{businessName}}'
         }]
-      },
-      reviewNote: 'Requires a workspace review link (Settings → Organization) and the review_request WhatsApp template approved in Meta.'
+      }
     },
     {
       key: 'low_profit_margin_alert',
@@ -343,8 +338,7 @@ function getTemplates() {
           subject: 'Invoice {{invoiceNumber}} from {{businessName}}',
           body: 'Hi {{customerName}},\n\nYour invoice {{invoiceNumber}} for {{totalAmountFormatted}} is ready.\n\nPay online: {{paymentLink}}\n\nThank you,\n{{businessName}}',
         }]
-      },
-      reviewNote: 'Requires the invoice_notification WhatsApp template to be approved in Meta.'
+      }
     },
     {
       key: 'sale_completed_receipt',
@@ -364,8 +358,7 @@ function getTemplates() {
           subject: 'Your receipt — {{saleNumber}}',
           body: 'Hi {{customerName}},\n\nThank you for your purchase! Your receipt {{saleNumber}} totals {{totalAmountFormatted}}.\n\n— {{businessName}}',
         }]
-      },
-      reviewNote: 'Requires the sale_receipt WhatsApp template to be approved in Meta.'
+      }
     },
     {
       key: 'low_stock_on_change',
@@ -425,8 +418,7 @@ function getTemplates() {
           subject: 'Your quote {{quoteNumber}} from {{businessName}}',
           body: 'Hi {{customerName}},\n\nYour quote {{quoteNumber}} ({{totalAmountFormatted}}) is ready.\n\nView it here: {{quoteLink}}\n\n— {{businessName}}',
         }]
-      },
-      reviewNote: 'Requires the quote_delivery WhatsApp template to be approved in Meta.'
+      }
     },
     {
       key: 'job_due_reminder',

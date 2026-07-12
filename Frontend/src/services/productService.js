@@ -22,6 +22,7 @@ const productService = {
    * @param {string} [params.categoryId] - Filter by category
    * @param {boolean} [params.isActive] - Filter by active status
    * @param {string} [params.shopId] - Filter by shop
+   * @param {string} [params.sort] - Sort key: name_asc | created_desc | updated_desc | stock_desc | stock_asc | price_asc | price_desc
    * @returns {Promise<Object>} - { products, pagination }
    */
   getProducts: async (params = {}) => {
