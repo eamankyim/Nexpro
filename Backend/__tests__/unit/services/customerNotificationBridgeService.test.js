@@ -1,7 +1,7 @@
 jest.mock('../../../models', () => ({
   AutomationRule: { findAll: jest.fn(), findOne: jest.fn() },
   Setting: { findOne: jest.fn() },
-  SaleActivity: { findOne: jest.fn(), create: jest.fn() },
+  SaleActivity: { findAll: jest.fn(), findOne: jest.fn(), create: jest.fn() },
 }));
 
 const { AutomationRule, Setting, SaleActivity } = require('../../../models');
@@ -73,12 +73,12 @@ describe('customerNotificationBridgeService', () => {
     );
   });
 
-  it('detects recent receipt activity within dedupe window', async () => {
-    SaleActivity.findOne.mockResolvedValue({ id: 'activity-1' });
+  it('detects recent receipt activity within dedupe window (global check)', async () => {
+    SaleActivity.findAll.mockResolvedValue([{ id: 'activity-1', metadata: { channels: ['email'] } }]);
 
     const recent = await bridge.hasRecentReceiptForSale('tenant-1', 'sale-1');
     expect(recent).toBe(true);
-    expect(SaleActivity.findOne).toHaveBeenCalledWith(
+    expect(SaleActivity.findAll).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           tenantId: 'tenant-1',
@@ -89,11 +89,76 @@ describe('customerNotificationBridgeService', () => {
     );
   });
 
+  it('does not dedupe a channel that was not part of the recent receipt activity', async () => {
+    // Auto-send only succeeded for email — a manual "Send SMS" should not be blocked.
+    SaleActivity.findAll.mockResolvedValue([{ id: 'activity-1', metadata: { channels: ['email'] } }]);
+
+    expect(await bridge.hasRecentReceiptForSale('tenant-1', 'sale-1', 'sms')).toBe(false);
+    expect(await bridge.hasRecentReceiptForSale('tenant-1', 'sale-1', 'email')).toBe(true);
+  });
+
   it('detects POS auto_send receipt mode', async () => {
     Setting.findOne.mockResolvedValue({ value: { receipt: { mode: 'auto_send' } } });
     expect(await bridge.isPosAutoSendReceiptEnabled('tenant-1')).toBe(true);
 
     Setting.findOne.mockResolvedValue({ value: { receipt: { mode: 'ask' } } });
     expect(await bridge.isPosAutoSendReceiptEnabled('tenant-1')).toBe(false);
+  });
+
+  describe('getAutomationCoveredChannelsForTemplate', () => {
+    it('only covers channels the enabled automation rule actually sends', async () => {
+      AutomationRule.findAll.mockResolvedValue([
+        {
+          id: 'rule-1',
+          enabled: true,
+          metadata: { templateKey: bridge.TEMPLATE_KEYS.SALE_COMPLETED_RECEIPT },
+          actionConfig: {
+            actions: [
+              { type: 'send_whatsapp' },
+              { type: 'send_email_platform' },
+            ],
+          },
+        },
+      ]);
+
+      const covered = await bridge.getAutomationCoveredChannelsForTemplate(
+        'tenant-1',
+        bridge.TEMPLATE_KEYS.SALE_COMPLETED_RECEIPT
+      );
+
+      expect(covered.has('whatsapp')).toBe(true);
+      expect(covered.has('email')).toBe(true);
+      expect(covered.has('sms')).toBe(false);
+    });
+
+    it('returns an empty set when no automation rule matches', async () => {
+      AutomationRule.findAll.mockResolvedValue([]);
+      AutomationRule.findOne.mockResolvedValue(null);
+
+      const covered = await bridge.getAutomationCoveredChannelsForTemplate(
+        'tenant-1',
+        bridge.TEMPLATE_KEYS.SALE_COMPLETED_RECEIPT
+      );
+
+      expect(covered.size).toBe(0);
+    });
+
+    it('isChannelHandledByAutomation reflects the covered-channel set', async () => {
+      AutomationRule.findAll.mockResolvedValue([
+        {
+          id: 'rule-1',
+          enabled: true,
+          metadata: { templateKey: bridge.TEMPLATE_KEYS.SALE_COMPLETED_RECEIPT },
+          actionConfig: { actions: [{ type: 'send_sms' }] },
+        },
+      ]);
+
+      expect(
+        await bridge.isChannelHandledByAutomation('tenant-1', bridge.TEMPLATE_KEYS.SALE_COMPLETED_RECEIPT, 'sms')
+      ).toBe(true);
+      expect(
+        await bridge.isChannelHandledByAutomation('tenant-1', bridge.TEMPLATE_KEYS.SALE_COMPLETED_RECEIPT, 'email')
+      ).toBe(false);
+    });
   });
 });

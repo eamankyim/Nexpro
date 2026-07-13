@@ -615,7 +615,15 @@ const POSScanMode = ({
             channels: ['sms'],
             phone: customerPhone
           })
-            .then(() => setReceiptSent(true))
+            .then((response) => {
+              // Backend returns 200 even when the SMS itself failed (not configured, invalid
+              // phone, provider error, etc.) — check the per-channel result, not just the request.
+              if (response?.data?.sms?.success) {
+                setReceiptSent(true);
+              } else {
+                console.warn('SMS receipt not delivered:', response?.data?.sms?.error);
+              }
+            })
             .catch((receiptErr) => {
               console.warn('Failed to send receipt:', receiptErr);
             });

@@ -70,6 +70,7 @@ import { formatAmount } from '../utils/formatNumber';
 import { queryKeys } from '../utils/queryKeys';
 import { useScopedWorkspaceName } from '../hooks/useScopedWorkspaceName';
 import { useDismissibleDashboardBanner } from '../hooks/useDismissibleDashboardBanner';
+import { isSabitoStoreEnabled } from '../utils/sabitoStoreFeature';
 import { matchesSearchQuery } from '../utils/searchEmptyState';
 import dayjs from 'dayjs';
 import weekOfYear from 'dayjs/plugin/weekOfYear';
@@ -706,7 +707,9 @@ const Dashboard = () => {
     pendingOrderCount,
     latestOrder: latestOnlineOrder,
     showBanner: showOnlineOrderBanner,
-  } = useOnlineStoreOrderAttention({ enabled: scopeReady && isShop });
+  } = useOnlineStoreOrderAttention({
+    enabled: scopeReady && isShop && isSabitoStoreEnabled(),
+  });
 
   const { data: staffProductsRaw, isLoading: staffProductsLoading } = useQuery({
     queryKey: queryKeys.products.active(activeTenantId, activeShopId),

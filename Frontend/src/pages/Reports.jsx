@@ -996,9 +996,13 @@ function ReportsInner() {
 
       const revenue = revenueData.data?.totalRevenue || 0;
       const expenses = expenseData.data?.totalExpenses || 0;
-      
-      // Calculate profit directly from the same date range data (no separate API call)
-      const profit = revenue - expenses;
+
+      // Cost of goods sold for this exact period, from the profit-loss report already fetched above.
+      // Net profit must deduct COGS in addition to operating expenses — Revenue - COGS - OpEx —
+      // otherwise product/service cost is silently dropped and profit is overstated.
+      const cogs = toNumber(profitLossPayload?.cogs);
+      const grossProfit = revenue - cogs;
+      const profit = grossProfit - expenses;
       const profitMargin = revenue > 0 ? ((profit / revenue) * 100) : 0;
 
       // Calculate previous equivalent period from the same selected filter/range.
@@ -1033,7 +1037,12 @@ function ReportsInner() {
 
       const prevRevenue = prevRevenueData.data?.totalRevenue || 0;
       const prevExpenses = prevExpenseData.data?.totalExpenses || 0;
-      const prevProfit = prevRevenue - prevExpenses;
+      // extendedKpisData.previous already computes revenue - COGS - operating expenses correctly;
+      // fall back to the (COGS-less) naive calc only if that comparison data isn't available.
+      const prevCogs = toNumber(extendedKpisData?.data?.previous?.cogs);
+      const prevProfit = extendedKpisData?.data?.previous
+        ? toNumber(extendedKpisData.data.previous.netProfit)
+        : (prevRevenue - prevExpenses);
 
       const calculateChange = (current, previous) => {
         if (previous === 0) return current === 0 ? 0 : null;
@@ -1169,11 +1178,14 @@ function ReportsInner() {
             ...(isShop || isPharmacy ? [{
               type: 'product-analytics',
               title: 'Product Sales',
-              description: 'Sales performance by product (quantity sold and revenue). Tenant-isolated.',
+              description: 'Sales performance by product (quantity sold, revenue, cost, and margin). Tenant-isolated.',
               data: (productSalesData?.data?.products || []).map(item => ({
                 productName: item.productName || 'Unknown',
                 quantitySold: parseFloat(item.quantitySold || 0),
                 revenue: parseFloat(item.revenue || 0),
+                cost: parseFloat(item.cost || 0),
+                grossProfit: parseFloat(item.grossProfit ?? (parseFloat(item.revenue || 0) - parseFloat(item.cost || 0))),
+                margin: parseFloat(item.margin || 0),
                 unit: item.unit || 'pcs',
                 sku: item.sku,
                 currentStock: parseFloat(item.currentStock || 0),
@@ -1341,8 +1353,11 @@ function ReportsInner() {
           }] : []),
           ...(reportTypes.includes('cost-analysis') ? [{
             type: 'cost-analysis',
-            title: 'Cost Analysis Summary',
-            description: 'Breakdown of costs and areas where a reduction could be most beneficial.',
+            // This section only breaks down operating expenses (rent, utilities, salaries, etc.) —
+            // it does not include cost of goods sold — so it's labeled accordingly rather than the
+            // more generic "Cost Analysis", which could be read as covering COGS too.
+            title: 'Operating Expense Analysis',
+            description: 'Breakdown of operating expenses (not including cost of goods sold) and areas where a reduction could be most beneficial.',
             data: (expenseData.data?.byCategory || []).map(item => ({
               category: item.category || 'Uncategorized',
               amount: parseFloat(item.totalAmount || 0),
@@ -1645,6 +1660,7 @@ function ReportsInner() {
           comparison: {
             prevRevenue,
             prevExpenses,
+            prevCogs,
             prevProfit,
             revenueChange,
             expenseChange,
@@ -3270,6 +3286,9 @@ function ReportsInner() {
                                 <TableHead>Product Name</TableHead>
                                 <TableHead className="text-right">Quantity Sold</TableHead>
                                 <TableHead className="text-right">Revenue (₵)</TableHead>
+                                <TableHead className="text-right">Cost (₵)</TableHead>
+                                <TableHead className="text-right">Gross Profit (₵)</TableHead>
+                                <TableHead className="text-right">Margin %</TableHead>
                               </>
                             ) : (
                               <>
@@ -3289,6 +3308,9 @@ function ReportsInner() {
                                   <TableCell title={`SKU: ${record.sku || 'N/A'}\nUnit: ${record.unit}`} className="cursor-help">{record.productName}</TableCell>
                                   <TableCell className="text-right">{formatInteger(record.quantitySold)} {record.unit || ''}</TableCell>
                                   <TableCell className="text-right">{formatDecimal(record.revenue)}</TableCell>
+                                  <TableCell className="text-right">{formatDecimal(record.cost)}</TableCell>
+                                  <TableCell className={cn("text-right", record.grossProfit < 0 && "text-red-600")}>{formatDecimal(record.grossProfit)}</TableCell>
+                                  <TableCell className="text-right">{record.margin.toFixed(1)}%</TableCell>
                                 </>
                               ) : (
                                 <>
@@ -3476,7 +3498,7 @@ function ReportsInner() {
               </Card>
             )}
 
-            {/* Cost Analysis Section */}
+            {/* Operating Expense Analysis Section (operating expenses only, not COGS) */}
             {generatedReport.insights.find(i => i.type === 'cost-analysis') && (
               <Card style={{ ...cardStyle, marginBottom: 12 }}>
                 <CardContent className="p-4 md:p-6">

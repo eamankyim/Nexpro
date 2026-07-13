@@ -78,6 +78,7 @@ import { useShopOptional } from '../context/ShopContext';
 import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import { getErrorMessage, showSuccess, showError } from '../utils/toast';
+import { isSabitoStoreEnabled } from '../utils/sabitoStoreFeature';
 import { QUERY_STALE, refreshAfterInventoryChange } from '../utils/queryInvalidation';
 import { queryKeys } from '../utils/queryKeys';
 import { EMPTY_STATES, FEATURE_NOT_AVAILABLE } from '../constants/microcopy';
@@ -4073,10 +4074,12 @@ const Products = () => {
                     <QrCode className="h-4 w-4 mr-2" />
                     Generate QR
                   </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => handleOpenStoreListing(selectedProduct)}>
-                    <Store className="h-4 w-4 mr-2" />
-                    Publish to store
-                  </DropdownMenuItem>
+                  {isSabitoStoreEnabled() ? (
+                    <DropdownMenuItem onSelect={() => handleOpenStoreListing(selectedProduct)}>
+                      <Store className="h-4 w-4 mr-2" />
+                      Publish to store
+                    </DropdownMenuItem>
+                  ) : null}
                   <DropdownMenuItem onSelect={() => handleOpenVariantForm()}>
                     <Plus className="h-4 w-4 mr-2" />
                     Add Variant

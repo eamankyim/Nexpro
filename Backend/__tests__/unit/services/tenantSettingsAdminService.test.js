@@ -46,7 +46,12 @@ describe('tenantSettingsAdminService', () => {
     Tenant.findByPk.mockResolvedValue(mockTenant);
     Setting.findOne
       .mockResolvedValueOnce({ value: { invoiceFooter: 'Thanks' } })
-      .mockResolvedValueOnce({ value: { autoSendInvoiceOnJobCreation: true } })
+      .mockResolvedValueOnce({
+        value: {
+          autoSendInvoiceOnJobCreation: true,
+          autoCreateExpenseFromProductCost: true,
+        },
+      })
       .mockResolvedValueOnce({ value: { autoSendInvoiceToCustomer: false } });
 
     const result = await getTenantAdminSettings('tenant-1');
@@ -54,8 +59,34 @@ describe('tenantSettingsAdminService', () => {
     expect(result.tenant.slug).toBe('acme-shop');
     expect(result.organization.invoiceFooter).toBe('Thanks');
     expect(result.jobInvoice.autoSendInvoiceOnJobCreation).toBe(true);
+    // Legacy product-cost expense flag is hard-disabled (COGS handles cost).
+    expect(result.jobInvoice.autoCreateExpenseFromProductCost).toBe(false);
     expect(result.customerNotifications.autoSendInvoiceToCustomer).toBe(false);
     expect(result.sidebarDefaults.hiddenSidebarKeys).toEqual(['/leads']);
+  });
+
+  it('clears autoCreateExpenseFromProductCost even when patch requests true', async () => {
+    const settingRow = { value: {}, save: jest.fn().mockResolvedValue(undefined) };
+    Tenant.findByPk
+      .mockResolvedValueOnce(mockTenant)
+      .mockResolvedValueOnce(mockTenant);
+    Setting.findOne.mockResolvedValue({
+      value: { autoCreateExpenseFromProductCost: true },
+    });
+    Setting.findOrCreate.mockResolvedValue([settingRow, false]);
+
+    const result = await updateTenantAdminSettings({
+      tenantId: 'tenant-1',
+      actorUserId: 'admin-1',
+      payload: {
+        jobInvoice: { autoCreateExpenseFromProductCost: true },
+      },
+      reason: 'Attempt to re-enable removed setting',
+    });
+
+    expect(settingRow.save).toHaveBeenCalled();
+    expect(settingRow.value.autoCreateExpenseFromProductCost).toBe(false);
+    expect(result.jobInvoice.autoCreateExpenseFromProductCost).toBe(false);
   });
 
   it('updates settings and writes audit log', async () => {

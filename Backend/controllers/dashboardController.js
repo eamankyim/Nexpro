@@ -207,7 +207,9 @@ exports.getDashboardOverview = async (req, res, next) => {
     weekEnd.setHours(23, 59, 59, 999);
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    let recentSalesWhere = applyShopFilter(req, { tenantId });
+    // Sale isn't paranoid — soft-deleted sales (deletedAt set) must be excluded explicitly here
+    // and in every raw sales/sale_items query below, so dashboard totals match Reports.
+    let recentSalesWhere = applyShopFilter(req, { tenantId, deletedAt: null });
     if (hasDateFilter) recentSalesWhere.createdAt = dateFilter;
 
     const customerShopFrag = getShopSqlFragment(req);
@@ -215,6 +217,7 @@ exports.getDashboardOverview = async (req, res, next) => {
     const jobStudioFrag = getStudioLocationSqlFragment(req);
     const invoiceStudioFrag = getStudioLocationSqlFragment(req);
     const saleShopFrag = getShopSqlFragment(req);
+    const saleCogsShopFrag = getShopSqlFragment(req, 's');
     const expenseShopFrag = getShopSqlFragment(req);
     const expenseStudioFrag = getStudioLocationSqlFragment(req);
     const customerCountSql = (baseWhere) =>
@@ -348,7 +351,7 @@ exports.getDashboardOverview = async (req, res, next) => {
             COUNT(*) as "totalSales"
             ${hasDateFilter ? `,COALESCE(SUM(CASE WHEN "createdAt" BETWEEN :filterStart AND :filterEnd THEN total ELSE 0 END), 0) as "filteredSalesRevenue"` : ''}
             ${prevPeriod ? `,COALESCE(SUM(CASE WHEN "createdAt" BETWEEN :prevStart AND :prevEnd THEN total ELSE 0 END), 0) as "prevSalesRevenue"` : ''}
-          FROM sales WHERE "tenantId" = :tenantId AND status = 'completed'${saleShopFrag.sql}
+          FROM sales WHERE "tenantId" = :tenantId AND status = 'completed' AND "deletedAt" IS NULL${saleShopFrag.sql}
         `, {
           replacements: { 
             tenantId, 
@@ -356,6 +359,34 @@ exports.getDashboardOverview = async (req, res, next) => {
             monthEnd: lastDayOfMonth,
             todayStart, todayEnd, weekStart, weekEnd,
             ...saleShopFrag.replacements,
+            ...(hasDateFilter ? { filterStart, filterEnd } : {}),
+            ...(prevPeriod ? { prevStart: prevPeriod.start, prevEnd: prevPeriod.end } : {})
+          },
+          type: sequelize.QueryTypes.SELECT
+        }) : Promise.resolve([{}])),
+      // Cost of goods sold (shop/pharmacy) — deduct product/variant cost from revenue so
+      // "profit" reflects margin, not just top-line sales. Mirrors saleAccountingService COGS logic.
+      safeQuery((businessType === 'shop' || businessType === 'pharmacy') ?
+        sequelize.query(`
+          SELECT
+            COALESCE(SUM(CASE WHEN s."createdAt" BETWEEN :monthStart AND :monthEnd THEN si.quantity * COALESCE(pv."costPrice", p."costPrice", 0) ELSE 0 END), 0) as "monthCogs",
+            COALESCE(SUM(CASE WHEN s."createdAt" BETWEEN :todayStart AND :todayEnd THEN si.quantity * COALESCE(pv."costPrice", p."costPrice", 0) ELSE 0 END), 0) as "todayCogs",
+            COALESCE(SUM(si.quantity * COALESCE(pv."costPrice", p."costPrice", 0)), 0) as "totalCogs"
+            ${hasDateFilter ? `,COALESCE(SUM(CASE WHEN s."createdAt" BETWEEN :filterStart AND :filterEnd THEN si.quantity * COALESCE(pv."costPrice", p."costPrice", 0) ELSE 0 END), 0) as "filteredCogs"` : ''}
+            ${prevPeriod ? `,COALESCE(SUM(CASE WHEN s."createdAt" BETWEEN :prevStart AND :prevEnd THEN si.quantity * COALESCE(pv."costPrice", p."costPrice", 0) ELSE 0 END), 0) as "prevCogs"` : ''}
+          FROM sale_items si
+          INNER JOIN sales s ON s.id = si."saleId"
+          LEFT JOIN products p ON p.id = si."productId"
+          LEFT JOIN product_variants pv ON pv.id = si."productVariantId"
+          WHERE s."tenantId" = :tenantId AND s.status = 'completed' AND s."deletedAt" IS NULL
+            AND COALESCE(p."trackStock", true) != false${saleCogsShopFrag.sql}
+        `, {
+          replacements: {
+            tenantId,
+            monthStart: firstDayOfMonth,
+            monthEnd: lastDayOfMonth,
+            todayStart, todayEnd,
+            ...saleCogsShopFrag.replacements,
             ...(hasDateFilter ? { filterStart, filterEnd } : {}),
             ...(prevPeriod ? { prevStart: prevPeriod.start, prevEnd: prevPeriod.end } : {})
           },
@@ -392,7 +423,7 @@ exports.getDashboardOverview = async (req, res, next) => {
           COUNT(DISTINCT "SaleItem"."saleId") as "saleCount" 
         FROM "sale_items" AS "SaleItem" 
         INNER JOIN "sales" AS "Sale" ON "SaleItem"."saleId"="Sale"."id" 
-        WHERE "Sale"."tenantId"=:tenantId AND "Sale"."status"='completed'
+        WHERE "Sale"."tenantId"=:tenantId AND "Sale"."status"='completed' AND "Sale"."deletedAt" IS NULL
           ${hasDateFilter ? 'AND "Sale"."createdAt" BETWEEN :filterStart AND :filterEnd' : 'AND "Sale"."createdAt">=:thirtyDaysAgo'}${saleShopFrag.sql.replace(/"shopId"/g, '"Sale"."shopId"')}
         GROUP BY "SaleItem"."productId","SaleItem"."name" 
         ORDER BY SUM("SaleItem"."total") DESC LIMIT 5
@@ -442,6 +473,7 @@ exports.getDashboardOverview = async (req, res, next) => {
       entityCountsResult,
       recentJobs,
       salesStatsResult,
+      salesCogsStatsResult,
       inventoryStatsResult,
       recentSales,
       topProducts,
@@ -455,6 +487,7 @@ exports.getDashboardOverview = async (req, res, next) => {
     const expenseStats = Array.isArray(expenseStatsResult) ? expenseStatsResult[0] : (expenseStatsResult || {});
     const entityCounts = Array.isArray(entityCountsResult) ? entityCountsResult[0] : (entityCountsResult || {});
     const salesStats = Array.isArray(salesStatsResult) ? salesStatsResult[0] : (salesStatsResult || {});
+    const salesCogsStats = Array.isArray(salesCogsStatsResult) ? salesCogsStatsResult[0] : (salesCogsStatsResult || {});
     const inventoryStats = Array.isArray(inventoryStatsResult) ? inventoryStatsResult[0] : (inventoryStatsResult || {});
 
     // Map consolidated results to original variable names
@@ -493,6 +526,11 @@ exports.getDashboardOverview = async (req, res, next) => {
     const totalSales = parseInt(salesStats.totalSales) || 0;
     const todaySalesCount = parseInt(salesStats.todaySalesCount) || 0;
     const filteredSalesRevenue = hasDateFilter ? (parseFloat(salesStats.filteredSalesRevenue) || 0) : 0;
+
+    // Cost of goods sold for the same periods (0 for non-retail business types, no products/sale_items to cost).
+    const monthCogs = parseFloat(salesCogsStats.monthCogs) || 0;
+    const totalCogs = parseFloat(salesCogsStats.totalCogs) || 0;
+    const filteredCogs = hasDateFilter ? (parseFloat(salesCogsStats.filteredCogs) || 0) : 0;
 
     // Inventory stats
     const lowStockItems = parseInt(inventoryStats.lowStockItems) || 0;
@@ -533,6 +571,7 @@ exports.getDashboardOverview = async (req, res, next) => {
         : (parseFloat(invoiceStats.prevRevenue) || 0)
     ) : 0;
     const prevExpenses = prevPeriod ? (parseFloat(expenseStats.prevExpenses) || 0) : 0;
+    const prevCogs = prevPeriod ? (parseFloat(salesCogsStats.prevCogs) || 0) : 0;
     const prevNewCustomers = prevPeriod ? (parseInt(entityCounts.prevNewCustomers) || 0) : 0;
 
     if (hasDateFilter) {
@@ -549,7 +588,9 @@ exports.getDashboardOverview = async (req, res, next) => {
       jobs: thisMonthJobs ?? 0,
       revenue: Number(parseFloat(currentMonthRevenueValue ?? 0).toFixed(2)),
       expenses: Number(parseFloat(thisMonthExpenses ?? 0).toFixed(2)),
-      profit: Number(parseFloat((currentMonthRevenueValue ?? 0) - (thisMonthExpenses ?? 0)).toFixed(2)),
+      // Profit deducts cost of goods sold (product/variant cost) in addition to operating expenses,
+      // so retail workspaces see revenue - COGS - expenses, not just revenue - expenses.
+      profit: Number(parseFloat((currentMonthRevenueValue ?? 0) - (thisMonthExpenses ?? 0) - (monthCogs ?? 0)).toFixed(2)),
       range: {
         start: firstDayOfMonth.toISOString(),
         end: lastDayOfMonth.toISOString()
@@ -559,7 +600,7 @@ exports.getDashboardOverview = async (req, res, next) => {
     const allTimeSummary = {
       revenue: Number(parseFloat(totalRevenue ?? 0).toFixed(2)),
       expenses: Number(parseFloat(totalExpenses ?? 0).toFixed(2)),
-      profit: Number(parseFloat((totalRevenue ?? 0) - (totalExpenses ?? 0)).toFixed(2))
+      profit: Number(parseFloat((totalRevenue ?? 0) - (totalExpenses ?? 0) - (totalCogs ?? 0)).toFixed(2))
     };
 
     // Shop-specific data (from batch)
@@ -606,7 +647,7 @@ exports.getDashboardOverview = async (req, res, next) => {
                 COALESCE(SUM(CASE WHEN s."createdAt" BETWEEN :periodStart AND :periodEnd THEN s.total ELSE 0 END), 0) AS "periodRevenue",
                 COUNT(s.id) FILTER (WHERE s."createdAt" BETWEEN :periodStart AND :periodEnd) AS "periodSalesCount"
               FROM shops sh
-              LEFT JOIN sales s ON s."shopId" = sh.id AND s."tenantId" = :tenantId AND s.status = 'completed'
+              LEFT JOIN sales s ON s."shopId" = sh.id AND s."tenantId" = :tenantId AND s.status = 'completed' AND s."deletedAt" IS NULL
               WHERE sh."tenantId" = :tenantId AND sh."isActive" = true
               GROUP BY sh.id, sh.name
               ORDER BY "periodRevenue" DESC
@@ -672,7 +713,8 @@ exports.getDashboardOverview = async (req, res, next) => {
         (businessType === 'shop' || businessType === 'pharmacy') ? (filteredSalesRevenue || 0) : (filteredRevenue || 0)
       ).toFixed(2));
       const filteredExpensesValue = Number(parseFloat(filteredExpenses || 0).toFixed(2));
-      const filteredProfitValue = Number(parseFloat(filteredRevenueValue - filteredExpensesValue).toFixed(2));
+      const filteredCogsValue = Number(parseFloat(filteredCogs || 0).toFixed(2));
+      const filteredProfitValue = Number(parseFloat(filteredRevenueValue - filteredExpensesValue - filteredCogsValue).toFixed(2));
 
       responseData.filteredPeriod = {
         jobs: filteredJobs ?? 0,
@@ -691,8 +733,8 @@ exports.getDashboardOverview = async (req, res, next) => {
       if (filterType && prevPeriod) {
         const currRev = filteredRevenueValue;
         const currExp = filteredExpensesValue;
-        const currProfit = currRev - currExp;
-        const prevProfit = (prevRevenue || 0) - (prevExpenses || 0);
+        const currProfit = currRev - currExp - filteredCogsValue;
+        const prevProfit = (prevRevenue || 0) - (prevExpenses || 0) - (prevCogs || 0);
         const currNewCustomers = filteredNewCustomers ?? 0;
         const prevNewCustomersVal = prevNewCustomers ?? 0;
         responseData.comparison = {

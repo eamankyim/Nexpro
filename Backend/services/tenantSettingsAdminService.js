@@ -77,7 +77,8 @@ const buildJobInvoicePayload = (value = {}) => ({
   customerJobTrackingEnabled: value.customerJobTrackingEnabled === true,
   emailCustomerJobTrackingOnJobCreation: value.emailCustomerJobTrackingOnJobCreation === true,
   smsCustomerJobTrackingOnJobCreation: value.smsCustomerJobTrackingOnJobCreation === true,
-  autoCreateExpenseFromProductCost: value.autoCreateExpenseFromProductCost === true,
+  // Hard-disabled legacy flag (product cost → COGS, not Expense).
+  autoCreateExpenseFromProductCost: false,
 });
 
 const buildCustomerNotificationPayload = (value = {}) => ({
@@ -179,9 +180,8 @@ const updateTenantAdminSettings = async ({ tenantId, actorUserId, payload, reaso
       ...(typeof patch.smsCustomerJobTrackingOnJobCreation === 'boolean' && {
         smsCustomerJobTrackingOnJobCreation: patch.smsCustomerJobTrackingOnJobCreation,
       }),
-      ...(typeof patch.autoCreateExpenseFromProductCost === 'boolean' && {
-        autoCreateExpenseFromProductCost: patch.autoCreateExpenseFromProductCost,
-      }),
+      // Always clear legacy flag; product cost must not create Expense rows.
+      autoCreateExpenseFromProductCost: false,
     };
     if (value.customerJobTrackingEnabled !== true) {
       value.emailCustomerJobTrackingOnJobCreation = false;

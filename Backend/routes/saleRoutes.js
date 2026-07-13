@@ -49,7 +49,7 @@ router.route('/sync')
 router.route('/:id')
   .get(timeCrudAction('sales.read'), getSale)
   .put(authorize('admin', 'manager', 'staff'), timeCrudAction('sales.update'), updateSale)
-  .delete(authorize('admin'), timeCrudAction('sales.delete'), deleteSale);
+  .delete(authorize('admin', 'manager', 'staff'), timeCrudAction('sales.delete'), deleteSale);
 
 router.route('/:id/order-status')
   .patch(authorize('admin', 'manager', 'staff'), timeCrudAction('sales.update_order_status'), updateOrderStatus);

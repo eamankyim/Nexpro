@@ -1337,8 +1337,8 @@ const POS = () => {
 
   // Handle send receipt
   const handleSendReceipt = useCallback(async ({ saleId, channels, phone, email }) => {
-    if (!guardOnline(showError)) return;
-    await saleService.sendReceipt(saleId, { channels, phone, email });
+    if (!guardOnline(showError)) return undefined;
+    return saleService.sendReceipt(saleId, { channels, phone, email });
   }, []);
 
   const handleRefreshProducts = useCallback(async () => {
@@ -1358,8 +1358,8 @@ const POS = () => {
 
   // Handle send receipt for scan mode
   const handleSendReceiptForScanMode = useCallback(async (saleId, options) => {
-    if (!guardOnline(showError)) return;
-    await saleService.sendReceipt(saleId, options);
+    if (!guardOnline(showError)) return undefined;
+    return saleService.sendReceipt(saleId, options);
   }, []);
 
   const mobileCheckoutBarPaddingBottom = useMemo(() => {

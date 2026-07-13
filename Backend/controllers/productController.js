@@ -1,14 +1,11 @@
 const fs = require('fs');
 const path = require('path');
-const { Product, ProductVariant, Shop, ProductCategory, Barcode, SaleItem, Sale, Customer, User, Expense, Setting } = require('../models');
+const { Product, ProductVariant, Shop, ProductCategory, Barcode, SaleItem, Sale, Customer, User } = require('../models');
 const { Op } = require('sequelize');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const { getPagination } = require('../utils/paginationUtils');
 const { baseUploadDir, ensureDirExists } = require('../middleware/upload');
 const { invalidateProductListCache } = require('../middleware/cache');
-const { invalidateAfterMutation } = require('../middleware/cache');
-const { getExpenseCategories } = require('../config/expenseCategories');
-const { generateExpenseNumber } = require('./expenseController');
 const {
   applyShopReadFilter,
   attachShopToPayload,
@@ -283,52 +280,6 @@ const syncProductAliasBarcodes = async ({ product, tenantId, aliases, transactio
     }
   }
 };
-
-async function maybeCreateExpenseFromProductCost({ req, product }) {
-  const settingsRow = await Setting.findOne({
-    where: {
-      tenantId: req.tenantId,
-      key: 'job-invoice',
-    },
-  });
-  const settings = settingsRow?.value || {};
-  if (settings.autoCreateExpenseFromProductCost !== true) return;
-
-  const unitCost = Number.parseFloat(product?.costPrice || 0);
-  if (!Number.isFinite(unitCost) || unitCost <= 0) return;
-
-  const quantity = Number.parseFloat(product?.quantityOnHand || 0);
-  const quantityForCost = Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
-  const totalAmount = Number((unitCost * quantityForCost).toFixed(2));
-  if (totalAmount <= 0) return;
-
-  const businessType = req.tenant?.businessType || 'shop';
-  const metadata = req.tenant?.metadata || {};
-  const tenantCategories = getExpenseCategories(businessType, metadata);
-  const category = tenantCategories.includes('Inventory')
-    ? 'Inventory'
-    : tenantCategories.includes('Materials')
-      ? 'Materials'
-      : 'Other';
-
-  const expenseNumber = await generateExpenseNumber(req.tenantId);
-  await Expense.create({
-    tenantId: req.tenantId,
-    expenseNumber,
-    category,
-    description: `Auto-created from product cost: ${product.name || 'Product'} (${quantityForCost} x ${unitCost.toFixed(2)})`,
-    amount: totalAmount,
-    expenseDate: new Date(),
-    paymentMethod: 'other',
-    status: 'paid',
-    approvalStatus: 'approved',
-    submittedBy: req.user?.id || null,
-    approvedBy: req.user?.id || null,
-    approvedAt: new Date(),
-    notes: 'Created automatically from product cost automation setting.',
-  });
-  invalidateAfterMutation(req.tenantId);
-}
 
 // @desc    Get all products
 // @route   GET /api/products
@@ -860,11 +811,8 @@ exports.createProduct = async (req, res, next) => {
     transactionFinished = true;
 
     invalidateProductListCache(req.tenantId);
-    try {
-      await maybeCreateExpenseFromProductCost({ req, product });
-    } catch (expenseErr) {
-      console.error('[Product] Failed to auto-create expense from cost price:', expenseErr?.message || expenseErr);
-    }
+    // Product cost is reflected in COGS on sale — do not auto-create Expense rows
+    // (that double-counted profit as sales − expenses − COGS).
     res.status(201).json({
       success: true,
       data: stripSensitiveProductFields(product, req)

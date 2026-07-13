@@ -166,6 +166,24 @@ const Sale = sequelize.define('Sale', {
   clientId: {
     type: DataTypes.STRING(255),
     allowNull: true
+  },
+  // Soft-delete audit trail: managers/staff soft-delete paid sales with a reason instead of
+  // destroying the row (admins can still hard-delete). NULL deletedAt = not deleted.
+  deletedAt: {
+    type: DataTypes.DATE,
+    allowNull: true
+  },
+  deletedBy: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'users',
+      key: 'id'
+    }
+  },
+  deletionReason: {
+    type: DataTypes.TEXT,
+    allowNull: true
   }
 }, {
   tableName: 'sales',

@@ -24,7 +24,6 @@ const EMPTY_SETTINGS = {
     customerJobTrackingEnabled: false,
     emailCustomerJobTrackingOnJobCreation: false,
     smsCustomerJobTrackingOnJobCreation: false,
-    autoCreateExpenseFromProductCost: false,
   },
   customerNotifications: {
     autoSendInvoiceToCustomer: true,
@@ -246,7 +245,6 @@ export default function AdminTenantSettingsPanel({ tenantId, tenantName }) {
               ['customerJobTrackingEnabled', 'Enable customer job tracking links'],
               ['emailCustomerJobTrackingOnJobCreation', 'Email tracking link when job is created'],
               ['smsCustomerJobTrackingOnJobCreation', 'SMS tracking link when job is created'],
-              ['autoCreateExpenseFromProductCost', 'Auto-create expense from product cost'],
             ].map(([key, label]) => (
               <div key={key} className="flex items-center justify-between gap-3">
                 <Label htmlFor={`job-invoice-${key}`}>{label}</Label>

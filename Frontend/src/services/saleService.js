@@ -104,9 +104,9 @@ const saleService = {
     return api.get(query ? `/sales?${query}` : '/sales');
   },
 
-  // Delete a sale
-  deleteSale: async (id) => {
-    return api.delete(`/sales/${id}`);
+  // Delete a sale. Admins hard-delete; managers/staff soft-delete a paid sale and must pass a reason.
+  deleteSale: async (id, reason) => {
+    return api.delete(`/sales/${id}`, reason ? { data: { reason } } : undefined);
   },
 
   // Get sales statistics

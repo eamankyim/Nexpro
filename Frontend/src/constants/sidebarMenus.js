@@ -1,4 +1,5 @@
 import { STUDIO_LIKE_TYPES, isQuotesEnabledForTenant } from './index.js';
+import { isSabitoStoreEnabled } from '../utils/sabitoStoreFeature';
 
 /** Core navigation items that must always remain visible in the sidebar. */
 export const LOCKED_SIDEBAR_KEYS = [
@@ -178,10 +179,12 @@ export const isConfigurableSidebarKeyForTenant = (key, ctx = {}) => {
     isPlatformAdmin = false,
   } = ctx;
   const isStudio = STUDIO_LIKE_TYPES.includes(businessType);
+  const sabitoStoreEnabled = isSabitoStoreEnabled();
 
   switch (key) {
     case 'store':
       return (
+        sabitoStoreEnabled &&
         !isPlatformAdmin &&
         STORE_CHILD_KEYS.some((childKey) =>
           isConfigurableSidebarKeyForTenant(childKey, ctx)
@@ -189,12 +192,12 @@ export const isConfigurableSidebarKeyForTenant = (key, ctx = {}) => {
       );
     case '/store':
     case '/store/settings':
-      return !isPlatformAdmin;
+      return sabitoStoreEnabled && !isPlatformAdmin;
     case '/store/listings':
     case '/store/orders':
-      return !isPlatformAdmin && !isStudio;
+      return sabitoStoreEnabled && !isPlatformAdmin && !isStudio;
     case '/store/services':
-      return !isPlatformAdmin && isStudio;
+      return sabitoStoreEnabled && !isPlatformAdmin && isStudio;
 
     case 'company-assets':
     case '/materials':

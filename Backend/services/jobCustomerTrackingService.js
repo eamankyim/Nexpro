@@ -9,6 +9,7 @@ const JOB_INVOICE_DEFAULTS = {
   customerJobTrackingEnabled: false,
   emailCustomerJobTrackingOnJobCreation: false,
   smsCustomerJobTrackingOnJobCreation: false,
+  // Legacy key kept false: product cost must not create Expense (COGS handles cost).
   autoCreateExpenseFromProductCost: false
 };
 

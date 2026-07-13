@@ -45,6 +45,7 @@ import { useHintMode } from '@/context/HintModeContext';
 import { usePWAInstall } from '@/context/PWAInstallContext';
 import { APP_NAME, isQuotesEnabledForTenant, STUDIO_LIKE_TYPES } from '@/constants';
 import { filterHiddenNavItems, sanitizeHiddenSidebarKeys } from '@/constants/sidebarMenus';
+import { isSabitoStoreEnabled } from '@/utils/sabitoStoreFeature';
 import settingsService from '@/services/settingsService';
 import { useSidebarPreferences } from '@/hooks/useSidebarPreferences';
 import { API_BASE_URL } from '@/services/api';
@@ -193,22 +194,24 @@ const getMenuItems = (
 
   if (!isPlatformAdmin) {
     const isStudioStore = STUDIO_LIKE_TYPES.includes(businessType);
-    // "Sabito Store" = the Sabito marketplace-backed storefront channel (trade assurance,
-    // marketplace discovery). Kept separate from "Online Store" (custom domain, direct-pay) below.
-    baseItems.push({
-      key: 'store',
-      icon: Store,
-      label: 'Sabito Store',
-      tooltip: MENU_HINTS['/store'],
-      children: [
-        { key: '/store', label: 'Dashboard', tooltip: MENU_HINTS['/store'] },
-        ...(isStudioStore
-          ? [{ key: '/store/services', label: 'Studio services', tooltip: MENU_HINTS['/store/services'] }]
-          : [{ key: '/store/listings', label: 'Store listings', tooltip: MENU_HINTS['/store/listings'] }]),
-        ...(!isStudioStore ? [{ key: '/store/orders', label: 'Online orders', tooltip: MENU_HINTS['/store/orders'] }] : []),
-        { key: '/store/settings', label: isStudioStore ? 'Studio settings' : 'Store settings', tooltip: MENU_HINTS['/store/settings'], managerOnly: true },
-      ],
-    });
+    if (isSabitoStoreEnabled()) {
+      // "Sabito Store" = the Sabito marketplace-backed storefront channel (trade assurance,
+      // marketplace discovery). Kept separate from "Online Store" (custom domain, direct-pay) below.
+      baseItems.push({
+        key: 'store',
+        icon: Store,
+        label: 'Sabito Store',
+        tooltip: MENU_HINTS['/store'],
+        children: [
+          { key: '/store', label: 'Dashboard', tooltip: MENU_HINTS['/store'] },
+          ...(isStudioStore
+            ? [{ key: '/store/services', label: 'Studio services', tooltip: MENU_HINTS['/store/services'] }]
+            : [{ key: '/store/listings', label: 'Store listings', tooltip: MENU_HINTS['/store/listings'] }]),
+          ...(!isStudioStore ? [{ key: '/store/orders', label: 'Online orders', tooltip: MENU_HINTS['/store/orders'] }] : []),
+          { key: '/store/settings', label: isStudioStore ? 'Studio settings' : 'Store settings', tooltip: MENU_HINTS['/store/settings'], managerOnly: true },
+        ],
+      });
+    }
 
     // "Online Store" = customer-owned custom domain storefront (not Sabito, not trade assurance).
     baseItems.push({
@@ -481,11 +484,15 @@ export function Sidebar({ collapsed, onCollapse }) {
     '/prescriptions': () => import('../../pages/Prescriptions'),
     '/tasks': () => import('../../pages/Tasks'),
     '/automations': () => import('../../pages/Automations'),
-    '/store': () => import('../../pages/StoreDashboard'),
-    '/store/listings': () => import('../../pages/StoreListings'),
-    '/store/services': () => import('../../pages/StoreServices'),
-    '/store/orders': () => import('../../pages/OnlineOrders'),
-    '/store/settings': () => import('../../pages/StoreSettings'),
+    ...(isSabitoStoreEnabled()
+      ? {
+          '/store': () => import('../../pages/StoreDashboard'),
+          '/store/listings': () => import('../../pages/StoreListings'),
+          '/store/services': () => import('../../pages/StoreServices'),
+          '/store/orders': () => import('../../pages/OnlineOrders'),
+          '/store/settings': () => import('../../pages/StoreSettings'),
+        }
+      : {}),
     '/online-store': () => import('../../pages/OnlineStore'),
   }), []);
 

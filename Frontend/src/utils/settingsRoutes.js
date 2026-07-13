@@ -84,7 +84,7 @@ export const SETTINGS_HUB_CARDS = [
   {
     slug: 'inventory',
     title: 'Inventory',
-    subtitle: 'Auto-create expense from product cost',
+    subtitle: 'Product cost, COGS, and operating expenses',
     group: 'business',
     migrated: true,
     managerOnly: true,

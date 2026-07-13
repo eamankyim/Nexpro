@@ -1965,7 +1965,8 @@ exports.getJobInvoiceSettings = async (req, res, next) => {
         customerJobTrackingEnabled: value.customerJobTrackingEnabled === true,
         emailCustomerJobTrackingOnJobCreation: value.emailCustomerJobTrackingOnJobCreation === true,
         smsCustomerJobTrackingOnJobCreation: value.smsCustomerJobTrackingOnJobCreation === true,
-        autoCreateExpenseFromProductCost: value.autoCreateExpenseFromProductCost === true,
+        // Hard-disabled: product cost feeds COGS, not Expense (avoids double-counting profit).
+        autoCreateExpenseFromProductCost: false,
         tenantSlug: tenant?.slug || null
       }
     });
@@ -1983,8 +1984,7 @@ exports.updateJobInvoiceSettings = async (req, res, next) => {
       autoSendInvoiceOnJobCreation,
       customerJobTrackingEnabled,
       emailCustomerJobTrackingOnJobCreation,
-      smsCustomerJobTrackingOnJobCreation,
-      autoCreateExpenseFromProductCost
+      smsCustomerJobTrackingOnJobCreation
     } = sanitizePayload(req.body);
     const existing = await getSettingValue(req.tenantId, 'job-invoice', JOB_INVOICE_DEFAULTS);
     let value = {
@@ -1993,7 +1993,8 @@ exports.updateJobInvoiceSettings = async (req, res, next) => {
       ...(typeof customerJobTrackingEnabled === 'boolean' && { customerJobTrackingEnabled }),
       ...(typeof emailCustomerJobTrackingOnJobCreation === 'boolean' && { emailCustomerJobTrackingOnJobCreation }),
       ...(typeof smsCustomerJobTrackingOnJobCreation === 'boolean' && { smsCustomerJobTrackingOnJobCreation }),
-      ...(typeof autoCreateExpenseFromProductCost === 'boolean' && { autoCreateExpenseFromProductCost })
+      // Always clear legacy flag; creating expenses from product cost is removed.
+      autoCreateExpenseFromProductCost: false
     };
     if (value.customerJobTrackingEnabled !== true) {
       value.emailCustomerJobTrackingOnJobCreation = false;
@@ -2013,7 +2014,7 @@ exports.updateJobInvoiceSettings = async (req, res, next) => {
         customerJobTrackingEnabled: value.customerJobTrackingEnabled === true,
         emailCustomerJobTrackingOnJobCreation: value.emailCustomerJobTrackingOnJobCreation === true,
         smsCustomerJobTrackingOnJobCreation: value.smsCustomerJobTrackingOnJobCreation === true,
-        autoCreateExpenseFromProductCost: value.autoCreateExpenseFromProductCost === true,
+        autoCreateExpenseFromProductCost: false,
         tenantSlug: tenant?.slug || null
       }
     });

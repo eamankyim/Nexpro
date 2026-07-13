@@ -31,6 +31,13 @@ const TEMPLATE_KEY_TRIGGER_TYPES = {
   [TEMPLATE_KEYS.LOW_STOCK_ALERT]: 'low_stock_detected',
 };
 
+/** Maps automation messaging action types to the delivery channel they cover. */
+const ACTION_TYPE_TO_CHANNEL = {
+  send_sms: 'sms',
+  send_email_platform: 'email',
+  send_whatsapp: 'whatsapp',
+};
+
 /**
  * Find an enabled automation rule seeded from or matching a template key.
  * @param {string} tenantId
@@ -41,7 +48,7 @@ async function getEnabledRuleByTemplateKey(tenantId, templateKey) {
   if (!tenantId || !templateKey) return null;
   const rules = await AutomationRule.findAll({
     where: { tenantId, enabled: true },
-    attributes: ['id', 'name', 'triggerType', 'metadata', 'enabled'],
+    attributes: ['id', 'name', 'triggerType', 'metadata', 'enabled', 'actionConfig'],
   });
   return rules.find((rule) => rule.metadata?.templateKey === templateKey) || null;
 }
@@ -56,7 +63,7 @@ async function getEnabledRuleByTriggerType(tenantId, triggerType) {
   if (!tenantId || !triggerType) return null;
   return AutomationRule.findOne({
     where: { tenantId, enabled: true, triggerType },
-    attributes: ['id', 'name', 'triggerType', 'metadata', 'enabled'],
+    attributes: ['id', 'name', 'triggerType', 'metadata', 'enabled', 'actionConfig'],
   });
 }
 
@@ -72,6 +79,45 @@ async function shouldUseAutomationInsteadOfBuiltIn(tenantId, templateKey) {
   const triggerType = TEMPLATE_KEY_TRIGGER_TYPES[templateKey];
   if (triggerType && await getEnabledRuleByTriggerType(tenantId, triggerType)) return true;
   return false;
+}
+
+/**
+ * Which delivery channels (sms/email/whatsapp) are actually covered by the enabled
+ * automation rule matching this template — an enabled "sale receipt" automation that only
+ * sends WhatsApp + email should not silently swallow a manually-requested SMS send.
+ * @param {string} tenantId
+ * @param {string} templateKey
+ * @returns {Promise<Set<string>>}
+ */
+async function getAutomationCoveredChannelsForTemplate(tenantId, templateKey) {
+  const covered = new Set();
+  let rule = await getEnabledRuleByTemplateKey(tenantId, templateKey);
+  if (!rule) {
+    const triggerType = TEMPLATE_KEY_TRIGGER_TYPES[templateKey];
+    if (triggerType) {
+      rule = await getEnabledRuleByTriggerType(tenantId, triggerType);
+    }
+  }
+  if (!rule) return covered;
+  const actions = Array.isArray(rule.actionConfig?.actions) ? rule.actionConfig.actions : [];
+  for (const action of actions) {
+    const channel = ACTION_TYPE_TO_CHANNEL[action?.type];
+    if (channel) covered.add(channel);
+  }
+  return covered;
+}
+
+/**
+ * Whether a specific channel is handled by an enabled automation for this template
+ * (as opposed to shouldUseAutomationInsteadOfBuiltIn, which is all-or-nothing per rule match).
+ * @param {string} tenantId
+ * @param {string} templateKey
+ * @param {string} channel - 'sms' | 'email' | 'whatsapp'
+ * @returns {Promise<boolean>}
+ */
+async function isChannelHandledByAutomation(tenantId, templateKey, channel) {
+  const covered = await getAutomationCoveredChannelsForTemplate(tenantId, templateKey);
+  return covered.has(channel);
 }
 
 /**
@@ -98,23 +144,31 @@ async function isPosAutoSendReceiptEnabled(tenantId) {
 
 /**
  * Whether a receipt was sent for this sale within the dedupe window.
+ * When `channel` is provided, only counts as a dupe if that specific channel was actually
+ * recorded as sent — an auto-sent email should not block a manually-requested SMS.
  * @param {string} tenantId
  * @param {string} saleId
+ * @param {string|null} [channel] - 'sms' | 'email' | 'whatsapp'; omit for a global (any-channel) check
  * @returns {Promise<boolean>}
  */
-async function hasRecentReceiptForSale(tenantId, saleId) {
+async function hasRecentReceiptForSale(tenantId, saleId, channel = null) {
   if (!tenantId || !saleId) return false;
   const threshold = new Date(Date.now() - RECEIPT_DEDUPE_WINDOW_MINUTES * 60 * 1000);
-  const recent = await SaleActivity.findOne({
+  const recent = await SaleActivity.findAll({
     where: {
       tenantId,
       saleId,
       type: 'receipt_sent',
       createdAt: { [Op.gte]: threshold },
     },
-    attributes: ['id'],
+    attributes: ['id', 'metadata'],
   });
-  return Boolean(recent);
+  if (!recent.length) return false;
+  if (!channel) return true;
+  return recent.some((activity) => {
+    const channels = activity.metadata?.channels;
+    return Array.isArray(channels) && channels.includes(channel);
+  });
 }
 
 /**
@@ -143,6 +197,8 @@ module.exports = {
   getEnabledRuleByTemplateKey,
   getEnabledRuleByTriggerType,
   shouldUseAutomationInsteadOfBuiltIn,
+  getAutomationCoveredChannelsForTemplate,
+  isChannelHandledByAutomation,
   isCustomerNotificationEffectiveEnabled,
   isPosAutoSendReceiptEnabled,
   hasRecentReceiptForSale,

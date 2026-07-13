@@ -5,6 +5,7 @@ import { CheckCircle2, Clock, ExternalLink, Globe, Loader2, ShieldOff, Sparkles,
 
 import storeService from '../services/storeService';
 import { buildStorefrontStoreUrl } from '../utils/storefrontUrl';
+import { isSabitoStoreEnabled } from '../utils/sabitoStoreFeature';
 import { showError, showSuccess } from '../utils/toast';
 
 import { Badge } from '@/components/ui/badge';
@@ -119,12 +120,15 @@ const OnlineStore = () => {
         <Card className="border-amber-200 bg-amber-50">
           <CardContent className="flex flex-col gap-3 py-6 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-amber-900">
-              Finish basic store setup first (store name, products, branding) — Online Store reuses
-              that same information for your template.
+              {isSabitoStoreEnabled()
+                ? 'Finish basic store setup first (store name, products, branding) — Online Store reuses that same information for your template.'
+                : 'Basic store profile (name, products, branding) is required before connecting a domain. Sabito Store setup is currently unavailable — contact support if you need help.'}
             </p>
-            <Button asChild className="shrink-0">
-              <Link to="/store/setup">Start store setup</Link>
-            </Button>
+            {isSabitoStoreEnabled() ? (
+              <Button asChild className="shrink-0">
+                <Link to="/store/setup">Start store setup</Link>
+              </Button>
+            ) : null}
           </CardContent>
         </Card>
       ) : null}

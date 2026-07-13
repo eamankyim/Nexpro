@@ -204,6 +204,8 @@ const Sales = () => {
   const [posModalOpen, setPosModalOpen] = useState(false);
   const [loadingReceipt, setLoadingReceipt] = useState(false);
   const [saleToDelete, setSaleToDelete] = useState(null);
+  const [deleteSaleReason, setDeleteSaleReason] = useState('');
+  const [deletingSale, setDeletingSale] = useState(false);
   const [updatingSaleDelivery, setUpdatingSaleDelivery] = useState(false);
   const { activeTenant, activeTenantId, isAdmin } = useAuth();
   const shopContext = useShopOptional();
@@ -491,13 +493,15 @@ const Sales = () => {
     }
   }, [navigate]);
 
-  const handleDeleteSale = useCallback(async (id) => {
+  const handleDeleteSale = useCallback(async (id, reason) => {
+    setDeletingSale(true);
     try {
-      await saleService.deleteSale(id);
+      await saleService.deleteSale(id, reason);
       showSuccess('Sale deleted successfully');
       await refreshAfterSale(queryClient);
       refetchSales();
       setSaleToDelete(null);
+      setDeleteSaleReason('');
       if (viewingSale?.id === id) {
         setDrawerVisible(false);
         setViewingSale(null);
@@ -505,6 +509,8 @@ const Sales = () => {
       }
     } catch (error) {
       showError(error, 'Failed to delete sale');
+    } finally {
+      setDeletingSale(false);
     }
   }, [viewingSale?.id, refetchSales, queryClient]);
 
@@ -663,7 +669,8 @@ const Sales = () => {
               icon: <FileText className="h-4 w-4" />,
               onClick: () => handleViewInvoice(record)
             },
-            isAdmin && {
+            // Admins can hard-delete any sale; managers/staff can only soft-delete a paid sale (with a reason).
+            (isAdmin || parseFloat(record.amountPaid || 0) > 0) && {
               key: 'delete',
               label: 'Delete sale',
               variant: 'outline',
@@ -1294,7 +1301,7 @@ const Sales = () => {
               onClick: () => handleOpenRecordPayment(viewingSale)
             });
           }
-          if (isAdmin) {
+          if (isAdmin || parseFloat(viewingSale?.amountPaid || 0) > 0) {
             items.push({
               key: 'delete',
               label: 'Delete sale',
@@ -1650,21 +1657,50 @@ const Sales = () => {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={!!saleToDelete} onOpenChange={(open) => !open && setSaleToDelete(null)}>
+      <AlertDialog
+        open={!!saleToDelete}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSaleToDelete(null);
+            setDeleteSaleReason('');
+          }
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete sale?</AlertDialogTitle>
             <AlertDialogDescription>
               {saleToDelete
-                ? `Are you sure you want to delete sale "${saleToDelete.saleNumber || saleToDelete.id}"? This action cannot be undone.`
+                ? isAdmin
+                  ? `Are you sure you want to permanently delete sale "${saleToDelete.saleNumber || saleToDelete.id}"? This action cannot be undone.`
+                  : `Sale "${saleToDelete.saleNumber || saleToDelete.id}" will be removed from the sales list. It stays on record for audit purposes. Please provide a reason.`
                 : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {saleToDelete && !isAdmin && (
+            <div className="space-y-2">
+              <Label htmlFor="delete-sale-reason">Reason for deletion</Label>
+              <Textarea
+                id="delete-sale-reason"
+                value={deleteSaleReason}
+                onChange={(e) => setDeleteSaleReason(e.target.value)}
+                placeholder="e.g. Duplicate sale entered by mistake"
+                rows={3}
+              />
+            </div>
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => saleToDelete && handleDeleteSale(saleToDelete.id)}
+              disabled={deletingSale || (!isAdmin && !deleteSaleReason.trim())}
+              onClick={(e) => {
+                if (!isAdmin && !deleteSaleReason.trim()) {
+                  e.preventDefault();
+                  return;
+                }
+                if (saleToDelete) handleDeleteSale(saleToDelete.id, isAdmin ? undefined : deleteSaleReason.trim());
+              }}
             >
               Delete
             </AlertDialogAction>

@@ -107,21 +107,23 @@ export function buildSmartReportSnapshot({
   const collectedRevenue = num(revenueData?.totalRevenue);
   const bookedJobValue = num(salesData?.totalSales);
   const revenue = collectedRevenue;
-  const expenses = num(expenseData?.totalExpenses);
-  const netProfit = revenue - expenses;
-  const profitMargin = pct(netProfit, revenue);
+  const expenses = num(expenseData?.totalExpenses); // operating expenses only — COGS is tracked separately
   const profitLossRevenue = num(profitLossData?.revenue ?? profitLossData?.totalRevenue);
   const profitLossAlignsWithCollections = !profitLossRevenue || isCloseAmount(profitLossRevenue, collectedRevenue);
   const reportedCogs = num(profitLossData?.cogs);
-  const alignedGrossProfit = hasValue(profitLossData?.grossProfit)
+  // Only trust the reported COGS figure when the P&L revenue basis matches collected revenue —
+  // otherwise the two numbers use different bases and combining them would be unreliable, so
+  // COGS is treated as unknown (0) rather than risk double-counting or a mismatched calculation.
+  const cogs = profitLossAlignsWithCollections ? reportedCogs : 0;
+  const grossProfit = (hasValue(profitLossData?.grossProfit) && profitLossAlignsWithCollections)
     ? num(profitLossData.grossProfit)
-    : hasValue(profitLossData?.cogs)
-      ? revenue - reportedCogs
-      : netProfit;
-  const grossProfit = profitLossAlignsWithCollections
-    ? alignedGrossProfit
-    : netProfit;
+    : revenue - cogs;
   const grossProfitMargin = pct(grossProfit, revenue);
+  // Net Profit = Gross Profit − Operating Expenses = Revenue − COGS − Operating Expenses.
+  // Previously this dropped COGS entirely (netProfit = revenue - expenses), overstating profit
+  // for any business with product/service cost.
+  const netProfit = grossProfit - expenses;
+  const profitMargin = pct(netProfit, revenue);
   const bookedVsCollectedGap = Math.max(0, bookedJobValue - collectedRevenue);
 
   const sourceMeta = {
@@ -144,8 +146,8 @@ export function buildSmartReportSnapshot({
     },
     netProfit: {
       label: 'Net profit',
-      subLabel: 'Collected revenue less approved expenses',
-      basis: 'collections_less_expenses',
+      subLabel: 'Collected revenue less cost of goods sold and approved expenses',
+      basis: 'collections_less_cogs_less_expenses',
     },
     cashFlow: {
       label: 'Cash flow',
@@ -250,17 +252,24 @@ export function buildSmartReportSnapshot({
 
   const plCurrent = {
     revenue,
-    cogs: reportedCogs,
+    cogs,
     grossProfit,
     operatingExpenses: expenses,
     otherIncome: num(profitLossData?.otherIncome),
     otherExpenses: num(profitLossData?.otherExpenses),
     netProfit,
   };
+  // prevCogs comes from the comparison payload (Reports.jsx passes it from the extended-KPIs
+  // endpoint) rather than profitLossData, which has no per-period "previous" fields. When it's
+  // unavailable, derive gross profit from prevProfit + prevExpenses (both real) so the previous
+  // period's cogs/grossProfit stay internally consistent even without a direct COGS figure.
+  const prevCogsReported = num(comparison?.prevCogs);
+  const prevGrossProfit = prevCogsReported > 0 ? (prevRevenue - prevCogsReported) : (prevProfit + prevExpenses);
+  const prevCogs = prevRevenue - prevGrossProfit;
   const plPrevious = {
     revenue: prevRevenue,
-    cogs: num(profitLossData?.prevCogs),
-    grossProfit: prevRevenue - num(profitLossData?.prevCogs),
+    cogs: prevCogs,
+    grossProfit: prevGrossProfit,
     operatingExpenses: prevExpenses,
     otherIncome: num(profitLossData?.prevOtherIncome),
     otherExpenses: num(profitLossData?.prevOtherExpenses),
@@ -393,6 +402,9 @@ export function buildSmartReportSnapshot({
     sku: p.sku,
     quantitySold: num(p.quantitySold),
     revenue: num(p.revenue),
+    cost: num(p.cost),
+    grossProfit: hasValue(p.grossProfit) ? num(p.grossProfit) : num(p.revenue) - num(p.cost),
+    margin: num(p.margin),
     currentStock: num(p.currentStock),
     safetyStock: num(p.safetyStock),
     unit: p.unit || 'pcs',
@@ -427,12 +439,12 @@ export function buildSmartReportSnapshot({
     cashFlowData?.financing?.netCashFromFinancingActivities ?? 0
   );
 
-  const closingBalance = num(
-    financialPositionData?.equity
-    ?? financialPosition.equity
-    ?? (cashInflow - cashOutflow)
-  );
-  const openingBalance = closingBalance - netCashFlow;
+  // We don't have a real running bank/cash balance to report as "opening"/"closing" — equity is
+  // an accounting balance-sheet figure, not a cash position, and using it here mislabels it as
+  // cash on hand. Instead we only report the net cash change generated during the period itself
+  // (opening treated as the period's own baseline of 0).
+  const closingBalance = netCashFlow;
+  const openingBalance = 0;
 
   const periodStartLabel = comparison?.startDate
     ? dayjs(comparison.startDate).format('MMM D, YYYY')
@@ -441,12 +453,13 @@ export function buildSmartReportSnapshot({
     ? dayjs(comparison.endDate).format('MMM D, YYYY')
     : 'period end';
 
-  const inventoryPurchases = expenseCategories.find((c) => /inventory|stock|purchase|material/i.test(c.category))?.amount
-    ?? expenseCategories[0]?.amount * 0.45
-    ?? expenses * 0.45;
-  const operatingExpensesOut = Math.max(0, cashOutflow - inventoryPurchases);
-  const vendorPayments = (phase2Data?.topVendors || []).reduce((s, v) => s + num(v.amount), 0) || cashOutflow * 0.15;
-  const otherPayments = Math.max(0, cashOutflow - operatingExpensesOut - inventoryPurchases - vendorPayments);
+  // Only attribute outflow to Inventory Purchases / Vendor Payments when we have real category or
+  // vendor data — no fabricated 45%/15% estimates. Unattributed outflow stays in Operating Expenses
+  // rather than being guessed at.
+  const inventoryPurchases = expenseCategories.find((c) => /inventory|stock|purchase|material/i.test(c.category))?.amount ?? 0;
+  const vendorPayments = (phase2Data?.topVendors || []).reduce((s, v) => s + num(v.amount), 0);
+  const operatingExpensesOut = Math.max(0, cashOutflow - inventoryPurchases - vendorPayments);
+  const otherPayments = 0;
 
   const outstanding = num(outstandingData?.totalOutstanding);
   const outstandingInvoices = outstandingData?.invoices || [];
@@ -467,8 +480,10 @@ export function buildSmartReportSnapshot({
       net: { value: netCashFlow, change: netCashChange, sparkline: profitSparkline },
       inflow: { value: cashInflow, change: inflowChange, sparkline: revenueSparkline },
       outflow: { value: cashOutflow, change: outflowChange, sparkline: expenseSparkline, invertTrend: true },
-      opening: { value: openingBalance, subLabel: `As of ${periodStartLabel}` },
-      closing: { value: closingBalance, subLabel: `As of ${periodEndLabel}` },
+      // Not a real bank balance — just the net cash change for the period, relative to a $0
+      // baseline. Labeled accordingly so this isn't mistaken for an actual opening/closing balance.
+      opening: { value: openingBalance, subLabel: `Baseline for ${periodStartLabel}` },
+      closing: { value: closingBalance, subLabel: `Net cash change by ${periodEndLabel}` },
     },
     trend: trend.map((d) => ({
       period: d.period,

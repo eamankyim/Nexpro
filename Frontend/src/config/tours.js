@@ -101,7 +101,7 @@ export const TOUR_STEPS = {
   EXPENSES_ENTRY: {
     id: 'expenses-entry',
     target: '[data-tour="nav-expenses"]',
-    content: 'Track what you spend. Use Expenses to record costs like supplies, rent, and utilities so you can monitor your spending and profitability.',
+    content: 'Track operating costs. Use Expenses for rent, salaries, utilities, and similar spending — not inventory purchases (those are counted as COGS when products sell).',
     placement: 'right',
     disableBeacon: true,
     businessTypes: ['shop', 'pharmacy', 'printing_press', 'mechanic', 'barber', 'salon', 'studio']

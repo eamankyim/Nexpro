@@ -45,6 +45,7 @@ const {
   CUSTOMER_CONFIRMED_DELIVERY_ERROR_MESSAGE,
   hasCustomerConfirmedDelivery,
 } = require('../utils/marketplaceOrderStatus');
+const { getEffectiveRole } = require('../middleware/auth');
 
 /** Throttle check-Paystack calls per sale (avoid hitting Paystack every poll) */
 const paystackCheckLastBySaleId = new Map();
@@ -1023,7 +1024,7 @@ exports.getSales = async (req, res, next) => {
     const startDate = req.query.startDate;
     const endDate = req.query.endDate;
 
-    let where = applyTenantFilter(req.tenantId, {});
+    let where = applyTenantFilter(req.tenantId, { deletedAt: null });
     // Shop-scoped staff see all sales in their assigned/current shop; non-shop staff keep owner-only visibility.
     if (shouldRestrictStaffToOwnSales(req)) {
       where.soldBy = req.user.id;
@@ -1192,6 +1193,15 @@ exports.getSale = async (req, res, next) => {
     });
 
     if (!sale) {
+      return res.status(404).json({
+        success: false,
+        message: 'Sale not found'
+      });
+    }
+
+    // Soft-deleted sales stay in the database for audit purposes but are hidden from
+    // everyday views; only admins (via getEffectiveRole) may still look them up.
+    if (sale.deletedAt && getEffectiveRole(req) !== 'admin') {
       return res.status(404).json({
         success: false,
         message: 'Sale not found'
@@ -2605,23 +2615,18 @@ exports.sendReceipt = async (req, res, next) => {
 
     const {
       hasRecentReceiptForSale,
-      shouldUseAutomationInsteadOfBuiltIn,
+      getAutomationCoveredChannelsForTemplate,
       TEMPLATE_KEYS,
     } = require('../services/customerNotificationBridgeService');
-    if (await hasRecentReceiptForSale(req.tenantId, sale.id)) {
-      return res.status(200).json({
-        success: true,
-        message: 'Receipt already sent recently',
-        data: { deduped: true },
-      });
-    }
-    if (await shouldUseAutomationInsteadOfBuiltIn(req.tenantId, TEMPLATE_KEYS.SALE_COMPLETED_RECEIPT)) {
-      return res.status(200).json({
-        success: true,
-        message: 'Receipt delivery managed by sale_completed automation',
-        data: { managedByAutomation: true },
-      });
-    }
+
+    // Automation coverage and dedupe are checked per-channel below (not as a blanket
+    // all-or-nothing gate) — an enabled "sale receipt" automation that only sends
+    // WhatsApp/email, or an auto-sent email, must not silently swallow a manually
+    // requested SMS send.
+    const automationHandledChannels = await getAutomationCoveredChannelsForTemplate(
+      req.tenantId,
+      TEMPLATE_KEYS.SALE_COMPLETED_RECEIPT
+    );
 
     // Determine phone and email to use; normalize phone for SMS/WhatsApp (0XX / +233)
     const rawPhone = phone || sale.customer?.phone;
@@ -2644,6 +2649,14 @@ exports.sendReceipt = async (req, res, next) => {
     // Send via requested channels
     for (const channel of channels) {
       try {
+        if (automationHandledChannels.has(channel)) {
+          results[channel] = { success: true, managedByAutomation: true };
+          continue;
+        }
+        if (await hasRecentReceiptForSale(req.tenantId, sale.id, channel)) {
+          results[channel] = { success: true, deduped: true };
+          continue;
+        }
         const channelAllowed = await isChannelEnabledForEvent(req.tenantId, 'sales_receipt', channel);
         if (!channelAllowed) {
           results[channel] = { success: false, error: 'Channel disabled in delivery rules' };
@@ -2687,20 +2700,27 @@ exports.sendReceipt = async (req, res, next) => {
       }
     }
 
-    // Log activity
-    await SaleActivity.create({
-      saleId: sale.id,
-      tenantId: req.tenantId,
-      type: 'receipt_sent',
-      subject: 'Receipt Sent',
-      notes: `Receipt sent via: ${channels.join(', ')}`,
-      createdBy: req.user?.id || null,
-      metadata: { channels, results, phone: recipientPhone, email: recipientEmail }
-    });
+    // Log activity only for channels that actually succeeded, so the dedupe window and
+    // audit trail reflect what was really delivered (not just "attempted").
+    const sentChannels = channels.filter((channel) => results[channel]?.success);
+    if (sentChannels.length > 0) {
+      await SaleActivity.create({
+        saleId: sale.id,
+        tenantId: req.tenantId,
+        type: 'receipt_sent',
+        subject: 'Receipt Sent',
+        notes: `Receipt sent via: ${sentChannels.join(', ')}`,
+        createdBy: req.user?.id || null,
+        metadata: { channels: sentChannels, results, phone: recipientPhone, email: recipientEmail }
+      });
+    }
+
+    const anyFailed = channels.some((channel) => results[channel]?.success === false);
 
     res.status(200).json({
       success: true,
-      message: 'Receipt delivery processed',
+      // Request was processed; check `data[channel].success` for the actual outcome per channel.
+      message: anyFailed ? 'Receipt delivery failed for one or more channels' : 'Receipt delivery processed',
       data: results
     });
   } catch (error) {
@@ -2769,29 +2789,42 @@ async function autoSendReceiptIfEnabled(tenantId, saleId) {
   const email = sale.customer.email?.trim();
   const hasPhone = !!smsService.validatePhoneNumber(phone);
 
+  // Only record channels that actually succeeded — a hardcoded "all channels sent" log
+  // would falsely dedupe a later manual send (e.g. "Send SMS") for a channel that was
+  // never configured or failed silently here.
+  const sentChannels = [];
+
   if (emailConfig && email) {
-    await sendEmailReceipt(tenantId, email, sale, receiptMessage).catch((e) =>
-      console.error('[AutoSendReceipt] Email failed:', e?.message)
-    );
+    const emailResult = await sendEmailReceipt(tenantId, email, sale, receiptMessage).catch((e) => {
+      console.error('[AutoSendReceipt] Email failed:', e?.message);
+      return { success: false };
+    });
+    if (emailResult?.success) sentChannels.push('email');
   }
   if (smsConfig && hasPhone) {
-    await sendSMSReceipt(
+    const smsResult = await sendSMSReceipt(
       tenantId,
       smsService.validatePhoneNumber(phone),
       receiptSmsMessage || receiptMessage
-    ).catch((e) =>
-      console.error('[AutoSendReceipt] SMS failed:', e?.message)
-    );
+    ).catch((e) => {
+      console.error('[AutoSendReceipt] SMS failed:', e?.message);
+      return { success: false };
+    });
+    if (smsResult?.success) sentChannels.push('sms');
   }
   if (whatsappConfig?.phoneNumberId && hasPhone) {
-    await sendWhatsAppReceipt(tenantId, whatsappService.validatePhoneNumber(phone), sale, receiptMessage).catch((e) =>
-      console.error('[AutoSendReceipt] WhatsApp failed:', e?.message)
-    );
+    const whatsappResult = await sendWhatsAppReceipt(tenantId, whatsappService.validatePhoneNumber(phone), sale, receiptMessage).catch((e) => {
+      console.error('[AutoSendReceipt] WhatsApp failed:', e?.message);
+      return { success: false };
+    });
+    if (whatsappResult?.success) sentChannels.push('whatsapp');
   }
+
+  if (sentChannels.length === 0) return;
 
   await recordReceiptSentActivity(tenantId, saleId, {
     source: 'auto_send_receipt',
-    channels: ['email', 'sms', 'whatsapp'],
+    channels: sentChannels,
   }).catch((e) => console.error('[AutoSendReceipt] Failed to record receipt activity:', e?.message));
 }
 
@@ -3028,6 +3061,14 @@ exports.deleteSale = async (req, res, next) => {
       });
     }
 
+    if (sale.deletedAt) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Sale has already been deleted'
+      });
+    }
+
     try {
       assertShopRecordAccess(req, sale);
     } catch (accessErr) {
@@ -3036,6 +3077,52 @@ exports.deleteSale = async (req, res, next) => {
         return res.status(403).json({ success: false, message: accessErr.message });
       }
       throw accessErr;
+    }
+
+    // Managers and staff soft-delete paid sales instead of destroying the row: the sale stays
+    // in the database (accounting/stock untouched) but is hidden from everyday views, and the
+    // reason is kept for audit. Only admins can permanently (hard) delete a sale.
+    if (getEffectiveRole(req) !== 'admin') {
+      const reason = String(req.body?.reason || '').trim();
+      if (!reason) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: 'A reason is required to delete this sale'
+        });
+      }
+
+      const isPaidSale = parseFloat(sale.amountPaid || 0) > 0;
+      if (!isPaidSale) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: 'Only paid sales can be deleted this way. Cancel unpaid sales instead, or ask an admin to delete it.'
+        });
+      }
+
+      await sale.update({
+        deletedAt: new Date(),
+        deletedBy: req.user.id,
+        deletionReason: reason
+      }, { transaction });
+
+      await SaleActivity.create({
+        tenantId: req.tenantId,
+        saleId: sale.id,
+        type: 'status_change',
+        subject: 'Sale deleted',
+        notes: reason,
+        createdBy: req.user.id
+      }, { transaction });
+
+      await transaction.commit();
+      invalidateSaleMutationCaches(req.tenantId);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Sale deleted successfully'
+      });
     }
 
     // Prevent deletion of completed sales with paid invoices

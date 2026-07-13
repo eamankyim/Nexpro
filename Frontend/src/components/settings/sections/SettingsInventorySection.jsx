@@ -1,20 +1,13 @@
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { useSettingsInventory } from '../../../hooks/useSettingsInventory';
+import { useAuth } from '../../../context/AuthContext';
 
 /**
- * Inventory cost automation settings.
+ * Inventory cost guidance — product cost is COGS, not an Expense.
  */
 const SettingsInventorySection = () => {
-  const {
-    canManageOrganization,
-    loadingJobInvoice,
-    jobInvoiceData,
-    updateJobInvoiceMutation,
-    handleAutoCreateExpenseChange,
-  } = useSettingsInventory();
+  const { isManager } = useAuth();
+  const canManageOrganization = Boolean(isManager);
 
   if (!canManageOrganization) {
     return (
@@ -23,7 +16,7 @@ const SettingsInventorySection = () => {
           <Alert variant="destructive">
             <AlertTitle>Access Restricted</AlertTitle>
             <AlertDescription>
-              You need admin or manager permissions to change inventory settings.
+              You need admin or manager permissions to view inventory settings.
             </AlertDescription>
           </Alert>
         </CardContent>
@@ -34,29 +27,25 @@ const SettingsInventorySection = () => {
   return (
     <Card className="border border-gray-200">
       <CardHeader>
-        <CardTitle className="text-base md:text-lg">Inventory &amp; cost automation</CardTitle>
+        <CardTitle className="text-base md:text-lg">Inventory &amp; cost</CardTitle>
         <CardDescription className="text-xs md:text-sm">
-          Automatically log product cost as an expense when new products are added.
+          Product cost is counted as COGS when items sell — not as an operating expense.
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        {loadingJobInvoice ? (
-          <p className="text-sm text-muted-foreground">Loading inventory settings…</p>
-        ) : (
-          <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
-            <div className="space-y-0.5 pr-4">
-              <Label className="text-base">Auto-create expense from product cost</Label>
-              <p className="text-xs text-muted-foreground">
-                When enabled, creating a product with cost price creates a paid and approved expense entry automatically.
-              </p>
-            </div>
-            <Switch
-              checked={jobInvoiceData?.autoCreateExpenseFromProductCost === true}
-              disabled={updateJobInvoiceMutation.isPending}
-              onCheckedChange={handleAutoCreateExpenseChange}
-            />
-          </div>
-        )}
+      <CardContent className="space-y-3 text-sm text-muted-foreground">
+        <p>
+          When you set a cost price on a product, ABS uses it for inventory value and cost of goods
+          sold (COGS). Profit is calculated as sales − operating expenses − COGS.
+        </p>
+        <p>
+          Use Expenses only for true operating costs (rent, salaries, utilities, marketing, and
+          similar). Do not record inventory purchases as expenses — that would double-count cost
+          against profit.
+        </p>
+        <p>
+          If you previously had auto-created inventory expenses from product cost, those historical
+          entries are left unchanged. You can archive or adjust them in Expenses if needed.
+        </p>
       </CardContent>
     </Card>
   );

@@ -108,6 +108,7 @@ const createTenantPlatformSmsUsage = require('./create-tenant-platform-sms-usage
 const addPlatformSmsSettings = require('./add-platform-sms-settings');
 const addBranchFieldsToAutomationRules = require('./add-branch-fields-to-automation-rules');
 const addCustomDomainToOnlineStoreSettings = require('./add-custom-domain-to-online-store-settings');
+const addSoftDeleteFieldsToSales = require('./add-soft-delete-fields-to-sales');
 
 const migrate = async () => {
   try {
@@ -396,6 +397,9 @@ const migrate = async () => {
 
     // "Online Store" custom domain product (customer-owned domain -> single-store template)
     await addCustomDomainToOnlineStoreSettings();
+
+    // Sale soft-delete audit trail (manager/staff soft-delete paid sales with a reason)
+    await addSoftDeleteFieldsToSales();
 
     console.log('\n✅ Database migration completed successfully!');
     console.log('📊 Incremental schema updates applied.');

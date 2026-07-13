@@ -41,6 +41,8 @@
     "test:integration": "jest __tests__/integration",
     "verify:invoice-discount": "node scripts/verify-invoice-discount.js",
     "adjust:invoice-payment": "node scripts/adjust-invoice-payment.js",
+    "cleanup:product-cost-expenses": "node scripts/delete-product-cost-expenses.js",
+    "audit:product-cost-coverage": "node scripts/audit-product-cost-coverage.js",
     "load:k6": "k6 run ./load-tests/backend-load-test.js",
     "load:k6:100": "PROFILE=100 k6 run ./load-tests/backend-load-test.js",
     "load:k6:200": "PROFILE=200 k6 run ./load-tests/backend-load-test.js",

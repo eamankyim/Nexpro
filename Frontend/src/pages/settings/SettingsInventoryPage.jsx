@@ -4,7 +4,7 @@ import SettingsInventorySection from '../../components/settings/sections/Setting
 const SettingsInventoryPage = () => (
   <SettingsLayout
     title="Inventory"
-    description="Automatically create expenses from product cost when products are added."
+    description="How product cost relates to COGS and profit — operating expenses stay separate."
   >
     <SettingsInventorySection />
   </SettingsLayout>

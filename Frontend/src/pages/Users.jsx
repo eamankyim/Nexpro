@@ -117,6 +117,8 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS, ROLE_CHIP_CLASSES, STATUS_CHIP_DEFAULT_CLASS } from '../constants';
+import { WORKSPACE_INVITE_ROLES, WORKSPACE_ROLE_DEFINITIONS } from '../constants/workspaceRoles';
+import WorkspaceRoleDescription from '../components/WorkspaceRoleDescription';
 import StatusChip from '../components/StatusChip';
 import { resolveImageUrl } from '../utils/fileUtils';
 
@@ -679,12 +681,19 @@ const Users = () => {
     }
   ], [isAdmin, user, handleView, handleToggleStatus]);
 
-  const roleOptions = [
-    { value: 'admin', label: 'Admin', icon: <Crown className="h-4 w-4" /> },
-    { value: 'manager', label: 'Manager', icon: <Settings className="h-4 w-4" /> },
-    { value: 'staff', label: 'Staff', icon: <User className="h-4 w-4" /> },
-    { value: 'driver', label: 'Driver', icon: <Truck className="h-4 w-4" /> },
-  ];
+  const roleOptions = useMemo(() => {
+    const roleIcons = {
+      admin: <Crown className="h-4 w-4" />,
+      manager: <Settings className="h-4 w-4" />,
+      staff: <User className="h-4 w-4" />,
+      driver: <Truck className="h-4 w-4" />,
+    };
+    return WORKSPACE_INVITE_ROLES.map((value) => ({
+      value,
+      label: WORKSPACE_ROLE_DEFINITIONS[value]?.label || value,
+      icon: roleIcons[value],
+    }));
+  }, []);
 
   const statusOptions = [
     { value: 'true', label: 'Active' },
@@ -1296,6 +1305,7 @@ const Users = () => {
                 ))}
                         </SelectContent>
               </Select>
+                      {inviteRole ? <WorkspaceRoleDescription role={inviteRole} /> : null}
                       <FormMessage />
                     </FormItem>
                   )}

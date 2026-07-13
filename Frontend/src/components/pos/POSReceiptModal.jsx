@@ -242,6 +242,25 @@ const POSReceiptModal = ({
     }
   }, [sale?.paymentMethod, sale?.saleNumber]);
 
+  /**
+   * Summarize a send-receipt API response as success/error toasts, checking the per-channel
+   * result rather than assuming success just because the request itself didn't throw.
+   * @param {{ data?: Record<string, { success?: boolean, error?: string }> }} response
+   * @param {string[]} requestedChannels
+   */
+  const notifySendResult = useCallback((response, requestedChannels) => {
+    const docLabel = sale?.paymentMethod === 'credit' ? 'Invoice' : 'Receipt';
+    const channelResults = response?.data || {};
+    const sentChannels = requestedChannels.filter((ch) => channelResults[ch]?.success);
+    const failedChannels = requestedChannels.filter((ch) => !channelResults[ch]?.success);
+    if (sentChannels.length > 0) {
+      showSuccess(`${docLabel} sent via ${sentChannels.join(', ')}`);
+    }
+    failedChannels.forEach((ch) => {
+      showError(channelResults[ch]?.error || `Failed to send via ${ch}`, `Failed to send via ${ch}`);
+    });
+  }, [sale?.paymentMethod]);
+
   // Auto modes: execute and close
   const integratedSendChannels = useMemo(() => enabledChannels.filter((c) => c !== 'print'), [enabledChannels]);
   const hasContactForSend = useMemo(() => {
@@ -267,13 +286,13 @@ const POSReceiptModal = ({
         }
         if (hasContactForSend && integratedSendChannels.length > 0) {
           try {
-            await onSendReceipt({
+            const response = await onSendReceipt({
               saleId: sale.id,
               channels: integratedSendChannels,
               phone: ['sms', 'whatsapp'].some((c) => integratedSendChannels.includes(c)) ? (normalizePhone(phone || customer?.phone) || phone || customer?.phone) : undefined,
               email: integratedSendChannels.includes('email') ? (email || customer?.email) : undefined,
             });
-            if (!cancelled) showSuccess(sale?.paymentMethod === 'credit' ? 'Invoice sent' : 'Receipt sent');
+            if (!cancelled) notifySendResult(response, integratedSendChannels);
           } catch (e) {
             if (!cancelled) showError(e);
           }
@@ -285,13 +304,13 @@ const POSReceiptModal = ({
         handlePrint();
         if (hasContactForSend && integratedSendChannels.length > 0) {
           try {
-            await onSendReceipt({
+            const response = await onSendReceipt({
               saleId: sale.id,
               channels: integratedSendChannels,
               phone: ['sms', 'whatsapp'].some((c) => integratedSendChannels.includes(c)) ? (normalizePhone(phone || customer?.phone) || phone || customer?.phone) : undefined,
               email: integratedSendChannels.includes('email') ? (email || customer?.email) : undefined,
             });
-            if (!cancelled) showSuccess(sale?.paymentMethod === 'credit' ? 'Invoice sent' : 'Receipt sent');
+            if (!cancelled) notifySendResult(response, integratedSendChannels);
           } catch (e) {
             if (!cancelled) showError(e);
           }
@@ -304,7 +323,7 @@ const POSReceiptModal = ({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [isOpen, sale, receiptMode, hasContactForSend, integratedSendChannels, phone, email, customer, onSendReceipt, onClose, handlePrint]);
+  }, [isOpen, sale, receiptMode, hasContactForSend, integratedSendChannels, phone, email, customer, onSendReceipt, onClose, handlePrint, notifySendResult]);
 
   // Handle send receipt
   const handleSendReceipt = useCallback(async () => {
@@ -336,18 +355,21 @@ const POSReceiptModal = ({
         });
 
         try {
-          await onSendReceipt({
+          const response = await onSendReceipt({
             saleId: sale.id,
             channels,
             phone: needsPhone ? (normalizePhone(phone) || phone) : undefined,
             email: needsEmail ? email : undefined
           });
 
+          // The request itself can succeed (HTTP 200) while a specific channel still failed
+          // to deliver (not configured, invalid phone, provider error, disabled, etc.) —
+          // always check the per-channel result instead of assuming success.
+          const channelResults = response?.data || {};
           channels.forEach(ch => {
-            results[ch] = 'sent';
+            results[ch] = channelResults[ch]?.success ? 'sent' : 'failed';
           });
-
-          showSuccess(sale?.paymentMethod === 'credit' ? `Invoice sent via ${channels.join(', ')}` : `Receipt sent via ${channels.join(', ')}`);
+          notifySendResult(response, channels);
         } catch (err) {
           channels.forEach(ch => {
             results[ch] = 'failed';
@@ -371,7 +393,7 @@ const POSReceiptModal = ({
     } finally {
       setIsSending(false);
     }
-  }, [deliveryOptions, phone, email, sale, needsPhone, needsEmail, handlePrint, onSendReceipt, onClose, sendStatus]);
+  }, [deliveryOptions, phone, email, sale, needsPhone, needsEmail, handlePrint, onSendReceipt, onClose, sendStatus, notifySendResult]);
 
   // Receipt data for preview
   const receiptOrganization = useMemo(() => {

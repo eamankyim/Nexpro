@@ -32,6 +32,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useResponsive, useSafeAreaInsets } from '@/hooks/useResponsive';
 import { RESPONSIVE } from '@/constants';
 import { resolveImageUrl } from '@/utils/fileUtils';
+import { isSabitoStoreEnabled } from '@/utils/sabitoStoreFeature';
 import NotificationBell from '@/components/NotificationBell';
 import TourButton from '@/components/tour/TourButton';
 import { MobileSidebar } from './Sidebar';
@@ -516,16 +517,18 @@ export function Header() {
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuSeparator className="mx-0 my-0" />
-                <DropdownMenuItem
-                  onClick={() => {
-                    closeMenu();
-                    handleNavigateToSabito();
-                  }}
-                  className="min-h-[44px]"
-                >
-                  <LinkIcon className="mr-2 h-4 w-4" />
-                  <span>Open Sabito</span>
-                </DropdownMenuItem>
+                {isSabitoStoreEnabled() ? (
+                  <DropdownMenuItem
+                    onClick={() => {
+                      closeMenu();
+                      handleNavigateToSabito();
+                    }}
+                    className="min-h-[44px]"
+                  >
+                    <LinkIcon className="mr-2 h-4 w-4" />
+                    <span>Open Sabito</span>
+                  </DropdownMenuItem>
+                ) : null}
                 <DropdownMenuItem
                   onClick={() => {
                     closeMenu();

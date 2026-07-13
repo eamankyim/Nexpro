@@ -14,6 +14,7 @@ import MainLayout from './layouts/MainLayout';
 import AdminLayout from './layouts/AdminLayout';
 import ErrorBoundary from './components/ErrorBoundary';
 import RequireWorkspaceManager from './components/RequireWorkspaceManager';
+import SabitoStoreRoute from './components/SabitoStoreRoute';
 import TableSkeleton from './components/TableSkeleton';
 import AppLoader from './components/AppLoader';
 import PWAInstallBanner from './components/PWAInstallBanner';
@@ -334,16 +335,16 @@ function AppContent() {
             <Route path="payroll" element={<FeatureRoute featureKey="payroll"><RequireWorkspaceManager><Payroll /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="accounting" element={<FeatureRoute featureKey="accounting"><RequireWorkspaceManager><Accounting /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="shops" element={<FeatureRoute featureKey="shopsModule"><RequireWorkspaceManager><Shops /></RequireWorkspaceManager></FeatureRoute>} />
-            <Route path="store" element={<StoreDashboard />} />
-            <Route path="store/dashboard" element={<StoreDashboard />} />
-            <Route path="store/setup" element={<RequireWorkspaceManager><StoreSetup /></RequireWorkspaceManager>} />
-            <Route path="store/listings" element={<StoreListings />} />
-            <Route path="store/listings/:productId/edit" element={<StoreListingEditor />} />
-            <Route path="store/listings/:productId/published" element={<StoreListingPublished />} />
-            <Route path="store/services" element={<StoreServices />} />
-            <Route path="store/services/:serviceId/edit" element={<StoreServiceEditor />} />
-            <Route path="store/orders" element={<OnlineOrders />} />
-            <Route path="store/settings" element={<RequireWorkspaceManager><StoreSettings /></RequireWorkspaceManager>} />
+            <Route path="store" element={<SabitoStoreRoute><StoreDashboard /></SabitoStoreRoute>} />
+            <Route path="store/dashboard" element={<SabitoStoreRoute><StoreDashboard /></SabitoStoreRoute>} />
+            <Route path="store/setup" element={<SabitoStoreRoute><RequireWorkspaceManager><StoreSetup /></RequireWorkspaceManager></SabitoStoreRoute>} />
+            <Route path="store/listings" element={<SabitoStoreRoute><StoreListings /></SabitoStoreRoute>} />
+            <Route path="store/listings/:productId/edit" element={<SabitoStoreRoute><StoreListingEditor /></SabitoStoreRoute>} />
+            <Route path="store/listings/:productId/published" element={<SabitoStoreRoute><StoreListingPublished /></SabitoStoreRoute>} />
+            <Route path="store/services" element={<SabitoStoreRoute><StoreServices /></SabitoStoreRoute>} />
+            <Route path="store/services/:serviceId/edit" element={<SabitoStoreRoute><StoreServiceEditor /></SabitoStoreRoute>} />
+            <Route path="store/orders" element={<SabitoStoreRoute><OnlineOrders /></SabitoStoreRoute>} />
+            <Route path="store/settings" element={<SabitoStoreRoute><RequireWorkspaceManager><StoreSettings /></RequireWorkspaceManager></SabitoStoreRoute>} />
             <Route path="online-store" element={<OnlineStore />} />
             <Route path="studio-locations" element={<FeatureRoute featureKey="studioLocationsModule"><RequireWorkspaceManager><StudioLocations /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="pharmacies" element={<FeatureRoute featureKey="pharmacyOps"><Pharmacies /></FeatureRoute>} />

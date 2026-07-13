@@ -29,6 +29,8 @@ const invoiceDocumentSqlFragment = (req, tableAlias = '') =>
 const scopedSaleWhere = (req, dateFilter = {}) =>
   scopedRetailWhere(req, {
     status: 'completed',
+    // Sale isn't paranoid — exclude manager/staff soft-deleted sales from every revenue/COGS/VAT total.
+    deletedAt: null,
     ...(hasDateFilter(dateFilter) && { createdAt: dateFilter })
   });
 
@@ -56,7 +58,7 @@ const getRetailCogsTotal = async (req, dateFilter = {}) => {
       {
         model: Product,
         as: 'product',
-        attributes: ['costPrice'],
+        attributes: ['costPrice', 'trackStock'],
         required: false
       },
       {
@@ -68,7 +70,10 @@ const getRetailCogsTotal = async (req, dateFilter = {}) => {
     ]
   });
 
+  // Exclude items whose product has trackStock=false so this total matches dashboardController's
+  // COGS query (COALESCE(p."trackStock", true) != false). Keeps Dashboard vs Reports COGS aligned.
   return saleItems.reduce((sum, item) => {
+    if (item.product?.trackStock === false) return sum;
     const quantity = parseFloat(item.quantity || 0) || 0;
     const unitCost = parseFloat(item.variant?.costPrice ?? item.product?.costPrice ?? 0) || 0;
     return sum + (quantity * unitCost);
@@ -1209,6 +1214,32 @@ exports.getFinancialPositionReport = async (req, res, next) => {
   }
 };
 
+/**
+ * Cash collected from customers (studio/invoice types) for the period.
+ * Prefers the Payment ledger (each row has its own paymentDate + amount, so partial payments
+ * spread across periods are attributed correctly) over Invoice.amountPaid, which is a running
+ * total that — when filtered by paidDate/updatedAt — can mis-state per-period cash for invoices
+ * paid across multiple periods. Falls back to the invoice total when the tenant has no income
+ * Payment rows at all, so tenants who haven't recorded payments this way don't see a blank report.
+ * @param {import('express').Request} req
+ * @param {Object} dateFilter
+ * @param {Object} revWhere - Invoice fallback where clause (buildCollectedRevenueWhere)
+ */
+const getStudioCashCollected = async (req, dateFilter, revWhere) => {
+  const hasAnyIncomePayments = await Payment.count({
+    where: applyTenantFilter(req.tenantId, { type: 'income', status: 'completed' })
+  });
+  if (hasAnyIncomePayments > 0) {
+    const paymentWhere = applyTenantFilter(req.tenantId, {
+      type: 'income',
+      status: 'completed',
+      ...(hasDateFilter(dateFilter) && { paymentDate: dateFilter })
+    });
+    return parseFloat(await Payment.sum('amount', { where: paymentWhere }) || 0);
+  }
+  return parseFloat(await Invoice.sum('amountPaid', { where: revWhere }) || 0);
+};
+
 // @desc    Get cash flow statement (simplified: operating only)
 // @route   GET /api/reports/cashflow
 // @access  Private
@@ -1227,7 +1258,7 @@ exports.getCashFlowReport = async (req, res, next) => {
     const [cashFromCustomers, cashPaidExpenses] = await Promise.all([
       isRetailBusiness(req)
         ? Sale.sum('amountPaid', { where: scopedSaleWhere(req, dateFilter) })
-        : Invoice.sum('amountPaid', { where: revWhere }),
+        : getStudioCashCollected(req, dateFilter, revWhere),
       Expense.sum('amount', { where: expenseWhere }) || 0
     ]);
 
@@ -1278,7 +1309,7 @@ exports.getKpiSummary = async (req, res, next) => {
   try {
     const dateFilter = resolveDateFilterFromQuery(req.query);
 
-    const [totalRevenue, totalExpenses, activeCustomers, pendingInvoices] = await Promise.all([
+    const [totalRevenue, operatingExpenses, cogs, activeCustomers, pendingInvoices] = await Promise.all([
       resolveOverviewRevenueTotal(req, dateFilter),
       Expense.sum('amount', {
         where: scopedReportWhere(req, {
@@ -1287,6 +1318,7 @@ exports.getKpiSummary = async (req, res, next) => {
           ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter }),
         }),
       }) || 0,
+      getRetailCogsTotal(req, dateFilter),
       Customer.count({
         where: scopedReportWhere(req, { isActive: true }),
       }),
@@ -1295,12 +1327,24 @@ exports.getKpiSummary = async (req, res, next) => {
       }) || 0,
     ]);
 
+    const revenue = parseFloat(totalRevenue) || 0;
+    const opEx = parseFloat(operatingExpenses || 0);
+    const cogsTotal = parseFloat(cogs || 0);
+    // grossProfit = revenue - COGS; netProfit = grossProfit - operating expenses.
+    // Previously this endpoint returned (revenue - operatingExpenses) mislabeled as "grossProfit",
+    // which both ignored COGS and confused gross vs net profit for consumers.
+    const grossProfit = revenue - cogsTotal;
+    const netProfit = grossProfit - opEx;
+
     res.status(200).json({
       success: true,
       data: {
-        totalRevenue: parseFloat(totalRevenue),
-        totalExpenses: parseFloat(totalExpenses),
-        grossProfit: parseFloat(totalRevenue - totalExpenses),
+        totalRevenue: revenue,
+        totalExpenses: opEx + cogsTotal,
+        operatingExpenses: opEx,
+        cogs: cogsTotal,
+        grossProfit: parseFloat(grossProfit.toFixed(2)),
+        netProfit: parseFloat(netProfit.toFixed(2)),
         activeCustomers,
         pendingInvoices: parseFloat(pendingInvoices),
       },
@@ -1875,11 +1919,7 @@ exports.getProductSalesReport = async (req, res, next) => {
     const { startDate, endDate } = req.query;
 
     const saleDateFilter = resolveDateFilterFromQuery(req.query);
-
-    const saleWhere = scopedRetailWhere(req, {
-      status: 'completed',
-      ...(hasDateFilter(saleDateFilter) && { createdAt: saleDateFilter })
-    });
+    const saleWhere = scopedSaleWhere(req, saleDateFilter);
 
     // Aggregate sales by product: quantity sold and revenue per product
     const salesByProduct = await SaleItem.findAll({
@@ -1906,7 +1946,9 @@ exports.getProductSalesReport = async (req, res, next) => {
           products: [],
           totalProducts: 0,
           totalRevenue: 0,
-          totalQuantitySold: 0
+          totalQuantitySold: 0,
+          totalCost: 0,
+          totalGrossProfit: 0
         }
       });
     }
@@ -1919,15 +1961,50 @@ exports.getProductSalesReport = async (req, res, next) => {
     });
     const productMap = new Map(products.map((p) => [p.id, p]));
 
+    // Cost per product (qty sold × unit cost, variant cost preferred over product cost),
+    // excluding trackStock=false items to match getRetailCogsTotal / dashboard COGS rule.
+    const hasSaleDate = hasDateFilter(saleDateFilter);
+    const shopFrag = getShopSqlFragment(req, 's');
+    const costRows = await sequelize.query(`
+      SELECT si."productId" as "productId",
+        SUM(si.quantity * COALESCE(pv."costPrice", p."costPrice", 0)) as "cost"
+      FROM sale_items si
+      INNER JOIN sales s ON s.id = si."saleId"
+      LEFT JOIN products p ON p.id = si."productId"
+      LEFT JOIN product_variants pv ON pv.id = si."productVariantId"
+      WHERE s."tenantId" = :tenantId AND s.status = 'completed' AND s."deletedAt" IS NULL
+        AND COALESCE(p."trackStock", true) != false
+        ${hasSaleDate ? 'AND s."createdAt" BETWEEN :startDate AND :endDate' : ''}${shopFrag.sql}
+      GROUP BY si."productId"
+    `, {
+      replacements: {
+        tenantId: req.tenantId,
+        ...(hasSaleDate && {
+          startDate: saleDateFilter[Op.between][0],
+          endDate: saleDateFilter[Op.between][1]
+        }),
+        ...shopFrag.replacements
+      },
+      type: sequelize.QueryTypes.SELECT
+    });
+    const costMap = new Map(
+      costRows.map((r) => [r.productId || r.productid, parseFloat(r.cost || 0) || 0])
+    );
+
     let totalRevenue = 0;
     let totalQuantitySold = 0;
+    let totalCost = 0;
     const productsList = salesByProduct.map((row) => {
       const pid = row.productId || row.productid;
       const product = productMap.get(pid);
       const quantitySold = Number(parseFloat(row.quantitySold || 0)) || 0;
       const revenue = Number(parseFloat(row.revenue || 0)) || 0;
+      const cost = Number(costMap.get(pid) || 0);
+      const grossProfit = revenue - cost;
+      const margin = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
       totalRevenue += revenue;
       totalQuantitySold += quantitySold;
+      totalCost += cost;
 
       const currentStock = Number(parseFloat(product?.quantityOnHand || 0)) || 0;
       const safetyStock = Number(parseFloat(product?.reorderLevel || 0)) || 0;
@@ -1939,6 +2016,9 @@ exports.getProductSalesReport = async (req, res, next) => {
         productName: product?.name || 'Unknown',
         quantitySold,
         revenue,
+        cost,
+        grossProfit,
+        margin: Math.round(margin * 10) / 10,
         currentStock,
         safetyStock,
         unit: product?.unit || 'pcs',
@@ -1958,7 +2038,9 @@ exports.getProductSalesReport = async (req, res, next) => {
         products: productsList,
         totalProducts: productsList.length,
         totalRevenue,
-        totalQuantitySold
+        totalQuantitySold,
+        totalCost,
+        totalGrossProfit: totalRevenue - totalCost
       }
     });
   } catch (error) {
@@ -2388,8 +2470,10 @@ exports.getVatReport = async (req, res, next) => {
       logReport('[VAT Report] Date filter applied:', { start, end });
     }
 
-    // Get VAT from invoices
+    // Get VAT from invoices — exclude drafts (not yet issued, no VAT liability) and
+    // cancelled invoices (voided, no VAT collected) so this report doesn't overstate VAT owed.
     const invoiceVatWhere = scopedReportWhere(req, {
+      status: { [Op.notIn]: ['draft', 'cancelled'] },
       ...invoiceDateFilter
     });
 
@@ -2403,8 +2487,12 @@ exports.getVatReport = async (req, res, next) => {
       raw: true
     });
 
-    // Get VAT from sales (POS)
+    // Get VAT from sales (POS) — exclude cancelled/refunded sales (no VAT owed on voided or
+    // fully-refunded transactions) and soft-deleted sales; pending/partially_paid sales still
+    // owe VAT since the sale itself is finalized even if payment is outstanding.
     const saleVatWhere = scopedRetailWhere(req, {
+      status: { [Op.notIn]: ['cancelled', 'refunded'] },
+      deletedAt: null,
       ...saleDateFilter
     });
 
@@ -2674,6 +2762,7 @@ exports.getOverviewPhase2 = async (req, res, next) => {
     const [
       revenueResult,
       expenseResult,
+      cogs,
       activeCustomers,
       pendingInvoicesRaw,
       ...handlerResults
@@ -2686,6 +2775,7 @@ exports.getOverviewPhase2 = async (req, res, next) => {
         logReportError('[Overview Phase2] Expense error:', err?.message || err);
         return { success: false, data: null };
       }),
+      getRetailCogsTotal(req, dateFilter),
       Customer.count({
         where: scopedReportWhere(req, { isActive: true }),
       }),
@@ -2701,7 +2791,10 @@ exports.getOverviewPhase2 = async (req, res, next) => {
     ]);
 
     const totalRevenue = parseFloat(revenueResult?.data?.totalRevenue || 0);
-    const totalExpenses = parseFloat(expenseResult?.data?.totalExpenses || 0);
+    const operatingExpenses = parseFloat(expenseResult?.data?.totalExpenses || 0);
+    const cogsTotal = parseFloat(cogs || 0);
+    const grossProfit = totalRevenue - cogsTotal;
+    const netProfit = grossProfit - operatingExpenses;
 
     const defaults = {
       productStockSummary: { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
@@ -2711,8 +2804,12 @@ exports.getOverviewPhase2 = async (req, res, next) => {
       revenueByChannel: [],
       kpiSummary: {
         totalRevenue,
-        totalExpenses,
-        grossProfit: totalRevenue - totalExpenses,
+        totalExpenses: operatingExpenses + cogsTotal,
+        operatingExpenses,
+        cogs: cogsTotal,
+        // grossProfit = revenue - COGS; netProfit = grossProfit - operating expenses.
+        grossProfit: parseFloat(grossProfit.toFixed(2)),
+        netProfit: parseFloat(netProfit.toFixed(2)),
         activeCustomers: Number(activeCustomers || 0),
         pendingInvoices: parseFloat(pendingInvoicesRaw || 0),
       },
