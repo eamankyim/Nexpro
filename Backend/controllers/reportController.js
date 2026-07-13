@@ -2939,6 +2939,10 @@ async function computeOverviewPeriodMetrics(req, rangeStart, rangeEnd) {
 
   return {
     totalRevenue: revenue,
+    // totalExpenses is a COMBINED subtotal (operatingExpenses + cogs) kept for backward
+    // compatibility with older consumers. UI surfaces must NOT label this "Total Expenses"
+    // on its own — always show operatingExpenses and cogs as separate cards/lines so cost of
+    // goods sold is never mistaken for (or lumped into) the Expenses table/page totals.
     totalExpenses: expenses,
     operatingExpenses: parseFloat(operatingExpenses.toFixed(2)),
     cogs: parseFloat(cogs.toFixed(2)),
@@ -3007,6 +3011,8 @@ exports.getOverviewExtendedKpis = async (req, res, next) => {
           label: comparisonLabel,
           totalRevenue: pctChange(current.totalRevenue, previous.totalRevenue),
           totalExpenses: pctChange(current.totalExpenses, previous.totalExpenses),
+          operatingExpenses: pctChange(current.operatingExpenses, previous.operatingExpenses),
+          cogs: pctChange(current.cogs, previous.cogs),
           netProfit: pctChange(current.netProfit, previous.netProfit),
           grossProfitMargin: pctChange(current.grossProfitMargin, previous.grossProfitMargin),
           netProfitMargin: pctChange(current.netProfitMargin, previous.netProfitMargin),

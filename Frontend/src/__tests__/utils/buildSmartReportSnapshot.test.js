@@ -34,6 +34,11 @@ describe('buildSmartReportSnapshot profit formulas', () => {
     expect(snapshot.profitLoss.current.cogs).toBe(3000);
     expect(snapshot.profitLoss.current.grossProfit).toBe(7000);
     expect(snapshot.profitLoss.current.netProfit).toBe(5000);
+    // Cost of Goods Sold must be exposed as its own KPI (not folded into `expenses`, which is
+    // operating expenses only) so the UI can render it as a separate card, never as an
+    // Expenses-table entry.
+    expect(snapshot.kpis.cogs.value).toBe(3000);
+    expect(snapshot.kpis.expenses.value).toBe(2000);
   });
 
   it('falls back to a COGS of 0 (not a fabricated figure) when the P&L revenue basis does not align with collected revenue', () => {

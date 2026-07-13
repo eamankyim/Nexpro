@@ -491,6 +491,7 @@ export const SEARCH_PLACEHOLDERS = {
   ASSETS: 'Name, tag, or location...',
   MATERIALS: 'Name, SKU, or category...',
   EQUIPMENT: 'Name, serial #, or location...',
+  MERCHANDISE: 'Name, SKU, or category...',
   EMPLOYEES: 'Name, department, or role...',
   USERS: 'Name, email, or role...',
   EXPENSES: 'Description, vendor, or category...',

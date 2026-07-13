@@ -17,6 +17,16 @@ const getTourStatus = async (req, res, next) => {
       });
     }
 
+    // Platform admins in support mode have no UserTenant membership — return empty tours.
+    if (req.isSupportAccess) {
+      return res.json({
+        success: true,
+        data: {
+          tours: {},
+        },
+      });
+    }
+
     // Find user-tenant relationship
     const userTenant = await UserTenant.findOne({
       where: {

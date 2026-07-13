@@ -8,7 +8,7 @@ export default function SmartReportKpiRow({ items = [] }) {
   if (!items.length) return null;
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3 md:gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 md:gap-4">
       {items.map((item) => (
         <OverviewKpiCard
           key={item.label}

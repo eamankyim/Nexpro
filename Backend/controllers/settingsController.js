@@ -1752,11 +1752,11 @@ exports.getSidebarPreferences = async (req, res, next) => {
     const {
       getSidebarPreferences: buildSidebarPreferences,
       getTenantDefaultHiddenSidebarKeys,
-      sanitizeHiddenSidebarKeys,
     } = require('../services/sidebarPreferenceHelper');
-    const { isConfigurationSupportMode } = require('../utils/supportAccess');
 
-    if (req.isSupportAccess && isConfigurationSupportMode(req.supportAccessMode)) {
+    // Platform admins in support (read-only or configuration) have no UserTenant membership.
+    // Return tenant-wide sidebar defaults instead of requiring membership.
+    if (req.isSupportAccess) {
       const tenant = req.tenant || (await Tenant.findByPk(req.tenantId, { attributes: ['metadata', 'businessType'] }));
       const shopType =
         tenant?.metadata?.businessSubType || tenant?.metadata?.shopType || null;

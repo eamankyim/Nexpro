@@ -245,6 +245,27 @@ export function isInternalStaffTrigger(triggerType) {
   return INTERNAL_TRIGGER_TYPES.has(String(triggerType || ''));
 }
 
+/**
+ * Whether a test run should pick a team member instead of a customer.
+ * Uses internal trigger set, action audience, or staff recipient config.
+ * @param {{ triggerType?: string, actionRows?: Record<string, unknown>[] }} [params]
+ * @returns {boolean}
+ */
+export function isStaffAutomationAudience({ triggerType, actionRows } = {}) {
+  if (isInternalStaffTrigger(triggerType)) return true;
+  const type = String(triggerType || '');
+  if (type.endsWith('_staff')) return true;
+  const rows = Array.isArray(actionRows) ? actionRows : [];
+  return rows.some((row) => {
+    if (!row || typeof row !== 'object') return false;
+    const audience = String(row.audience || '').toLowerCase();
+    if (audience === 'internal' || audience === 'staff') return true;
+    if (String(row.recipientType || '').trim()) return true;
+    if (row.recipient && typeof row.recipient === 'object') return true;
+    return false;
+  });
+}
+
 /** Placeholders available in trigger context when automations run (see automationEngineService). */
 export const TRIGGER_PLACEHOLDERS = {
   invoice_due_in_days: [
@@ -901,42 +922,70 @@ export function messagingActionRequirements(actionRows) {
 
 /**
  * Merge a real test recipient into automation trigger context.
+ * Supports customer pickers and staff/team-member pickers.
  * @param {Record<string, unknown>} baseContext
  * @param {Record<string, unknown>} recipient
  * @returns {Record<string, unknown>}
  */
 export function buildTestRecipientContext(baseContext = {}, recipient = {}) {
-  const name = String(recipient.name || recipient.customerName || baseContext.customerName || 'Test Customer').trim();
+  const isStaff = Boolean(
+    recipient?.userId
+    || recipient?.recipientUserId
+    || recipient?.audience === 'internal'
+    || recipient?.audience === 'staff'
+    || recipient?.forceTestRecipient
+  );
+  const defaultName = isStaff ? 'Test Staff' : 'Test Customer';
+  const name = String(recipient.name || recipient.customerName || baseContext.customerName || defaultName).trim();
   const phone = String(recipient.phone || baseContext.phone || '').trim();
   const email = String(recipient.email || baseContext.email || '').trim();
-  const customerId = recipient.customerId || recipient.id || baseContext.customerId || 'test-customer';
+  const userId = recipient.userId || recipient.recipientUserId || null;
+  const customerId = isStaff
+    ? (baseContext.customerId || 'test-customer')
+    : (recipient.customerId || recipient.id || baseContext.customerId || 'test-customer');
   const dateOfBirth = recipient.dateOfBirth || baseContext.customer?.dateOfBirth || baseContext.dateOfBirth;
 
   const customer = {
     ...(baseContext.customer && typeof baseContext.customer === 'object' ? baseContext.customer : {}),
     id: customerId,
-    name,
-    company: recipient.company || baseContext.customer?.company || name,
-    email,
-    phone,
+    name: isStaff ? (baseContext.customer?.name || 'Test Customer') : name,
+    company: isStaff
+      ? (baseContext.customer?.company || baseContext.customer?.name || 'Test Customer')
+      : (recipient.company || baseContext.customer?.company || name),
+    email: isStaff ? (baseContext.customer?.email || '') : email,
+    phone: isStaff ? (baseContext.customer?.phone || '') : phone,
     dateOfBirth,
     whatsappConsent: true,
     smsConsent: true,
     marketingConsent: true,
   };
 
-  return {
+  const next = {
     ...baseContext,
     customerId,
-    customerName: name,
+    customerName: isStaff ? (baseContext.customerName || customer.name) : name,
     recipientName: name,
     email,
     phone,
     dateOfBirth,
-    customerHasPhone: Boolean(phone),
-    customerHasEmail: Boolean(email),
+    customerHasPhone: Boolean(isStaff ? customer.phone : phone),
+    customerHasEmail: Boolean(isStaff ? customer.email : email),
     customer,
   };
+
+  if (isStaff) {
+    next.forceTestRecipient = true;
+    next.audience = 'internal';
+    if (userId) {
+      next.testRecipientUserId = userId;
+      next.recipientUserId = userId;
+      next.assigneeId = userId;
+      next.assignedTo = userId;
+      next.assigneeName = name;
+    }
+  }
+
+  return next;
 }
 
 export const TASK_PRIORITY_OPTIONS = [

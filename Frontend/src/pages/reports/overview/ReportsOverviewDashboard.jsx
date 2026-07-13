@@ -5,6 +5,7 @@ import {
   CircleDollarSign,
   FileText,
   Gauge,
+  Package,
   Percent,
   Receipt,
   UserPlus,
@@ -152,9 +153,11 @@ export default function ReportsOverviewDashboard({
   const insights = useMemo(
     () => buildOverviewInsights({
       totalRevenue,
-      totalExpenses,
+      // Use operating expenses (not the COGS-inclusive totalExpenses) so this insight reflects
+      // controllable overhead rather than COGS, which naturally scales with sales volume.
+      totalExpenses: operatingExpenses,
       revenueChange: comparison.totalRevenue ?? 0,
-      expenseChange: comparison.totalExpenses ?? 0,
+      expenseChange: comparison.operatingExpenses ?? 0,
       topCustomers,
       outstanding,
       collectionRate: current.collectionRate ?? 0,
@@ -162,7 +165,7 @@ export default function ReportsOverviewDashboard({
       isPharmacy,
       productSales
     }),
-    [totalRevenue, totalExpenses, comparison, topCustomers, outstanding, current.collectionRate, isShop, isPharmacy, productSales]
+    [totalRevenue, operatingExpenses, comparison, topCustomers, outstanding, current.collectionRate, isShop, isPharmacy, productSales]
   );
 
   const overdueInvoices = useMemo(
@@ -210,7 +213,7 @@ export default function ReportsOverviewDashboard({
         downloading={downloading}
       />
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3 md:gap-4 mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 md:gap-4 mb-4">
         <OverviewKpiCard
           label="Total Revenue"
           value={totalRevenue}
@@ -223,15 +226,28 @@ export default function ReportsOverviewDashboard({
           iconBgColor="#dcfce7"
           iconColor="#166534"
         />
+        {/* Cost of Goods Sold is the cost of products/materials sold — it is NOT an entry in the
+            Expenses table/page, so it gets its own card and must never be labeled "Expenses". */}
         <OverviewKpiCard
-          label="Total Expenses"
-          value={totalExpenses}
-          change={comparison.totalExpenses}
+          label="Cost of Goods Sold"
+          value={cogs}
+          change={comparison.cogs}
+          comparisonLabel={comparisonLabel}
+          invertTrend
+          sourceLabel="Cost of products/materials sold this period"
+          icon={Package}
+          iconBgColor="#ffedd5"
+          iconColor="#c2410c"
+        />
+        <OverviewKpiCard
+          label="Operating Expenses"
+          value={operatingExpenses}
+          change={comparison.operatingExpenses}
           comparisonLabel={comparisonLabel}
           sparklineData={expenseSparkline}
           SparklineChart={Sparkline}
           invertTrend
-          sourceLabel={metricSourceLabel}
+          sourceLabel="From the Expenses page (approved, non-archived)"
           icon={Receipt}
           iconBgColor="#fee2e2"
           iconColor="#b91c1c"

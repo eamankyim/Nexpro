@@ -189,7 +189,7 @@ export function buildOverviewInsights({
   }
 
   if (expenseChange > 10 && totalExpenses > 0) {
-    insights.push(`Expenses rose ${expenseChange.toFixed(1)}%. Monitor cost categories for savings opportunities.`);
+    insights.push(`Operating expenses rose ${expenseChange.toFixed(1)}%. Monitor cost categories for savings opportunities.`);
   }
 
   const top = (topCustomers || [])[0];

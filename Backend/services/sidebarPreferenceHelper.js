@@ -18,6 +18,7 @@ const CONFIGURABLE_SIDEBAR_KEYS = [
   '/store/orders',
   '/store/settings',
   'company-assets',
+  '/merchandise',
   '/materials',
   '/equipment',
   'advanced',
@@ -58,6 +59,11 @@ const PHARMACY_ONLY_SIDEBAR_KEYS = new Set([
   '/pharmacies',
   '/prescriptions',
   '/drugs',
+]);
+
+/** Menu keys only relevant to retail workspaces that sell tracked stock (shop or pharmacy). */
+const RETAIL_ONLY_SIDEBAR_KEYS = new Set([
+  '/merchandise',
 ]);
 
 /** Menu keys only relevant to studio-like workspaces. */
@@ -114,6 +120,7 @@ const isSidebarMenuKeyAllowedForBusinessType = (key, businessType, shopType = nu
 
   if (SHOP_ONLY_SIDEBAR_KEYS.has(key)) return isShop;
   if (PHARMACY_ONLY_SIDEBAR_KEYS.has(key)) return isPharmacy;
+  if (RETAIL_ONLY_SIDEBAR_KEYS.has(key)) return isShop || isPharmacy;
   if (STUDIO_ONLY_SIDEBAR_KEYS.has(key)) return isStudio;
   if (key === '/quotes') return isQuotesEnabledForTenant(businessType, shopType);
 

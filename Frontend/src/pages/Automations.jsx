@@ -2505,6 +2505,11 @@ function AutomationCreationModal({
   testMutation,
   businessName,
   tenantSlug,
+  showBranchSelector = false,
+  branchSelectValue = ALL_BRANCHES_VALUE,
+  branchOptions = [],
+  branchLists = { shops: [], studioLocations: [] },
+  handleBranchChange,
 }) {
   const stepIndex = AUTOMATION_CREATION_STEPS.findIndex((item) => item.key === step);
   const currentStepIndex = stepIndex < 0 ? 0 : stepIndex;
@@ -2562,8 +2567,8 @@ function AutomationCreationModal({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="overflow-hidden border-slate-200 bg-slate-50 p-0 sm:top-2 sm:h-[calc(100vh-1rem)] sm:max-h-[calc(100vh-1rem)] sm:w-[min(1200px,96vw)] sm:max-w-none sm:rounded-2xl"
-        style={{ '--modal-w': 'min(1200px,96vw)', '--modal-min-h': 'calc(100vh - 1rem)', '--modal-max-h': 'calc(100vh - 1rem)' }}
+        className="h-auto overflow-hidden border-slate-200 bg-slate-50 p-0 sm:top-2 sm:h-auto sm:max-h-[calc(100vh-1rem)] sm:w-[min(1200px,96vw)] sm:max-w-none sm:rounded-2xl"
+        style={{ '--modal-w': 'min(1200px,96vw)', '--modal-min-h': '0px', '--modal-max-h': 'calc(100vh - 1rem)' }}
       >
         <DialogHeader className="border-b border-slate-200 bg-white px-5 py-3 sm:px-7">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -4592,8 +4597,9 @@ export default function Automations() {
         setPendingTestRun({
           source: 'rule',
           ruleId: rule.id,
+          triggerType: rule.triggerType || '',
           actionRows,
-          baseContext: {},
+          baseContext: { manualTest: true, test: true, triggerType: rule.triggerType || '' },
         });
         setTestRecipientDialogOpen(true);
         return;
@@ -4843,6 +4849,7 @@ export default function Automations() {
       setPendingTestRun({
         source: 'builder',
         editingRuleId,
+        triggerType: builder.triggerType,
         actionRows: builder.actionRows,
         baseContext: triggerContext,
       });
@@ -4964,6 +4971,7 @@ export default function Automations() {
           setTestRecipientDialogOpen(open);
           if (!open) setPendingTestRun(null);
         }}
+        triggerType={pendingTestRun?.triggerType || ''}
         actionRows={pendingTestRun?.actionRows || []}
         isSubmitting={testMutation.isPending || isPreparingTest}
         onConfirm={executePendingTestRun}
@@ -4994,6 +5002,11 @@ export default function Automations() {
         testMutation={testMutation}
         businessName={businessName}
         tenantSlug={tenantSlug}
+        showBranchSelector={showBranchSelector}
+        branchSelectValue={branchSelectValue}
+        branchOptions={branchOptions}
+        branchLists={branchLists}
+        handleBranchChange={handleBranchChange}
       />
       <AutomationRuleDetailsDrawer
         open={Boolean(viewingRuleId)}

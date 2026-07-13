@@ -106,7 +106,8 @@ const MENU_HINTS = {
   '/accounting': 'Money in and out',
   '/materials': 'Materials you use',
   '/equipment': 'Laptops, furniture, vehicles',
-  assets: 'Materials and equipment your business uses (not for sale)',
+  '/merchandise': 'Stock value of goods you sell',
+  assets: 'Stock value of goods for sale, materials, and equipment',
   '/employees': 'Your staff',
   '/shops': 'Your shops',
   '/studio-locations': 'Studio branches in your workspace',
@@ -222,17 +223,25 @@ const getMenuItems = (
     });
   }
 
-  // Assets: materials and equipment the business uses (not for sale)
-  if (hasFeature('materials')) baseItems.push({
-    key: 'company-assets',
-    icon: PackageCheck,
-    label: 'Assets',
-    tooltip: MENU_HINTS.assets,
-    children: [
-      { key: '/materials', label: 'Materials', tooltip: MENU_HINTS['/materials'] },
-      { key: '/equipment', label: 'Equipment', tooltip: MENU_HINTS['/equipment'] },
-    ],
-  });
+  // Assets: stock value of goods for sale (Merchandise), plus materials and equipment the business uses
+  if (hasFeature('materials')) {
+    const canSeeMerchandise =
+      (businessType === 'shop' && hasFeature('products')) ||
+      (businessType === 'pharmacy' && hasFeature('pharmacyOps'));
+    baseItems.push({
+      key: 'company-assets',
+      icon: PackageCheck,
+      label: 'Assets',
+      tooltip: MENU_HINTS.assets,
+      children: [
+        ...(canSeeMerchandise
+          ? [{ key: '/merchandise', label: 'Merchandise', tooltip: MENU_HINTS['/merchandise'], managerOnly: true }]
+          : []),
+        { key: '/materials', label: 'Materials', tooltip: MENU_HINTS['/materials'] },
+        { key: '/equipment', label: 'Equipment', tooltip: MENU_HINTS['/equipment'] },
+      ],
+    });
+  }
 
   // Advanced group: everything else (Leads, Vendors, Shops/Pharmacies, Payroll, Accounting, Quotes, Employees, Workspace, etc.)
   const advancedChildren = [
@@ -470,6 +479,7 @@ export function Sidebar({ collapsed, onCollapse }) {
     '/reports/compliance': () => import('../../pages/Reports'),
     '/materials': () => import('../../pages/Materials'),
     '/equipment': () => import('../../pages/Equipment'),
+    '/merchandise': () => import('../../pages/Merchandise'),
     '/leads': () => import('../../pages/Leads'),
     '/users': () => import('../../pages/Users'),
     '/settings': () => import('../../pages/Settings'),
@@ -897,6 +907,7 @@ export function MobileSidebar() {
     '/reports/compliance': () => import('../../pages/Reports'),
     '/materials': () => import('../../pages/Materials'),
     '/equipment': () => import('../../pages/Equipment'),
+    '/merchandise': () => import('../../pages/Merchandise'),
     '/leads': () => import('../../pages/Leads'),
     '/users': () => import('../../pages/Users'),
     '/settings': () => import('../../pages/Settings'),

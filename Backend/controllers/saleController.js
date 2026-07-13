@@ -3050,8 +3050,9 @@ exports.deleteSale = async (req, res, next) => {
       include: [
         { model: SaleItem, as: 'items' },
         { model: Invoice, as: 'invoice' }
-      ]
-    }, { transaction });
+      ],
+      transaction
+    });
 
     if (!sale) {
       await transaction.rollback();
@@ -3125,19 +3126,12 @@ exports.deleteSale = async (req, res, next) => {
       });
     }
 
-    // Prevent deletion of completed sales with paid invoices
-    if (sale.invoice && sale.invoice.status === 'paid') {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot delete sale with paid invoice. Cancel or refund the sale instead.'
-      });
-    }
-
-    // If sale is not cancelled, restore stock first (skip when trackStock is false - made-to-order)
+    // Admin hard-delete: restore stock, remove linked invoice (including paid), then destroy the sale.
     if (sale.status !== 'cancelled' && sale.status !== 'refunded') {
-      for (const item of sale.items) {
-        const product = await Product.findByPk(item.productId, { transaction });
+      for (const item of sale.items || []) {
+        const product = item.productId
+          ? await Product.findByPk(item.productId, { transaction })
+          : null;
         if (!item.productVariantId && product && product.trackStock !== false) {
           const newQuantity = parseFloat(product.quantityOnHand || 0) + parseFloat(item.quantity);
           await product.update({ quantityOnHand: newQuantity }, { transaction });
@@ -3145,7 +3139,9 @@ exports.deleteSale = async (req, res, next) => {
 
         if (item.productVariantId) {
           const variant = await ProductVariant.findByPk(item.productVariantId, { transaction });
-          const parent = product || await Product.findByPk(item.productId, { transaction });
+          const parent = product || (item.productId
+            ? await Product.findByPk(item.productId, { transaction })
+            : null);
           if (variant && parent?.trackStock !== false && variant.trackStock !== false) {
             const newVariantQuantity = parseFloat(variant.quantityOnHand || 0) + parseFloat(item.quantity);
             await variant.update({ quantityOnHand: newVariantQuantity }, { transaction });
@@ -3154,8 +3150,11 @@ exports.deleteSale = async (req, res, next) => {
       }
     }
 
-    // Delete related invoice if exists and not paid
-    if (sale.invoice && sale.invoice.status !== 'paid') {
+    if (sale.invoice) {
+      // Clear the sale → invoice FK first so destroy order does not trip constraints.
+      if (sale.invoiceId) {
+        await sale.update({ invoiceId: null }, { transaction });
+      }
       await sale.invoice.destroy({ transaction });
     }
 

@@ -10,12 +10,13 @@ import { TOUR_IDS } from '../config/tours';
  * (button, provider) share the same running tour state.
  */
 export const useTourInternal = () => {
-  const { user, activeTenantId } = useAuth();
+  const { user, activeTenantId, isSupportAccessActive } = useAuth();
   const queryClient = useQueryClient();
   const [runningTour, setRunningTour] = useState(null);
   const [tourStepIndex, setTourStepIndex] = useState(0);
 
-  // Only fetch tour status when user is authenticated (avoids 401 loop when token expired)
+  // Only fetch tour status when user is authenticated (avoids 401 loop when token expired).
+  // Skip during platform-admin support access — no UserTenant membership for tours.
   const isAuthenticated = !!user && !!activeTenantId;
   const tourStatusQueryKey = ['tours', 'status', activeTenantId];
   const {
@@ -25,7 +26,7 @@ export const useTourInternal = () => {
   } = useQuery({
     queryKey: tourStatusQueryKey,
     queryFn: () => tourService.getTourStatus(),
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && !isSupportAccessActive,
     staleTime: 5 * 60 * 1000, // 5 minutes
     retry: false, // avoid 401 retries that can cause redirect/reload loops
     select: (data) => data?.data?.tours || {}

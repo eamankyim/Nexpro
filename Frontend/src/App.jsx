@@ -57,6 +57,7 @@ const Reports = lazy(() => import('./pages/Reports'));
 const ExportData = lazy(() => import('./pages/ExportData'));
 const Materials = lazy(() => import('./pages/Materials'));
 const Equipment = lazy(() => import('./pages/Equipment'));
+const Merchandise = lazy(() => import('./pages/Merchandise'));
 const Leads = lazy(() => import('./pages/Leads'));
 const Users = lazy(() => import('./pages/Users'));
 const Profile = lazy(() => import('./pages/Profile'));
@@ -331,6 +332,7 @@ function AppContent() {
             <Route path="inventory" element={<Navigate to="/materials" replace />} />
             <Route path="assets" element={<Navigate to="/materials" replace />} />
             <Route path="equipment" element={<FeatureRoute featureKey="materials"><Equipment /></FeatureRoute>} />
+            <Route path="merchandise" element={<FeatureRoute featureKey="materials"><RequireWorkspaceManager><Merchandise /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="employees" element={<FeatureRoute featureKey="payroll"><RequireWorkspaceManager><Employees /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="payroll" element={<FeatureRoute featureKey="payroll"><RequireWorkspaceManager><Payroll /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="accounting" element={<FeatureRoute featureKey="accounting"><RequireWorkspaceManager><Accounting /></RequireWorkspaceManager></FeatureRoute>} />

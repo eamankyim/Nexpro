@@ -138,6 +138,42 @@ describe('saleController deleteSale (soft vs hard delete)', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
+  it('hard-deletes paid-invoice sales for admins (clears invoice FK then destroys invoice)', async () => {
+    const invoice = {
+      id: 'inv-1',
+      status: 'paid',
+      destroy: jest.fn().mockResolvedValue(undefined),
+    };
+    const sale = buildSale({
+      invoiceId: 'inv-1',
+      invoice,
+      amountPaid: 500,
+      status: 'completed',
+    });
+    Sale.findOne.mockResolvedValue(sale);
+    SaleItem.destroy.mockResolvedValue(undefined);
+    SaleActivity.destroy.mockResolvedValue(undefined);
+
+    const req = {
+      params: { id: 'sale-1' },
+      tenantId: 'tenant-1',
+      tenantRole: 'owner',
+      user: { id: 'owner-1', role: 'admin' },
+      body: {},
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    await saleController.deleteSale(req, res, next);
+
+    expect(sale.update).toHaveBeenCalledWith({ invoiceId: null }, { transaction });
+    expect(invoice.destroy).toHaveBeenCalledWith({ transaction });
+    expect(sale.destroy).toHaveBeenCalled();
+    expect(transaction.commit).toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(next).not.toHaveBeenCalled();
+  });
+
   it('soft-deletes a paid sale for managers, recording the reason and an audit activity', async () => {
     const sale = buildSale({ amountPaid: 250 });
     Sale.findOne.mockResolvedValue(sale);

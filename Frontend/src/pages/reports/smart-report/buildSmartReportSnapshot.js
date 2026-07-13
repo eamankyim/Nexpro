@@ -750,7 +750,10 @@ export function buildSmartReportSnapshot({
       revenue: { value: revenue, change: revenueChange, sparkline: revenueSparkline, sourceLabel: sourceMeta.revenue.subLabel },
       grossProfit: { value: grossProfit, change: revenueChange * 0.95, sparkline: profitSparkline, sourceLabel: sourceMeta.grossProfit.subLabel },
       netProfit: { value: netProfit, change: profitChange, sparkline: profitSparkline, sourceLabel: sourceMeta.netProfit.subLabel },
-      expenses: { value: expenses, change: expenseChange, sparkline: expenseSparkline, invertTrend: true, sourceLabel: 'Approved expenses for the selected period' },
+      // cogs is the cost of products/materials sold — kept separate from "expenses" (operating
+      // expenses only) so it's never mistaken for, or lumped into, the Expenses table/page totals.
+      cogs: { value: cogs, change: prevCogs > 0 ? ((cogs - prevCogs) / prevCogs) * 100 : 0, invertTrend: true, sourceLabel: 'Cost of products/materials sold this period' },
+      expenses: { value: expenses, change: expenseChange, sparkline: expenseSparkline, invertTrend: true, sourceLabel: 'Approved expenses for the selected period (from the Expenses page)' },
       profitMargin: { value: profitMargin, change: marginChange, sparkline: marginSparkline, isPercent: true, sourceLabel: 'Net profit divided by collected revenue' },
       cashFlow: { value: netCashFlow, change: netCashChange, sparkline: profitSparkline, sourceLabel: sourceMeta.cashFlow.subLabel },
       totalSales: { value: totalSales, change: revenueChange, sparkline: revenueSparkline, sourceLabel: isStudio ? sourceMeta.bookedJobValue.subLabel : sourceMeta.revenue.subLabel },

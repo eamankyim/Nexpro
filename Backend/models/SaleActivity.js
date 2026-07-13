@@ -24,7 +24,7 @@ const SaleActivity = sequelize.define('SaleActivity', {
     }
   },
   type: {
-    type: DataTypes.ENUM('note', 'status_change', 'payment', 'refund'),
+    type: DataTypes.ENUM('note', 'status_change', 'payment', 'refund', 'receipt_sent'),
     defaultValue: 'note'
   },
   subject: {

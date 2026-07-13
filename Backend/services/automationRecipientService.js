@@ -97,6 +97,56 @@ async function hydrateStaffContacts(tenantId, userIds, roleByUserId = new Map())
 }
 
 /**
+ * Build a single staff recipient from an explicit manual/test override.
+ * Used so "Run test" delivers to the chosen team member (or manual email/phone)
+ * instead of every user matching the rule's role recipient config.
+ * @param {string} tenantId
+ * @param {object} triggerContext
+ * @returns {Promise<Array<{ userId: string|null, name: string|null, email: string|null, phone: string|null, role?: string|null }>|null>}
+ */
+async function resolveManualTestStaffOverride(tenantId, triggerContext = {}) {
+  const isTest = Boolean(triggerContext?.manualTest || triggerContext?.test);
+  if (!isTest || !triggerContext?.forceTestRecipient) return null;
+
+  const userId =
+    triggerContext.testRecipientUserId
+    || triggerContext.recipientUserId
+    || triggerContext.assigneeId
+    || null;
+  const email = String(triggerContext.email || '').trim() || null;
+  const phone = String(triggerContext.phone || '').trim() || null;
+  const name = String(
+    triggerContext.recipientName
+    || triggerContext.assigneeName
+    || triggerContext.customerName
+    || ''
+  ).trim() || null;
+
+  if (userId && tenantId) {
+    const hydrated = await hydrateStaffContacts(tenantId, [String(userId)]);
+    if (hydrated.length) {
+      return hydrated.map((staff) => ({
+        ...staff,
+        email: email || staff.email,
+        phone: phone || staff.phone,
+        name: name || staff.name,
+      }));
+    }
+  }
+
+  if (email || phone) {
+    return [{
+      userId: userId ? String(userId) : null,
+      name,
+      email,
+      phone,
+    }];
+  }
+
+  return [];
+}
+
+/**
  * Resolve staff recipients for an automation messaging action.
  * Never returns customer/lead contacts — only tenant staff Users.
  *
@@ -112,6 +162,9 @@ async function resolveStaffRecipients({
   triggerContext = {},
 } = {}) {
   if (!tenantId) return [];
+
+  const testOverride = await resolveManualTestStaffOverride(tenantId, triggerContext);
+  if (testOverride) return testOverride;
 
   const config = normalizeRecipientConfig(recipient);
   if (!config) return [];
@@ -183,6 +236,7 @@ module.exports = {
   normalizeRecipientConfig,
   isInternalAudience,
   resolveStaffRecipients,
+  resolveManualTestStaffOverride,
   getActionRecipientConfig,
   loadEmployeePhonesByUserId,
   hydrateStaffContacts,

@@ -13,7 +13,7 @@ const createSaleActivitiesTable = async () => {
       DO $$
       BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'enum_sale_activities_type') THEN
-          CREATE TYPE enum_sale_activities_type AS ENUM ('note', 'status_change', 'payment', 'refund');
+          CREATE TYPE enum_sale_activities_type AS ENUM ('note', 'status_change', 'payment', 'refund', 'receipt_sent');
         END IF;
       END
       $$;

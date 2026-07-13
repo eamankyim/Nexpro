@@ -25,7 +25,7 @@ export default function SmartReportExecutiveTab({ snapshot, periodLabel }) {
     { label: 'Total Revenue', value: kpis.revenue.value, change: kpis.revenue.change, sparklineData: kpis.revenue.sparkline, icon: CircleDollarSign, iconBgColor: '#dcfce7', iconColor: '#166534', comparisonLabel, sourceLabel: kpis.revenue.sourceLabel },
     { label: 'Net Profit', value: kpis.netProfit.value, change: kpis.netProfit.change, sparklineData: kpis.netProfit.sparkline, icon: TrendingUp, iconBgColor: '#dcfce7', iconColor: '#166534', comparisonLabel, sourceLabel: kpis.netProfit.sourceLabel },
     { label: 'Profit Margin', value: kpis.profitMargin.value, change: kpis.profitMargin.change, sparklineData: kpis.profitMargin.sparkline, valueFormatter: (v) => `${Number(v).toFixed(1)}%`, icon: Percent, iconBgColor: '#dcfce7', iconColor: '#166534', comparisonLabel, sourceLabel: kpis.profitMargin.sourceLabel },
-    { label: 'Total Expenses', value: kpis.expenses.value, change: kpis.expenses.change, sparklineData: kpis.expenses.sparkline, invertTrend: true, icon: Receipt, iconBgColor: '#fee2e2', iconColor: '#b91c1c', comparisonLabel, sourceLabel: kpis.expenses.sourceLabel },
+    { label: 'Operating Expenses', value: kpis.expenses.value, change: kpis.expenses.change, sparklineData: kpis.expenses.sparkline, invertTrend: true, icon: Receipt, iconBgColor: '#fee2e2', iconColor: '#b91c1c', comparisonLabel, sourceLabel: kpis.expenses.sourceLabel },
     { label: 'Cash Flow', value: kpis.cashFlow.value, change: kpis.cashFlow.change, sparklineData: kpis.cashFlow.sparkline, icon: Wallet, iconBgColor: '#dcfce7', iconColor: '#166534', comparisonLabel, sourceLabel: kpis.cashFlow.sourceLabel },
   ];
 

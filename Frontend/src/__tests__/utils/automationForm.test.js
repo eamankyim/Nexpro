@@ -3,6 +3,7 @@ import {
   DEFAULT_ACTION_CONTENT,
   buildRulePayloadFromForm,
   buildScheduleConfigFromForm,
+  buildTestRecipientContext,
   conditionFormFromConfig,
   defaultActionFormRow,
   defaultDelayMinutesForTrigger,
@@ -11,6 +12,8 @@ import {
   getEventTimingCopy,
   getReviewAdditionalSettingsLines,
   getWhatHappensNextTiming,
+  isInternalStaffTrigger,
+  isStaffAutomationAudience,
   isStickyTrigger,
   prefillActionRow,
   prefillActionRows,
@@ -253,6 +256,54 @@ describe('resolveAutomationBranchLabel', () => {
   it('falls back to "Unknown branch" when the id has no match in the list', () => {
     expect(resolveAutomationBranchLabel({ shopId: 'shop-missing' }, branches)).toBe('Unknown branch');
     expect(resolveAutomationBranchLabel({ studioLocationId: 'loc-missing' }, branches)).toBe('Unknown branch');
+  });
+});
+
+describe('staff vs customer test audience', () => {
+  it('detects internal staff triggers and recipient configs', () => {
+    expect(isInternalStaffTrigger('invoice_paid_staff')).toBe(true);
+    expect(isStaffAutomationAudience({ triggerType: 'invoice_paid_staff' })).toBe(true);
+    expect(isStaffAutomationAudience({
+      triggerType: 'payment_received',
+      actionRows: [{ type: 'send_email_platform', recipientType: 'role' }],
+    })).toBe(true);
+    expect(isStaffAutomationAudience({
+      triggerType: 'payment_received',
+      actionRows: [{ type: 'send_email_platform' }],
+    })).toBe(false);
+  });
+
+  it('builds staff test recipient context with forceTestRecipient', () => {
+    const ctx = buildTestRecipientContext(
+      { customerName: 'Customer A', customerId: 'c-1' },
+      {
+        userId: 'u-1',
+        name: 'Ama Mensah',
+        email: 'ama@example.com',
+        audience: 'internal',
+        forceTestRecipient: true,
+      }
+    );
+    expect(ctx.forceTestRecipient).toBe(true);
+    expect(ctx.testRecipientUserId).toBe('u-1');
+    expect(ctx.recipientUserId).toBe('u-1');
+    expect(ctx.assigneeId).toBe('u-1');
+    expect(ctx.email).toBe('ama@example.com');
+    expect(ctx.recipientName).toBe('Ama Mensah');
+    expect(ctx.customerName).toBe('Customer A');
+  });
+
+  it('keeps customer picker shape for customer tests', () => {
+    const ctx = buildTestRecipientContext({}, {
+      customerId: 'c-9',
+      name: 'Kofi',
+      email: 'kofi@example.com',
+      phone: '0244123456',
+    });
+    expect(ctx.forceTestRecipient).toBeUndefined();
+    expect(ctx.customerId).toBe('c-9');
+    expect(ctx.customerName).toBe('Kofi');
+    expect(ctx.email).toBe('kofi@example.com');
   });
 });
 

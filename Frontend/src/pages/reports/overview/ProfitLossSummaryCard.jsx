@@ -20,7 +20,7 @@ export default function ProfitLossSummaryCard({ profitLoss, onViewFullReport }) 
     { label: 'COGS', value: cogs },
     { label: 'Gross Profit', value: grossProfit, bold: true },
     { label: 'Operating Expenses', value: operatingExpenses },
-    { label: 'Total Expenses', value: totalExpenses },
+    { label: 'Total Expenses (COGS + Operating)', value: totalExpenses },
     { label: 'Net Profit', value: netProfit, bold: true, highlight: true },
     { label: 'Net Profit Margin', value: `${netMargin}%`, isText: true }
   ];

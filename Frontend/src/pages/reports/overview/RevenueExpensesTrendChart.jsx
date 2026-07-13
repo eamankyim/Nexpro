@@ -18,7 +18,7 @@ export default function RevenueExpensesTrendChart({ data, emptyMessage = 'No tre
   return (
     <Card style={OVERVIEW_CARD_BORDER} className="bg-card h-full">
       <CardHeader className="pb-2 pt-4 px-4">
-        <CardTitle className="text-base font-semibold">Revenue vs Expenses Trend</CardTitle>
+        <CardTitle className="text-base font-semibold">Revenue vs Operating Expenses Trend</CardTitle>
       </CardHeader>
       <CardContent className="px-4 pb-4">
         {data?.length > 0 ? (
@@ -40,13 +40,13 @@ export default function RevenueExpensesTrendChart({ data, emptyMessage = 'No tre
               <Tooltip
                 formatter={(value, _name, { dataKey }) => [
                   formatOverviewCurrency(value),
-                  dataKey === 'revenue' ? 'Revenue' : dataKey === 'expenses' ? 'Expenses' : _name
+                  dataKey === 'revenue' ? 'Revenue' : dataKey === 'expenses' ? 'Operating Expenses' : _name
                 ]}
                 contentStyle={{ borderRadius: 8, border: '1px solid #e5e7eb' }}
               />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <Line type="monotone" dataKey="revenue" name="Revenue" stroke="var(--color-primary)" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="expenses" name="Expenses" stroke="#b91c1c" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="expenses" name="Operating Expenses" stroke="#b91c1c" strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         ) : (

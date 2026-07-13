@@ -1,5 +1,6 @@
 import {
   CircleDollarSign,
+  Package,
   Percent,
   Receipt,
   TrendingUp,
@@ -42,7 +43,10 @@ export default function SmartReportFinancialTab({ snapshot, periodLabel }) {
     { label: 'Total Revenue', value: kpis.revenue.value, change: kpis.revenue.change, sparklineData: kpis.revenue.sparkline, icon: CircleDollarSign, comparisonLabel, sourceLabel: kpis.revenue.sourceLabel },
     { label: 'Gross Profit', value: kpis.grossProfit.value, change: kpis.grossProfit.change, sparklineData: kpis.grossProfit.sparkline, icon: TrendingUp, comparisonLabel, sourceLabel: kpis.grossProfit.sourceLabel },
     { label: 'Net Profit', value: kpis.netProfit.value, change: kpis.netProfit.change, sparklineData: kpis.netProfit.sparkline, icon: TrendingUp, comparisonLabel, sourceLabel: kpis.netProfit.sourceLabel },
-    { label: 'Total Expenses', value: kpis.expenses.value, change: kpis.expenses.change, sparklineData: kpis.expenses.sparkline, invertTrend: true, icon: Receipt, comparisonLabel, sourceLabel: kpis.expenses.sourceLabel },
+    // Cost of Goods Sold is the cost of products/materials sold — kept separate from Operating
+    // Expenses (real Expense table rows) so it's never mistaken for an Expenses page entry.
+    { label: 'Cost of Goods Sold', value: kpis.cogs.value, change: kpis.cogs.change, invertTrend: true, icon: Package, comparisonLabel, sourceLabel: kpis.cogs.sourceLabel },
+    { label: 'Operating Expenses', value: kpis.expenses.value, change: kpis.expenses.change, sparklineData: kpis.expenses.sparkline, invertTrend: true, icon: Receipt, comparisonLabel, sourceLabel: kpis.expenses.sourceLabel },
     { label: 'Profit Margin', value: kpis.profitMargin.value, change: kpis.profitMargin.change, sparklineData: kpis.profitMargin.sparkline, valueFormatter: (v) => `${Number(v).toFixed(1)}%`, icon: Percent, comparisonLabel, sourceLabel: kpis.profitMargin.sourceLabel },
   ];
 

@@ -25,6 +25,7 @@ export const CONFIGURABLE_SIDEBAR_KEYS = [
   '/store/orders',
   '/store/settings',
   'company-assets',
+  '/merchandise',
   '/materials',
   '/equipment',
   'advanced',
@@ -115,6 +116,7 @@ export const SIDEBAR_MENU_GROUPS = [
     label: 'Assets',
     items: [
       { key: 'company-assets', label: 'Assets section', description: 'Hide the entire assets menu group' },
+      { key: '/merchandise', label: 'Merchandise', managerOnly: true },
       { key: '/materials', label: 'Materials' },
       { key: '/equipment', label: 'Equipment' },
     ],
@@ -203,6 +205,12 @@ export const isConfigurableSidebarKeyForTenant = (key, ctx = {}) => {
     case '/materials':
     case '/equipment':
       return hasFeature('materials');
+    case '/merchandise':
+      return (
+        hasFeature('materials') &&
+        ((businessType === 'shop' && hasFeature('products')) ||
+          (businessType === 'pharmacy' && hasFeature('pharmacyOps')))
+      );
 
     case 'advanced':
       return ADVANCED_CHILD_KEYS.some((childKey) =>

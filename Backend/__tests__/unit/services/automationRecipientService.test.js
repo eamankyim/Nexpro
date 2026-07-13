@@ -100,5 +100,52 @@ describe('automationRecipientService', () => {
       expect(recipients).toEqual([]);
       expect(User.findAll).not.toHaveBeenCalled();
     });
+
+    it('uses forceTestRecipient override for manual staff tests', async () => {
+      User.findAll.mockResolvedValue([{ id: 'user-9', name: 'Ama', email: 'ama@example.com' }]);
+      Employee.findAll.mockResolvedValue([{ userId: 'user-9', phone: '+233201112233' }]);
+
+      const recipients = await resolveStaffRecipients({
+        tenantId: 'tenant-1',
+        recipient: { type: 'role', roles: ['owner', 'manager'] },
+        triggerContext: {
+          manualTest: true,
+          forceTestRecipient: true,
+          testRecipientUserId: 'user-9',
+          email: 'ama-test@example.com',
+          phone: '+233209998877',
+          recipientName: 'Ama Test',
+        },
+      });
+
+      expect(recipients).toEqual([
+        {
+          userId: 'user-9',
+          name: 'Ama Test',
+          email: 'ama-test@example.com',
+          phone: '+233209998877',
+          role: null,
+        },
+      ]);
+      expect(UserTenant.findAll).not.toHaveBeenCalled();
+    });
+
+    it('allows manual email/phone override without a user id', async () => {
+      const recipients = await resolveStaffRecipients({
+        tenantId: 'tenant-1',
+        recipient: { type: 'role', roles: ['owner'] },
+        triggerContext: {
+          test: true,
+          forceTestRecipient: true,
+          email: 'you@example.com',
+          recipientName: 'You',
+        },
+      });
+
+      expect(recipients).toEqual([
+        { userId: null, name: 'You', email: 'you@example.com', phone: null },
+      ]);
+      expect(User.findAll).not.toHaveBeenCalled();
+    });
   });
 });

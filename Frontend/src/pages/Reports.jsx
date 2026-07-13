@@ -1166,7 +1166,10 @@ function ReportsInner() {
             comparisonLabel: previousPeriodForComparison.label,
             metrics: [
               { label: 'Total Revenue', value: revenue, prevValue: prevRevenue, change: Math.abs(revenueChange), trend: revenueChange >= 0 ? 'up' : 'down', color: 'var(--color-primary)' },
-              { label: 'Total Expenses', value: expenses, prevValue: prevExpenses, change: Math.abs(expenseChange), trend: expenseChange <= 0 ? 'down' : 'up', color: expenseChange <= 0 ? 'var(--color-primary)' : 'hsl(var(--destructive))' },
+              // Cost of Goods Sold is kept separate from Operating Expenses — it's the cost of
+              // products/materials sold, not an Expenses table entry.
+              { label: 'Cost of Goods Sold', value: cogs, prevValue: prevCogs, change: Math.abs(calculateChange(cogs, prevCogs) ?? 0), trend: cogs <= prevCogs ? 'down' : 'up', color: 'hsl(var(--destructive))' },
+              { label: 'Operating Expenses', value: expenses, prevValue: prevExpenses, change: Math.abs(expenseChange), trend: expenseChange <= 0 ? 'down' : 'up', color: expenseChange <= 0 ? 'var(--color-primary)' : 'hsl(var(--destructive))' },
               { label: 'Net Profit', value: profit, prevValue: prevProfit, change: Math.abs(profitChange), trend: profitChange >= 0 ? 'up' : 'down', color: 'var(--color-primary)' }
             ],
             note: (revenueChange > 0)
@@ -3228,7 +3231,7 @@ function ReportsInner() {
                   return (
                     <>
                       <h4 className="text-base font-semibold mb-3 md:mb-4">{perfSection.title}</h4>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
                         {perfSection.metrics.map((metric, idx) => {
                           const prevValue = metric.prevValue || 0;
                           const changeAmount = Math.abs(metric.value - prevValue);
