@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -8,7 +8,7 @@ const POS = lazy(() => import('./POS'));
 import { useDebounce } from '../hooks/useDebounce';
 import { usePOSConfig } from '../hooks/usePOSConfig';
 import { useResponsive } from '../hooks/useResponsive';
-import { ShoppingCart, Filter, RefreshCw, Printer, Receipt, FileText, Loader2, X, CheckCircle, Clock, XCircle, Download, Plus, Trash2 } from 'lucide-react';
+import { ShoppingCart, Filter, RefreshCw, Printer, Receipt, FileText, Loader2, X, CheckCircle, Clock, XCircle, Download, Plus, Trash2, Undo2 } from 'lucide-react';
 import { generatePDF, openPrintDialog } from '../utils/pdfUtils';
 import saleService from '../services/saleService';
 import customerService from '../services/customerService';
@@ -32,6 +32,9 @@ import ViewToggle from '../components/ViewToggle';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
 import FeatureNotAvailable from '../components/FeatureNotAvailable';
+import SaleReturnWizard from '../components/sales/SaleReturnWizard';
+import SaleReturnsPanel from '../components/sales/SaleReturnsPanel';
+import { getSaleReturnBadgeStatuses, canStartSaleReturn } from '../utils/saleReturnBadges';
 import { showSuccess, showError } from '../utils/toast';
 import { resolvePaymentNotePayload } from '../utils/paymentNotes';
 import { resolveImageUrl } from '../utils/fileUtils';
@@ -91,6 +94,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { numberInputValue, handleNumberChange, numberOrEmptySchema } from '../utils/formUtils';
 import { DELIVERY_STATUS_ORDER, DELIVERY_STATUS_LABELS, ORDER_STATUSES, SHOP_TYPES } from '../constants';
 import { EMPTY_STATES, FEATURE_NOT_AVAILABLE } from '../constants/microcopy';
@@ -182,7 +186,9 @@ const normalizeSalesResponse = (response) => {
 const Sales = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
   const { isMobile } = useResponsive();
+  const salesTab = location.pathname.endsWith('/returns') ? 'returns' : 'sales';
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [saleForPayment, setSaleForPayment] = useState(null);
   const [filters, setFilters] = useState({ 
@@ -207,7 +213,8 @@ const Sales = () => {
   const [deleteSaleReason, setDeleteSaleReason] = useState('');
   const [deletingSale, setDeletingSale] = useState(false);
   const [updatingSaleDelivery, setUpdatingSaleDelivery] = useState(false);
-  const { activeTenant, activeTenantId, isAdmin } = useAuth();
+  const [returnSale, setReturnSale] = useState(null);
+  const { activeTenant, activeTenantId, isAdmin, isManager } = useAuth();
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
   const queryClient = useQueryClient();
@@ -217,7 +224,7 @@ const Sales = () => {
     isShop &&
     (activeTenant?.metadata?.businessSubType ||
       activeTenant?.metadata?.shopType) === SHOP_TYPES.RESTAURANT;
-  const salesQueryEnabled = !!activeTenantId && isShop && (!shopContext?.isShopWorkspace || !!activeShopId);
+  const salesQueryEnabled = !!activeTenantId && isShop && (!shopContext?.isShopWorkspace || !!activeShopId) && salesTab === 'sales';
 
   const salesQueryParams = useMemo(() => {
     const params = {
@@ -622,7 +629,17 @@ const Sales = () => {
       key: 'status',
       label: isRestaurant ? 'Payment' : 'Status',
       mobileDashboardPlacement: 'headerEnd',
-      render: (_, record) => <StatusChip status={record.status} />
+      render: (_, record) => {
+        const returnBadges = getSaleReturnBadgeStatuses(record).filter((b) => b !== record.status);
+        return (
+          <div className="flex flex-wrap gap-1 items-center">
+            <StatusChip status={record.status} />
+            {returnBadges.map((badge) => (
+              <StatusChip key={badge} status={badge} />
+            ))}
+          </div>
+        );
+      }
     },
     ...(isRestaurant ? [{
       key: 'orderStatus',
@@ -654,35 +671,19 @@ const Sales = () => {
         <ActionColumn
           record={record}
           onView={handleView}
-          extraActions={[
-            (record.status === 'pending' || record.status === 'partially_paid') && {
-              key: 'record-payment',
-              label: 'Record payment',
-              variant: 'secondary',
-              icon: <CheckCircle className="h-4 w-4" />,
-              onClick: () => handleOpenRecordPayment(record)
-            },
-            record.invoiceId && {
-              key: 'view-invoice',
-              label: 'View Invoice',
-              variant: 'secondary',
-              icon: <FileText className="h-4 w-4" />,
-              onClick: () => handleViewInvoice(record)
-            },
-            // Admins can hard-delete any sale; managers/staff can only soft-delete a paid sale (with a reason).
-            (isAdmin || parseFloat(record.amountPaid || 0) > 0) && {
-              key: 'delete',
-              label: 'Delete sale',
-              variant: 'outline',
-              icon: <Trash2 className="h-4 w-4" />,
-              onClick: () => setSaleToDelete(record),
-              destructive: true
-            }
-          ].filter(Boolean)}
+          extraActions={
+            canStartSaleReturn(record, { isManager })
+              ? [{
+                  label: 'Return / Exchange',
+                  icon: <Undo2 className="h-4 w-4" />,
+                  onClick: () => setReturnSale(record),
+                }]
+              : []
+          }
         />
       )
     }
-  ], [handleView, handleViewInvoice, handleOpenRecordPayment, isAdmin, isRestaurant]);
+  ], [handleView, isRestaurant, isManager]);
 
   const drawerFields = useMemo(() => viewingSale ? [
     { label: 'Sale Number', value: viewingSale.saleNumber },
@@ -709,7 +710,16 @@ const Sales = () => {
     },
     {
       label: 'Status',
-      value: <StatusChip status={viewingSale.status} />
+      value: (
+        <div className="flex flex-wrap gap-1 items-center justify-end">
+          <StatusChip status={viewingSale.status} />
+          {getSaleReturnBadgeStatuses(viewingSale)
+            .filter((b) => b !== viewingSale.status)
+            .map((badge) => (
+              <StatusChip key={badge} status={badge} />
+            ))}
+        </div>
+      )
     },
     {
       label: 'Payment Method',
@@ -809,6 +819,8 @@ const Sales = () => {
           subText="Track and manage your sales transactions."
         />
         <div className="flex items-center gap-2 flex-1 min-w-0 sm:justify-end sm:ml-auto">
+          {salesTab === 'sales' && (
+            <>
           <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
           <Tooltip>
             <TooltipTrigger asChild>
@@ -836,6 +848,8 @@ const Sales = () => {
             </TooltipTrigger>
             <TooltipContent>Reload sales list</TooltipContent>
           </Tooltip>
+            </>
+          )}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button onClick={() => setPosModalOpen(true)} className="flex-1 min-w-0 md:flex-none">
@@ -848,6 +862,22 @@ const Sales = () => {
         </div>
       </div>
 
+      <Tabs
+        value={salesTab}
+        onValueChange={(value) => {
+          navigate(value === 'returns' ? '/sales/returns' : '/sales');
+        }}
+      >
+        <TabsList>
+          <TabsTrigger value="sales">Sales</TabsTrigger>
+          <TabsTrigger value="returns">Returns</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      {salesTab === 'returns' ? (
+        <SaleReturnsPanel />
+      ) : (
+      <>
       <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <DashboardStatsCard
           tooltip="Total sales matching your current filters, across all pages"
@@ -919,6 +949,8 @@ const Sales = () => {
           return url ? resolveImageUrl(url) : null;
         }}
       />
+      </>
+      )}
 
       <Dialog
         open={posModalOpen}
@@ -1299,6 +1331,14 @@ const Sales = () => {
               label: 'Record payment',
               icon: <CheckCircle className="h-4 w-4" />,
               onClick: () => handleOpenRecordPayment(viewingSale)
+            });
+          }
+          if (canStartSaleReturn(viewingSale, { isManager })) {
+            items.push({
+              key: 'return-exchange',
+              label: 'Return / Exchange',
+              icon: <Undo2 className="h-4 w-4" />,
+              onClick: () => setReturnSale(viewingSale),
             });
           }
           if (isAdmin || parseFloat(viewingSale?.amountPaid || 0) > 0) {
@@ -1707,6 +1747,23 @@ const Sales = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <SaleReturnWizard
+        open={Boolean(returnSale)}
+        onOpenChange={(open) => {
+          if (!open) setReturnSale(null);
+        }}
+        saleId={returnSale?.id}
+        saleNumber={returnSale?.saleNumber}
+        onCompleted={async () => {
+          await refreshAfterSale(queryClient);
+          refetchSales();
+          if (returnSale?.id && viewingSale?.id === returnSale.id) {
+            await fetchSaleDetails(returnSale.id);
+          }
+          setReturnSale(null);
+        }}
+      />
     </div>
   );
 };

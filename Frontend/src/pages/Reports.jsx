@@ -1166,9 +1166,11 @@ function ReportsInner() {
             comparisonLabel: previousPeriodForComparison.label,
             metrics: [
               { label: 'Total Revenue', value: revenue, prevValue: prevRevenue, change: Math.abs(revenueChange), trend: revenueChange >= 0 ? 'up' : 'down', color: 'var(--color-primary)' },
-              // Cost of Goods Sold is kept separate from Operating Expenses — it's the cost of
-              // products/materials sold, not an Expenses table entry.
-              { label: 'Cost of Goods Sold', value: cogs, prevValue: prevCogs, change: Math.abs(calculateChange(cogs, prevCogs) ?? 0), trend: cogs <= prevCogs ? 'down' : 'up', color: 'hsl(var(--destructive))' },
+              ...(isShop || isPharmacy ? [
+                // Cost of Goods Sold is kept separate from Operating Expenses — it's the cost of
+                // products/materials sold, not an Expenses table entry.
+                { label: 'Cost of Goods Sold', value: cogs, prevValue: prevCogs, change: Math.abs(calculateChange(cogs, prevCogs) ?? 0), trend: cogs <= prevCogs ? 'down' : 'up', color: 'hsl(var(--destructive))' },
+              ] : []),
               { label: 'Operating Expenses', value: expenses, prevValue: prevExpenses, change: Math.abs(expenseChange), trend: expenseChange <= 0 ? 'down' : 'up', color: expenseChange <= 0 ? 'var(--color-primary)' : 'hsl(var(--destructive))' },
               { label: 'Net Profit', value: profit, prevValue: prevProfit, change: Math.abs(profitChange), trend: profitChange >= 0 ? 'up' : 'down', color: 'var(--color-primary)' }
             ],

@@ -6,7 +6,7 @@ import { OVERVIEW_CARD_BORDER, formatOverviewCurrency } from './overviewUtils';
 /**
  * Compact profit and loss summary panel.
  */
-export default function ProfitLossSummaryCard({ profitLoss, onViewFullReport }) {
+export default function ProfitLossSummaryCard({ profitLoss, showCogs = true, onViewFullReport }) {
   const revenue = parseFloat(profitLoss?.revenue || 0);
   const cogs = parseFloat(profitLoss?.cogs || 0);
   const totalExpenses = parseFloat(profitLoss?.expenses || 0);
@@ -15,15 +15,22 @@ export default function ProfitLossSummaryCard({ profitLoss, onViewFullReport }) 
   const netProfit = parseFloat(profitLoss?.netProfit ?? (revenue - totalExpenses));
   const netMargin = revenue > 0 ? ((netProfit / revenue) * 100).toFixed(1) : '0.0';
 
-  const rows = [
-    { label: 'Total Revenue', value: revenue },
-    { label: 'COGS', value: cogs },
-    { label: 'Gross Profit', value: grossProfit, bold: true },
-    { label: 'Operating Expenses', value: operatingExpenses },
-    { label: 'Total Expenses (COGS + Operating)', value: totalExpenses },
-    { label: 'Net Profit', value: netProfit, bold: true, highlight: true },
-    { label: 'Net Profit Margin', value: `${netMargin}%`, isText: true }
-  ];
+  const rows = showCogs
+    ? [
+        { label: 'Total Revenue', value: revenue },
+        { label: 'COGS', value: cogs },
+        { label: 'Gross Profit', value: grossProfit, bold: true },
+        { label: 'Operating Expenses', value: operatingExpenses },
+        { label: 'Total Expenses (COGS + Operating)', value: totalExpenses },
+        { label: 'Net Profit', value: netProfit, bold: true, highlight: true },
+        { label: 'Net Profit Margin', value: `${netMargin}%`, isText: true },
+      ]
+    : [
+        { label: 'Total Revenue', value: revenue },
+        { label: 'Operating Expenses', value: operatingExpenses },
+        { label: 'Net Profit', value: netProfit, bold: true, highlight: true },
+        { label: 'Net Profit Margin', value: `${netMargin}%`, isText: true },
+      ];
 
   return (
     <Card style={OVERVIEW_CARD_BORDER} className="bg-card h-full">

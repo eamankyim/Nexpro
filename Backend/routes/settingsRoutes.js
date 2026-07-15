@@ -52,7 +52,10 @@ const {
   verifyPaymentCollectionOtp,
   updateMtnCollectionCredentials,
   testMtnCollectionCredentials,
-  disconnectMtnCollectionCredentials
+  disconnectMtnCollectionCredentials,
+  updateHubtelCollectionCredentials,
+  testHubtelCollectionCredentials,
+  disconnectHubtelCollectionCredentials
 } = require('../controllers/settingsController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
@@ -271,6 +274,24 @@ router.post(
   authorize('admin', 'manager'),
   timeCrudAction('settings.mtn_collection_credentials.disconnect'),
   disconnectMtnCollectionCredentials
+);
+
+router.put(
+  '/hubtel-collection-credentials',
+  authorize('admin', 'manager'),
+  timeCrudAction('settings.hubtel_collection_credentials.update'),
+  updateHubtelCollectionCredentials
+);
+router.post(
+  '/hubtel-collection-credentials/test',
+  authorize('admin', 'manager'),
+  testHubtelCollectionCredentials
+);
+router.post(
+  '/hubtel-collection-credentials/disconnect',
+  authorize('admin', 'manager'),
+  timeCrudAction('settings.hubtel_collection_credentials.disconnect'),
+  disconnectHubtelCollectionCredentials
 );
 
 module.exports = router;

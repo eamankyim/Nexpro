@@ -1023,6 +1023,7 @@ exports.getSales = async (req, res, next) => {
     const activeOrders = req.query.activeOrders === 'true';
     const startDate = req.query.startDate;
     const endDate = req.query.endDate;
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
 
     let where = applyTenantFilter(req.tenantId, { deletedAt: null });
     // Shop-scoped staff see all sales in their assigned/current shop; non-shop staff keep owner-only visibility.
@@ -1060,6 +1061,10 @@ exports.getSales = async (req, res, next) => {
       where.createdAt = {
         [Op.between]: [start, end]
       };
+    }
+    if (search) {
+      // Sale # lookup for returns/POS find-sale (customer name search deferred to avoid join edge cases)
+      where.saleNumber = { [Op.iLike]: `%${search}%` };
     }
 
     const baseInclude = [
@@ -2735,9 +2740,8 @@ exports.sendReceipt = async (req, res, next) => {
 async function autoSendReceiptIfEnabled(tenantId, saleId) {
   const {
     TEMPLATE_KEYS,
-    isCustomerNotificationEffectiveEnabled,
-    shouldUseAutomationInsteadOfBuiltIn,
     isPosAutoSendReceiptEnabled,
+    getAutomationCoveredChannelsForTemplate,
     hasRecentReceiptForSale,
     recordReceiptSentActivity,
   } = require('../services/customerNotificationBridgeService');
@@ -2745,19 +2749,13 @@ async function autoSendReceiptIfEnabled(tenantId, saleId) {
   const prefs = await Setting.findOne({ where: { tenantId, key: 'customer-notification-preferences' } });
   const settingOn = prefs?.value?.autoSendReceiptToCustomer === true;
   const posAutoSend = await isPosAutoSendReceiptEnabled(tenantId);
-  const effective = await isCustomerNotificationEffectiveEnabled(tenantId, {
-    settingEnabled: settingOn || posAutoSend,
-    templateKey: TEMPLATE_KEYS.SALE_COMPLETED_RECEIPT,
-  });
-  if (!effective) return;
+  // Legacy auto-send only when explicitly enabled — automations run separately via runSaleCompletedAutomations.
+  if (!settingOn && !posAutoSend) return;
 
-  if (await shouldUseAutomationInsteadOfBuiltIn(tenantId, TEMPLATE_KEYS.SALE_COMPLETED_RECEIPT)) {
-    return;
-  }
-
-  if (await hasRecentReceiptForSale(tenantId, saleId)) {
-    return;
-  }
+  const automationHandledChannels = await getAutomationCoveredChannelsForTemplate(
+    tenantId,
+    TEMPLATE_KEYS.SALE_COMPLETED_RECEIPT
+  );
 
   const sale = await Sale.findOne({
     where: { tenantId, id: saleId },
@@ -2794,30 +2792,36 @@ async function autoSendReceiptIfEnabled(tenantId, saleId) {
   // never configured or failed silently here.
   const sentChannels = [];
 
-  if (emailConfig && email) {
-    const emailResult = await sendEmailReceipt(tenantId, email, sale, receiptMessage).catch((e) => {
-      console.error('[AutoSendReceipt] Email failed:', e?.message);
-      return { success: false };
-    });
-    if (emailResult?.success) sentChannels.push('email');
+  if (emailConfig && email && !automationHandledChannels.has('email')) {
+    if (!(await hasRecentReceiptForSale(tenantId, saleId, 'email'))) {
+      const emailResult = await sendEmailReceipt(tenantId, email, sale, receiptMessage).catch((e) => {
+        console.error('[AutoSendReceipt] Email failed:', e?.message);
+        return { success: false };
+      });
+      if (emailResult?.success) sentChannels.push('email');
+    }
   }
-  if (smsConfig && hasPhone) {
-    const smsResult = await sendSMSReceipt(
-      tenantId,
-      smsService.validatePhoneNumber(phone),
-      receiptSmsMessage || receiptMessage
-    ).catch((e) => {
-      console.error('[AutoSendReceipt] SMS failed:', e?.message);
-      return { success: false };
-    });
-    if (smsResult?.success) sentChannels.push('sms');
+  if (smsConfig && hasPhone && !automationHandledChannels.has('sms')) {
+    if (!(await hasRecentReceiptForSale(tenantId, saleId, 'sms'))) {
+      const smsResult = await sendSMSReceipt(
+        tenantId,
+        smsService.validatePhoneNumber(phone),
+        receiptSmsMessage || receiptMessage
+      ).catch((e) => {
+        console.error('[AutoSendReceipt] SMS failed:', e?.message);
+        return { success: false };
+      });
+      if (smsResult?.success) sentChannels.push('sms');
+    }
   }
-  if (whatsappConfig?.phoneNumberId && hasPhone) {
-    const whatsappResult = await sendWhatsAppReceipt(tenantId, whatsappService.validatePhoneNumber(phone), sale, receiptMessage).catch((e) => {
-      console.error('[AutoSendReceipt] WhatsApp failed:', e?.message);
-      return { success: false };
-    });
-    if (whatsappResult?.success) sentChannels.push('whatsapp');
+  if (whatsappConfig?.phoneNumberId && hasPhone && !automationHandledChannels.has('whatsapp')) {
+    if (!(await hasRecentReceiptForSale(tenantId, saleId, 'whatsapp'))) {
+      const whatsappResult = await sendWhatsAppReceipt(tenantId, whatsappService.validatePhoneNumber(phone), sale, receiptMessage).catch((e) => {
+        console.error('[AutoSendReceipt] WhatsApp failed:', e?.message);
+        return { success: false };
+      });
+      if (whatsappResult?.success) sentChannels.push('whatsapp');
+    }
   }
 
   if (sentChannels.length === 0) return;
@@ -3379,6 +3383,57 @@ exports.paystackMobileMoneyForSale = async (req, res, next) => {
     }
 
     const tenant = await findTenantWithOptionalColumns(sale.tenantId);
+    const logicalProvider = String(provider || '').toUpperCase();
+
+    // Prefer Hubtel / tenant MTN when available; leave Paystack charge path below unchanged.
+    try {
+      const { resolveMoMoCollector } = require('../services/paymentCollectionRouter');
+      const {
+        initiateDirectMoMoCharge,
+        buildMobileMoneyRefMeta
+      } = require('../services/directMoMoChargeService');
+      const directRail = resolveMoMoCollector(tenant, { allowPaystack: false });
+      if (directRail.rail === 'hubtel' || directRail.rail === 'mtn') {
+        const externalId = `SALE-MM-${sale.id}-${Date.now()}`.slice(0, 64);
+        const direct = await initiateDirectMoMoCharge({
+          tenant,
+          phoneNumber,
+          amount: balanceDue,
+          currency: 'GHS',
+          provider: logicalProvider,
+          externalId,
+          payerMessage: `Sale ${sale.saleNumber || sale.id}`,
+          customerName: sale.customer?.name || 'Customer',
+          customerEmail: sale.customer?.email || req.user?.email || undefined
+        });
+        if (direct.success) {
+          const existingMetadata = sale.metadata || {};
+          await sale.update({
+            metadata: {
+              ...existingMetadata,
+              mobileMoneyRef: buildMobileMoneyRefMeta(direct, {
+                saleId: sale.id,
+                tenantId: sale.tenantId
+              })
+            }
+          });
+          return res.status(200).json({
+            success: true,
+            data: {
+              reference: direct.referenceId,
+              referenceId: direct.referenceId,
+              provider: direct.provider,
+              status: direct.status || 'PENDING',
+              rail: direct.rail,
+              message: direct.message
+            }
+          });
+        }
+        // If direct charge failed, fall through to Paystack when allowed.
+      }
+    } catch (directErr) {
+      console.warn('[MoMo] Direct collector attempt failed; using Paystack:', directErr?.message);
+    }
 
     const customerEmail =
       (sale.customer && sale.customer.email) ||
@@ -3403,8 +3458,6 @@ exports.paystackMobileMoneyForSale = async (req, res, next) => {
     }
 
     const reference = `SALE-MM-${sale.id}-${Date.now()}`.slice(0, 50);
-
-    const logicalProvider = String(provider || '').toUpperCase();
 
     const orgRow = await Setting.findOne({ where: { tenantId: sale.tenantId, key: 'organization' } });
     const orgTax = orgRow?.value?.tax || {};
@@ -3521,7 +3574,60 @@ exports.checkPaystackChargeForSale = async (req, res, next) => {
       return res.status(200).json({ success: true, data: sale, applied: false, alreadyRecorded: true });
     }
 
-    const ref = sale.metadata?.paystackMobileMoney?.reference || sale.metadata?.paystackCheckout?.reference;
+    // Direct Hubtel/MTN refs (thin route above Paystack) — poll without touching Paystack verify.
+    const mobileMoneyRef = sale.metadata?.mobileMoneyRef;
+    const paystackRef =
+      sale.metadata?.paystackMobileMoney?.reference || sale.metadata?.paystackCheckout?.reference;
+    if (
+      mobileMoneyRef?.referenceId &&
+      mobileMoneyRef?.provider &&
+      ['HUBTEL', 'MTN', 'AIRTEL'].includes(String(mobileMoneyRef.provider).toUpperCase()) &&
+      !paystackRef
+    ) {
+      const tenant = await findTenantWithOptionalColumns(sale.tenantId);
+      const { checkDirectMoMoStatus } = require('../services/directMoMoChargeService');
+      const statusResult = await checkDirectMoMoStatus({
+        tenant,
+        referenceId: mobileMoneyRef.referenceId,
+        provider: mobileMoneyRef.provider
+      });
+      const updatedMetadata = {
+        ...sale.metadata,
+        mobileMoneyRef: {
+          ...mobileMoneyRef,
+          status: statusResult.status,
+          lastChecked: new Date().toISOString(),
+          financialTransactionId: statusResult.financialTransactionId
+        }
+      };
+      if (statusResult.status === 'SUCCESSFUL') {
+        await sale.update({
+          status: 'completed',
+          paymentMethod: 'mobile_money',
+          amountPaid: sale.total,
+          metadata: updatedMetadata
+        });
+        const refreshed = await Sale.findOne({
+          where: applyTenantFilter(req.tenantId, { id: saleId }),
+          include: [{ model: Customer, as: 'customer' }]
+        });
+        return res.status(200).json({
+          success: true,
+          data: refreshed || sale,
+          applied: true,
+          rail: mobileMoneyRef.rail || mobileMoneyRef.provider
+        });
+      }
+      await sale.update({ metadata: updatedMetadata });
+      return res.status(200).json({
+        success: true,
+        data: sale,
+        applied: false,
+        paymentStatus: statusResult.status
+      });
+    }
+
+    const ref = paystackRef;
     if (!ref) {
       return res.status(200).json({ success: true, data: sale, applied: false });
     }

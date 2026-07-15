@@ -56,9 +56,9 @@ const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount, onEditPric
   const isCustomItem = item.type === 'custom' || item.metadata?.customItem === true || !item.productId;
 
   return (
-    <div className="flex items-start gap-3 py-3 border-b border-border last:border-0">
-      {/* Item details */}
-      <div className="flex-1 min-w-0">
+    <div className="grid grid-cols-2 gap-2 items-start py-3 border-b border-border last:border-0">
+      {/* Left 50%: name + unit price */}
+      <div className="min-w-0 w-full">
         <div className="flex items-center gap-2 min-w-0">
           <p className="font-medium text-foreground truncate">{item.name}</p>
           {isCustomItem && (
@@ -67,70 +67,80 @@ const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount, onEditPric
             </Badge>
           )}
         </div>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-sm text-muted-foreground truncate">
           {formatAmount(unitPrice)} × {quantity}
+          {item.dealerPriceSource && item.dealerPriceSource !== 'retail' && (
+            <span className="ml-1 text-[10px] font-medium uppercase tracking-wide text-[#166534]">
+              Dealer
+            </span>
+          )}
         </p>
+        {item.dealerPriceSource && item.dealerPriceSource !== 'retail'
+          && item.retailUnitPrice != null
+          && Math.abs(Number(item.retailUnitPrice) - unitPrice) > 0.001 && (
+          <p className="text-xs text-muted-foreground line-through truncate">
+            Retail: {formatAmount(item.retailUnitPrice)}
+          </p>
+        )}
         {priceOverridden && Number.isFinite(catalogUnitPrice) && (
-          <p className="text-xs text-amber-700">
+          <p className="text-xs text-amber-700 truncate">
             Catalog: {formatAmount(catalogUnitPrice)}
           </p>
         )}
         {discount > 0 && (
-          <p className="text-sm text-green-600">
+          <p className="text-sm text-green-600 truncate">
             Discount: -{formatAmount(discount)}
           </p>
         )}
       </div>
 
-      {/* Quantity controls */}
-      <div className="flex items-center gap-1 relative z-10">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-11 w-11 min-h-[44px] min-w-[44px] shrink-0"
-              onClick={() => onUpdateQuantity(item.id, quantity - 1)}
-            >
-              <Minus className="h-4 w-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>Reduce by one</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              className="h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 rounded-md border border-border bg-background text-center font-semibold text-foreground hover:bg-muted"
-              onClick={() => onEditQuantity(item)}
-              aria-label={`Edit quantity for ${item.name}`}
-            >
-              {quantity}
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>Tap to enter quantity</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-11 w-11 min-h-[44px] min-w-[44px] shrink-0"
-              onClick={() => onUpdateQuantity(item.id, quantity + 1)}
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>Add one more</TooltipContent>
-        </Tooltip>
-      </div>
-
-      {/* Item total and actions */}
-      <div className="flex flex-col items-end gap-1">
+      {/* Right 50%: qty stepper, total, actions */}
+      <div className="min-w-0 w-full flex flex-col items-end gap-1">
+        <div className="flex items-center gap-1 relative z-10 flex-wrap justify-end">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-11 w-11 min-h-[44px] min-w-[44px] shrink-0"
+                onClick={() => onUpdateQuantity(item.id, quantity - 1)}
+              >
+                <Minus className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Reduce by one</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className="h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 rounded-md border border-border bg-background text-center font-semibold text-foreground hover:bg-muted"
+                onClick={() => onEditQuantity(item)}
+                aria-label={`Edit quantity for ${item.name}`}
+              >
+                {quantity}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Tap to enter quantity</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-11 w-11 min-h-[44px] min-w-[44px] shrink-0"
+                onClick={() => onUpdateQuantity(item.id, quantity + 1)}
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Add one more</TooltipContent>
+          </Tooltip>
+        </div>
         <span className="font-semibold text-foreground">
           {formatAmount(itemTotal)}
         </span>
-        <div className="flex gap-1">
+        <div className="flex gap-1 justify-end">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

@@ -291,6 +291,10 @@ export const STATUS_CHIP_CLASSES = {
   completed: CHIP_GREEN,
   pending: CHIP_ORANGE,
   partially_paid: CHIP_ORANGE,
+  refunded: CHIP_RED,
+  cancelled: CHIP_RED,
+  partial_return: CHIP_ORANGE,
+  exchanged: CHIP_PURPLE,
   // Task statuses and sources
   todo: CHIP_GRAY,
   task_source_lead: CHIP_PURPLE,
@@ -396,8 +400,44 @@ export const PAYMENT_METHODS = {
   BANK_TRANSFER: 'bank_transfer',
   CHEQUE: 'cheque',
   CARD: 'card',
+  CREDIT: 'credit',
   OTHER: 'other',
 };
+
+/** POS return / exchange reason codes (matches Backend saleReturnController). */
+export const SALE_RETURN_REASON_CODES = {
+  CUSTOMER_CHANGED_MIND: 'customer_changed_mind',
+  WRONG_ITEM: 'wrong_item',
+  DAMAGED: 'damaged',
+  DEFECTIVE: 'defective',
+  EXPIRED: 'expired',
+  OTHER: 'other',
+};
+
+export const SALE_RETURN_REASON_LABELS = {
+  [SALE_RETURN_REASON_CODES.CUSTOMER_CHANGED_MIND]: 'Customer changed mind',
+  [SALE_RETURN_REASON_CODES.WRONG_ITEM]: 'Wrong item',
+  [SALE_RETURN_REASON_CODES.DAMAGED]: 'Damaged',
+  [SALE_RETURN_REASON_CODES.DEFECTIVE]: 'Defective',
+  [SALE_RETURN_REASON_CODES.EXPIRED]: 'Expired',
+  [SALE_RETURN_REASON_CODES.OTHER]: 'Other',
+};
+
+export const SALE_RETURN_DISPOSITIONS = {
+  RESTOCK: 'restock',
+  WRITE_OFF: 'write_off',
+};
+
+export const SALE_RETURN_DISPOSITION_LABELS = {
+  [SALE_RETURN_DISPOSITIONS.RESTOCK]: 'Restock',
+  [SALE_RETURN_DISPOSITIONS.WRITE_OFF]: 'Do not restock (write-off)',
+};
+
+export const SALE_RETURN_TYPES = {
+  REFUND: 'refund',
+  EXCHANGE: 'exchange',
+};
+
 
 /**
  * Africa-focused MoMo markets (copy for UI copy, provider hints, docs).

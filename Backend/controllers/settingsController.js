@@ -2255,6 +2255,9 @@ exports.getPOSConfig = async (req, res, next) => {
       email: !!(emailSetting?.value?.enabled)
     };
 
+    const { getSaleReceiptAutomationCoverage } = require('../services/customerNotificationBridgeService');
+    merged.automationReceiptCoverage = await getSaleReceiptAutomationCoverage(req.tenantId);
+
     res.status(200).json({ success: true, data: merged });
   } catch (error) {
     next(error);
@@ -2504,13 +2507,11 @@ exports.getPaymentCollectionSettings = async (req, res, next) => {
     if (subaccountLinked || hasBankMeta || hasMomoMeta) {
       settlementType = explicitMomo || (hasMomoMeta && !hasBankMeta) ? 'momo' : 'bank';
     }
-    const configured = subaccountLinked || hasMomoMeta || hasBankMeta;
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('[Payment Collection] GET: tenantId=', req.tenantId, 'pcKeys=', Object.keys(pc), 'settlementType=', settlementType, 'configured=', configured, 'hasSubaccount=', subaccountLinked || hasBankMeta);
-    }
     const { getMtnCollectionPublicSummary } = require('../services/tenantMomoCollectionService');
     let mtn_collection = {
       configured: false,
+      merchantId: '',
+      hasApiCredentials: false,
       environment: '',
       collectionApiUrl: '',
       callbackUrl: '',
@@ -2525,6 +2526,31 @@ exports.getPaymentCollectionSettings = async (req, res, next) => {
     } catch (mtnErr) {
       console.error('[Payment Collection] mtn_collection summary failed:', mtnErr?.message || mtnErr);
     }
+
+    const { getHubtelCollectionPublicSummary } = require('../services/tenantHubtelCollectionService');
+    let hubtel_collection = {
+      configured: false,
+      clientIdMasked: '',
+      merchantAccountNumber: '',
+      posSalesId: '',
+      encryptionConfigured: false
+    };
+    try {
+      hubtel_collection = getHubtelCollectionPublicSummary(tenant);
+    } catch (hubtelErr) {
+      console.error('[Payment Collection] hubtel_collection summary failed:', hubtelErr?.message || hubtelErr);
+    }
+
+    const mtnConfigured =
+      Boolean(mtn_collection?.configured) ||
+      Boolean(mtn_collection?.merchantId) ||
+      mtn_collection?.activeSource === 'tenant';
+    const hubtelConfigured = Boolean(hubtel_collection?.configured);
+    const configured =
+      subaccountLinked || hasMomoMeta || hasBankMeta || mtnConfigured || hubtelConfigured;
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[Payment Collection] GET: tenantId=', req.tenantId, 'pcKeys=', Object.keys(pc), 'settlementType=', settlementType, 'configured=', configured, 'hasSubaccount=', subaccountLinked || hasBankMeta);
+    }
     const safe = {
       business_name: pc.business_name || '',
       bank_code: pc.bank_code || '',
@@ -2536,7 +2562,8 @@ exports.getPaymentCollectionSettings = async (req, res, next) => {
       momo_phone_masked: momoPhone ? `****${momoPhone.slice(-4)}` : '',
       momo_provider: pc.momoProvider || '',
       configured,
-      mtn_collection
+      mtn_collection,
+      hubtel_collection
     };
     res.status(200).json({ success: true, data: safe });
   } catch (error) {
@@ -3011,12 +3038,13 @@ exports.updatePaymentCollectionSettings = async (req, res, next) => {
   }
 };
 
-// @desc    Save encrypted MTN MoMo Collection API credentials for this tenant
+// @desc    Connect MTN Merchant ID (and optional Collection API credentials) for this tenant
 // @route   PUT /api/settings/mtn-collection-credentials
 // @access  Private (admin, manager)
 exports.updateMtnCollectionCredentials = async (req, res, next) => {
   try {
     const {
+      merchantId,
       subscriptionKey,
       apiUser,
       apiKey,
@@ -3030,22 +3058,39 @@ exports.updateMtnCollectionCredentials = async (req, res, next) => {
       return res.status(gate.status).json({ success: false, message: gate.message });
     }
 
-    if (!subscriptionKey || !apiUser || !apiKey) {
+    const trimmedMerchantId = merchantId != null ? String(merchantId).trim() : '';
+    if (!trimmedMerchantId) {
       return res.status(400).json({
         success: false,
-        message: 'Subscription key, API user, and API key are required'
+        message: 'Merchant ID is required'
       });
     }
 
-    const { isEncryptionConfigured, saveTenantMtnCollectionCredentials } = require('../services/tenantMomoCollectionService');
-    if (!isEncryptionConfigured()) {
-      return res.status(503).json({
-        success: false,
-        message: 'Server is missing MOMO_CREDENTIALS_ENCRYPTION_KEY (64 hex chars). Ask your administrator to configure it.'
-      });
+    const providingKeys = Boolean(
+      (subscriptionKey && String(subscriptionKey).trim()) ||
+      (apiUser && String(apiUser).trim()) ||
+      (apiKey && String(apiKey).trim())
+    );
+    if (providingKeys) {
+      if (!subscriptionKey || !apiUser || !apiKey) {
+        return res.status(400).json({
+          success: false,
+          message: 'Subscription key, API user, and API key are all required when saving API credentials'
+        });
+      }
+      const { isEncryptionConfigured } = require('../services/tenantMomoCollectionService');
+      if (!isEncryptionConfigured()) {
+        return res.status(503).json({
+          success: false,
+          message:
+            'Server is missing MOMO_CREDENTIALS_ENCRYPTION_KEY (64 hex chars). Ask your administrator to configure it.'
+        });
+      }
     }
 
+    const { saveTenantMtnCollectionCredentials } = require('../services/tenantMomoCollectionService');
     const summary = await saveTenantMtnCollectionCredentials(req.tenantId, {
+      merchantId: trimmedMerchantId,
       subscriptionKey,
       apiUser,
       apiKey,
@@ -3056,11 +3101,15 @@ exports.updateMtnCollectionCredentials = async (req, res, next) => {
     await clearStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
     res.status(200).json({
       success: true,
-      message: 'MTN MoMo Collection credentials saved for this workspace.',
+      message: 'MTN Merchant ID saved for this workspace.',
       data: summary
     });
   } catch (error) {
     console.error('[Settings] updateMtnCollectionCredentials:', error?.message || error);
+    const msg = error?.message || '';
+    if (msg.includes('Merchant ID') || msg.includes('API credentials') || msg.includes('encryption')) {
+      return res.status(400).json({ success: false, message: msg });
+    }
     next(error);
   }
 };
@@ -3138,7 +3187,127 @@ exports.disconnectMtnCollectionCredentials = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      message: 'Workspace MTN Collection credentials removed. Direct MTN charges will use platform keys if set on the server.',
+      message: 'Workspace MTN Merchant ID and credentials removed. Direct MTN charges will use platform keys if set on the server.',
+      data: summary
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Save encrypted Hubtel merchant credentials for this tenant (BYO ClientID/Secret)
+// @route   PUT /api/settings/hubtel-collection-credentials
+// @access  Private (admin, manager)
+exports.updateHubtelCollectionCredentials = async (req, res, next) => {
+  try {
+    const { clientId, clientSecret, merchantAccountNumber, posSalesId } = sanitizePayload(req.body || {});
+
+    const gate = await verifyStoredPaymentOtp(req);
+    if (!gate.ok) {
+      return res.status(gate.status).json({ success: false, message: gate.message });
+    }
+
+    if (!clientId || !clientSecret) {
+      return res.status(400).json({
+        success: false,
+        message: 'Client ID and Client Secret are required'
+      });
+    }
+
+    const {
+      isEncryptionConfigured,
+      saveTenantHubtelCollectionCredentials
+    } = require('../services/tenantHubtelCollectionService');
+    if (!isEncryptionConfigured()) {
+      return res.status(503).json({
+        success: false,
+        message:
+          'Server is missing MOMO_CREDENTIALS_ENCRYPTION_KEY (64 hex chars). Ask your administrator to configure it.'
+      });
+    }
+
+    const summary = await saveTenantHubtelCollectionCredentials(req.tenantId, {
+      clientId,
+      clientSecret,
+      merchantAccountNumber,
+      posSalesId
+    });
+    await clearStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
+    res.status(200).json({
+      success: true,
+      message: 'Hubtel credentials saved for this workspace.',
+      data: summary
+    });
+  } catch (error) {
+    console.error('[Settings] updateHubtelCollectionCredentials:', error?.message || error);
+    next(error);
+  }
+};
+
+// @desc    Test Hubtel Basic auth with credentials from body (does not save; does not consume OTP)
+// @route   POST /api/settings/hubtel-collection-credentials/test
+// @access  Private (admin, manager)
+exports.testHubtelCollectionCredentials = async (req, res, next) => {
+  try {
+    const gate = await verifyStoredPaymentOtp(req);
+    if (!gate.ok) {
+      return res.status(gate.status).json({ success: false, message: gate.message });
+    }
+
+    const { clientId, clientSecret, merchantAccountNumber, posSalesId } = sanitizePayload(req.body || {});
+
+    if (!clientId || !clientSecret) {
+      return res.status(400).json({
+        success: false,
+        message: 'Client ID and Client Secret are required to test'
+      });
+    }
+
+    const { testHubtelCredentials } = require('../services/tenantHubtelCollectionService');
+    await testHubtelCredentials({
+      clientId: String(clientId).trim(),
+      clientSecret: String(clientSecret).trim(),
+      merchantAccountNumber,
+      posSalesId
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Hubtel authentication succeeded. You can save these credentials.'
+    });
+  } catch (error) {
+    const msg = error?.message || 'Hubtel test failed';
+    console.error('[Settings] testHubtelCollectionCredentials:', msg);
+    res.status(400).json({
+      success: false,
+      message: msg.includes('Hubtel') ? msg : `Hubtel test failed: ${msg}`
+    });
+  }
+};
+
+// @desc    Remove tenant Hubtel collection credentials
+// @route   POST /api/settings/hubtel-collection-credentials/disconnect
+// @access  Private (admin, manager)
+exports.disconnectHubtelCollectionCredentials = async (req, res, next) => {
+  try {
+    const gate = await verifyStoredPaymentOtp(req);
+    if (!gate.ok) {
+      return res.status(gate.status).json({ success: false, message: gate.message });
+    }
+
+    const {
+      clearTenantHubtelCollectionCredentials,
+      getHubtelCollectionPublicSummary
+    } = require('../services/tenantHubtelCollectionService');
+    await clearTenantHubtelCollectionCredentials(req.tenantId);
+    await clearStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
+
+    const tenant = await Tenant.findByPk(req.tenantId);
+    const summary = tenant ? getHubtelCollectionPublicSummary(tenant) : {};
+
+    res.status(200).json({
+      success: true,
+      message: 'Workspace Hubtel credentials removed.',
       data: summary
     });
   } catch (error) {

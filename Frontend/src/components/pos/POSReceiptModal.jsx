@@ -40,6 +40,7 @@ import PrintableReceipt from '../PrintableReceipt';
 import { isDealerSale } from '../../utils/saleParty';
 import PrintableInvoice from '../PrintableInvoice';
 import { usePOSConfig } from '../../hooks/usePOSConfig';
+import { getEffectiveReceiptChannels } from '../../utils/receiptChannels';
 import { CURRENCY } from '../../constants';
 import { showSuccess, showError } from '../../utils/toast';
 import { normalizePhone, validatePhone } from '../../utils/phoneUtils';
@@ -135,16 +136,12 @@ const POSReceiptModal = ({
   const { posConfig } = usePOSConfig();
 
   const receiptMode = posConfig.receipt?.mode || 'ask';
-  const rawChannels = posConfig.receipt?.channels || ['sms', 'print'];
-  const receiptChannelsAvailable = posConfig.receiptChannelsAvailable || { sms: false, whatsapp: false, email: false };
-  // Only show/send via SMS, WhatsApp, Email if actually integrated
-  const enabledChannels = useMemo(() => {
-    return rawChannels.filter((c) => {
-      if (c === 'print') return true;
-      return receiptChannelsAvailable[c] === true;
-    });
-  }, [rawChannels, receiptChannelsAvailable]);
   const printConfig = posConfig.print || { format: 'a4' };
+  // Hide SMS/email/WhatsApp when a sale_completed receipt automation already covers that channel; print stays.
+  const enabledChannels = useMemo(
+    () => getEffectiveReceiptChannels(posConfig),
+    [posConfig]
+  );
 
   const isCreditSale = sale?.paymentMethod === 'credit';
   const docLabel = isCreditSale ? 'Invoice' : 'Receipt';
@@ -486,9 +483,15 @@ const POSReceiptModal = ({
 
         <Separator />
 
-        {/* Delivery options - only show enabled channels */}
+        {/* Delivery options - only show channels not handled by automations (print always available) */}
         <div className="space-y-3">
           <h4 className="font-medium text-foreground">Send {docLabel}</h4>
+
+          {enabledChannels.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              Receipt delivery is handled automatically. You can close this dialog.
+            </p>
+          )}
           
           {enabledChannels.includes('print') && (
             <DeliveryOption
@@ -584,17 +587,27 @@ const POSReceiptModal = ({
         </div>
         </DialogBody>
         <DialogFooter className="flex-col sm:flex-row gap-2">
-          <Button
-            onClick={handleSendReceipt}
-            disabled={!canSend}
-            loading={isSending}
-            className="w-full sm:w-auto bg-green-700 hover:bg-green-800"
-          >
-            <>
-              <Send className="h-4 w-4 mr-2" />
-              {sendButtonLabel}
-            </>
-          </Button>
+          {enabledChannels.length > 0 && (
+            <Button
+              onClick={handleSendReceipt}
+              disabled={!canSend}
+              loading={isSending}
+              className="w-full sm:w-auto bg-green-700 hover:bg-green-800"
+            >
+              <>
+                <Send className="h-4 w-4 mr-2" />
+                {sendButtonLabel}
+              </>
+            </Button>
+          )}
+          {enabledChannels.length === 0 && (
+            <Button
+              onClick={onClose}
+              className="w-full sm:w-auto bg-green-700 hover:bg-green-800"
+            >
+              Done
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

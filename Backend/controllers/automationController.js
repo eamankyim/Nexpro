@@ -202,7 +202,9 @@ function countMessagesInRuns(runs) {
   return runs.reduce((total, run) => {
     const actions = getRunActions(run);
     return total + actions.filter(
-      (action) => ['send_whatsapp', 'send_email_platform', 'send_sms'].includes(action?.type) && action?.success !== false
+      (action) => ['send_whatsapp', 'send_email_platform', 'send_sms'].includes(action?.type)
+        && action?.success !== false
+        && !action?.skipped
     ).length;
   }, 0);
 }

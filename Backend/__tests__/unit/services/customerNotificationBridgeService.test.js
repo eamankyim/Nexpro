@@ -160,5 +160,49 @@ describe('customerNotificationBridgeService', () => {
         await bridge.isChannelHandledByAutomation('tenant-1', bridge.TEMPLATE_KEYS.SALE_COMPLETED_RECEIPT, 'email')
       ).toBe(false);
     });
+
+    it('matches custom sale_completed rules and ignores staff/internal rules', async () => {
+      AutomationRule.findAll.mockResolvedValue([
+        {
+          id: 'staff-rule',
+          enabled: true,
+          triggerType: 'sale_completed_staff',
+          audience: 'internal',
+          metadata: { templateKey: 'sale_completed_staff' },
+          actionConfig: { actions: [{ type: 'send_sms', audience: 'internal' }] },
+        },
+        {
+          id: 'custom-rule',
+          enabled: true,
+          triggerType: 'sale_completed',
+          metadata: {},
+          actionConfig: { actions: [{ type: 'send_sms' }, { type: 'send_email_platform' }] },
+        },
+      ]);
+
+      const covered = await bridge.getAutomationCoveredChannelsForTemplate(
+        'tenant-1',
+        bridge.TEMPLATE_KEYS.SALE_COMPLETED_RECEIPT
+      );
+
+      expect(covered.has('sms')).toBe(true);
+      expect(covered.has('email')).toBe(true);
+      expect(covered.size).toBe(2);
+    });
+
+    it('getSaleReceiptAutomationCoverage returns API-friendly booleans', async () => {
+      AutomationRule.findAll.mockResolvedValue([
+        {
+          id: 'rule-1',
+          enabled: true,
+          metadata: { templateKey: bridge.TEMPLATE_KEYS.SALE_COMPLETED_RECEIPT },
+          actionConfig: { actions: [{ type: 'send_whatsapp' }] },
+        },
+      ]);
+
+      const coverage = await bridge.getSaleReceiptAutomationCoverage('tenant-1');
+
+      expect(coverage).toEqual({ sms: false, email: false, whatsapp: true });
+    });
   });
 });

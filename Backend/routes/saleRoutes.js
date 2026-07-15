@@ -20,6 +20,10 @@ const {
   checkPaystackChargeForSale,
   exportSales
 } = require('../controllers/saleController');
+const {
+  getSaleReturnable,
+  createSaleReturn,
+} = require('../controllers/saleReturnController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
 const { shopContext } = require('../middleware/shopContext');
@@ -45,6 +49,12 @@ router.get('/export', exportLimiter, authorize('admin', 'manager'), exportSales)
 
 router.route('/sync')
   .post(authorize('admin', 'manager', 'staff'), timeCrudAction('sales.batch_sync'), batchSyncSales);
+
+router.route('/:id/returnable')
+  .get(timeCrudAction('sales.returnable'), getSaleReturnable);
+
+router.route('/:id/returns')
+  .post(authorize('admin', 'manager'), timeCrudAction('sales.create_return'), createSaleReturn);
 
 router.route('/:id')
   .get(timeCrudAction('sales.read'), getSale)

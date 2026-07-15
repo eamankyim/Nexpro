@@ -66,6 +66,10 @@ jest.mock('../../../services/tenantMomoCollectionService', () => ({
   clearMtnCollectionSettings: jest.fn(),
 }));
 
+jest.mock('../../../services/tenantHubtelCollectionService', () => ({
+  getHubtelCollectionPublicSummary: jest.fn(() => ({ configured: false })),
+}));
+
 jest.mock('../../../services/sidebarPreferenceHelper', () => ({
   getSidebarPreferences: jest.fn(),
   getTenantDefaultHiddenSidebarKeys: jest.fn(),

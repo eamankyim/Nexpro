@@ -98,7 +98,7 @@ export default function SmartReportDetail({
   }, [report?.title]);
 
   const renderTab = () => {
-    const props = { snapshot, periodLabel, isStudio };
+    const props = { snapshot, periodLabel, isStudio, isShop, isPharmacy };
     switch (activeTab) {
       case 'executive':
         return <SmartReportExecutiveTab {...props} />;

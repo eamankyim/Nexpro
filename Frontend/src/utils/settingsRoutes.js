@@ -237,8 +237,14 @@ export const legacyTabToRoute = (tab, subtab, smsSection, canManageOrganization 
 
   if (rawTab === 'payments' || rawTab === PAYMENT_COLLECTION_TAB) {
     const params = new URLSearchParams();
-    if (subtab === 'mtn-collection' || subtab === 'settlements') {
-      params.set('subtab', subtab);
+    if (
+      subtab === 'mtn-collection' ||
+      subtab === 'merchant-id' ||
+      subtab === 'settlements' ||
+      subtab === 'hubtel' ||
+      subtab === 'hubtel-collection'
+    ) {
+      params.set('subtab', subtab === 'hubtel-collection' ? 'hubtel' : subtab === 'mtn-collection' ? 'merchant-id' : subtab);
     }
     const qs = params.toString();
     return qs ? `/settings/payments?${qs}` : '/settings/payments';

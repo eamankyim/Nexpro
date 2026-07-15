@@ -14,7 +14,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { computeDocumentTax } from '../utils/taxCalculationClient';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { RefreshCw, Users, Loader2, Camera, CreditCard, UserPlus, Phone, Building2, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react';
+import { RefreshCw, Users, Loader2, Camera, CreditCard, UserPlus, Phone, Building2, AlertCircle, ChevronDown, ChevronUp, X, Undo2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { SecondaryButton } from '@/components/ui/secondary-button';
@@ -22,6 +22,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
+import FindSaleForReturnDialog from '../components/sales/FindSaleForReturnDialog';
+import SaleReturnWizard from '../components/sales/SaleReturnWizard';
 import {
   Dialog,
   DialogBody,
@@ -79,6 +81,7 @@ import { formatAmount } from '../utils/formatNumber';
 import { FEATURE_NOT_AVAILABLE } from '../constants/microcopy';
 import { QUERY_STALE, refreshAfterSale } from '../utils/queryInvalidation';
 import { queryKeys } from '../utils/queryKeys';
+import { shouldSkipReceiptModal } from '../utils/receiptChannels';
 
 /**
  * Generate cart item ID
@@ -216,7 +219,7 @@ const ProductVariantDialog = ({ product, open, onClose, onSelect }) => {
 };
 
 /**
- * Customer selection dialog: search existing, walk-in, or quick-add (phone + name)
+ * Customer selection dialog: search existing or quick-add (phone + name)
  */
 const CustomerSelectDialog = ({ isOpen, onClose, onSelect, onFindOrCreate }) => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -318,14 +321,6 @@ const CustomerSelectDialog = ({ isOpen, onClose, onSelect, onFindOrCreate }) => 
             {quickAddError && (
               <p className="text-xs text-red-600">{quickAddError}</p>
             )}
-            <Button
-              onClick={handleQuickAdd}
-              loading={quickAddLoading}
-              disabled={!quickPhone.trim()}
-              className="h-10 bg-brand hover:bg-brand-dark"
-            >
-              Add & use
-            </Button>
           </div>
         </div>
 
@@ -387,13 +382,12 @@ const CustomerSelectDialog = ({ isOpen, onClose, onSelect, onFindOrCreate }) => 
             Cancel
           </SecondaryButton>
           <Button
-            variant="outline"
-            onClick={() => {
-              onSelect(null);
-              onClose();
-            }}
+            onClick={handleQuickAdd}
+            loading={quickAddLoading}
+            disabled={!quickPhone.trim()}
+            className="bg-brand hover:bg-brand-dark"
           >
-            Walk-in Customer
+            Add & use
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -514,6 +508,8 @@ const POS = () => {
   // Scan Mode state
   const [scanModeOpen, setScanModeOpen] = useState(false);
   const [cartSheetOpen, setCartSheetOpen] = useState(false);
+  const [findSaleReturnOpen, setFindSaleReturnOpen] = useState(false);
+  const [returnSale, setReturnSale] = useState(null);
   const { isMobile: isMobileWidth } = useResponsive();
   const safeAreaInsets = useSafeAreaInsets();
   const [isMobile, setIsMobile] = useState(isMobileWidth);
@@ -529,6 +525,41 @@ const POS = () => {
     () => (Array.isArray(activeProductsFromQuery) ? activeProductsFromQuery : []),
     [activeProductsFromQuery]
   );
+
+  const dealerCatalogProductIds = useMemo(() => {
+    if (!isDealerMode || !selectedDealer?.id) return [];
+    return allProducts.map((p) => p?.id).filter(Boolean);
+  }, [isDealerMode, selectedDealer?.id, allProducts]);
+
+  const { data: dealerPriceByProductId = {} } = useQuery({
+    queryKey: ['pos-dealer-catalog-prices', selectedDealer?.id, activeShopId, dealerCatalogProductIds],
+    queryFn: async () => {
+      if (!selectedDealer?.id || !activeShopId || dealerCatalogProductIds.length === 0) {
+        return {};
+      }
+      const NULL_VARIANT = '00000000-0000-0000-0000-000000000000';
+      const items = dealerCatalogProductIds.map((productId) => ({
+        productId,
+        productVariantId: null,
+      }));
+      const res = await dealerService.resolvePricesBatch(selectedDealer.id, {
+        shopId: activeShopId,
+        items,
+      });
+      const raw = res?.data?.data || res?.data || {};
+      const byProductId = {};
+      Object.entries(raw).forEach(([key, value]) => {
+        const [productId, variantKey] = key.split(':');
+        if (!productId || value?.unitPrice == null) return;
+        if (variantKey === NULL_VARIANT || !byProductId[productId]) {
+          byProductId[productId] = value;
+        }
+      });
+      return byProductId;
+    },
+    enabled: Boolean(isDealerMode && selectedDealer?.id && activeShopId && dealerCatalogProductIds.length > 0),
+    staleTime: 60_000,
+  });
 
   const cartQuantityByProductId = useMemo(() => {
     const map = {};
@@ -1074,13 +1105,7 @@ const POS = () => {
                 ? { phone: quickCustomerPhone, name: quickCustomerName || '', email: '' }
                 : null)
         );
-        // If auto_send and no SMS/WhatsApp/Email integrated, skip receipt modal - close immediately
-        const receiptChannelsAvailable = posConfig?.receiptChannelsAvailable || {};
-        const rawChannels = posConfig?.receipt?.channels || ['sms', 'print'];
-        const integratedSendChannels = rawChannels.filter((c) => c !== 'print' && receiptChannelsAvailable[c]);
-        const receiptMode = posConfig?.receipt?.mode || 'ask';
-        const skipReceiptModal = receiptMode === 'auto_send' && integratedSendChannels.length === 0;
-        setReceiptModalOpen(!skipReceiptModal);
+        setReceiptModalOpen(!shouldSkipReceiptModal(posConfig));
 
         if (isRestaurant && saleObj?.saleNumber && (paymentDetails.sendToKitchen ?? true)) {
           showSuccess(`Order placed! #${saleObj.saleNumber} has been sent to the kitchen.`);
@@ -1181,7 +1206,9 @@ const POS = () => {
               errMsg.includes('not configured') ||
               errMsg.includes('authenticate') ||
               errMsg.includes('failed to initiate') ||
-              errMsg.includes('unavailable');
+              errMsg.includes('unavailable') ||
+              errMsg.includes('use paystack') ||
+              momoRes?.allowPaystackFallback === true;
             if (!canTryPaystack) {
               const message = momoRes?.error || momoRes?.message || 'Failed to initiate mobile money payment';
               showError(message);
@@ -1281,15 +1308,7 @@ const POS = () => {
               ? { phone: quickCustomerPhone, name: quickCustomerName || '', email: '' }
               : null)
         );
-        const receiptChannelsAvailable = posConfig?.receiptChannelsAvailable || {};
-        const rawChannels = posConfig?.receipt?.channels || ['sms', 'print'];
-        const integratedSendChannels = rawChannels.filter(
-          (c) => c !== 'print' && receiptChannelsAvailable[c]
-        );
-        const receiptMode = posConfig?.receipt?.mode || 'ask';
-        const skipReceiptModal =
-          receiptMode === 'auto_send' && integratedSendChannels.length === 0;
-        setReceiptModalOpen(!skipReceiptModal);
+        setReceiptModalOpen(!shouldSkipReceiptModal(posConfig));
 
         showSuccess('Sale completed successfully!');
         refreshSaleQueries();
@@ -1512,6 +1531,17 @@ const POS = () => {
               </div>
             </div>
             <div className="flex items-center justify-end gap-2">
+              {isManager && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setFindSaleReturnOpen(true)}
+                >
+                  <Undo2 className="h-4 w-4 mr-1" />
+                  Return
+                </Button>
+              )}
               <span className="text-xs text-muted-foreground">Stay open</span>
               <Switch
                 id="stay-open-main-mobile"
@@ -1544,6 +1574,22 @@ const POS = () => {
               </TooltipTrigger>
               <TooltipContent>Open barcode scanner for quick add</TooltipContent>
             </Tooltip>
+
+            {isManager && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="h-10"
+                    onClick={() => setFindSaleReturnOpen(true)}
+                  >
+                    <Undo2 className="h-4 w-4 mr-2 flex-shrink-0" />
+                    <span className="truncate">Return / Exchange</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Find a sale to refund or exchange</TooltipContent>
+              </Tooltip>
+            )}
 
             <POSConnectionStatus isOnline={isOnline} />
 
@@ -1701,6 +1747,7 @@ const POS = () => {
             fillHeight
             onAdjustProductQuantity={adjustProductQuantity}
             onAddCustomItem={handleOpenCustomItemDialog}
+            dealerPriceByProductId={isDealerMode ? dealerPriceByProductId : {}}
           />
         </div>
 
@@ -1935,8 +1982,28 @@ const POS = () => {
         onFindOrCreateCustomer={handleFindOrCreateCustomer}
         onSendReceipt={handleSendReceiptForScanMode}
         receiptChannelsAvailable={posConfig?.receiptChannelsAvailable || { sms: false, whatsapp: false, email: false }}
+        automationReceiptCoverage={posConfig?.automationReceiptCoverage || { sms: false, email: false, whatsapp: false }}
         isOnline={isOnline}
         isRestaurant={isRestaurant}
+      />
+
+      <FindSaleForReturnDialog
+        open={findSaleReturnOpen}
+        onOpenChange={setFindSaleReturnOpen}
+        onSelectSale={(sale) => setReturnSale(sale)}
+      />
+
+      <SaleReturnWizard
+        open={Boolean(returnSale)}
+        onOpenChange={(open) => {
+          if (!open) setReturnSale(null);
+        }}
+        saleId={returnSale?.id}
+        saleNumber={returnSale?.saleNumber}
+        onCompleted={() => {
+          refreshAfterSale(queryClient).catch(() => {});
+          setReturnSale(null);
+        }}
       />
     </div>
   );

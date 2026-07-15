@@ -50,6 +50,9 @@ const Shop = require('./Shop');
 const Product = require('./Product');
 const Sale = require('./Sale');
 const SaleItem = require('./SaleItem');
+const SaleReturn = require('./SaleReturn');
+const SaleReturnItem = require('./SaleReturnItem');
+const SaleReturnExchangeItem = require('./SaleReturnExchangeItem');
 const ProductVariant = require('./ProductVariant');
 const Barcode = require('./Barcode');
 const ProductCategory = require('./ProductCategory');
@@ -690,6 +693,23 @@ Product.hasMany(SaleItem, { foreignKey: 'productId', as: 'saleItems' });
 SaleItem.belongsTo(ProductVariant, { foreignKey: 'productVariantId', as: 'variant' });
 ProductVariant.hasMany(SaleItem, { foreignKey: 'productVariantId', as: 'saleItems' });
 
+Tenant.hasMany(SaleReturn, { foreignKey: 'tenantId', as: 'saleReturns' });
+SaleReturn.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Shop.hasMany(SaleReturn, { foreignKey: 'shopId', as: 'saleReturns' });
+SaleReturn.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+Sale.hasMany(SaleReturn, { foreignKey: 'originalSaleId', as: 'returns' });
+SaleReturn.belongsTo(Sale, { foreignKey: 'originalSaleId', as: 'originalSale' });
+SaleReturn.belongsTo(User, { foreignKey: 'createdBy', as: 'creator' });
+SaleReturn.hasMany(SaleReturnItem, { foreignKey: 'saleReturnId', as: 'items' });
+SaleReturnItem.belongsTo(SaleReturn, { foreignKey: 'saleReturnId', as: 'saleReturn' });
+SaleReturnItem.belongsTo(SaleItem, { foreignKey: 'saleItemId', as: 'saleItem' });
+SaleReturnItem.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
+SaleReturnItem.belongsTo(ProductVariant, { foreignKey: 'productVariantId', as: 'variant' });
+SaleReturn.hasMany(SaleReturnExchangeItem, { foreignKey: 'saleReturnId', as: 'exchangeItems' });
+SaleReturnExchangeItem.belongsTo(SaleReturn, { foreignKey: 'saleReturnId', as: 'saleReturn' });
+SaleReturnExchangeItem.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
+SaleReturnExchangeItem.belongsTo(ProductVariant, { foreignKey: 'productVariantId', as: 'variant' });
+
 Tenant.hasMany(MarketplaceOrderPayment, { foreignKey: 'tenantId', as: 'marketplaceOrderPayments' });
 MarketplaceOrderPayment.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 Shop.hasMany(MarketplaceOrderPayment, { foreignKey: 'shopId', as: 'marketplaceOrderPayments' });
@@ -896,6 +916,9 @@ module.exports = {
   Product,
   Sale,
   SaleItem,
+  SaleReturn,
+  SaleReturnItem,
+  SaleReturnExchangeItem,
   ProductVariant,
   Barcode,
   // Pharmacy Management

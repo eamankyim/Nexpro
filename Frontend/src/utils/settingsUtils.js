@@ -123,7 +123,15 @@ export const formatMinorCurrency = (amount, currency = 'GHS') => {
   return `${currency || 'GHS'} ${majorAmount.toFixed(2)}`;
 };
 
-export const PAYMENT_COLLECTION_SUBTABS = ['settlements', 'mtn-collection'];
+export const PAYMENT_COLLECTION_SUBTABS = ['merchant-id', 'settlements', 'hubtel', 'mtn-collection'];
+
+/** @param {string|null|undefined} subtab */
+export function normalizePaymentCollectionSubtab(subtab) {
+  if (subtab === 'hubtel' || subtab === 'hubtel-collection') return 'hubtel';
+  if (subtab === 'settlements' || subtab === 'paystack') return 'settlements';
+  if (subtab === 'merchant-id' || subtab === 'mtn-collection' || subtab === 'momo') return 'merchant-id';
+  return 'merchant-id';
+}
 
 export const DELIVERY_RULE_CATEGORY_LABELS = {
   sales: 'Sales & billing',

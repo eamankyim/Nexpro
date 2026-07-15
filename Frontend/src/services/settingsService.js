@@ -220,6 +220,21 @@ const disconnectMtnCollectionCredentials = async (payload) => {
   return res?.data ?? res;
 };
 
+const updateHubtelCollectionCredentials = async (payload) => {
+  const res = await api.put('/settings/hubtel-collection-credentials', payload);
+  return res?.data ?? res;
+};
+
+const testHubtelCollectionCredentials = async (payload) => {
+  const res = await api.post('/settings/hubtel-collection-credentials/test', payload);
+  return res?.data ?? res;
+};
+
+const disconnectHubtelCollectionCredentials = async (payload) => {
+  const res = await api.post('/settings/hubtel-collection-credentials/disconnect', payload);
+  return res?.data ?? res;
+};
+
 const getSidebarPreferences = async () => {
   const res = await api.get('/settings/sidebar-preferences');
   return res?.data?.data ?? res?.data ?? { hiddenSidebarKeys: [] };
@@ -286,6 +301,9 @@ export default {
   updateMtnCollectionCredentials,
   testMtnCollectionCredentials,
   disconnectMtnCollectionCredentials,
+  updateHubtelCollectionCredentials,
+  testHubtelCollectionCredentials,
+  disconnectHubtelCollectionCredentials,
   getSidebarPreferences,
   updateSidebarPreferences,
   getSmsTemplates,

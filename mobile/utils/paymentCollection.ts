@@ -6,10 +6,17 @@ export function isPaymentCollectionConfigured(paymentCollection: unknown): boole
     pc.momo_phone_masked ?? pc.momoPhone ?? pc.momo_provider ?? pc.momoProvider
   );
 
+  const mtn = pc.mtn_collection as Record<string, unknown> | undefined;
+  const hubtel = pc.hubtel_collection as Record<string, unknown> | undefined;
+  const hasMerchantId = Boolean(mtn?.merchantId || mtn?.configured);
+  const hasHubtel = Boolean(hubtel?.configured);
+
   return Boolean(
     pc.hasSubaccount === true ||
     pc.configured === true ||
-    (settlementType === 'momo' && hasMomoDetails)
+    (settlementType === 'momo' && hasMomoDetails) ||
+    hasMerchantId ||
+    hasHubtel
   );
 }
 

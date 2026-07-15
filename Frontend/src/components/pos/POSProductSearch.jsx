@@ -40,6 +40,47 @@ import { resolveImageUrl } from '../../utils/fileUtils';
 import api from '../../services/api';
 
 /**
+ * Retail vs dealer price display for POS product tiles.
+ */
+const ProductPriceDisplay = memo(function ProductPriceDisplay({
+  product,
+  dealerPrice,
+  className,
+}) {
+  const retail = Number(product?.sellingPrice);
+  const dealerUnit = dealerPrice?.unitPrice != null ? Number(dealerPrice.unitPrice) : null;
+  const showDealer = dealerUnit != null && Number.isFinite(dealerUnit);
+  const retailDiffers = showDealer
+    && Number.isFinite(retail)
+    && Math.abs(retail - dealerUnit) > 0.001;
+
+  if (showDealer) {
+    return (
+      <div className={cn(className)}>
+        <p className="font-semibold text-green-700 text-sm">
+          {formatAmount(dealerUnit)}
+          <span className="ml-1 text-[10px] font-medium uppercase tracking-wide text-green-800/80">
+            Dealer
+          </span>
+        </p>
+        {retailDiffers && (
+          <p className="text-xs text-muted-foreground">
+            <span className="line-through">{formatAmount(retail)}</span>
+            <span className="ml-1">Retail</span>
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <p className={cn('font-semibold text-green-700', className)}>
+      {formatAmount(retail)}
+    </p>
+  );
+});
+
+/**
  * Inline +/- stepper for products already in cart (touch-friendly on tablet/mobile).
  */
 const CartQuantityStepper = memo(function CartQuantityStepper({
@@ -97,6 +138,7 @@ const ProductItem = memo(function ProductItem({
   quantityInCart = 0,
   onAdjustQuantity,
   showQuantityControls = false,
+  dealerPrice = null,
 }) {
   const trackStock = product.trackStock !== false;
   const quantityOnHand = getProductStockQuantity(product);
@@ -121,7 +163,7 @@ const ProductItem = memo(function ProductItem({
           onClick={() => !isOutOfStock && onSelect(product)}
         >
       {/* Product image or placeholder - square */}
-      <div className="w-14 h-14 bg-muted rounded-lg flex items-center justify-center flex-shrink-0 relative overflow-hidden">
+      <div className="w-14 aspect-square bg-muted rounded-lg flex items-center justify-center flex-shrink-0 relative overflow-hidden">
         <div className="absolute inset-0 flex items-center justify-center bg-muted pointer-events-none" aria-hidden>
           <Package className="h-6 w-6 text-muted-foreground" />
         </div>
@@ -129,7 +171,7 @@ const ProductItem = memo(function ProductItem({
           <img
             src={resolveImageUrl(product.imageUrl) || ''}
             alt={product.name}
-            className="relative z-10 w-full h-full object-cover aspect-square"
+            className="relative z-10 w-full h-full object-contain"
             onError={(e) => { e.currentTarget.style.display = 'none'; }}
           />
         )}
@@ -168,9 +210,7 @@ const ProductItem = memo(function ProductItem({
             {quantityInCart}
           </Badge>
         ) : null}
-        <p className="font-semibold text-green-700">
-          {formatAmount(product.sellingPrice)}
-        </p>
+        <ProductPriceDisplay product={product} dealerPrice={dealerPrice} />
         <div className="flex items-center gap-1 justify-end">
           {!trackStock ? (
             <span className="text-xs text-muted-foreground">Made to order</span>
@@ -203,6 +243,7 @@ const ProductCard = memo(function ProductCard({
   quantityInCart = 0,
   onAdjustQuantity,
   showQuantityControls = false,
+  dealerPrice = null,
 }) {
   const trackStock = product.trackStock !== false;
   const quantityOnHand = getProductStockQuantity(product);
@@ -217,7 +258,7 @@ const ProductCard = memo(function ProductCard({
       <TooltipTrigger asChild>
         <div
           className={cn(
-            'rounded-lg border p-3 flex flex-col transition-colors cursor-pointer min-h-[220px] relative',
+            'rounded-lg border p-3 flex flex-col transition-colors cursor-pointer min-h-[260px] relative',
             isOutOfStock
               ? 'border-muted bg-muted opacity-60 cursor-not-allowed'
               : inCart
@@ -241,7 +282,7 @@ const ProductCard = memo(function ProductCard({
           )}
         </div>
       )}
-      <div className="w-full h-24 sm:h-28 bg-muted rounded-md flex items-center justify-center flex-shrink-0 mb-2 relative overflow-hidden">
+      <div className="w-full aspect-square bg-muted rounded-md flex items-center justify-center flex-shrink-0 mb-2 relative overflow-hidden">
         <div className="absolute inset-0 flex items-center justify-center bg-muted pointer-events-none" aria-hidden>
           <Package className="h-8 w-8 text-muted-foreground" />
         </div>
@@ -249,7 +290,7 @@ const ProductCard = memo(function ProductCard({
           <img
             src={resolveImageUrl(product.imageUrl) || ''}
             alt={product.name}
-            className="relative z-10 w-full h-full object-cover"
+            className="relative z-10 w-full h-full object-contain"
             onError={(e) => { e.currentTarget.style.display = 'none'; }}
           />
         )}
@@ -257,9 +298,7 @@ const ProductCard = memo(function ProductCard({
       <p className="font-medium text-foreground text-sm leading-5 line-clamp-2 min-h-[2.5rem]" title={product.name}>
         {product.name}
       </p>
-      <p className="font-semibold text-green-700 text-sm mt-1">
-        {formatAmount(product.sellingPrice)}
-      </p>
+      <ProductPriceDisplay product={product} dealerPrice={dealerPrice} className="mt-1 text-left" />
       <div className="mt-1.5">
         {!trackStock ? (
           <span className="text-xs text-muted-foreground">Made to order</span>
@@ -1174,7 +1213,7 @@ const QRCodeScanner = ({
 const BROWSE_LIST_SIZE = 60;
 const POS_RESULTS_VIRT_MIN = 32;
 const POS_LIST_ROW_EST = 92;
-const POS_GRID_ROW_EST = 236;
+const POS_GRID_ROW_EST = 300;
 
 function POSVirtualProductList({
   scrollRef,
@@ -1183,6 +1222,7 @@ function POSVirtualProductList({
   cartQuantityByProductId,
   onAdjustProductQuantity,
   showQuantityControls,
+  dealerPriceByProductId = {},
 }) {
   const virtualizer = useVirtualizer({
     count: results.length,
@@ -1213,6 +1253,7 @@ function POSVirtualProductList({
               onSelect={onSelect}
               quantityInCart={cartQuantityByProductId[product.id] || 0}
               showQuantityControls={showQuantityControls}
+              dealerPrice={dealerPriceByProductId[product.id] || null}
               onAdjustQuantity={
                 onAdjustProductQuantity
                   ? (delta) => onAdjustProductQuantity(product.id, delta)
@@ -1234,6 +1275,7 @@ function POSVirtualProductGrid({
   cartQuantityByProductId,
   onAdjustProductQuantity,
   showQuantityControls,
+  dealerPriceByProductId = {},
 }) {
   const rowCount = Math.ceil(results.length / columnCount);
   const virtualizer = useVirtualizer({
@@ -1275,6 +1317,7 @@ function POSVirtualProductGrid({
                   onSelect={onSelect}
                   quantityInCart={cartQuantityByProductId[product.id] || 0}
                   showQuantityControls={showQuantityControls}
+                  dealerPrice={dealerPriceByProductId[product.id] || null}
                   onAdjustQuantity={
                     onAdjustProductQuantity
                       ? (delta) => onAdjustProductQuantity(product.id, delta)
@@ -1304,6 +1347,7 @@ function POSVirtualProductGrid({
  * @param {boolean} [props.fillHeight] - If true, the results area uses flex-1 to fill available height (e.g. in POS layout)
  * @param {function} [props.onAdjustProductQuantity] - Optional: (productId, delta) => void, for mobile +/- quantity controls
  * @param {function} [props.onAddCustomItem] - Optional: open custom item flow
+ * @param {Object} [props.dealerPriceByProductId] - Map of productId -> { unitPrice, source, retailPrice } when selling to a dealer
  */
 const POSProductSearch = ({
   onSearch,
@@ -1317,6 +1361,7 @@ const POSProductSearch = ({
   fillHeight = false,
   onAdjustProductQuantity,
   onAddCustomItem,
+  dealerPriceByProductId = {},
 }) => {
   const navigate = useNavigate();
   const { isMobile, isDesktop } = useResponsive();
@@ -1576,6 +1621,7 @@ const POSProductSearch = ({
                     cartQuantityByProductId={cartQuantityByProductId}
                     onAdjustProductQuantity={onAdjustProductQuantity}
                     showQuantityControls={showQuantityControls}
+                    dealerPriceByProductId={dealerPriceByProductId}
                   />
                 );
               }
@@ -1589,6 +1635,7 @@ const POSProductSearch = ({
                     cartQuantityByProductId={cartQuantityByProductId}
                     onAdjustProductQuantity={onAdjustProductQuantity}
                     showQuantityControls={showQuantityControls}
+                    dealerPriceByProductId={dealerPriceByProductId}
                   />
                 );
               }
@@ -1601,6 +1648,7 @@ const POSProductSearch = ({
                       onSelect={handleSelectProduct}
                       quantityInCart={cartQuantityByProductId[product.id] || 0}
                       showQuantityControls={showQuantityControls}
+                      dealerPrice={dealerPriceByProductId[product.id] || null}
                       onAdjustQuantity={
                         onAdjustProductQuantity
                           ? (delta) => onAdjustProductQuantity(product.id, delta)
@@ -1618,6 +1666,7 @@ const POSProductSearch = ({
                       onSelect={handleSelectProduct}
                       quantityInCart={cartQuantityByProductId[product.id] || 0}
                       showQuantityControls={showQuantityControls}
+                      dealerPrice={dealerPriceByProductId[product.id] || null}
                       onAdjustQuantity={
                         onAdjustProductQuantity
                           ? (delta) => onAdjustProductQuantity(product.id, delta)

@@ -12,6 +12,26 @@ const variantWhere = (variantId) => (
 );
 
 /**
+ * Load retail selling price for a product/variant (for display next to dealer price).
+ */
+const loadRetailPrice = async (tenantId, shopId, productId, productVariantId = null) => {
+  if (productVariantId) {
+    const variant = await ProductVariant.findOne({
+      where: { id: productVariantId, productId },
+      attributes: ['sellingPrice'],
+    });
+    if (variant?.sellingPrice != null && variant.sellingPrice !== '') {
+      return roundMoney(variant.sellingPrice);
+    }
+  }
+  const product = await Product.findOne({
+    where: applyTenantFilter(tenantId, { id: productId, shopId }),
+    attributes: ['sellingPrice'],
+  });
+  return product ? roundMoney(product.sellingPrice) : null;
+};
+
+/**
  * Resolve unit price for a dealer at a branch:
  * dealer-specific → tier → wholesalePrice → retail sellingPrice.
  * @param {object} params
@@ -48,10 +68,11 @@ const resolvePrice = async ({
       attributes: ['unitPrice'],
     });
     if (dealerPrice) {
+      const retailPrice = await loadRetailPrice(tenantId, shopId, productId, productVariantId);
       return {
         unitPrice: roundMoney(dealerPrice.unitPrice),
         source: 'dealer',
-        retailPrice: null,
+        retailPrice,
       };
     }
   }
@@ -62,10 +83,11 @@ const resolvePrice = async ({
       attributes: ['unitPrice'],
     });
     if (tierPrice) {
+      const retailPrice = await loadRetailPrice(tenantId, shopId, productId, productVariantId);
       return {
         unitPrice: roundMoney(tierPrice.unitPrice),
         source: 'tier',
-        retailPrice: null,
+        retailPrice,
       };
     }
   }

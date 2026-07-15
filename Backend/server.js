@@ -270,6 +270,7 @@ app.use('/api/products', productRoutes);
 app.use('/api/merchandise', merchandiseRoutes);
 app.use('/api/store', storeRoutes);
 app.use('/api/sales', saleRoutes);
+app.use('/api/returns', require('./routes/saleReturnRoutes'));
 app.use('/api/scan-logs', scanLogRoutes);
 app.use('/api/stock-transfers', stockTransferRoutes);
 // Pharmacy Management Routes

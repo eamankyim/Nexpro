@@ -18,10 +18,14 @@ export function isPaymentConfigured(pc) {
   const settlementType = pc.settlement_type ?? pc.settlementType;
   const isMomo = settlementType === 'momo';
   const hasMomoDetails = Boolean(pc.momo_phone_masked ?? pc.momoPhone ?? pc.momo_provider ?? pc.momoProvider);
+  const hasMerchantId = Boolean(pc.mtn_collection?.merchantId || pc.mtn_collection?.configured);
+  const hasHubtel = Boolean(pc.hubtel_collection?.configured);
   return Boolean(
     pc.hasSubaccount === true ||
     pc.configured === true ||
-    (isMomo && hasMomoDetails)
+    (isMomo && hasMomoDetails) ||
+    hasMerchantId ||
+    hasHubtel
   );
 }
 

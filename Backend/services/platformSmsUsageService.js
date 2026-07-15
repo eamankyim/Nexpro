@@ -100,7 +100,7 @@ async function checkPlatformSmsLimit(tenantId, count = 1) {
     return {
       allowed: false,
       errorCode: 'PLATFORM_SMS_MONTHLY_LIMIT',
-      error: `Platform SMS monthly limit reached (${summary.monthlyLimit}/month). Used ${summary.sentCount}, requested ${requested}.`,
+      error: `ABS platform SMS quota exhausted (${summary.sentCount}/${summary.monthlyLimit} this month). Connect your own SMS provider or wait until the monthly reset.`,
       summary,
     };
   }

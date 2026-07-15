@@ -42,6 +42,7 @@ describe('platformSmsUsageService', () => {
 
     expect(result.allowed).toBe(false);
     expect(result.errorCode).toBe('PLATFORM_SMS_MONTHLY_LIMIT');
+    expect(result.error).toMatch(/ABS platform SMS quota exhausted/i);
   });
 
   it('returns zero usage when usage table is missing', async () => {

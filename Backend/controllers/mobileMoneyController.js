@@ -1,14 +1,27 @@
-const { Sale, Invoice, Payment, Tenant } = require('../models');
+const { Sale, Invoice, Tenant } = require('../models');
 const mobileMoneyService = require('../services/mobileMoneyService');
 const { getResolvedMtnConfigForTenant } = require('../services/tenantMomoCollectionService');
-const { applyTenantFilter } = require('../utils/tenantUtils');
+const {
+  initiateDirectMoMoCharge,
+  checkDirectMoMoStatus,
+  buildMobileMoneyRefMeta
+} = require('../services/directMoMoChargeService');
+const {
+  parseHubtelCallback,
+  getResolvedHubtelConfigForTenant
+} = require('../services/tenantHubtelCollectionService');
 const { sequelize } = require('../config/database');
 const { emitNewSale } = require('../services/websocketService');
+const { Op } = require('sequelize');
 
 async function loadMtnRuntimeForTenant(tenantId) {
   const tenant = await Tenant.findByPk(tenantId);
   if (!tenant) return null;
   return getResolvedMtnConfigForTenant(tenant);
+}
+
+async function loadTenant(tenantId) {
+  return Tenant.findByPk(tenantId);
 }
 
 /**
@@ -36,8 +49,8 @@ exports.initiatePayment = async (req, res) => {
       });
     }
 
-    // Generate external reference
-    const externalId = saleId || invoiceId || `PAY-${Date.now()}`;
+    // Generate external reference (stable client/reference mapping)
+    const externalId = String(saleId || invoiceId || `PAY-${Date.now()}`).slice(0, 64);
     
     // Detect or use provided provider
     const detectedProvider = provider || mobileMoneyService.detectProvider(phoneNumber);
@@ -49,34 +62,38 @@ exports.initiatePayment = async (req, res) => {
       });
     }
 
-    let mtnConfig;
-    if (detectedProvider === 'MTN') {
-      mtnConfig = await loadMtnRuntimeForTenant(tenantId);
-      if (!mtnConfig) {
-        return res.status(503).json({
-          success: false,
-          error: 'MTN MoMo Collection is not configured. Add API credentials in Settings → Payments or set server MTN env vars.'
-        });
-      }
+    const tenant = await loadTenant(tenantId);
+    if (!tenant) {
+      return res.status(404).json({ success: false, error: 'Workspace not found' });
     }
 
-    const result = await mobileMoneyService.requestPayment({
+    const result = await initiateDirectMoMoCharge({
+      tenant,
       phoneNumber,
       amount: parseFloat(amount),
       currency,
-      externalId,
       provider: detectedProvider,
-      payerMessage: payerMessage || 'Payment for your purchase',
-      mtnConfig
+      externalId,
+      payerMessage: payerMessage || 'Payment for your purchase'
     });
 
     if (!result.success) {
-      return res.status(400).json({
+      const status =
+        result.rail === 'none' ? 503 : result.allowPaystackFallback ? 503 : 400;
+      return res.status(status).json({
         success: false,
-        error: result.error,
-        provider: result.provider
+        error: result.error || 'Failed to initiate payment',
+        provider: result.provider || detectedProvider,
+        rail: result.rail,
+        allowPaystackFallback: Boolean(result.allowPaystackFallback)
       });
     }
+
+    const refMeta = buildMobileMoneyRefMeta(result, {
+      saleId: saleId || undefined,
+      invoiceId: invoiceId || undefined,
+      tenantId
+    });
 
     // Store payment reference in metadata
     if (saleId) {
@@ -85,12 +102,7 @@ exports.initiatePayment = async (req, res) => {
           metadata: sequelize.fn('jsonb_set', 
             sequelize.fn('COALESCE', sequelize.col('metadata'), '{}'),
             '{mobileMoneyRef}',
-            JSON.stringify({
-              referenceId: result.referenceId,
-              provider: result.provider,
-              status: 'PENDING',
-              initiatedAt: new Date().toISOString()
-            })
+            JSON.stringify(refMeta)
           )
         },
         { where: { id: saleId, tenantId } }
@@ -103,12 +115,7 @@ exports.initiatePayment = async (req, res) => {
           metadata: sequelize.fn('jsonb_set',
             sequelize.fn('COALESCE', sequelize.col('metadata'), '{}'),
             '{mobileMoneyRef}',
-            JSON.stringify({
-              referenceId: result.referenceId,
-              provider: result.provider,
-              status: 'PENDING',
-              initiatedAt: new Date().toISOString()
-            })
+            JSON.stringify(refMeta)
           )
         },
         { where: { id: invoiceId, tenantId } }
@@ -122,6 +129,7 @@ exports.initiatePayment = async (req, res) => {
         provider: result.provider,
         status: result.status,
         message: result.message,
+        rail: result.rail,
         saleId,
         invoiceId
       }
@@ -152,9 +160,13 @@ exports.checkPaymentStatus = async (req, res) => {
     }
 
     const prov = provider.toUpperCase();
-    let mtnConfig;
+    const tenant = await loadTenant(req.tenantId);
+    if (!tenant) {
+      return res.status(404).json({ success: false, error: 'Workspace not found' });
+    }
+
     if (prov === 'MTN') {
-      mtnConfig = await loadMtnRuntimeForTenant(req.tenantId);
+      const mtnConfig = await loadMtnRuntimeForTenant(req.tenantId);
       if (!mtnConfig) {
         return res.status(503).json({
           success: false,
@@ -162,8 +174,18 @@ exports.checkPaymentStatus = async (req, res) => {
         });
       }
     }
+    if (prov === 'HUBTEL' && !getResolvedHubtelConfigForTenant(tenant)) {
+      return res.status(503).json({
+        success: false,
+        error: 'Hubtel is not configured for this workspace'
+      });
+    }
 
-    const result = await mobileMoneyService.checkPaymentStatus(referenceId, prov, mtnConfig);
+    const result = await checkDirectMoMoStatus({
+      tenant,
+      referenceId,
+      provider: prov
+    });
 
     res.json({
       success: true,
@@ -212,9 +234,14 @@ exports.pollSalePayment = async (req, res) => {
       });
     }
 
-    let mtnConfig;
+    const tenant = await loadTenant(tenantId);
+    if (!tenant) {
+      await transaction.rollback();
+      return res.status(404).json({ success: false, error: 'Workspace not found' });
+    }
+
     if (mobileMoneyRef.provider === 'MTN') {
-      mtnConfig = await loadMtnRuntimeForTenant(tenantId);
+      const mtnConfig = await loadMtnRuntimeForTenant(tenantId);
       if (!mtnConfig) {
         await transaction.rollback();
         return res.status(503).json({
@@ -223,12 +250,19 @@ exports.pollSalePayment = async (req, res) => {
         });
       }
     }
+    if (mobileMoneyRef.provider === 'HUBTEL' && !getResolvedHubtelConfigForTenant(tenant)) {
+      await transaction.rollback();
+      return res.status(503).json({
+        success: false,
+        error: 'Hubtel is not configured for this workspace'
+      });
+    }
 
-    const result = await mobileMoneyService.checkPaymentStatus(
-      mobileMoneyRef.referenceId,
-      mobileMoneyRef.provider,
-      mtnConfig
-    );
+    const result = await checkDirectMoMoStatus({
+      tenant,
+      referenceId: mobileMoneyRef.referenceId,
+      provider: mobileMoneyRef.provider
+    });
 
     // Update sale metadata with latest status
     const updatedMetadata = {
@@ -434,6 +468,133 @@ exports.airtelWebhook = async (req, res) => {
     res.status(200).json({ success: true });
   } catch (error) {
     console.error('[Airtel Webhook] Error:', error);
+    res.status(200).json({ success: true });
+  }
+};
+
+/**
+ * Find sale/invoice by Hubtel clientReference stored in metadata.mobileMoneyRef.
+ * Uses parameterized JSON path (no string-interpolated SQL).
+ * @param {string} clientReference
+ */
+async function findRecordsByHubtelClientReference(clientReference) {
+  const ref = String(clientReference || '').trim();
+  if (!ref) return { sale: null, invoice: null };
+
+  const sale = await Sale.findOne({
+    where: {
+      [Op.or]: [
+        sequelize.where(
+          sequelize.json('metadata.mobileMoneyRef.referenceId'),
+          ref
+        ),
+        sequelize.where(
+          sequelize.json('metadata.mobileMoneyRef.clientReference'),
+          ref
+        )
+      ]
+    }
+  });
+
+  const invoice = await Invoice.findOne({
+    where: {
+      [Op.or]: [
+        sequelize.where(
+          sequelize.json('metadata.mobileMoneyRef.referenceId'),
+          ref
+        ),
+        sequelize.where(
+          sequelize.json('metadata.mobileMoneyRef.clientReference'),
+          ref
+        )
+      ]
+    }
+  });
+
+  return { sale, invoice };
+}
+
+/**
+ * Idempotent Hubtel Receive Money callback.
+ * @route POST /api/webhooks/hubtel
+ */
+exports.hubtelWebhook = async (req, res) => {
+  try {
+    const parsed = parseHubtelCallback(req.body || {});
+    console.log('[Hubtel Webhook] Received:', {
+      clientReference: parsed.clientReference,
+      status: parsed.status,
+      hasTransactionId: Boolean(parsed.transactionId)
+    });
+
+    if (!parsed.clientReference) {
+      return res.status(200).json({ success: true, ignored: true });
+    }
+
+    const { sale, invoice } = await findRecordsByHubtelClientReference(parsed.clientReference);
+
+    if (sale) {
+      const existing = sale.metadata?.mobileMoneyRef || {};
+      if (existing.status === 'SUCCESSFUL' && sale.status === 'completed') {
+        return res.status(200).json({ success: true, duplicate: true });
+      }
+
+      const updatedRef = {
+        ...existing,
+        referenceId: existing.referenceId || parsed.clientReference,
+        clientReference: parsed.clientReference,
+        provider: 'HUBTEL',
+        status: parsed.status,
+        lastChecked: new Date().toISOString(),
+        ...(parsed.transactionId ? { financialTransactionId: parsed.transactionId } : {}),
+        ...(parsed.status === 'SUCCESSFUL' ? { completedAt: new Date().toISOString() } : {})
+      };
+
+      if (parsed.status === 'SUCCESSFUL') {
+        await sale.update({
+          status: 'completed',
+          paymentMethod: 'mobile_money',
+          amountPaid: sale.total,
+          metadata: { ...sale.metadata, mobileMoneyRef: updatedRef }
+        });
+        try {
+          emitNewSale(sale.tenantId, sale);
+        } catch (e) {
+          console.error('WebSocket emit error:', e);
+        }
+      } else {
+        await sale.update({
+          metadata: { ...sale.metadata, mobileMoneyRef: updatedRef }
+        });
+      }
+    }
+
+    if (invoice) {
+      const existing = invoice.metadata?.mobileMoneyRef || {};
+      if (existing.status === 'SUCCESSFUL' && invoice.status === 'paid') {
+        return res.status(200).json({ success: true, duplicate: true });
+      }
+
+      const updatedRef = {
+        ...existing,
+        referenceId: existing.referenceId || parsed.clientReference,
+        clientReference: parsed.clientReference,
+        provider: 'HUBTEL',
+        status: parsed.status,
+        lastChecked: new Date().toISOString(),
+        ...(parsed.transactionId ? { financialTransactionId: parsed.transactionId } : {}),
+        ...(parsed.status === 'SUCCESSFUL' ? { completedAt: new Date().toISOString() } : {})
+      };
+
+      // Mark ref only; public/auth poll finalize records the Payment row idempotently.
+      await invoice.update({
+        metadata: { ...invoice.metadata, mobileMoneyRef: updatedRef }
+      });
+    }
+
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('[Hubtel Webhook] Error:', error?.message || error);
     res.status(200).json({ success: true });
   }
 };

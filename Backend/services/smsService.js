@@ -25,11 +25,11 @@ function isProviderAcceptedResponse(response) {
 }
 
 /**
- * Normalize provider errors, including axios timeouts.
- * @param {Error} error
+ * Extract the raw provider error string from an axios/provider error object.
+ * @param {Error|object} error
  * @returns {string}
  */
-function formatSmsProviderError(error) {
+function extractSmsProviderRawMessage(error) {
   const code = error?.code;
   const message = String(error?.message || '');
   if (code === 'ECONNABORTED' || /timeout/i.test(message)) {
@@ -41,6 +41,97 @@ function formatSmsProviderError(error) {
     || error?.response?.data?.error
     || message
     || 'Failed to send SMS message';
+}
+
+/**
+ * Map SMS provider / Arkesel errors to actionable merchant-facing messages.
+ * Distinguishes provider wallet/coverage failures from ABS platform monthly quota.
+ * @param {Error|object|string} errorOrMessage - Axios error, provider payload, or raw message
+ * @param {object} [hints]
+ * @param {string|number} [hints.providerCode] - Arkesel-style status code when known
+ * @param {number} [hints.httpStatus] - HTTP status from provider response
+ * @returns {{ error: string, errorCode?: string }}
+ * @example
+ * classifySmsProviderError({ response: { data: { message: 'Insufficient balance or invalid coverage!' } } })
+ * // → { error: 'SMS provider (Arkesel) balance empty…', errorCode: 'SMS_PROVIDER_BALANCE_OR_COVERAGE' }
+ */
+function classifySmsProviderError(errorOrMessage, hints = {}) {
+  const isTimeoutObject = errorOrMessage
+    && typeof errorOrMessage === 'object'
+    && (errorOrMessage.code === 'ECONNABORTED' || /timeout/i.test(String(errorOrMessage.message || '')));
+  if (isTimeoutObject) {
+    return {
+      error: 'SMS provider did not respond in time - the message may still be delivered',
+      errorCode: 'SMS_PROVIDER_TIMEOUT',
+    };
+  }
+
+  const raw = typeof errorOrMessage === 'string'
+    ? errorOrMessage
+    : extractSmsProviderRawMessage(errorOrMessage);
+  const providerCode = String(
+    hints.providerCode
+      ?? errorOrMessage?.response?.data?.code
+      ?? errorOrMessage?.response?.data?.status
+      ?? errorOrMessage?.code
+      ?? ''
+  ).toLowerCase();
+  const httpStatus = Number(
+    hints.httpStatus
+      ?? errorOrMessage?.response?.status
+      ?? NaN
+  );
+  const lower = String(raw || '').toLowerCase();
+
+  const looksLikeBalanceOrCoverage = (
+    /insufficient balance/i.test(lower)
+    || /invalid coverage/i.test(lower)
+    || providerCode === '105'
+    || providerCode === '402'
+    || providerCode === '1007'
+    || providerCode === '1008'
+    || httpStatus === 402
+  );
+
+  if (looksLikeBalanceOrCoverage) {
+    return {
+      error:
+        'SMS provider (Arkesel) balance empty or destination not covered — top up Arkesel (this is not the ABS platform SMS quota)',
+      errorCode: 'SMS_PROVIDER_BALANCE_OR_COVERAGE',
+    };
+  }
+
+  if (
+    providerCode === '104'
+    || /phone coverage not active/i.test(lower)
+    || /coverage not active/i.test(lower)
+  ) {
+    return {
+      error: 'SMS provider cannot reach this number — network coverage is not active for the destination',
+      errorCode: 'SMS_PROVIDER_COVERAGE',
+    };
+  }
+
+  if (
+    providerCode === '103'
+    || /invalid phone/i.test(lower)
+  ) {
+    return {
+      error: raw || 'Invalid phone number',
+      errorCode: 'INVALID_PHONE',
+    };
+  }
+
+  return { error: raw || 'Failed to send SMS message' };
+}
+
+/**
+ * Normalize provider errors, including axios timeouts.
+ * @param {Error} error
+ * @returns {string}
+ */
+function formatSmsProviderError(error) {
+  return classifySmsProviderError(error).error;
 }
 
 /**
@@ -417,9 +508,32 @@ class SMSService {
       );
 
       if (!isProviderAcceptedResponse(response)) {
+        const classified = classifySmsProviderError(
+          response.data?.message || `Arkesel returned unexpected status ${response.status}`,
+          { httpStatus: response.status, providerCode: response.data?.code || response.data?.status }
+        );
         return {
           success: false,
-          error: `Arkesel returned unexpected status ${response.status}`,
+          error: classified.error,
+          errorCode: classified.errorCode,
+        };
+      }
+
+      const bodyStatus = String(response.data?.status || response.data?.code || '').toLowerCase();
+      const bodyLooksFailed = bodyStatus
+        && bodyStatus !== 'success'
+        && bodyStatus !== 'ok'
+        && bodyStatus !== '200';
+      if (bodyLooksFailed) {
+        const classified = classifySmsProviderError(
+          response.data?.message || response.data?.error || `Arkesel status: ${bodyStatus}`,
+          { providerCode: response.data?.code || response.data?.status, httpStatus: response.status }
+        );
+        return {
+          success: false,
+          error: classified.error,
+          errorCode: classified.errorCode,
+          data: response.data,
         };
       }
 
@@ -439,12 +553,11 @@ class SMSService {
       };
     } catch (error) {
       console.error('[SMS] Arkesel error:', error.response?.data || error.message);
+      const classified = classifySmsProviderError(error);
       return {
         success: false,
-        error: formatSmsProviderError(error),
-        errorCode: error?.code === 'ECONNABORTED' || /timeout/i.test(error?.message || '')
-          ? 'SMS_PROVIDER_TIMEOUT'
-          : undefined,
+        error: classified.error,
+        errorCode: classified.errorCode,
       };
     }
   }
@@ -621,6 +734,7 @@ module.exports = new SMSService();
 module.exports.hasValidTenantSmsCredentials = hasValidTenantSmsCredentials;
 module.exports.toArkeselRecipient = toArkeselRecipient;
 module.exports.formatSmsProviderError = formatSmsProviderError;
+module.exports.classifySmsProviderError = classifySmsProviderError;
 module.exports.isProviderAcceptedResponse = isProviderAcceptedResponse;
 module.exports.SMS_SEND_TIMEOUT_MS = SMS_SEND_TIMEOUT_MS;
 module.exports.SMS_CONNECTION_TEST_TIMEOUT_MS = SMS_CONNECTION_TEST_TIMEOUT_MS;

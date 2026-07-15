@@ -27,28 +27,29 @@ describe('dealerPricingService.resolvePrice', () => {
 
   it('returns dealer override first', async () => {
     DealerProductPrice.findOne.mockResolvedValueOnce({ unitPrice: '80.00' });
+    Product.findOne.mockResolvedValue({ sellingPrice: '120.00' });
 
     const result = await resolvePrice(base);
 
     expect(result).toEqual({
       unitPrice: 80,
       source: 'dealer',
-      retailPrice: null,
+      retailPrice: 120,
     });
-    expect(Product.findOne).not.toHaveBeenCalled();
   });
 
   it('returns tier when no dealer override', async () => {
     DealerProductPrice.findOne
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ unitPrice: '90.50' });
+    Product.findOne.mockResolvedValue({ sellingPrice: '120.00' });
 
     const result = await resolvePrice({ ...base, priceTierId: 'tier-1' });
 
     expect(result).toEqual({
       unitPrice: 90.5,
       source: 'tier',
-      retailPrice: null,
+      retailPrice: 120,
     });
   });
 
@@ -141,6 +142,6 @@ describe('dealerPricingService.resolvePrice', () => {
 
     expect(result.source).toBe('dealer');
     expect(result.unitPrice).toBe(50);
-    expect(Product.findOne).not.toHaveBeenCalled();
+    expect(result.retailPrice).toBe(100);
   });
 });

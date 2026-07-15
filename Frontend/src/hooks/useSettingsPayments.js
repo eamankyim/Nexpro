@@ -8,10 +8,14 @@ import settingsService from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
 import { showError, showLoading, showSuccess } from '../utils/toast';
 import { QUERY_CACHE } from '../constants';
-import { PAYMENT_COLLECTION_SUBTABS, paymentCollectionSchema } from '../utils/settingsUtils';
+import {
+  PAYMENT_COLLECTION_SUBTABS,
+  normalizePaymentCollectionSubtab,
+  paymentCollectionSchema,
+} from '../utils/settingsUtils';
 
 /**
- * Payment collections settings (Paystack settlements, MTN MoMo, payout destination).
+ * Payment collections settings (Merchant ID, Paystack settlement, Hubtel).
  * @returns {Object}
  */
 export const useSettingsPayments = () => {
@@ -31,9 +35,7 @@ export const useSettingsPayments = () => {
   const requestedSettlementType = requestedPaymentMethod === 'mobileMoney' ? 'momo' : 'bank';
 
   const subtabFromUrl = searchParams.get('subtab');
-  const [paymentsSubTab, setPaymentsSubTab] = useState(
-    subtabFromUrl === 'mtn-collection' ? 'mtn-collection' : 'settlements'
-  );
+  const [paymentsSubTab, setPaymentsSubTab] = useState(() => normalizePaymentCollectionSubtab(subtabFromUrl));
 
   const [paymentVerifyPassword, setPaymentVerifyPassword] = useState('');
   const [paymentVerifyOtp, setPaymentVerifyOtp] = useState('');
@@ -45,6 +47,7 @@ export const useSettingsPayments = () => {
   const [bankSelectOpen, setBankSelectOpen] = useState(false);
   const [bankSearchQuery, setBankSearchQuery] = useState('');
   const [mtnCredForm, setMtnCredForm] = useState({
+    merchantId: '',
     subscriptionKey: '',
     apiUser: '',
     apiKey: '',
@@ -52,11 +55,23 @@ export const useSettingsPayments = () => {
     collectionApiUrl: '',
     callbackUrl: '',
   });
+  const [mtnShowAdvancedKeys, setMtnShowAdvancedKeys] = useState(false);
   const [mtnOtp, setMtnOtp] = useState('');
   const [mtnGatePassword, setMtnGatePassword] = useState('');
   const [mtnSaving, setMtnSaving] = useState(false);
   const [mtnTesting, setMtnTesting] = useState(false);
   const [mtnDisconnecting, setMtnDisconnecting] = useState(false);
+  const [hubtelCredForm, setHubtelCredForm] = useState({
+    clientId: '',
+    clientSecret: '',
+    merchantAccountNumber: '',
+    posSalesId: '',
+  });
+  const [hubtelOtp, setHubtelOtp] = useState('');
+  const [hubtelGatePassword, setHubtelGatePassword] = useState('');
+  const [hubtelSaving, setHubtelSaving] = useState(false);
+  const [hubtelTesting, setHubtelTesting] = useState(false);
+  const [hubtelDisconnecting, setHubtelDisconnecting] = useState(false);
   const [paystackTxFrom, setPaystackTxFrom] = useState(() => dayjs().subtract(30, 'day').format('YYYY-MM-DD'));
   const [paystackTxTo, setPaystackTxTo] = useState(() => dayjs().format('YYYY-MM-DD'));
   const [paystackTxPage, setPaystackTxPage] = useState(1);
@@ -69,8 +84,8 @@ export const useSettingsPayments = () => {
 
   useEffect(() => {
     const subtab = searchParams.get('subtab');
-    if (subtab === 'mtn-collection' || subtab === 'settlements') {
-      setPaymentsSubTab(subtab);
+    if (subtab) {
+      setPaymentsSubTab(normalizePaymentCollectionSubtab(subtab));
     }
   }, [searchParams]);
 
@@ -168,9 +183,19 @@ export const useSettingsPayments = () => {
     if (mc && canManageOrganization) {
       setMtnCredForm((f) => ({
         ...f,
+        merchantId: mc.merchantId || f.merchantId || '',
         environment: mc.environment === 'production' ? 'production' : 'sandbox',
         collectionApiUrl: mc.collectionApiUrl || '',
         callbackUrl: mc.callbackUrl || '',
+      }));
+      if (mc.hasApiCredentials) setMtnShowAdvancedKeys(true);
+    }
+    const hc = pcInner?.hubtel_collection;
+    if (hc && canManageOrganization) {
+      setHubtelCredForm((f) => ({
+        ...f,
+        merchantAccountNumber: hc.merchantAccountNumber || f.merchantAccountNumber || '',
+        posSalesId: hc.posSalesId || f.posSalesId || '',
       }));
     }
   }, [paymentCollectionData, canManageOrganization]);
@@ -204,9 +229,10 @@ export const useSettingsPayments = () => {
   });
 
   const setPaymentsSection = useCallback((key) => {
-    setPaymentsSubTab(key);
+    const normalized = normalizePaymentCollectionSubtab(key);
+    setPaymentsSubTab(normalized);
     const params = new URLSearchParams(searchParams);
-    params.set('subtab', key === 'mtn-collection' ? 'mtn-collection' : 'settlements');
+    params.set('subtab', normalized);
     if (safeReturnTo) params.set('returnTo', safeReturnTo);
     if (requestedPaymentMethod) params.set('method', requestedPaymentMethod);
     setSearchParams(params, { replace: true });
@@ -303,13 +329,23 @@ export const useSettingsPayments = () => {
   const buildMtnCredPayload = useCallback(() => ({
     password: isGoogleUser ? undefined : mtnGatePassword,
     otp: (mtnOtp || '').replace(/\D/g, ''),
-    subscriptionKey: mtnCredForm.subscriptionKey.trim(),
-    apiUser: mtnCredForm.apiUser.trim(),
-    apiKey: mtnCredForm.apiKey.trim(),
+    merchantId: mtnCredForm.merchantId.trim(),
+    subscriptionKey: mtnCredForm.subscriptionKey.trim() || undefined,
+    apiUser: mtnCredForm.apiUser.trim() || undefined,
+    apiKey: mtnCredForm.apiKey.trim() || undefined,
     environment: mtnCredForm.environment,
     collectionApiUrl: mtnCredForm.collectionApiUrl.trim() || undefined,
     callbackUrl: mtnCredForm.callbackUrl.trim() || undefined,
   }), [isGoogleUser, mtnCredForm, mtnGatePassword, mtnOtp]);
+
+  const buildHubtelCredPayload = useCallback(() => ({
+    password: isGoogleUser ? undefined : hubtelGatePassword,
+    otp: (hubtelOtp || '').replace(/\D/g, ''),
+    clientId: hubtelCredForm.clientId.trim(),
+    clientSecret: hubtelCredForm.clientSecret.trim(),
+    merchantAccountNumber: hubtelCredForm.merchantAccountNumber.trim() || undefined,
+    posSalesId: hubtelCredForm.posSalesId.trim() || undefined,
+  }), [hubtelCredForm, hubtelGatePassword, hubtelOtp, isGoogleUser]);
 
   const handleMtnSendOtp = useCallback(async () => {
     if (!isGoogleUser && !mtnGatePassword.trim()) {
@@ -330,6 +366,10 @@ export const useSettingsPayments = () => {
       showError('Enter the 6-digit code from your email');
       return;
     }
+    if (!p.subscriptionKey || !p.apiUser || !p.apiKey) {
+      showError('API credentials are required to test automated collection.');
+      return;
+    }
     setMtnTesting(true);
     try {
       await settingsService.testMtnCollectionCredentials(p);
@@ -343,6 +383,10 @@ export const useSettingsPayments = () => {
 
   const handleMtnSave = useCallback(async () => {
     const p = buildMtnCredPayload();
+    if (!p.merchantId) {
+      showError('Enter your MTN Merchant ID');
+      return;
+    }
     if (p.otp.length !== 6) {
       showError('Enter the 6-digit code from your email');
       return;
@@ -350,7 +394,7 @@ export const useSettingsPayments = () => {
     setMtnSaving(true);
     try {
       await settingsService.updateMtnCollectionCredentials(p);
-      showSuccess('MTN credentials saved');
+      showSuccess('Merchant ID connected');
       setMtnOtp('');
       queryClient.invalidateQueries({ queryKey: ['settings', 'payment-collection', activeTenant?.id] });
     } catch (e) {
@@ -369,16 +413,104 @@ export const useSettingsPayments = () => {
     setMtnDisconnecting(true);
     try {
       await settingsService.disconnectMtnCollectionCredentials({ password: p.password, otp: p.otp });
-      showSuccess('Workspace MTN credentials removed');
+      showSuccess('Merchant ID disconnected');
       setMtnOtp('');
-      setMtnCredForm((f) => ({ ...f, subscriptionKey: '', apiUser: '', apiKey: '' }));
+      setMtnCredForm((f) => ({
+        ...f,
+        merchantId: '',
+        subscriptionKey: '',
+        apiUser: '',
+        apiKey: '',
+      }));
       queryClient.invalidateQueries({ queryKey: ['settings', 'payment-collection', activeTenant?.id] });
     } catch (e) {
-      showError(e, e?.response?.data?.message || 'Could not remove credentials');
+      showError(e, e?.response?.data?.message || 'Could not disconnect');
     } finally {
       setMtnDisconnecting(false);
     }
   }, [activeTenant?.id, buildMtnCredPayload, queryClient]);
+
+  const handleHubtelSendOtp = useCallback(async () => {
+    if (!isGoogleUser && !hubtelGatePassword.trim()) {
+      showError('Enter your account password to receive a code.');
+      return;
+    }
+    try {
+      await settingsService.sendPaymentCollectionOtp(isGoogleUser ? undefined : hubtelGatePassword);
+      showSuccess('Verification code sent to your email');
+    } catch (e) {
+      showError(e, 'Could not send code');
+    }
+  }, [hubtelGatePassword, isGoogleUser]);
+
+  const handleHubtelTest = useCallback(async () => {
+    const p = buildHubtelCredPayload();
+    if (p.otp.length !== 6) {
+      showError('Enter the 6-digit code from your email');
+      return;
+    }
+    if (!p.clientId || !p.clientSecret) {
+      showError('Client ID and Client Secret are required to test');
+      return;
+    }
+    setHubtelTesting(true);
+    try {
+      await settingsService.testHubtelCollectionCredentials(p);
+      showSuccess('Hubtel connection OK');
+    } catch (e) {
+      showError(e, e?.response?.data?.message || 'Test failed');
+    } finally {
+      setHubtelTesting(false);
+    }
+  }, [buildHubtelCredPayload]);
+
+  const handleHubtelSave = useCallback(async () => {
+    const p = buildHubtelCredPayload();
+    if (!p.clientId || !p.clientSecret) {
+      showError('Client ID and Client Secret are required');
+      return;
+    }
+    if (p.otp.length !== 6) {
+      showError('Enter the 6-digit code from your email');
+      return;
+    }
+    setHubtelSaving(true);
+    try {
+      await settingsService.updateHubtelCollectionCredentials(p);
+      showSuccess('Hubtel connected');
+      setHubtelOtp('');
+      queryClient.invalidateQueries({ queryKey: ['settings', 'payment-collection', activeTenant?.id] });
+    } catch (e) {
+      showError(e, e?.response?.data?.message || 'Save failed');
+    } finally {
+      setHubtelSaving(false);
+    }
+  }, [activeTenant?.id, buildHubtelCredPayload, queryClient]);
+
+  const handleHubtelDisconnect = useCallback(async () => {
+    const p = buildHubtelCredPayload();
+    if (p.otp.length !== 6) {
+      showError('Enter the 6-digit code from your email');
+      return;
+    }
+    setHubtelDisconnecting(true);
+    try {
+      await settingsService.disconnectHubtelCollectionCredentials({ password: p.password, otp: p.otp });
+      showSuccess('Hubtel disconnected');
+      setHubtelOtp('');
+      setHubtelCredForm({
+        clientId: '',
+        clientSecret: '',
+        merchantAccountNumber: '',
+        posSalesId: '',
+      });
+      queryClient.invalidateQueries({ queryKey: ['settings', 'payment-collection', activeTenant?.id] });
+    } catch (e) {
+      showError(e, e?.response?.data?.message || 'Could not disconnect');
+    } finally {
+      setHubtelDisconnecting(false);
+    }
+  }, [activeTenant?.id, buildHubtelCredPayload, queryClient]);
 
   const rawPc = paymentCollectionData?.data ?? paymentCollectionData;
   const pc = rawPc && typeof rawPc === 'object' && rawPc.data != null && (rawPc.success === true || rawPc.success === 'true') ? rawPc.data : rawPc;
@@ -431,6 +563,8 @@ export const useSettingsPayments = () => {
     setBankSearchQuery,
     mtnCredForm,
     setMtnCredForm,
+    mtnShowAdvancedKeys,
+    setMtnShowAdvancedKeys,
     mtnOtp,
     setMtnOtp,
     mtnGatePassword,
@@ -438,6 +572,15 @@ export const useSettingsPayments = () => {
     mtnSaving,
     mtnTesting,
     mtnDisconnecting,
+    hubtelCredForm,
+    setHubtelCredForm,
+    hubtelOtp,
+    setHubtelOtp,
+    hubtelGatePassword,
+    setHubtelGatePassword,
+    hubtelSaving,
+    hubtelTesting,
+    hubtelDisconnecting,
     isGoogleUser,
     handleSendPaymentOtp,
     handleVerifyPaymentPassword,
@@ -447,6 +590,10 @@ export const useSettingsPayments = () => {
     handleMtnTest,
     handleMtnSave,
     handleMtnDisconnect,
+    handleHubtelSendOtp,
+    handleHubtelTest,
+    handleHubtelSave,
+    handleHubtelDisconnect,
     pc,
     hasPaymentSubaccount,
     isMomoLinked,

@@ -598,17 +598,20 @@ const resolveStoreLogoUrl = (...sources) => firstFilled(
 const resolvePaymentMethods = (savedMethods = {}, paymentCollection = null) => {
   const merged = mergeOptions(defaultPaymentMethods, savedMethods);
   const collectionConfigured = isPaymentConfigured(paymentCollection);
-  const mtnCollectionActive = ['tenant', 'platform'].includes(paymentCollection?.mtn_collection?.activeSource);
+  const mtnCollectionActive = ['tenant', 'platform', 'merchant_id'].includes(
+    paymentCollection?.mtn_collection?.activeSource
+  );
+  const hubtelConnected = Boolean(paymentCollection?.hubtel_collection?.configured);
 
   return {
     ...merged,
     mobileMoney: {
       ...merged.mobileMoney,
-      configured: collectionConfigured || mtnCollectionActive,
+      configured: collectionConfigured || mtnCollectionActive || hubtelConnected,
     },
     card: {
       ...merged.card,
-      configured: collectionConfigured,
+      configured: collectionConfigured || hubtelConnected,
     },
   };
 };
@@ -616,7 +619,7 @@ const resolvePaymentMethods = (savedMethods = {}, paymentCollection = null) => {
 const getPaymentCollectionSettingsUrl = (methodKey, returnTo = STORE_SETUP_PAYMENTS_RETURN) => {
   const params = new URLSearchParams({
     tab: 'payment-collections',
-    subtab: 'settlements',
+    subtab: methodKey === 'mobileMoney' ? 'merchant-id' : 'settlements',
     method: methodKey,
     returnTo,
   });

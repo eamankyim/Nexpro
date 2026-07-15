@@ -23,5 +23,15 @@ describe('payment collection utilities', () => {
   it('only returns direct MoMo providers when collection is configured', () => {
     expect(getDirectMomoProviders(null)).toEqual([]);
     expect(getDirectMomoProviders({ configured: true })).toEqual(['MTN', 'AIRTEL', 'VODAFONE']);
+    expect(getDirectMomoProviders({ mtn_collection: { merchantId: 'M1' } })).toEqual([
+      'MTN',
+      'AIRTEL',
+      'VODAFONE',
+    ]);
+    expect(getDirectMomoProviders({ hubtel_collection: { configured: true } })).toEqual([
+      'MTN',
+      'AIRTEL',
+      'VODAFONE',
+    ]);
   });
 });

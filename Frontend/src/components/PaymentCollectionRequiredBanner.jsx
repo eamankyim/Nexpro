@@ -55,7 +55,7 @@ export default function PaymentCollectionRequiredBanner({
               variant="outline"
               size="sm"
               className="flex-1 sm:flex-none shrink-0 border-amber-600/50 text-amber-700 hover:bg-amber-500/20"
-              onClick={() => navigate('/settings?tab=billing&subtab=settlements')}
+              onClick={() => navigate('/settings/payments?subtab=merchant-id')}
             >
               Set up payment collection
             </Button>

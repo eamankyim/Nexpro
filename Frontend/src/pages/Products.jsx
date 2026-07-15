@@ -3342,7 +3342,7 @@ const Products = () => {
                 <div className={cn(
                   'grid grid-cols-1 gap-4',
                   canViewProductSensitiveFields && showWholesalePriceField
-                    ? 'md:grid-cols-2 lg:grid-cols-4'
+                    ? 'md:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(11rem,1.35fr)_auto]'
                     : canViewProductSensitiveFields || showWholesalePriceField
                       ? 'md:grid-cols-3'
                       : 'md:grid-cols-2'
@@ -3397,7 +3397,7 @@ const Products = () => {
                       name="wholesalePrice"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Wholesale Price (optional)</FormLabel>
+                          <FormLabel className="whitespace-nowrap">Wholesale Price (optional)</FormLabel>
                           <FormControl>
                             <Input
                               type="number"
@@ -3422,8 +3422,8 @@ const Products = () => {
                     />
                   )}
                   {canViewProductSensitiveFields && (
-                    <div>
-                      <Label className="mb-2 block">Profit Margin</Label>
+                    <div className="lg:justify-self-end lg:w-fit">
+                      <Label className="mb-2 block whitespace-nowrap">Profit Margin</Label>
                       <div className="h-10 flex items-center">
                         <Badge variant="outline" className={getMarginColor(calculatedMargin)}>
                           {calculatedMargin.toFixed(1)}%

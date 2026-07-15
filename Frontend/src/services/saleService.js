@@ -132,6 +132,24 @@ const saleService = {
     return api.get(`/sales/${saleId}/activities`);
   },
 
+  /**
+   * Remaining returnable qty per line (POS refunds/exchanges).
+   * @param {string} saleId
+   */
+  getReturnable: async (saleId) => {
+    return api.get(`/sales/${saleId}/returnable`);
+  },
+
+  /**
+   * Create a POS refund or exchange (manager/admin). Records tender only — no gateway reverse.
+   * @param {string} saleId
+   * @param {object} payload
+   */
+  createReturn: async (saleId, payload) => {
+    const res = await api.post(`/sales/${saleId}/returns`, payload);
+    return res?.data ?? res;
+  },
+
   // Add sale activity
   addActivity: async (saleId, activityData) => {
     return api.post(`/sales/${saleId}/activities`, activityData);

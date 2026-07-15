@@ -1629,7 +1629,9 @@ function buildActionMessage(action, triggerContext = {}) {
   const label = actionLabel(action);
   const recipient = triggerContext.assigneeName || triggerContext.recipientName || triggerContext.customerName || triggerContext.email || triggerContext.phone;
   if (action?.error) return `${label} failed${recipient ? ` for ${recipient}` : ''}: ${action.error}`;
-  if (action?.reason) return `${label} skipped: ${String(action.reason).replace(/_/g, ' ')}`;
+  if (action?.skipped || action?.reason) {
+    return `${label} skipped: ${String(action.reason || 'no recipient').replace(/_/g, ' ')}`;
+  }
   if (action?.messageId) return `${label} message sent${recipient ? ` to ${recipient}` : ''}`;
   if (action?.taskId) return `Task created${recipient ? ` for ${recipient}` : ''}`;
   return `${label} action completed${recipient ? ` for ${recipient}` : ''}`;
@@ -4070,7 +4072,11 @@ export default function Automations() {
 
       const actionLogs = actions.map((action, index) => {
         const channel = actionChannel(action);
-        const level = action?.success === false ? 'error' : action?.reason ? 'warning' : 'success';
+        const level = action?.success === false
+          ? 'error'
+          : (action?.skipped || action?.reason)
+            ? 'warning'
+            : 'success';
         return {
           id: `run-${run.id}-action-${index}`,
           source: 'AutomationRun.action',
@@ -4271,7 +4277,9 @@ export default function Automations() {
         count +
         getRunActions(run).filter(
           (action) =>
-            ['send_whatsapp', 'send_email_platform', 'send_sms'].includes(action?.type) && action?.success !== false
+            ['send_whatsapp', 'send_email_platform', 'send_sms'].includes(action?.type)
+            && action?.success !== false
+            && !action?.skipped
         ).length,
       0
     );

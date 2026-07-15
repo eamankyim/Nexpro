@@ -7,6 +7,8 @@ const POS_CONFIG_DEFAULTS = {
   customer: { phoneRequired: false, nameRequired: false },
 };
 
+const DEFAULT_AUTOMATION_COVERAGE = { sms: false, email: false, whatsapp: false };
+
 /**
  * Fetches POS/checkout configuration from settings
  * @returns {{ posConfig: Object, isLoading: boolean }}
@@ -24,8 +26,16 @@ export const usePOSConfig = () => {
         print: { ...POS_CONFIG_DEFAULTS.print, ...(data.data.print || {}) },
         customer: { ...POS_CONFIG_DEFAULTS.customer, ...(data.data.customer || {}) },
         receiptChannelsAvailable: data.data.receiptChannelsAvailable || { sms: false, whatsapp: false, email: false },
+        automationReceiptCoverage: {
+          ...DEFAULT_AUTOMATION_COVERAGE,
+          ...(data.data.automationReceiptCoverage || {}),
+        },
       }
-    : { ...POS_CONFIG_DEFAULTS, receiptChannelsAvailable: { sms: false, whatsapp: false, email: false } };
+    : {
+        ...POS_CONFIG_DEFAULTS,
+        receiptChannelsAvailable: { sms: false, whatsapp: false, email: false },
+        automationReceiptCoverage: DEFAULT_AUTOMATION_COVERAGE,
+      };
 
   return { posConfig, isLoading };
 };

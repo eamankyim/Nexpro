@@ -244,4 +244,135 @@ describe('automationEngineService delivery detail result shape', () => {
       })
     );
   });
+
+  it('soft-skips send_email_platform when customer has no email (does not fail the run)', async () => {
+    smsService.sendMessage.mockResolvedValue({ success: true, messageId: 'sms-ok' });
+
+    const outcome = await executeRule({
+      rule: {
+        id: 'rule-sale-receipt',
+        name: 'Sale receipt',
+        enabled: true,
+        triggerType: 'sale_completed',
+        triggerConfig: {},
+        conditionConfig: {},
+        actionConfig: {
+          actions: [
+            { type: 'send_sms', body: 'Thanks {{customerName}}' },
+            { type: 'send_email_platform', subject: 'Receipt', body: 'Body' },
+          ],
+        },
+      },
+      tenantId: 'tenant-1',
+      triggerContext: {
+        subjectKey: 'sale_completed:sale-1',
+        customerId: 'cust-1',
+        customerName: 'Walk-in',
+        email: null,
+        phone: '+233547460800',
+        customerHasEmail: false,
+        smsConsent: false,
+      },
+      options: { skipDedupe: true, skipDelay: true },
+    });
+
+    expect(outcome.success).toBe(true);
+    expect(emailService.sendPlatformMessage).not.toHaveBeenCalled();
+
+    const createArg = AutomationRun.create.mock.calls[0][0];
+    expect(createArg.status).toBe('success');
+    expect(createArg.error).toBeNull();
+
+    const [smsResult, emailResult] = createArg.resultSummary.results;
+    expect(smsResult).toMatchObject({
+      type: 'send_sms',
+      success: true,
+      messageId: 'sms-ok',
+    });
+    expect(emailResult).toMatchObject({
+      type: 'send_email_platform',
+      success: true,
+      skipped: true,
+      reason: 'No recipient email',
+    });
+    expect(emailResult.error).toBeNull();
+  });
+
+  it('still fails the run when SMS fails even if email is soft-skipped', async () => {
+    smsService.sendMessage.mockResolvedValue({
+      success: false,
+      error: 'SMS provider (Arkesel) balance empty or destination not covered — top up Arkesel (this is not the ABS platform SMS quota)',
+      errorCode: 'SMS_PROVIDER_BALANCE_OR_COVERAGE',
+    });
+
+    const outcome = await executeRule({
+      rule: {
+        id: 'rule-sale-receipt-fail',
+        name: 'Sale receipt',
+        enabled: true,
+        triggerType: 'sale_completed',
+        triggerConfig: {},
+        conditionConfig: {},
+        actionConfig: {
+          actions: [
+            { type: 'send_sms', body: 'Thanks' },
+            { type: 'send_email_platform', subject: 'Receipt', body: 'Body' },
+          ],
+        },
+      },
+      tenantId: 'tenant-1',
+      triggerContext: {
+        subjectKey: 'sale_completed:sale-2',
+        customerId: 'cust-2',
+        customerName: 'Walk-in',
+        email: null,
+        phone: '+233547460800',
+      },
+      options: { skipDedupe: true, skipDelay: true },
+    });
+
+    expect(outcome.success).toBe(false);
+    const createArg = AutomationRun.create.mock.calls[0][0];
+    expect(createArg.status).toBe('failed');
+    const [smsResult, emailResult] = createArg.resultSummary.results;
+    expect(smsResult).toMatchObject({
+      success: false,
+      errorCode: 'SMS_PROVIDER_BALANCE_OR_COVERAGE',
+    });
+    expect(emailResult).toMatchObject({
+      skipped: true,
+      reason: 'No recipient email',
+      success: true,
+    });
+  });
+
+  it('does not block transactional SMS when smsConsent is false (no consent condition)', async () => {
+    await executeRule({
+      rule: {
+        id: 'rule-receipt-consent',
+        name: 'Sale receipt',
+        enabled: true,
+        triggerType: 'sale_completed',
+        triggerConfig: {},
+        conditionConfig: {},
+        actionConfig: {
+          actions: [{ type: 'send_sms', body: 'Receipt' }],
+        },
+      },
+      tenantId: 'tenant-1',
+      triggerContext: {
+        subjectKey: 'sale_completed:sale-3',
+        phone: '+233547460800',
+        smsConsent: false,
+      },
+      options: { skipDedupe: true, skipDelay: true },
+    });
+
+    expect(smsService.sendMessage).toHaveBeenCalledWith(
+      'tenant-1',
+      '+233547460800',
+      'Receipt',
+      null
+    );
+  });
 });

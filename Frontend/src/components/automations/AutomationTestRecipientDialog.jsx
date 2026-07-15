@@ -64,21 +64,23 @@ export default function AutomationTestRecipientDialog({
 
   const customersQuery = useQuery({
     queryKey: ['automations', 'test-recipient-customers', activeTenantId, debouncedSearch],
-    queryFn: () => customerService.getCustomers({
-      search: debouncedSearch.trim() || undefined,
-      limit: 25,
-      isActive: true,
-    }),
+    queryFn: () => {
+      const params = { limit: 25, isActive: true };
+      const search = debouncedSearch.trim();
+      if (search) params.search = search;
+      return customerService.getCustomers(params);
+    },
     enabled: open && !isStaffAudience && mode === 'customer' && !!activeTenantId,
   });
 
   const membersQuery = useQuery({
     queryKey: ['automations', 'test-recipient-members', activeTenantId, debouncedSearch],
-    queryFn: () => userService.getAll({
-      search: debouncedSearch.trim() || undefined,
-      limit: 50,
-      isActive: 'true',
-    }),
+    queryFn: () => {
+      const params = { limit: 50 };
+      const search = debouncedSearch.trim();
+      if (search) params.search = search;
+      return userService.getAll(params);
+    },
     enabled: open && isStaffAudience && mode === 'member' && !!activeTenantId,
   });
 
@@ -112,8 +114,12 @@ export default function AutomationTestRecipientDialog({
   }, [employeesQuery.data]);
 
   const members = useMemo(() => {
-    const data = membersQuery.data?.data;
-    const rows = Array.isArray(data) ? data : [];
+    const payload = membersQuery.data;
+    const rows = Array.isArray(payload?.data)
+      ? payload.data
+      : Array.isArray(payload)
+        ? payload
+        : [];
     return rows.map((user) => ({
       ...user,
       phone: phoneByUserId.get(user.id) || user.phone || '',

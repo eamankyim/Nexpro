@@ -71,6 +71,8 @@ jest.mock('../../../services/emailService', () => ({
 jest.mock('../../../services/tenantMomoCollectionService', () => ({
   getMtnCollectionPublicSummary: jest.fn(() => ({
     configured: false,
+    merchantId: '',
+    hasApiCredentials: false,
     environment: '',
     collectionApiUrl: '',
     callbackUrl: '',
@@ -80,6 +82,20 @@ jest.mock('../../../services/tenantMomoCollectionService', () => ({
     platformFallbackAvailable: false,
     activeSource: 'none',
   })),
+}));
+
+jest.mock('../../../services/tenantHubtelCollectionService', () => ({
+  getHubtelCollectionPublicSummary: jest.fn(() => ({
+    configured: false,
+    clientIdMasked: '',
+    merchantAccountNumber: '',
+    posSalesId: '',
+    encryptionConfigured: false,
+  })),
+  saveTenantHubtelCollectionCredentials: jest.fn(),
+  clearTenantHubtelCollectionCredentials: jest.fn(),
+  testHubtelCredentials: jest.fn(),
+  isEncryptionConfigured: jest.fn(() => true),
 }));
 
 jest.mock('../../../services/emailTemplates', () => ({
@@ -333,6 +349,41 @@ describe('settingsController payment collection verification', () => {
           hasSubaccount: true,
           settlement_type: 'bank',
           account_number_masked: '****6789',
+          hubtel_collection: expect.objectContaining({ configured: false }),
+        }),
+      })
+    );
+  });
+
+  it('reports payment collection as configured when Hubtel credentials are connected', async () => {
+    const {
+      getHubtelCollectionPublicSummary,
+    } = require('../../../services/tenantHubtelCollectionService');
+    getHubtelCollectionPublicSummary.mockReturnValueOnce({
+      configured: true,
+      clientIdMasked: '****ient',
+      merchantAccountNumber: 'HM1',
+      posSalesId: '',
+      encryptionConfigured: true,
+    });
+    findTenantWithOptionalColumns.mockResolvedValue({
+      id: 'tenant-1',
+      paystackSubaccountCode: null,
+      metadata: {},
+    });
+
+    const req = { tenantId: 'tenant-1' };
+    const res = mockRes();
+
+    await settingsController.getPaymentCollectionSettings(req, res, jest.fn());
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: true,
+        data: expect.objectContaining({
+          configured: true,
+          hubtel_collection: expect.objectContaining({ configured: true }),
         }),
       })
     );

@@ -269,37 +269,44 @@ const PhoneNumberInput = forwardRef(({
   defaultCountry = 'GH',
   ...inputProps 
 }, ref) => {
+  // Coerce unexpected API/form shapes (null, number) so Select/Input never crash
+  const normalizedValue = value == null ? '' : String(value);
+
   // Parse value to extract country code and number
   const parsePhoneValue = (phoneValue) => {
-    if (!phoneValue || typeof phoneValue !== 'string') {
+    if (phoneValue == null || phoneValue === '') {
+      return { countryCode: defaultCountry, number: '' };
+    }
+    const asString = String(phoneValue).trim();
+    if (!asString) {
       return { countryCode: defaultCountry, number: '' };
     }
     
     // Try to extract country code from value (match longest dial code first to handle overlaps like +1)
     const sortedCountries = [...COUNTRIES].sort((a, b) => b.dialCode.length - a.dialCode.length);
     const matchedCountry = sortedCountries.find(country => 
-      phoneValue.startsWith(country.dialCode)
+      asString.startsWith(country.dialCode)
     );
     
     if (matchedCountry) {
-      const number = phoneValue.replace(matchedCountry.dialCode, '').trim();
+      const number = asString.replace(matchedCountry.dialCode, '').trim();
       return { countryCode: matchedCountry.code, number };
     }
     
-    return { countryCode: defaultCountry, number: phoneValue };
+    return { countryCode: defaultCountry, number: asString };
   };
 
   // Parse the current value to get country and number
-  const parsedValue = useMemo(() => parsePhoneValue(value), [value, defaultCountry]);
+  const parsedValue = useMemo(() => parsePhoneValue(normalizedValue), [normalizedValue, defaultCountry]);
   const [selectedCountry, setSelectedCountry] = useState(parsedValue.countryCode);
   const [phoneNumber, setPhoneNumber] = useState(parsedValue.number);
 
   // Sync internal state when value prop changes
   useEffect(() => {
-    const parsed = parsePhoneValue(value);
+    const parsed = parsePhoneValue(normalizedValue);
     setSelectedCountry(parsed.countryCode);
     setPhoneNumber(parsed.number);
-  }, [value]);
+  }, [normalizedValue]);
 
   // Update parent when internal state changes
   const handleCountryChange = (countryCode) => {

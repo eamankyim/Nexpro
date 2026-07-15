@@ -90,33 +90,28 @@ describe('automationDelivery', () => {
     expect(rows[0].cells.email.maskedAddress).toBe('l***@example.com');
   });
 
-  it('attaches WhatsApp delivered/read status by messageId', () => {
-    const waStatusByMessageId = buildWhatsAppStatusByMessageId([
-      { messageId: 'wa-1', status: 'sent' },
-      { messageId: 'wa-1', status: 'delivered' },
-      { messageId: 'wa-1', status: 'read' },
-    ]);
-    expect(waStatusByMessageId['wa-1']).toBe('read');
-
-    const rows = buildDeliveryMatrix(
-      {
-        resultSummary: {
-          results: [
-            {
-              type: 'send_whatsapp',
-              channel: 'whatsapp',
-              success: true,
-              recipientName: 'Ama',
-              recipientAddress: '+233201234567',
-              messageId: 'wa-1',
-              sentAt: '2026-07-12T10:00:00.000Z',
-            },
-          ],
-        },
+  it('marks skipped email cells without treating them as successful sends', () => {
+    const rows = buildDeliveryMatrix({
+      resultSummary: {
+        results: [
+          {
+            type: 'send_email_platform',
+            channel: 'email',
+            success: true,
+            skipped: true,
+            reason: 'No recipient email',
+            recipientName: 'Walk-in',
+            recipientAddress: null,
+            customerId: 'cust-1',
+          },
+        ],
       },
-      { waStatusByMessageId }
-    );
+    });
 
-    expect(rows[0].cells.whatsapp.whatsappStatus).toBe('read');
+    expect(rows[0].cells.email).toMatchObject({
+      success: false,
+      skipped: true,
+      reason: 'No recipient email',
+    });
   });
 });

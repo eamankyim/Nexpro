@@ -80,11 +80,16 @@ export function usePOSDealerMode({ activeShopId, enabled = true }) {
     try {
       const resolved = await resolveDealerUnitPrice(item.productId, item.productVariantId);
       if (resolved?.unitPrice != null) {
+        const dealerUnit = parseFloat(resolved.unitPrice);
+        const retailUnit = resolved.retailPrice != null
+          ? parseFloat(resolved.retailPrice)
+          : parseFloat(item.unitPrice ?? item.catalogUnitPrice ?? 0);
         return {
           ...item,
-          unitPrice: parseFloat(resolved.unitPrice),
-          baseUnitPrice: parseFloat(resolved.unitPrice),
-          catalogUnitPrice: parseFloat(resolved.unitPrice),
+          unitPrice: dealerUnit,
+          baseUnitPrice: dealerUnit,
+          catalogUnitPrice: dealerUnit,
+          retailUnitPrice: Number.isFinite(retailUnit) ? retailUnit : undefined,
           priceOverridden: false,
           dealerPriceSource: resolved.source,
         };

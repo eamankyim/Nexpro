@@ -1,6 +1,12 @@
-jest.mock('../../../models', () => ({
-  Tenant: { findByPk: jest.fn() }
-}));
+jest.mock('../../../models', () => {
+  const findByPk = jest.fn();
+  return {
+    Tenant: {
+      findByPk,
+      scope: jest.fn(() => ({ findByPk }))
+    }
+  };
+});
 
 jest.mock('../../../services/paystackService', () => ({
   createTransferRecipient: jest.fn(),
@@ -15,6 +21,7 @@ describe('paystackSalePayment', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     Tenant.findByPk.mockResolvedValue({ metadata: {} });
+    Tenant.scope.mockImplementation(() => ({ findByPk: Tenant.findByPk }));
   });
 
   it('applies a successful direct checkout charge and marks sale completed', async () => {

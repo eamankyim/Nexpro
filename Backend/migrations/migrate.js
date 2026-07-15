@@ -405,6 +405,10 @@ const migrate = async () => {
     // Receipt send activity type (SMS/email/WhatsApp receipt logging)
     await addReceiptSentToSaleActivitiesType.up();
 
+    // POS refunds & exchanges (SaleReturn + line items; separate from marketplace Trade Assurance)
+    const createSaleReturnsTables = require('./create-sale-returns-tables');
+    await createSaleReturnsTables();
+
     console.log('\n✅ Database migration completed successfully!');
     console.log('📊 Incremental schema updates applied.');
     console.log('👤 User model has been enhanced with new fields.');

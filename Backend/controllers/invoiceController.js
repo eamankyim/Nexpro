@@ -45,6 +45,13 @@ const { ensureSaleFromPaidInvoice } = require('../services/invoiceSaleService');
 const sabitoWebhookService = require('../services/sabitoWebhookService');
 const mobileMoneyService = require('../services/mobileMoneyService');
 const { getResolvedMtnConfigForTenant } = require('../services/tenantMomoCollectionService');
+const { getResolvedHubtelConfigForTenant } = require('../services/tenantHubtelCollectionService');
+const { buildPublicPaymentOptions } = require('../services/paymentCollectionRouter');
+const {
+  initiateDirectMoMoCharge,
+  checkDirectMoMoStatus,
+  buildMobileMoneyRefMeta
+} = require('../services/directMoMoChargeService');
 const { sequelize } = require('../config/database');
 const { getTaxConfigForTenant } = require('../utils/taxConfig');
 const { convertLineItemsFromTaxInclusive } = require('../utils/taxCalculation');
@@ -2361,12 +2368,11 @@ exports.getInvoiceByToken = async (req, res, next) => {
     // Prevent caching so payment link always shows current status (e.g. after paid)
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
 
-    const paystackService = require('../services/paystackService');
     const tenantForPay = await Tenant.findByPk(invoice.tenantId);
-    const mtnCollectionOk = Boolean(tenantForPay && getResolvedMtnConfigForTenant(tenantForPay));
     const airtelDirectOk = Boolean(
       process.env.AIRTEL_MONEY_CLIENT_ID && process.env.AIRTEL_MONEY_CLIENT_SECRET
     );
+    const paymentOptions = buildPublicPaymentOptions(tenantForPay, { airtelDirectOk });
 
     let organization = null;
     try {
@@ -2423,12 +2429,7 @@ exports.getInvoiceByToken = async (req, res, next) => {
         organization: organization || { name: invoice.tenant?.name },
         source: invoice.sourceType,
         sourceDetails: invoice.job || invoice.sale || invoice.prescription || null,
-        paymentOptions: {
-          paystack: Boolean(paystackService.secretKey),
-          directMtnMoMo: mtnCollectionOk,
-          directAirtelMoMo: airtelDirectOk,
-          directMoMo: mtnCollectionOk || airtelDirectOk
-        }
+        paymentOptions
       }
     });
   } catch (error) {
@@ -3118,6 +3119,59 @@ exports.paystackMobileMoneyForInvoice = async (req, res, next) => {
     }
 
     const tenant = await findTenantWithOptionalColumns(invoice.tenantId);
+    const logicalProvider = String(provider || '').toUpperCase();
+
+    // Prefer Hubtel / tenant MTN when available; Paystack charge path below stays as-is.
+    try {
+      const { resolveMoMoCollector } = require('../services/paymentCollectionRouter');
+      const directRail = resolveMoMoCollector(tenant, { allowPaystack: false });
+      if (directRail.rail === 'hubtel' || directRail.rail === 'mtn') {
+        const externalId = `INV-${invoice.id}-${Date.now()}`.slice(0, 64);
+        const direct = await initiateDirectMoMoCharge({
+          tenant,
+          phoneNumber,
+          amount: balanceDue,
+          currency: 'GHS',
+          provider: logicalProvider,
+          externalId,
+          payerMessage: `Invoice ${invoice.invoiceNumber || invoice.id}`,
+          customerName: invoice.customer?.name || 'Customer',
+          customerEmail: invoice.customer?.email || req.user?.email || undefined
+        });
+        if (direct.success) {
+          await Invoice.update(
+            {
+              metadata: sequelize.fn(
+                'jsonb_set',
+                sequelize.fn('COALESCE', sequelize.col('metadata'), '{}'),
+                '{mobileMoneyRef}',
+                JSON.stringify(
+                  buildMobileMoneyRefMeta(direct, {
+                    invoiceId: invoice.id,
+                    tenantId: invoice.tenantId
+                  })
+                )
+              )
+            },
+            { where: { id: invoice.id } }
+          );
+          return res.status(200).json({
+            success: true,
+            data: {
+              reference: direct.referenceId,
+              referenceId: direct.referenceId,
+              provider: direct.provider,
+              status: direct.status || 'PENDING',
+              rail: direct.rail,
+              message: direct.message || 'Approve the mobile money prompt on the customer phone.'
+            }
+          });
+        }
+      }
+    } catch (directErr) {
+      console.warn('[Invoice] Direct collector attempt failed; using Paystack:', directErr?.message);
+    }
+
     const customerEmail =
       invoice.customer?.email ||
       req.user?.email ||
@@ -3141,7 +3195,6 @@ exports.paystackMobileMoneyForInvoice = async (req, res, next) => {
     }
 
     const reference = `INV-${invoice.id}-${Date.now()}`.slice(0, 50);
-    const logicalProvider = String(provider || '').toUpperCase();
 
     const orgRow = await Setting.findOne({ where: { tenantId: invoice.tenantId, key: 'organization' } });
     const orgTax = orgRow?.value?.tax || {};
@@ -3250,32 +3303,34 @@ exports.initiateMobileMoneyForPublicInvoice = async (req, res, next) => {
     }
 
     const tenant = await Tenant.findByPk(invoice.tenantId);
-    let mtnConfig;
-    if (detectedProvider === 'MTN') {
-      mtnConfig = tenant ? getResolvedMtnConfigForTenant(tenant) : null;
-      if (!mtnConfig) {
-        return res.status(503).json({
-          success: false,
-          message: 'This business has not configured MTN MoMo Collection yet.'
-        });
-      }
+    if (!tenant) {
+      return res.status(503).json({
+        success: false,
+        message: 'This business is not available for payment collection.'
+      });
     }
 
-    const externalId = `INV-PUB-${invoice.id}-${Date.now()}`;
-    const result = await mobileMoneyService.requestPayment({
+    const externalId = `INV-PUB-${invoice.id}-${Date.now()}`.slice(0, 64);
+    const result = await initiateDirectMoMoCharge({
+      tenant,
       phoneNumber: normalized,
       amount: balance,
       currency: 'GHS',
-      externalId,
       provider: detectedProvider,
+      externalId,
       payerMessage: `Invoice ${invoice.invoiceNumber || invoice.id}`,
-      mtnConfig
+      customerName: invoice.customer?.name || 'Customer',
+      customerEmail: invoice.customer?.email || undefined
     });
 
     if (!result.success) {
-      return res.status(400).json({
+      // Public invoice: Prefer clear setup errors. Paystack redirect remains available via paymentOptions.paystack.
+      const status = result.rail === 'none' || result.allowPaystackFallback ? 503 : 400;
+      return res.status(status).json({
         success: false,
-        message: result.error || 'Failed to start mobile money payment'
+        message: result.error || 'Failed to start mobile money payment',
+        rail: result.rail,
+        allowPaystackFallback: Boolean(result.allowPaystackFallback)
       });
     }
 
@@ -3285,14 +3340,14 @@ exports.initiateMobileMoneyForPublicInvoice = async (req, res, next) => {
           'jsonb_set',
           sequelize.fn('COALESCE', sequelize.col('metadata'), '{}'),
           '{mobileMoneyRef}',
-          JSON.stringify({
-            referenceId: result.referenceId,
-            provider: result.provider,
-            status: 'PENDING',
-            initiatedAt: new Date().toISOString(),
-            publicToken: token,
-            amountDue: balance
-          })
+          JSON.stringify(
+            buildMobileMoneyRefMeta(result, {
+              publicToken: token,
+              amountDue: balance,
+              invoiceId: invoice.id,
+              tenantId: invoice.tenantId
+            })
+          )
         )
       },
       { where: { id: invoice.id } }
@@ -3305,6 +3360,7 @@ exports.initiateMobileMoneyForPublicInvoice = async (req, res, next) => {
         provider: result.provider,
         status: result.status,
         message: result.message,
+        rail: result.rail,
         invoiceId: invoice.id
       }
     });
@@ -3352,23 +3408,33 @@ exports.pollMobileMoneyForPublicInvoice = async (req, res, next) => {
     }
 
     const tenantForPoll = await Tenant.findByPk(invoice.tenantId);
-    let mtnConfigPoll;
-    if (mobileMoneyRef.provider === 'MTN') {
-      mtnConfigPoll = tenantForPoll ? getResolvedMtnConfigForTenant(tenantForPoll) : null;
-      if (!mtnConfigPoll) {
-        await transaction.rollback();
-        return res.status(503).json({
-          success: false,
-          message: 'MTN MoMo is not configured for this business.'
-        });
-      }
+    if (!tenantForPoll) {
+      await transaction.rollback();
+      return res.status(503).json({
+        success: false,
+        message: 'This business is not available for payment collection.'
+      });
+    }
+    if (mobileMoneyRef.provider === 'MTN' && !getResolvedMtnConfigForTenant(tenantForPoll)) {
+      await transaction.rollback();
+      return res.status(503).json({
+        success: false,
+        message: 'MTN MoMo is not configured for this business.'
+      });
+    }
+    if (mobileMoneyRef.provider === 'HUBTEL' && !getResolvedHubtelConfigForTenant(tenantForPoll)) {
+      await transaction.rollback();
+      return res.status(503).json({
+        success: false,
+        message: 'Hubtel is not configured for this business.'
+      });
     }
 
-    const statusResult = await mobileMoneyService.checkPaymentStatus(
-      mobileMoneyRef.referenceId,
-      mobileMoneyRef.provider,
-      mtnConfigPoll
-    );
+    const statusResult = await checkDirectMoMoStatus({
+      tenant: tenantForPoll,
+      referenceId: mobileMoneyRef.referenceId,
+      provider: mobileMoneyRef.provider
+    });
 
     const updatedMeta = {
       ...invoice.metadata,

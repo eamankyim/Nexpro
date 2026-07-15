@@ -48,7 +48,9 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -401,11 +403,15 @@ const Customers = () => {
   const handleEdit = (customer) => {
     setEditingCustomer(customer);
     const birthdayParts = parseBirthdayParts(customer.dateOfBirth);
+    const phoneValue =
+      customer.phone == null || customer.phone === ''
+        ? ''
+        : String(customer.phone);
     form.reset({
       name: customer.name || '',
       company: customer.company || '',
       email: customer.email || '',
-      phone: customer.phone || '',
+      phone: phoneValue,
       birthdayMonth: birthdayParts?.month || '',
       birthdayDay: birthdayParts?.day || '',
       address: customer.address || '',
@@ -415,6 +421,8 @@ const Customers = () => {
       referralName: customer.referralName || '',
     });
     setShowReferralName(customer.howDidYouHear === 'Referral');
+    setShowCustomerSourceOtherInput(false);
+    setCustomerSourceOtherValue('');
     setModalVisible(true);
   };
 
@@ -703,7 +711,9 @@ const Customers = () => {
 
   const defaultSources = useMemo(() => {
     const apiOpts = Array.isArray(customerSourceOptionsApi) ? customerSourceOptionsApi : [];
-    const mapped = apiOpts.map(s => ({ value: s.value, label: s.label || s.value }));
+    const mapped = apiOpts
+      .map((s) => ({ value: s.value, label: s.label || s.value }))
+      .filter((s) => s.value);
     return mapped.length > 0 ? mapped : [
       { value: 'Walk-in', label: 'Walk-in' },
       { value: 'Referral', label: 'Referral' },
@@ -711,6 +721,11 @@ const Customers = () => {
       { value: 'Social Media', label: 'Social Media' }
     ];
   }, [customerSourceOptionsApi]);
+
+  const validCustomCustomerSources = useMemo(
+    () => (customCustomerSources || []).filter((s) => s?.value),
+    [customCustomerSources]
+  );
 
   const handleClearFilters = () => {
     setFilters({
@@ -1059,12 +1074,19 @@ const Customers = () => {
 
               <FormField
                 control={form.control}
-                name="howDidYouHear" 
-                render={({ field }) => (
+                name="howDidYouHear"
+                render={({ field }) => {
+                  const selectedSource = field.value || '';
+                  const isKnownSource =
+                    !selectedSource ||
+                    selectedSource === '__OTHER__' ||
+                    defaultSources.some((s) => s.value === selectedSource) ||
+                    validCustomCustomerSources.some((s) => s.value === selectedSource);
+                  return (
                   <FormItem>
                     <FormLabel>How did you hear about us? (optional)</FormLabel>
-                    <Select 
-                      value={field.value} 
+                    <Select
+                      value={field.value || undefined}
                       onValueChange={(value) => {
                         field.onChange(value);
                         handleHowDidYouHearChange(value);
@@ -1076,32 +1098,32 @@ const Customers = () => {
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        {defaultSources.map(source => (
+                        {defaultSources.map((source) => (
                           <SelectItem key={source.value} value={source.value}>{source.label}</SelectItem>
                         ))}
-                  {customCustomerSources.length > 0 && (
-                          <div>
-                            <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
-                              Custom Sources
-                            </div>
-                      {customCustomerSources.map(source => (
+                        {!isKnownSource && (
+                          <SelectItem value={selectedSource}>{selectedSource}</SelectItem>
+                        )}
+                        {validCustomCustomerSources.length > 0 && (
+                          <SelectGroup>
+                            <SelectLabel>Custom Sources</SelectLabel>
+                            {validCustomCustomerSources.map((source) => (
                               <SelectItem key={source.value} value={source.value}>
-                                {source.label}
+                                {source.label || source.value}
                               </SelectItem>
                             ))}
-                          </div>
+                          </SelectGroup>
                         )}
-                        <div>
-                          <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
-                            Other
-                          </div>
+                        <SelectGroup>
+                          <SelectLabel>Other</SelectLabel>
                           <SelectItem value="__OTHER__">Other (specify)</SelectItem>
-                        </div>
+                        </SelectGroup>
                       </SelectContent>
-                </Select>
+                    </Select>
                     <FormMessage />
                   </FormItem>
-                )}
+                  );
+                }}
               />
 
               {showCustomerSourceOtherInput && (
@@ -1200,20 +1222,18 @@ const Customers = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Sources</SelectItem>
-                  {defaultSources.map(source => (
+                  {defaultSources.map((source) => (
                     <SelectItem key={source.value} value={source.value}>{source.label}</SelectItem>
                   ))}
-                  {customCustomerSources.length > 0 && (
-                    <div>
-                      <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
-                        Custom Sources
-                      </div>
-                      {customCustomerSources.map(source => (
+                  {validCustomCustomerSources.length > 0 && (
+                    <SelectGroup>
+                      <SelectLabel>Custom Sources</SelectLabel>
+                      {validCustomCustomerSources.map((source) => (
                         <SelectItem key={source.value} value={source.value}>
-                          {source.label}
+                          {source.label || source.value}
                         </SelectItem>
                       ))}
-                    </div>
+                    </SelectGroup>
                   )}
                 </SelectContent>
               </Select>

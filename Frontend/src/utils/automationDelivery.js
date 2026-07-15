@@ -49,7 +49,9 @@ function cellFromResult(result, waStatusByMessageId = {}) {
   const waStatus = messageId && waStatusByMessageId[messageId] ? waStatusByMessageId[messageId] : null;
   return {
     channel,
-    success: result.success !== false && !result.error,
+    success: result.success !== false && !result.error && !result.skipped,
+    skipped: Boolean(result.skipped),
+    reason: result.reason || null,
     error: result.error || null,
     sentAt: result.sentAt || null,
     address,
@@ -102,7 +104,9 @@ export function buildDeliveryMatrix(run, options = {}) {
           : triggerContext.phone || null;
       cells[channel] = {
         channel,
-        success: result.success !== false && !result.error,
+        success: result.success !== false && !result.error && !result.skipped,
+        skipped: Boolean(result.skipped),
+        reason: result.reason || null,
         error: result.error || null,
         sentAt: result.sentAt || run.finishedAt || run.createdAt || null,
         address,

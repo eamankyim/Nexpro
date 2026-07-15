@@ -5,7 +5,7 @@ const {
   handleWhatsAppWebhook,
   handlePaystackWebhook,
 } = require('../controllers/webhookController');
-const { mtnWebhook, airtelWebhook } = require('../controllers/mobileMoneyController');
+const { mtnWebhook, airtelWebhook, hubtelWebhook } = require('../controllers/mobileMoneyController');
 
 // Sabito webhook endpoint (no auth middleware - uses API key authentication)
 router.post('/sabito/customer', handleSabitoCustomerWebhook);
@@ -17,6 +17,7 @@ router.post('/whatsapp', handleWhatsAppWebhook);
 // Mobile Money webhooks (no auth - provider verifies via signature/IP)
 router.post('/mtn-momo', mtnWebhook);
 router.post('/airtel-money', airtelWebhook);
+router.post('/hubtel', hubtelWebhook);
 
 // Paystack (subscriptions, invoices, POS)
 router.post('/paystack', handlePaystackWebhook);

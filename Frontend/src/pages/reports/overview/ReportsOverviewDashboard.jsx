@@ -226,19 +226,23 @@ export default function ReportsOverviewDashboard({
           iconBgColor="#dcfce7"
           iconColor="#166534"
         />
-        {/* Cost of Goods Sold is the cost of products/materials sold — it is NOT an entry in the
-            Expenses table/page, so it gets its own card and must never be labeled "Expenses". */}
-        <OverviewKpiCard
-          label="Cost of Goods Sold"
-          value={cogs}
-          change={comparison.cogs}
-          comparisonLabel={comparisonLabel}
-          invertTrend
-          sourceLabel="Cost of products/materials sold this period"
-          icon={Package}
-          iconBgColor="#ffedd5"
-          iconColor="#c2410c"
-        />
+        {isRetail && (
+          <>
+            {/* Cost of Goods Sold is the cost of products/materials sold — it is NOT an entry in the
+                Expenses table/page, so it gets its own card and must never be labeled "Expenses". */}
+            <OverviewKpiCard
+              label="Cost of Goods Sold"
+              value={cogs}
+              change={comparison.cogs}
+              comparisonLabel={comparisonLabel}
+              invertTrend
+              sourceLabel="Cost of products/materials sold this period"
+              icon={Package}
+              iconBgColor="#ffedd5"
+              iconColor="#c2410c"
+            />
+          </>
+        )}
         <OverviewKpiCard
           label="Operating Expenses"
           value={operatingExpenses}
@@ -371,6 +375,7 @@ export default function ReportsOverviewDashboard({
         />
         <ProfitLossSummaryCard
           profitLoss={plData}
+          showCogs={isRetail}
           onViewFullReport={() => navigate('/reports/compliance')}
         />
         <CashFlowSummaryCard

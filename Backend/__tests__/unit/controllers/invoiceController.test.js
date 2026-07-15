@@ -52,6 +52,30 @@ jest.mock('../../../services/mobileMoneyService', () => ({}));
 jest.mock('../../../services/tenantMomoCollectionService', () => ({
   getResolvedMtnConfigForTenant: jest.fn(),
 }));
+jest.mock('../../../services/tenantHubtelCollectionService', () => ({
+  getResolvedHubtelConfigForTenant: jest.fn(),
+}));
+jest.mock('../../../services/paymentCollectionRouter', () => ({
+  buildPublicPaymentOptions: jest.fn(() => ({
+    paystack: true,
+    directHubtel: false,
+    directMtnMoMo: false,
+    directAirtelMoMo: false,
+    directMoMo: false,
+  })),
+  resolveMoMoCollector: jest.fn(() => ({ rail: 'paystack' })),
+}));
+jest.mock('../../../services/directMoMoChargeService', () => ({
+  initiateDirectMoMoCharge: jest.fn(),
+  checkDirectMoMoStatus: jest.fn(),
+  buildMobileMoneyRefMeta: jest.fn((result, extras = {}) => ({
+    referenceId: result.referenceId,
+    provider: result.provider,
+    status: result.status || 'PENDING',
+    rail: result.rail,
+    ...extras,
+  })),
+}));
 
 jest.mock('../../../services/invoiceAccountingService', () => ({
   createInvoicePaymentJournal: jest.fn(),

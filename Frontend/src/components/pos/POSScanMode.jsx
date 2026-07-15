@@ -303,6 +303,7 @@ const CartItemRow = ({ item, onUpdateQuantity, onRemove, onEditPrice, onEditQuan
  * @param {function} props.onFindOrCreateCustomer - Find or create customer (phone, name) => Promise<customer>
  * @param {function} props.onSendReceipt - Send receipt function (saleId, options) => Promise
  * @param {Object} props.receiptChannelsAvailable - { sms, whatsapp, email } booleans for which channels are integrated
+ * @param {Object} props.automationReceiptCoverage - { sms, email, whatsapp } booleans for automation-covered channels
  * @param {boolean} props.isOnline - Whether device is online
  * @param {boolean} props.isRestaurant - If true, show Send to kitchen option
  */
@@ -315,6 +316,7 @@ const POSScanMode = ({
   onFindOrCreateCustomer,
   onSendReceipt,
   receiptChannelsAvailable = { sms: false, whatsapp: false, email: false },
+  automationReceiptCoverage = { sms: false, email: false, whatsapp: false },
   isOnline = true,
   isRestaurant = false
 }) => {
@@ -609,8 +611,10 @@ const POSScanMode = ({
         setCompletedSale(saleObj);
         setCurrentStep(STEPS.SUCCESS);
 
-        // Auto-send receipt via SMS only if SMS is integrated (do not block – user can close immediately)
-        if (customerPhone && saleObj.id && onSendReceipt && receiptChannelsAvailable?.sms) {
+        // Auto-send receipt via SMS only when integrated and not already handled by automation
+        const canManualSmsReceipt =
+          receiptChannelsAvailable?.sms && !automationReceiptCoverage?.sms;
+        if (customerPhone && saleObj.id && onSendReceipt && canManualSmsReceipt) {
           onSendReceipt(saleObj.id, {
             channels: ['sms'],
             phone: customerPhone
@@ -649,6 +653,7 @@ const POSScanMode = ({
     onProcessSale,
     onSendReceipt,
     receiptChannelsAvailable,
+    automationReceiptCoverage,
     isRestaurant,
     sendToKitchen
   ]);
@@ -1048,7 +1053,7 @@ const POSScanMode = ({
             </p>
 
             {/* Receipt / SMS Status */}
-            {customerPhone && (
+            {customerPhone && receiptChannelsAvailable?.sms && !automationReceiptCoverage?.sms && (
               <div className={`${isMobile ? 'p-3' : 'p-4'} border ${isMobile ? 'rounded-md mb-4' : 'rounded-lg mb-6'} w-full max-w-sm ${
                 receiptSent ? 'bg-green-500/10 border-green-500/30' : 'bg-muted border-border'
               }`}>
@@ -1065,9 +1070,14 @@ const POSScanMode = ({
                 )}
               </div>
             )}
-            {!customerPhone && (
+            {!customerPhone && receiptChannelsAvailable?.sms && !automationReceiptCoverage?.sms && (
               <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-muted-foreground mb-2`}>
                 Add customer phone next time to receive receipt via SMS
+              </p>
+            )}
+            {automationReceiptCoverage?.sms && customerPhone && (
+              <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-muted-foreground mb-2`}>
+                Receipt will be sent automatically via your sale automation.
               </p>
             )}
 

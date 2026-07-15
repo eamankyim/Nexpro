@@ -20,8 +20,16 @@ const TEMPLATE_KEYS = {
   LOW_STOCK_ALERT: 'low_stock_alert',
 };
 
+/** Staff-only templates — never count toward customer receipt channel coverage. */
+const STAFF_TEMPLATE_KEYS = new Set([
+  'job_assigned_staff',
+  'quote_accepted_staff',
+  'sale_completed_staff',
+]);
+
 /** Template keys that should also match by trigger type (any custom overdue rule). */
 const TEMPLATE_KEY_TRIGGER_TYPES = {
+  [TEMPLATE_KEYS.SALE_COMPLETED_RECEIPT]: 'sale_completed',
   [TEMPLATE_KEYS.OVERDUE_INVOICE_REMINDER]: 'invoice_overdue',
   [TEMPLATE_KEYS.ORDER_CREATED_NOTIFICATION]: 'order_created',
   [TEMPLATE_KEYS.JOB_ASSIGNED_STAFF]: 'job_assigned_staff',
@@ -44,13 +52,47 @@ const ACTION_TYPE_TO_CHANNEL = {
  * @param {string} templateKey
  * @returns {Promise<object|null>}
  */
+const AUTOMATION_RULE_ATTRIBUTES = [
+  'id',
+  'name',
+  'triggerType',
+  'metadata',
+  'enabled',
+  'actionConfig',
+  'audience',
+];
+
 async function getEnabledRuleByTemplateKey(tenantId, templateKey) {
   if (!tenantId || !templateKey) return null;
   const rules = await AutomationRule.findAll({
     where: { tenantId, enabled: true },
-    attributes: ['id', 'name', 'triggerType', 'metadata', 'enabled', 'actionConfig'],
+    attributes: AUTOMATION_RULE_ATTRIBUTES,
   });
   return rules.find((rule) => rule.metadata?.templateKey === templateKey) || null;
+}
+
+/**
+ * All enabled customer-facing automation rules for a template (by templateKey or trigger type).
+ * Staff/internal rules are excluded so they never suppress manual customer receipt sends.
+ * @param {string} tenantId
+ * @param {string} templateKey
+ * @returns {Promise<object[]>}
+ */
+async function getEnabledCustomerRulesForTemplate(tenantId, templateKey) {
+  if (!tenantId || !templateKey) return [];
+  const rules = await AutomationRule.findAll({
+    where: { tenantId, enabled: true },
+    attributes: AUTOMATION_RULE_ATTRIBUTES,
+  });
+  const triggerType = TEMPLATE_KEY_TRIGGER_TYPES[templateKey];
+  return rules.filter((rule) => {
+    const ruleTemplateKey = rule.metadata?.templateKey;
+    if (STAFF_TEMPLATE_KEYS.has(ruleTemplateKey)) return false;
+    if (rule.audience === 'internal') return false;
+    if (ruleTemplateKey === templateKey) return true;
+    if (triggerType && rule.triggerType === triggerType) return true;
+    return false;
+  });
 }
 
 /**
@@ -91,20 +133,42 @@ async function shouldUseAutomationInsteadOfBuiltIn(tenantId, templateKey) {
  */
 async function getAutomationCoveredChannelsForTemplate(tenantId, templateKey) {
   const covered = new Set();
-  let rule = await getEnabledRuleByTemplateKey(tenantId, templateKey);
-  if (!rule) {
-    const triggerType = TEMPLATE_KEY_TRIGGER_TYPES[templateKey];
-    if (triggerType) {
-      rule = await getEnabledRuleByTriggerType(tenantId, triggerType);
+  const rules = await getEnabledCustomerRulesForTemplate(tenantId, templateKey);
+  for (const rule of rules) {
+    const actions = Array.isArray(rule.actionConfig?.actions) ? rule.actionConfig.actions : [];
+    for (const action of actions) {
+      if (action?.audience === 'internal') continue;
+      const channel = ACTION_TYPE_TO_CHANNEL[action?.type];
+      if (channel) covered.add(channel);
     }
   }
-  if (!rule) return covered;
-  const actions = Array.isArray(rule.actionConfig?.actions) ? rule.actionConfig.actions : [];
-  for (const action of actions) {
-    const channel = ACTION_TYPE_TO_CHANNEL[action?.type];
-    if (channel) covered.add(channel);
-  }
   return covered;
+}
+
+/**
+ * Serialize automation channel coverage for API responses.
+ * @param {Set<string>} covered
+ * @returns {{ sms: boolean, email: boolean, whatsapp: boolean }}
+ */
+function automationCoverageToObject(covered) {
+  return {
+    sms: covered.has('sms'),
+    email: covered.has('email'),
+    whatsapp: covered.has('whatsapp'),
+  };
+}
+
+/**
+ * Receipt automation coverage for POS / sale receipt UI.
+ * @param {string} tenantId
+ * @returns {Promise<{ sms: boolean, email: boolean, whatsapp: boolean }>}
+ */
+async function getSaleReceiptAutomationCoverage(tenantId) {
+  const covered = await getAutomationCoveredChannelsForTemplate(
+    tenantId,
+    TEMPLATE_KEYS.SALE_COMPLETED_RECEIPT
+  );
+  return automationCoverageToObject(covered);
 }
 
 /**
@@ -193,11 +257,15 @@ async function recordReceiptSentActivity(tenantId, saleId, metadata = {}) {
 module.exports = {
   TEMPLATE_KEYS,
   TEMPLATE_KEY_TRIGGER_TYPES,
+  STAFF_TEMPLATE_KEYS,
   RECEIPT_DEDUPE_WINDOW_MINUTES,
   getEnabledRuleByTemplateKey,
+  getEnabledCustomerRulesForTemplate,
   getEnabledRuleByTriggerType,
   shouldUseAutomationInsteadOfBuiltIn,
   getAutomationCoveredChannelsForTemplate,
+  automationCoverageToObject,
+  getSaleReceiptAutomationCoverage,
   isChannelHandledByAutomation,
   isCustomerNotificationEffectiveEnabled,
   isPosAutoSendReceiptEnabled,

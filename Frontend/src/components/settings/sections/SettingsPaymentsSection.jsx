@@ -1,13 +1,15 @@
+import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { ChevronDown, ChevronLeft, CreditCard, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -29,12 +31,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { useResponsive } from '../../../hooks/useResponsive';
 import { useSettingsPayments } from '../../../hooks/useSettingsPayments';
+import { cn } from '@/lib/utils';
+
+/**
+ * @param {'connected'|'needs_setup'|'not_connected'} status
+ */
+function statusBadgeProps(status) {
+  if (status === 'connected') {
+    return { label: 'Connected', className: 'border-[#166534]/40 bg-[#166534]/10 text-[#166534]' };
+  }
+  if (status === 'needs_setup') {
+    return { label: 'Needs setup', className: 'border-amber-600/40 bg-amber-500/10 text-amber-800' };
+  }
+  return { label: 'Not connected', className: 'border-gray-200 bg-gray-50 text-muted-foreground' };
+}
 
 const SettingsPaymentsSection = () => {
   const navigate = useNavigate();
-  const { isMobile } = useResponsive();
   const {
     canManageOrganization,
     safeReturnTo,
@@ -74,6 +88,8 @@ const SettingsPaymentsSection = () => {
     setBankSearchQuery,
     mtnCredForm,
     setMtnCredForm,
+    mtnShowAdvancedKeys,
+    setMtnShowAdvancedKeys,
     mtnOtp,
     setMtnOtp,
     mtnGatePassword,
@@ -81,6 +97,15 @@ const SettingsPaymentsSection = () => {
     mtnSaving,
     mtnTesting,
     mtnDisconnecting,
+    hubtelCredForm,
+    setHubtelCredForm,
+    hubtelOtp,
+    setHubtelOtp,
+    hubtelGatePassword,
+    setHubtelGatePassword,
+    hubtelSaving,
+    hubtelTesting,
+    hubtelDisconnecting,
     isGoogleUser,
     handleSendPaymentOtp,
     handleVerifyPaymentPassword,
@@ -90,6 +115,10 @@ const SettingsPaymentsSection = () => {
     handleMtnTest,
     handleMtnSave,
     handleMtnDisconnect,
+    handleHubtelSendOtp,
+    handleHubtelTest,
+    handleHubtelSave,
+    handleHubtelDisconnect,
     pc,
     hasPaymentSubaccount,
     isMomoLinked,
@@ -98,6 +127,46 @@ const SettingsPaymentsSection = () => {
     paymentDestinationLabel,
     paymentDestinationValue,
   } = useSettingsPayments();
+
+  const providerCards = useMemo(() => {
+    const mtn = pc?.mtn_collection;
+    let merchantStatus = 'not_connected';
+    if (mtn?.merchantId) {
+      merchantStatus = 'connected';
+    } else if (mtn?.hasApiCredentials) {
+      merchantStatus = 'needs_setup';
+    }
+
+    const paystackStatus = hasPaymentSubaccount || paymentAlreadyLinked ? 'connected' : 'not_connected';
+
+    let hubtelStatus = 'not_connected';
+    if (pc?.hubtel_collection?.encryptionConfigured === false && !pc?.hubtel_collection?.configured) {
+      hubtelStatus = 'needs_setup';
+    } else if (pc?.hubtel_collection?.configured) {
+      hubtelStatus = 'connected';
+    }
+
+    return [
+      {
+        id: 'merchant-id',
+        title: 'Merchant ID',
+        description: 'Customers pay into your MTN MoMo merchant account',
+        status: merchantStatus,
+      },
+      {
+        id: 'settlements',
+        title: 'Paystack',
+        description: 'Settle card and MoMo payouts via Paystack',
+        status: paystackStatus,
+      },
+      {
+        id: 'hubtel',
+        title: 'Hubtel',
+        description: 'Customers pay into your Hubtel account',
+        status: hubtelStatus,
+      },
+    ];
+  }, [hasPaymentSubaccount, paymentAlreadyLinked, pc]);
 
   if (!canManageOrganization) {
     return (
@@ -124,45 +193,47 @@ const SettingsPaymentsSection = () => {
           Back to store setup
         </Button>
       ) : null}
-<Card className="border border-gray-200">
-      <CardHeader className="p-0 md:p-6 pb-2 md:pb-6">
-        <CardTitle className="text-base md:text-2xl flex items-center gap-2">
-          <CreditCard className="h-5 w-5" />
-          Payment collections
-        </CardTitle>
-        <CardDescription className="mt-1 md:mt-0 text-xs md:text-sm">
-          Manage how customers pay this workspace through Paystack, MoMo, invoices, and POS. This is separate from your ABS subscription billing.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="p-0 md:p-6 pt-0">
-        <Tabs
-          value={paymentsSubTab}
-          onValueChange={setPaymentsSection}
-        >
-          {isMobile ? (
-            <Select
-              value={paymentsSubTab}
-              onValueChange={setPaymentsSection}
-            >
-              <SelectTrigger className="w-full mb-2 md:mb-4">
-                <SelectValue placeholder="Select section" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="settlements">Paystack settlement</SelectItem>
-                <SelectItem value="mtn-collection">MTN MoMo API (direct)</SelectItem>
-              </SelectContent>
-            </Select>
-          ) : (
-            <TabsList className="grid w-full grid-cols-2 mb-4">
-              <TabsTrigger value="settlements" className="text-xs md:text-sm">
-                Paystack settlement
-              </TabsTrigger>
-              <TabsTrigger value="mtn-collection" className="text-xs md:text-sm">
-                MTN MoMo API
-              </TabsTrigger>
-            </TabsList>
-          )}
-          <TabsContent value="settlements" className="mt-0 md:mt-1 space-y-4">
+      <Card className="border border-gray-200">
+        <CardHeader className="p-0 md:p-6 pb-2 md:pb-6">
+          <CardTitle className="text-base md:text-2xl flex items-center gap-2">
+            <CreditCard className="h-5 w-5" />
+            Payment collections
+          </CardTitle>
+          <CardDescription className="mt-1 md:mt-0 text-xs md:text-sm">
+            Choose how customers pay this workspace. Connect a Merchant ID, Paystack settlement, or Hubtel.
+            This is separate from your ABS subscription billing.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0 md:p-6 pt-0 space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {providerCards.map((card) => {
+              const badge = statusBadgeProps(card.status);
+              const selected = paymentsSubTab === card.id;
+              return (
+                <button
+                  key={card.id}
+                  type="button"
+                  onClick={() => setPaymentsSection(card.id)}
+                  className={cn(
+                    'text-left rounded-lg border p-4 transition-colors min-h-[44px]',
+                    'hover:border-[#166534]/50 hover:bg-[#166534]/5',
+                    selected ? 'border-[#166534] bg-[#166534]/5' : 'border-gray-200 bg-white'
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <h3 className="text-sm font-semibold text-foreground">{card.title}</h3>
+                    <Badge variant="outline" className={cn('shrink-0 text-[10px]', badge.className)}>
+                      {badge.label}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2 leading-relaxed">{card.description}</p>
+                </button>
+              );
+            })}
+          </div>
+
+          <Tabs value={paymentsSubTab} onValueChange={setPaymentsSection}>
+            <TabsContent value="settlements" className="mt-0 md:mt-1 space-y-4">
             <p className="text-sm text-muted-foreground">
               Track customer card and MoMo payments collected for this workspace, then choose where Paystack should settle your payout. ABS subscription charges are not shown here.
             </p>
@@ -691,207 +762,397 @@ const SettingsPaymentsSection = () => {
           </>
         )}
           </TabsContent>
-          <TabsContent value="mtn-collection" className="mt-0 md:mt-1 space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Direct MTN Request-to-Pay for POS and invoice “Pay with MoMo”. Workspace keys override platform MTN environment variables when saved.
-            </p>
-        {loadingPaymentCollection ? (
-          <div className="flex items-center justify-center py-6 md:py-12">
-            <Loader2 className="h-8 w-8 animate-spin" />
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {pc?.mtn_collection?.encryptionConfigured === false && (
-              <Alert variant="destructive">
-                <AlertTitle>Server not ready for workspace MTN keys</AlertTitle>
-                <AlertDescription>
-                  The host must set <code className="text-xs">MOMO_CREDENTIALS_ENCRYPTION_KEY</code> (64 hex characters, e.g.{' '}
-                  <code className="text-xs">openssl rand -hex 32</code>) before credentials can be stored.
-                </AlertDescription>
-              </Alert>
-            )}
-            <Alert>
-              <AlertTitle>Active MTN source</AlertTitle>
-              <AlertDescription>
-                {pc?.mtn_collection?.activeSource === 'tenant' && (
-                  <>
-                    This workspace&apos;s encrypted credentials are in use.
-                    {pc.mtn_collection.subscriptionKeyMasked || pc.mtn_collection.apiUserMasked ? (
-                      <>
-                        {' '}
-                        Subscription key: <strong>{pc.mtn_collection.subscriptionKeyMasked || '—'}</strong> · API user:{' '}
-                        <strong>{pc.mtn_collection.apiUserMasked || '—'}</strong>
-                      </>
+
+            <TabsContent value="merchant-id" className="mt-0 md:mt-1 space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Connect your MTN MoMo Merchant ID so customers can pay into your merchant account from POS and invoices.
+              </p>
+              {loadingPaymentCollection ? (
+                <div className="flex items-center justify-center py-6 md:py-12">
+                  <Loader2 className="h-8 w-8 animate-spin" />
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {pc?.mtn_collection?.encryptionConfigured === false && (
+                    <Alert variant="destructive">
+                      <AlertTitle>Server not ready for API credentials</AlertTitle>
+                      <AlertDescription>
+                        You can still save your Merchant ID. To store Collection API keys for automated Request-to-Pay, the host must set{' '}
+                        <code className="text-xs">MOMO_CREDENTIALS_ENCRYPTION_KEY</code> (64 hex characters).
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  <Alert>
+                    <AlertTitle>Merchant connection</AlertTitle>
+                    <AlertDescription>
+                      {pc?.mtn_collection?.merchantId ? (
+                        <>
+                          Connected Merchant ID: <strong>{pc.mtn_collection.merchantId}</strong>
+                          {pc.mtn_collection.hasApiCredentials
+                            ? ' · Automated collection credentials are saved.'
+                            : ' · Add API credentials below if you want automated Request-to-Pay.'}
+                        </>
+                      ) : pc?.mtn_collection?.hasApiCredentials ? (
+                        <>API credentials are saved, but add your Merchant ID to finish connecting.</>
+                      ) : pc?.mtn_collection?.activeSource === 'platform' ? (
+                        <>No Merchant ID yet. Platform MTN keys may still collect if configured on the server.</>
+                      ) : (
+                        <>No Merchant ID connected yet. Enter yours below to get started.</>
+                      )}
+                    </AlertDescription>
+                  </Alert>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="mtn-merchant-id">Merchant ID</Label>
+                    <Input
+                      id="mtn-merchant-id"
+                      name="mtn-merchant-id"
+                      type="text"
+                      autoComplete="off"
+                      value={mtnCredForm.merchantId}
+                      onChange={(e) => setMtnCredForm((f) => ({ ...f, merchantId: e.target.value }))}
+                      placeholder="Paste your MTN MoMo Merchant ID"
+                      data-form-type="other"
+                      data-lpignore="true"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Find this in your MTN MoMo Business / merchant portal. This is the main identity for your workspace.
+                    </p>
+                  </div>
+
+                  <div className="rounded-lg border border-gray-200">
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-medium"
+                      onClick={() => setMtnShowAdvancedKeys((v) => !v)}
+                    >
+                      <span>API credentials for automated collection (optional)</span>
+                      <ChevronDown className={cn('h-4 w-4 transition-transform', mtnShowAdvancedKeys && 'rotate-180')} />
+                    </button>
+                    {mtnShowAdvancedKeys ? (
+                      <div className="space-y-3 border-t border-gray-200 px-4 py-4">
+                        <p className="text-xs text-muted-foreground">
+                          Required only for automated Request-to-Pay from ABS. Get these from the MTN MoMo Developer portal for your merchant.
+                        </p>
+                        <div className="space-y-2">
+                          <Label htmlFor="mtn-subscription-key">Subscription Key</Label>
+                          <Input
+                            id="mtn-subscription-key"
+                            type="password"
+                            autoComplete="off"
+                            value={mtnCredForm.subscriptionKey}
+                            onChange={(e) => setMtnCredForm((f) => ({ ...f, subscriptionKey: e.target.value }))}
+                            placeholder="From MTN MoMo Developer portal"
+                            data-form-type="other"
+                            data-lpignore="true"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="mtn-api-user">API User (UUID)</Label>
+                          <Input
+                            id="mtn-api-user"
+                            type="text"
+                            autoComplete="off"
+                            value={mtnCredForm.apiUser}
+                            onChange={(e) => setMtnCredForm((f) => ({ ...f, apiUser: e.target.value }))}
+                            placeholder="API user UUID"
+                            data-form-type="other"
+                            data-lpignore="true"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="mtn-api-key">API Key</Label>
+                          <Input
+                            id="mtn-api-key"
+                            type="password"
+                            autoComplete="off"
+                            value={mtnCredForm.apiKey}
+                            onChange={(e) => setMtnCredForm((f) => ({ ...f, apiKey: e.target.value }))}
+                            placeholder="API key"
+                            data-form-type="other"
+                            data-lpignore="true"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="mtn-environment">Environment</Label>
+                          <Select
+                            value={mtnCredForm.environment}
+                            onValueChange={(v) => setMtnCredForm((f) => ({ ...f, environment: v }))}
+                          >
+                            <SelectTrigger id="mtn-environment">
+                              <SelectValue placeholder="Sandbox or production" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="sandbox">Sandbox</SelectItem>
+                              <SelectItem value="production">Production</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="mtn-collection-url">Collection API URL (optional)</Label>
+                          <Input
+                            id="mtn-collection-url"
+                            type="url"
+                            autoComplete="off"
+                            value={mtnCredForm.collectionApiUrl}
+                            onChange={(e) => setMtnCredForm((f) => ({ ...f, collectionApiUrl: e.target.value }))}
+                            placeholder="Override collection base URL if needed"
+                            data-form-type="other"
+                            data-lpignore="true"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="mtn-callback-url">Callback URL (optional)</Label>
+                          <Input
+                            id="mtn-callback-url"
+                            type="url"
+                            autoComplete="off"
+                            value={mtnCredForm.callbackUrl}
+                            onChange={(e) => setMtnCredForm((f) => ({ ...f, callbackUrl: e.target.value }))}
+                            placeholder="Webhook callback if different from default"
+                            data-form-type="other"
+                            data-lpignore="true"
+                          />
+                        </div>
+                      </div>
                     ) : null}
-                  </>
-                )}
-                {pc?.mtn_collection?.activeSource === 'platform' && (
-                  <>Platform MTN env is active (no workspace keys or keys could not be read).</>
-                )}
-                {pc?.mtn_collection?.activeSource === 'none' && (
-                  <>No MTN collection is configured. Add workspace keys below or configure platform MTN env.</>
-                )}
-              </AlertDescription>
-            </Alert>
-            <div className="space-y-2">
-              <Label htmlFor="mtn-subscription-key">Subscription Key</Label>
-              <Input
-                id="mtn-subscription-key"
-                name="mtn-subscription-key"
-                type="password"
-                autoComplete="off"
-                value={mtnCredForm.subscriptionKey}
-                onChange={(e) => setMtnCredForm((f) => ({ ...f, subscriptionKey: e.target.value }))}
-                placeholder="From MTN MoMo Developer portal"
-                data-form-type="other"
-                data-lpignore="true"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="mtn-api-user">API User (UUID)</Label>
-              <Input
-                id="mtn-api-user"
-                name="mtn-api-user"
-                type="text"
-                autoComplete="off"
-                value={mtnCredForm.apiUser}
-                onChange={(e) => setMtnCredForm((f) => ({ ...f, apiUser: e.target.value }))}
-                placeholder="API user UUID"
-                data-form-type="other"
-                data-lpignore="true"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="mtn-api-key">API Key</Label>
-              <Input
-                id="mtn-api-key"
-                name="mtn-api-key"
-                type="password"
-                autoComplete="off"
-                value={mtnCredForm.apiKey}
-                onChange={(e) => setMtnCredForm((f) => ({ ...f, apiKey: e.target.value }))}
-                placeholder="API key"
-                data-form-type="other"
-                data-lpignore="true"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="mtn-environment">Environment</Label>
-              <Select
-                value={mtnCredForm.environment}
-                onValueChange={(v) => setMtnCredForm((f) => ({ ...f, environment: v }))}
-              >
-                <SelectTrigger id="mtn-environment">
-                  <SelectValue placeholder="Sandbox or production" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="sandbox">Sandbox</SelectItem>
-                  <SelectItem value="production">Production</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="mtn-collection-url">Collection API URL (optional)</Label>
-              <Input
-                id="mtn-collection-url"
-                name="mtn-collection-url"
-                type="url"
-                autoComplete="off"
-                value={mtnCredForm.collectionApiUrl}
-                onChange={(e) => setMtnCredForm((f) => ({ ...f, collectionApiUrl: e.target.value }))}
-                placeholder="Override collection base URL if needed"
-                data-form-type="other"
-                data-lpignore="true"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="mtn-callback-url">Callback URL (optional)</Label>
-              <Input
-                id="mtn-callback-url"
-                name="mtn-callback-url"
-                type="url"
-                autoComplete="off"
-                value={mtnCredForm.callbackUrl}
-                onChange={(e) => setMtnCredForm((f) => ({ ...f, callbackUrl: e.target.value }))}
-                placeholder="Webhook callback if different from default"
-                data-form-type="other"
-                data-lpignore="true"
-              />
-            </div>
-            {!isGoogleUser && (
-              <div className="space-y-2">
-                <Label htmlFor="mtn-gate-password">Account password</Label>
-                <Input
-                  id="mtn-gate-password"
-                  name="mtn-gate-password"
-                  type="password"
-                  autoComplete="current-password"
-                  value={mtnGatePassword}
-                  onChange={(e) => setMtnGatePassword(e.target.value)}
-                  placeholder="Required to send verification code"
-                  data-form-type="other"
-                  data-lpignore="true"
-                />
-              </div>
-            )}
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="outline" onClick={handleMtnSendOtp}>
-                Send verification code
-              </Button>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="mtn-otp">Verification code</Label>
-              <Input
-                id="mtn-otp"
-                name="mtn-otp"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={6}
-                value={mtnOtp}
-                onChange={(e) => setMtnOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                placeholder="6-digit code from email"
-                className="max-w-[12rem] tabular-nums tracking-widest"
-              />
-            </div>
-            <div className="flex flex-wrap gap-2 items-center">
-              {pc?.mtn_collection?.configured ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleMtnDisconnect}
-                  disabled={mtnDisconnecting || pc?.mtn_collection?.encryptionConfigured === false}
-                >
-                  {mtnDisconnecting ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
-                  Remove workspace keys
-                </Button>
-              ) : null}
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleMtnTest}
-                disabled={mtnTesting || pc?.mtn_collection?.encryptionConfigured === false}
-              >
-                {mtnTesting ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
-                Test connection
-              </Button>
-              <Button
-                type="button"
-                onClick={handleMtnSave}
-                disabled={mtnSaving || pc?.mtn_collection?.encryptionConfigured === false}
-              >
-                {mtnSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
-                Save credentials
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Test, save, and remove require the email verification code. Test and save need all three secrets each time; saving replaces any previously stored workspace keys.
-            </p>
-          </div>
-        )}
-          </TabsContent>
-        </Tabs>
-      </CardContent>
-    </Card>
+                  </div>
+
+                  {!isGoogleUser && (
+                    <div className="space-y-2">
+                      <Label htmlFor="mtn-gate-password">Account password</Label>
+                      <Input
+                        id="mtn-gate-password"
+                        type="password"
+                        autoComplete="current-password"
+                        value={mtnGatePassword}
+                        onChange={(e) => setMtnGatePassword(e.target.value)}
+                        placeholder="Required to send verification code"
+                        data-form-type="other"
+                        data-lpignore="true"
+                      />
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" onClick={handleMtnSendOtp}>
+                      Send verification code
+                    </Button>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="mtn-otp">Verification code</Label>
+                    <Input
+                      id="mtn-otp"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      value={mtnOtp}
+                      onChange={(e) => setMtnOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      placeholder="6-digit code from email"
+                      className="max-w-[12rem] tabular-nums tracking-widest"
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-2 items-center">
+                    {pc?.mtn_collection?.configured || pc?.mtn_collection?.merchantId ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={handleMtnDisconnect}
+                        disabled={mtnDisconnecting}
+                      >
+                        {mtnDisconnecting ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
+                        Disconnect
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleMtnTest}
+                      disabled={
+                        mtnTesting ||
+                        pc?.mtn_collection?.encryptionConfigured === false ||
+                        !mtnCredForm.subscriptionKey ||
+                        !mtnCredForm.apiUser ||
+                        !mtnCredForm.apiKey
+                      }
+                    >
+                      {mtnTesting ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
+                      Test connection
+                    </Button>
+                    <Button type="button" onClick={handleMtnSave} disabled={mtnSaving || !mtnCredForm.merchantId.trim()}>
+                      {mtnSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
+                      Connect Merchant ID
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Connect your Merchant ID with the email verification code. API credentials are optional and only needed for automated collection.
+                  </p>
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="hubtel" className="mt-0 md:mt-1 space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Connect your Hubtel merchant so customers can pay into your Hubtel account. Use Client ID and Client Secret from your Hubtel API account.
+              </p>
+              {loadingPaymentCollection ? (
+                <div className="flex items-center justify-center py-6 md:py-12">
+                  <Loader2 className="h-8 w-8 animate-spin" />
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {pc?.hubtel_collection?.encryptionConfigured === false && (
+                    <Alert variant="destructive">
+                      <AlertTitle>Server not ready for Hubtel keys</AlertTitle>
+                      <AlertDescription>
+                        The host must set <code className="text-xs">MOMO_CREDENTIALS_ENCRYPTION_KEY</code> (64 hex characters) before
+                        Hubtel credentials can be stored.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  <Alert>
+                    <AlertTitle>Hubtel status</AlertTitle>
+                    <AlertDescription>
+                      {pc?.hubtel_collection?.configured ? (
+                        <>
+                          Connected. Client ID: <strong>{pc.hubtel_collection.clientIdMasked || '—'}</strong>
+                          {pc.hubtel_collection.merchantAccountNumber
+                            ? ` · Merchant account: ${pc.hubtel_collection.merchantAccountNumber}`
+                            : ''}
+                          {pc.hubtel_collection.posSalesId
+                            ? ` · POS Sales ID: ${pc.hubtel_collection.posSalesId}`
+                            : ''}
+                        </>
+                      ) : (
+                        <>Not connected. Enter your Hubtel Client ID and Client Secret below.</>
+                      )}
+                    </AlertDescription>
+                  </Alert>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="hubtel-client-id">Client ID</Label>
+                    <Input
+                      id="hubtel-client-id"
+                      type="text"
+                      autoComplete="off"
+                      value={hubtelCredForm.clientId}
+                      onChange={(e) => setHubtelCredForm((f) => ({ ...f, clientId: e.target.value }))}
+                      placeholder="Hubtel Client ID"
+                      data-form-type="other"
+                      data-lpignore="true"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="hubtel-client-secret">Client Secret</Label>
+                    <Input
+                      id="hubtel-client-secret"
+                      type="password"
+                      autoComplete="off"
+                      value={hubtelCredForm.clientSecret}
+                      onChange={(e) => setHubtelCredForm((f) => ({ ...f, clientSecret: e.target.value }))}
+                      placeholder="Hubtel Client Secret"
+                      data-form-type="other"
+                      data-lpignore="true"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="hubtel-merchant-account">Merchant account number (optional)</Label>
+                    <Input
+                      id="hubtel-merchant-account"
+                      type="text"
+                      autoComplete="off"
+                      value={hubtelCredForm.merchantAccountNumber}
+                      onChange={(e) => setHubtelCredForm((f) => ({ ...f, merchantAccountNumber: e.target.value }))}
+                      placeholder="e.g. HM2707170067"
+                      data-form-type="other"
+                      data-lpignore="true"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="hubtel-pos-sales-id">POS Sales ID (optional)</Label>
+                    <Input
+                      id="hubtel-pos-sales-id"
+                      type="text"
+                      autoComplete="off"
+                      value={hubtelCredForm.posSalesId}
+                      onChange={(e) => setHubtelCredForm((f) => ({ ...f, posSalesId: e.target.value }))}
+                      placeholder="Used for Receive Money / POS collections"
+                      data-form-type="other"
+                      data-lpignore="true"
+                    />
+                  </div>
+
+                  {!isGoogleUser && (
+                    <div className="space-y-2">
+                      <Label htmlFor="hubtel-gate-password">Account password</Label>
+                      <Input
+                        id="hubtel-gate-password"
+                        type="password"
+                        autoComplete="current-password"
+                        value={hubtelGatePassword}
+                        onChange={(e) => setHubtelGatePassword(e.target.value)}
+                        placeholder="Required to send verification code"
+                        data-form-type="other"
+                        data-lpignore="true"
+                      />
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" onClick={handleHubtelSendOtp}>
+                      Send verification code
+                    </Button>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="hubtel-otp">Verification code</Label>
+                    <Input
+                      id="hubtel-otp"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      value={hubtelOtp}
+                      onChange={(e) => setHubtelOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      placeholder="6-digit code from email"
+                      className="max-w-[12rem] tabular-nums tracking-widest"
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-2 items-center">
+                    {pc?.hubtel_collection?.configured ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={handleHubtelDisconnect}
+                        disabled={hubtelDisconnecting || pc?.hubtel_collection?.encryptionConfigured === false}
+                      >
+                        {hubtelDisconnecting ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
+                        Disconnect
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleHubtelTest}
+                      disabled={hubtelTesting || pc?.hubtel_collection?.encryptionConfigured === false}
+                    >
+                      {hubtelTesting ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
+                      Test connection
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={handleHubtelSave}
+                      disabled={hubtelSaving || pc?.hubtel_collection?.encryptionConfigured === false}
+                    >
+                      {hubtelSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
+                      Save credentials
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Test, save, and disconnect require the email verification code. Saving replaces previously stored Hubtel credentials.
+                  </p>
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
     </>
   );
 };

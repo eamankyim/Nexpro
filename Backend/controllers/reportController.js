@@ -28,6 +28,9 @@ const invoiceDocumentSqlFragment = (req, tableAlias = '') =>
 
 const scopedSaleWhere = (req, dateFilter = {}) =>
   scopedRetailWhere(req, {
+    // Completed only — excludes cancelled/refunded. POS returns set status to `refunded` when
+    // fully returned (SaleReturn records), so revenue is not double-counted. Partial returns keep
+    // status `completed`; netting partial refund amounts in reports is a follow-up.
     status: 'completed',
     // Sale isn't paranoid — exclude manager/staff soft-deleted sales from every revenue/COGS/VAT total.
     deletedAt: null,

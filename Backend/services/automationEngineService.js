@@ -450,6 +450,8 @@ function getTemplates() {
       description: 'Send customers an order confirmation when a sale is completed.',
       triggerType: 'sale_completed',
       allowedBusinessTypes: ['shop'],
+      // Transactional receipt: do not gate on smsConsent / marketingConsent.
+      // Channel gaps (no email) soft-skip at send time; SMS/WhatsApp still send when reachable.
       triggerConfig: {},
       actionConfig: {
         actions: [{
@@ -1624,6 +1626,8 @@ async function executeRule({
       contactContext = null,
       messageId = undefined,
       errorCode = undefined,
+      skipped = false,
+      reason = null,
       extras = {},
     }) => {
       const channel = channelForActionType(type);
@@ -1642,8 +1646,30 @@ async function executeRule({
       };
       if (messageId !== undefined) result.messageId = messageId;
       if (errorCode !== undefined) result.errorCode = errorCode;
+      if (skipped) {
+        result.skipped = true;
+        result.reason = reason || result.reason || 'skipped';
+      } else if (reason) {
+        result.reason = reason;
+      }
       return result;
     };
+
+    /**
+     * Soft-skip a messaging channel when the recipient has no usable address.
+     * Does not fail the automation run; Logs show Warning (reason), not Error.
+     * @param {string} type
+     * @param {string} reason
+     * @param {object} contactContext
+     * @returns {object}
+     */
+    const skipMessagingAction = (type, reason, contactContext) => buildMessagingResult({
+      type,
+      success: true,
+      skipped: true,
+      reason,
+      contactContext,
+    });
 
     /**
      * Send one messaging action to a single contact context.
@@ -1654,12 +1680,8 @@ async function executeRule({
     const sendMessagingAction = async (action, contactContext) => {
       if (action.type === 'send_email_platform') {
         if (!contactContext?.email) {
-          return buildMessagingResult({
-            type: 'send_email_platform',
-            success: false,
-            error: 'No recipient email available',
-            contactContext,
-          });
+          // Optional channel: no address → skip (not a hard error).
+          return skipMessagingAction('send_email_platform', 'No recipient email', contactContext);
         }
         const rawSubject = action.subject || `${rule.name}`;
         const rawBody = action.body || contactContext.message || '';
@@ -1687,12 +1709,10 @@ async function executeRule({
 
       if (action.type === 'send_sms') {
         if (!contactContext?.phone) {
-          return buildMessagingResult({
-            type: 'send_sms',
-            success: false,
-            error: 'No staff phone available — SMS skipped',
-            contactContext,
-          });
+          const reason = contactContext?.audience === 'internal'
+            ? 'No staff phone'
+            : 'No recipient phone';
+          return skipMessagingAction('send_sms', reason, contactContext);
         }
         try {
           const rawBody = action.body || contactContext.message || '';
@@ -1720,12 +1740,10 @@ async function executeRule({
 
       if (action.type === 'send_whatsapp') {
         if (!contactContext?.phone) {
-          return buildMessagingResult({
-            type: 'send_whatsapp',
-            success: false,
-            error: 'No staff phone available — WhatsApp skipped',
-            contactContext,
-          });
+          const reason = contactContext?.audience === 'internal'
+            ? 'No staff phone'
+            : 'No recipient phone';
+          return skipMessagingAction('send_whatsapp', reason, contactContext);
         }
         try {
           const response = await whatsappService.sendMessage(
@@ -1850,12 +1868,15 @@ async function executeRule({
       }));
     }
 
-    const allSucceeded = results.length > 0 && results.every((result) => result.success !== false);
+    const deliveredOrAttempted = results.filter((result) => !result.skipped);
     const anyFailed = results.some((result) => result.success === false);
+    const allSucceeded = deliveredOrAttempted.length > 0
+      && deliveredOrAttempted.every((result) => result.success !== false);
+    const onlySkipped = results.length > 0 && results.every((result) => result.skipped);
     const run = await AutomationRun.create({
       tenantId,
       ruleId: rule.id,
-      status: anyFailed ? 'failed' : allSucceeded ? 'success' : 'skipped',
+      status: anyFailed ? 'failed' : onlySkipped ? 'skipped' : allSucceeded ? 'success' : 'skipped',
       triggerContext,
       resultSummary: { results },
       error: anyFailed ? 'One or more actions failed' : null,
