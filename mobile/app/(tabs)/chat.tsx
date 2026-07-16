@@ -29,7 +29,12 @@ import {
   ASSISTANT_SUPPORT_PROMPTS,
 } from '@/constants/assistantPrompts';
 
-type Message = { id: string; role: 'user' | 'assistant'; content: string };
+type Message = {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  reasons?: Array<{ code?: string; label: string; detail?: string }>;
+};
 type TextSegment = { text: string; bold: boolean };
 
 function parseBoldSegments(text: string): TextSegment[] {
@@ -198,10 +203,12 @@ export default function ChatScreen() {
 
         const res = await assistantService.chat(history, { pageContext, clientSubmittedAt: tapAt });
         const reply = res?.message || '';
+        const reasons = Array.isArray(res?.meta?.reasons) ? res.meta.reasons : undefined;
         const assistantMsg: Message = {
           id: `a-${Date.now()}`,
           role: 'assistant',
           content: reply || 'No response.',
+          reasons,
         };
         setMessages((prev) => [...prev, assistantMsg]);
       } catch (err: unknown) {
@@ -255,6 +262,19 @@ export default function ChatScreen() {
         ]}
       >
         <FormattedMessage content={item.content} color={item.role === 'user' ? '#fff' : textColor} />
+        {item.role === 'assistant' && item.reasons && item.reasons.length > 0 ? (
+          <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: borderColor }}>
+            {item.reasons.slice(0, 4).map((reason) => (
+              <Text
+                key={reason.code || reason.label}
+                style={{ color: mutedColor, fontSize: 12, marginBottom: 4 }}
+              >
+                • {reason.label}
+                {reason.detail ? ` — ${reason.detail}` : ''}
+              </Text>
+            ))}
+          </View>
+        ) : null}
       </View>
     </View>
   );

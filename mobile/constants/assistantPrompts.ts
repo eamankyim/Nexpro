@@ -1,11 +1,15 @@
 /**
  * Suggested prompts for ABS Assistant (mobile).
+ * Business chips favor owned analysis intents (DB-backed).
  */
 export const ASSISTANT_BUSINESS_PROMPTS = [
-  "Summarize today's performance",
+  "How much did I sell today?",
+  'How are sales this month?',
   'Who owes me money?',
-  'Revenue vs expenses this month',
+  'What are my top products?',
   'What should I restock?',
+  'Why are sales down?',
+  'Summarize performance',
 ];
 
 export const ASSISTANT_SUPPORT_PROMPTS = [
@@ -29,11 +33,11 @@ export const ASSISTANT_RESTAURANT_PROMPTS = [
 ];
 
 export const ASSISTANT_PAGE_PROMPTS: Record<string, string[]> = {
-  dashboard: ['Summarize this month', 'What should I focus on today?'],
+  dashboard: ['Summarize performance', 'What should I restock?', 'Who owes me money?'],
   orders: ['How many orders are in the kitchen?', 'What is taking longest to prepare?'],
-  sales: ['How are sales this month?', 'Top products this month'],
+  sales: ['How are sales this month?', 'What are my top products?'],
   invoices: ['Who owes me money?', 'Draft a payment reminder'],
-  expenses: ['Summarize my expenses this month'],
-  customers: ['How many customers do I have?', 'Top customers'],
-  products: ['What is low on stock?'],
+  expenses: ['Summarize performance'],
+  customers: ['Who owes me money?', 'How are sales this month?'],
+  products: ['What is low on stock?', 'What are my top products?'],
 };

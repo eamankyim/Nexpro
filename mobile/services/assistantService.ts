@@ -5,8 +5,19 @@ type Message = { role: 'user' | 'assistant'; content: string };
 
 type ChatOptions = {
   pageContext?: string;
+  startDate?: string;
+  endDate?: string;
+  periodLabel?: string;
   /** Epoch ms when the user tapped send (for queue/network timing). */
   clientSubmittedAt?: number;
+};
+
+type AnalysisOptions = {
+  intent?: string;
+  pageContext?: string;
+  startDate?: string;
+  endDate?: string;
+  periodLabel?: string;
 };
 
 export const assistantService = {
@@ -22,9 +33,22 @@ export const assistantService = {
       messageCount: messages.length,
     });
 
-    const body: { messages: Message[]; pageContext?: string } = { messages };
+    const body: {
+      messages: Message[];
+      pageContext?: string;
+      startDate?: string;
+      endDate?: string;
+      periodLabel?: string;
+    } = { messages };
     if (options.pageContext) {
       body.pageContext = options.pageContext;
+    }
+    if (options.startDate && options.endDate) {
+      body.startDate = options.startDate;
+      body.endDate = options.endDate;
+    }
+    if (options.periodLabel) {
+      body.periodLabel = options.periodLabel;
     }
 
     try {
@@ -56,5 +80,19 @@ export const assistantService = {
       });
       throw error;
     }
+  },
+
+  /** Owned analysis engine (DB numbers only — no Anthropic). */
+  askAnalysis: async (message: string, options: AnalysisOptions = {}) => {
+    const body: Record<string, string> = { message };
+    if (options.intent) body.intent = options.intent;
+    if (options.pageContext) body.pageContext = options.pageContext;
+    if (options.startDate && options.endDate) {
+      body.startDate = options.startDate;
+      body.endDate = options.endDate;
+    }
+    if (options.periodLabel) body.periodLabel = options.periodLabel;
+    const res = await api.post('/analysis/ask', body);
+    return res.data;
   },
 };

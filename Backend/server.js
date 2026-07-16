@@ -68,6 +68,7 @@ const inviteRoutes = require('./routes/inviteRoutes');
 const tenantRoutes = require('./routes/tenantRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const assistantRoutes = require('./routes/assistantRoutes');
+const analysisRoutes = require('./routes/analysisRoutes');
 const automationRoutes = require('./routes/automationRoutes');
 const materialsRoutes = require('./routes/materialsRoutes');
 const equipmentRoutes = require('./routes/equipmentRoutes');
@@ -244,6 +245,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/invites', inviteRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/assistant', assistantRoutes);
+app.use('/api/analysis', analysisRoutes);
 app.use('/api/automations', automationRoutes);
 app.use('/api/materials', materialsRoutes);
 app.use('/api/inventory', materialsRoutes); // backward compat; remove after frontend/mobile use /api/materials

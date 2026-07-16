@@ -410,28 +410,11 @@ export default function DashboardScreen() {
     [revenue, expenses, profit, comparison, lowStockItems, isShop, isPharmacy]
   );
 
-  const aiInsightPrompt = useMemo(
-    () =>
-      [
-        'Create one short mobile dashboard insight for this business.',
-        'Return only JSON in this exact shape: {"title":"...","body":"..."}',
-        'Keep the title under 7 words and body under 18 words.',
-        `Business type: ${businessType}`,
-        `Period: ${getFilterLabel(filterType)}`,
-        `Revenue: ${formatCurrency(revenue)}`,
-        `Expenses: ${formatCurrency(expenses)}`,
-        `Profit: ${formatCurrency(profit)}`,
-        `New customers: ${summary.newCustomers ?? 0}`,
-        `Low stock items: ${lowStockItems}`,
-      ].join('\n'),
-    [businessType, filterType, revenue, expenses, profit, summary.newCustomers, lowStockItems]
-  );
-
   const { data: aiDashboardInsight, isFetching: isFetchingAiInsight } = useQuery({
     queryKey: [
       'dashboard',
       'ai-insight',
-      'v2',
+      'v3-analysis',
       activeTenantId,
       activeShopId,
       activeStudioLocationId,
@@ -443,10 +426,17 @@ export default function DashboardScreen() {
       lowStockItems,
     ],
     queryFn: async () => {
-      const response = await assistantService.chat([{ role: 'user', content: aiInsightPrompt }], {
+      const response = await assistantService.askAnalysis('Summarize performance', {
+        intent: 'performance_summary',
         pageContext: 'dashboard',
       });
-      return parseAiInsightResponse(response?.message ?? '');
+      if (response?.insight?.title && response?.insight?.body) {
+        return {
+          title: String(response.insight.title).trim(),
+          body: String(response.insight.body).trim(),
+        };
+      }
+      return parseAiInsightResponse(response?.message ?? response?.answerMarkdown ?? '');
     },
     enabled: !!activeTenantId && !isLoading && !!overviewResponse,
     staleTime: 10 * 60 * 1000,

@@ -11,6 +11,11 @@ const {
   openBillingCircuit,
   toDurationMs,
 } = require('../utils/aiProviderErrors');
+const {
+  runAnalysis,
+  buildUnsupportedResponse,
+  classifyIntent,
+} = require('../services/analysis');
 
 const sendAssistantError = (res, error) => {
   const classified = classifyAiProviderError(error);
@@ -680,6 +685,54 @@ exports.chat = async (req, res, next) => {
     }
 
     const preflightStart = process.hrtime.bigint();
+
+    // Analysis path first: owned engine needs no Anthropic key / billing circuit
+    const analysisClassification = classifyIntent(lastMessage.content, {
+      pageContext: typeof pageContext === 'string' ? pageContext : undefined,
+    });
+
+    if (analysisClassification.route === 'analysis') {
+      timings.preflightMs = toDurationMs(preflightStart);
+      const contextStart = process.hrtime.bigint();
+      const analysis = await runAnalysis(lastMessage.content, {
+        tenantId: req.tenantId,
+        shopFilterId: req.shopFilterId || null,
+        studioLocationFilterId: req.studioLocationFilterId || null,
+        startDate: typeof startDate === 'string' ? startDate : undefined,
+        endDate: typeof endDate === 'string' ? endDate : undefined,
+        periodLabel: typeof periodLabel === 'string' ? periodLabel : undefined,
+        pageContext: typeof pageContext === 'string' ? pageContext : undefined,
+      });
+      timings.contextMs = toDurationMs(contextStart);
+      timings.providerMs = 0;
+
+      if (analysis.route === 'analysis' && analysis.result) {
+        logAssistantTiming({
+          outcome: 'success',
+          source: 'analysis_engine',
+          intent: analysis.classification.intent,
+        });
+        return res.status(200).json({
+          success: true,
+          message: analysis.result.answerMarkdown,
+          meta: analysis.result.meta,
+          insight: analysis.result.insight || undefined,
+        });
+      }
+    }
+
+    if (analysisClassification.route === 'unsupported') {
+      timings.preflightMs = toDurationMs(preflightStart);
+      const unsupported = buildUnsupportedResponse(analysisClassification.suggestedQuestions);
+      logAssistantTiming({ outcome: 'success', source: 'analysis_engine', intent: null });
+      return res.status(200).json({
+        success: true,
+        message: unsupported.answerMarkdown,
+        meta: unsupported.meta,
+      });
+    }
+
+    // Support / draft only: Anthropic path (billing circuit + provider key)
     const circuitError = buildBillingCircuitError(req.tenantId);
     if (circuitError) {
       timings.preflightMs = toDurationMs(preflightStart);
@@ -722,10 +775,11 @@ exports.chat = async (req, res, next) => {
     });
     timings.providerMs = toDurationMs(providerStart);
 
-    logAssistantTiming({ outcome: 'success' });
+    logAssistantTiming({ outcome: 'success', source: 'anthropic' });
     res.status(200).json({
       success: true,
       message: assistantMessage,
+      meta: { source: 'anthropic' },
     });
   } catch (error) {
     const classified = classifyAiProviderError(error);

@@ -883,50 +883,6 @@ const Dashboard = () => {
     [businessHealthContext]
   );
 
-  const aiInsightPrompt = useMemo(
-    () => {
-      if (!canViewProfitMetrics) return '';
-
-      return [
-        'Create one short web dashboard insight for this business.',
-        'Return only JSON in this exact shape: {"title":"...","body":"..."}',
-        'Keep the title under 7 words and body under 18 words.',
-        'Evaluate the overall business state using current performance, previous-period baselines, daily averages, profit health, customers, and stock alerts.',
-        'Do not be overly positive when revenue/profit/customers are below baseline. Do not be overly negative when only totals are lower because the current period is partial and daily averages/profit are healthy.',
-        `Business type: ${businessType}`,
-        `Period: ${periodLabel} (${overviewParams.startDate} to ${overviewParams.endDate})`,
-        `Baseline: ${businessHealthContext.comparisonLabel}`,
-        `Elapsed days in period: ${businessHealthContext.elapsedDays} of ${businessHealthContext.periodDays}`,
-        `Revenue: ${CURRENCY.SYMBOL} ${revenueValue.toFixed(2)}`,
-        `Revenue baseline: previous ${CURRENCY.SYMBOL} ${businessHealthContext.metrics.revenue.previous.toFixed(2)}, current daily average ${CURRENCY.SYMBOL} ${businessHealthContext.metrics.revenue.currentDailyAverage.toFixed(2)}, baseline daily average ${CURRENCY.SYMBOL} ${businessHealthContext.metrics.revenue.baselineDailyAverage.toFixed(2)}, daily average change ${businessHealthContext.metrics.revenue.dailyAverageChangePercentage.toFixed(0)}%`,
-        `Expenses: ${CURRENCY.SYMBOL} ${expenseValue.toFixed(2)}`,
-        `Expenses baseline: previous ${CURRENCY.SYMBOL} ${businessHealthContext.metrics.expenses.previous.toFixed(2)}, current daily average ${CURRENCY.SYMBOL} ${businessHealthContext.metrics.expenses.currentDailyAverage.toFixed(2)}, baseline daily average ${CURRENCY.SYMBOL} ${businessHealthContext.metrics.expenses.baselineDailyAverage.toFixed(2)}, daily average change ${businessHealthContext.metrics.expenses.dailyAverageChangePercentage.toFixed(0)}%`,
-        `Profit: ${CURRENCY.SYMBOL} ${profitValue.toFixed(2)}`,
-        `Profit baseline: previous ${CURRENCY.SYMBOL} ${businessHealthContext.metrics.profit.previous.toFixed(2)}, current daily average ${CURRENCY.SYMBOL} ${businessHealthContext.metrics.profit.currentDailyAverage.toFixed(2)}, baseline daily average ${CURRENCY.SYMBOL} ${businessHealthContext.metrics.profit.baselineDailyAverage.toFixed(2)}, daily average change ${businessHealthContext.metrics.profit.dailyAverageChangePercentage.toFixed(0)}%`,
-        `Profit margin: ${businessHealthContext.profitMargin.toFixed(0)}%`,
-        `New customers: ${displayData?.summary?.newCustomers || 0}`,
-        `New customers baseline: previous ${businessHealthContext.metrics.newCustomers.previous.toFixed(0)}, current daily average ${businessHealthContext.metrics.newCustomers.currentDailyAverage.toFixed(1)}, baseline daily average ${businessHealthContext.metrics.newCustomers.baselineDailyAverage.toFixed(1)}, daily average change ${businessHealthContext.metrics.newCustomers.dailyAverageChangePercentage.toFixed(0)}%`,
-        `All-time revenue: ${CURRENCY.SYMBOL} ${businessHealthContext.allTime.revenue.toFixed(2)}`,
-        `All-time profit: ${CURRENCY.SYMBOL} ${businessHealthContext.allTime.profit.toFixed(2)}`,
-        `Total customers: ${businessHealthContext.totalCustomers}`,
-        `Low stock items: ${(stockAlerts?.lowStock || []).length}`,
-      ].join('\n');
-    },
-    [
-      canViewProfitMetrics,
-      businessType,
-      periodLabel,
-      overviewParams.startDate,
-      overviewParams.endDate,
-      revenueValue,
-      expenseValue,
-      profitValue,
-      displayData?.summary?.newCustomers,
-      businessHealthContext,
-      stockAlerts?.lowStock,
-    ]
-  );
-
   const { data: aiDashboardInsight, isFetching: aiDashboardInsightLoading } = useQuery({
     queryKey: queryKeys.dashboard.aiInsight(activeTenantId, activeShopId, activeStudioLocationId, {
       startDate: overviewParams.startDate,
@@ -942,15 +898,24 @@ const Dashboard = () => {
       profitChange: businessHealthContext.metrics.profit.dailyAverageChangePercentage,
       newCustomersChange: businessHealthContext.metrics.newCustomers.dailyAverageChangePercentage,
       profitMargin: businessHealthContext.profitMargin,
+      source: 'analysis_engine',
     }),
     queryFn: async () => {
-      const result = await assistantService.chat([{ role: 'user', content: aiInsightPrompt }], {
+      // Prefer owned analysis engine (performance_summary) — no Claude round-trip
+      const result = await assistantService.askAnalysis('Summarize performance', {
+        intent: 'performance_summary',
         pageContext: 'dashboard',
         startDate: overviewParams.startDate,
         endDate: overviewParams.endDate,
         periodLabel,
       });
-      return parseAiInsightResponse(result?.message || '');
+      if (result?.insight?.title && result?.insight?.body) {
+        return {
+          title: String(result.insight.title).trim(),
+          body: String(result.insight.body).trim(),
+        };
+      }
+      return parseAiInsightResponse(result?.message || result?.answerMarkdown || '');
     },
     enabled: scopeReady && !!overview && canViewProfitMetrics,
     staleTime: 10 * 60 * 1000,

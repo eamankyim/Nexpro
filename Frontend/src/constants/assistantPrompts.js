@@ -1,12 +1,16 @@
 /**
  * Suggested prompts for ABS Assistant (web).
+ * Business chips favor owned analysis intents (DB-backed).
  */
 export const ASSISTANT_BUSINESS_PROMPTS = [
-  "Summarize today's performance",
+  "How much did I sell today?",
+  'How are sales this month?',
   'Who owes me money?',
-  'Revenue vs expenses this month',
+  'What are my top products?',
   'What should I restock?',
-  'Predict sales for next week',
+  'Why are sales down?',
+  'Compare this period to the previous period',
+  'Summarize performance',
 ];
 
 export const ASSISTANT_SUPPORT_PROMPTS = [
@@ -25,16 +29,16 @@ export const ASSISTANT_DRAFT_PROMPTS = [
 
 /** Page-specific prompts when opening Ask AI from a module */
 export const ASSISTANT_PAGE_PROMPTS = {
-  dashboard: ['Summarize this period', 'What should I focus on today?'],
+  dashboard: ['Summarize performance', 'What should I restock?', 'Who owes me money?'],
   reports: [
     'Summarize performance for this period',
-    'What are my biggest revenue drivers this period?',
-    'Where can I cut costs this period?',
+    'Compare this period to the previous period',
+    'Why are sales down?',
   ],
-  sales: ['How are sales trending this month?', 'What are my top products?'],
-  invoices: ['Who has overdue invoices?', 'Draft a payment reminder'],
-  expenses: ['Where am I spending the most?', 'How can I reduce expenses?'],
-  customers: ['Who are my top customers?', 'How many new customers this month?'],
-  products: ['What products are low on stock?', 'What should I reorder first?'],
-  jobs: ['How many jobs are in progress?', 'Which jobs need attention?'],
+  sales: ['How are sales this month?', 'What are my top products?'],
+  invoices: ['Who owes me money?', 'Draft a payment reminder'],
+  expenses: ['How are sales this month?', 'Summarize performance'],
+  customers: ['Who owes me money?', 'How are sales this month?'],
+  products: ['What products are low on stock?', 'What are my top products?'],
+  jobs: ['Summarize performance', 'Who owes me money?'],
 };

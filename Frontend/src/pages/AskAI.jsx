@@ -122,7 +122,15 @@ export default function AskAI() {
     try {
       const res = await assistantService.chat(nextConversation, assistantContextOptions);
       const content = res?.message || 'No response from assistant.';
-      setMessages((prev) => [...prev, { role: 'assistant', content }]);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content,
+          meta: res?.meta || null,
+          insight: res?.insight || null,
+        },
+      ]);
       requestAnimationFrame(scrollToBottom);
     } catch (err) {
       const aiMessage = getAiProviderErrorMessage(err);
@@ -262,6 +270,22 @@ export default function AskAI() {
                           />
                         ) : (
                           <div className="whitespace-pre-wrap">{msg.content}</div>
+                        )}
+                        {msg.role === 'assistant' && Array.isArray(msg.meta?.reasons) && msg.meta.reasons.length > 0 && (
+                          <ul className="mt-2 space-y-1 border-t border-border/60 pt-2 text-xs text-muted-foreground">
+                            {msg.meta.reasons.slice(0, 5).map((reason) => (
+                              <li key={reason.code || reason.label}>
+                                <span className="font-medium text-foreground">{reason.label}</span>
+                                {reason.detail ? ` — ${reason.detail}` : ''}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {msg.role === 'assistant' && msg.meta?.metrics?.period?.revenue != null && (
+                          <p className="mt-2 text-xs text-muted-foreground border-t border-border/60 pt-2">
+                            Revenue {Number(msg.meta.metrics.period.revenue).toLocaleString()} · Profit{' '}
+                            {Number(msg.meta.metrics.period.profit ?? 0).toLocaleString()}
+                          </p>
                         )}
                       </div>
                       {msg.role === 'assistant' && (
