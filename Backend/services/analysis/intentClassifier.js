@@ -1,6 +1,7 @@
 const {
   ANALYSIS_INTENT_IDS,
   FALLBACK_SUGGESTED_QUESTIONS,
+  getFallbackSuggestedQuestions,
 } = require('./intentCatalog');
 
 /**
@@ -8,7 +9,7 @@ const {
  * Returns analysis intents, support/draft routing, or unsupported.
  *
  * @param {string} message
- * @param {{ pageContext?: string }} [options]
+ * @param {{ pageContext?: string, businessType?: string }} [options]
  * @returns {{
  *   intent: string | null,
  *   confidence: number,
@@ -18,19 +19,20 @@ const {
  */
 function classifyIntent(message, options = {}) {
   const text = String(message || '').trim().toLowerCase();
+  const suggestions = getFallbackSuggestedQuestions(options.businessType);
   if (!text) {
     return {
       intent: null,
       confidence: 0,
       route: 'unsupported',
-      suggestedQuestions: FALLBACK_SUGGESTED_QUESTIONS,
+      suggestedQuestions: suggestions,
     };
   }
 
   // Support / how-to — keep Claude path
   if (
     /\b(how do i|how to|where (is|can|do)|help me (set|add|create|find|use)|show me how|navigate|steps to|walk me through)\b/.test(text)
-    || /\b(create an? invoice|record a payment|add an? expense|add a customer|run (a |the )?pos|make a (new )?sale)\b/.test(text)
+    || /\b(create an? invoice|record a payment|add an? expense|add a customer|run (a |the )?pos|make a (new )?sale|create a job|dispense)\b/.test(text)
   ) {
     return { intent: 'support_howto', confidence: 0.85, route: 'support' };
   }
@@ -38,7 +40,7 @@ function classifyIntent(message, options = {}) {
   // Draft / compose — keep Claude path
   if (
     /\b(draft|write|compose|write me|craft)\b/.test(text)
-    && /\b(reminder|message|email|sms|whatsapp|thank[- ]?you|promotional|promo|newsletter|template)\b/.test(text)
+    && /\b(reminder|message|email|sms|whatsapp|thank[- ]?you|promotional|promo|newsletter|template|job[- ]?ready|pickup)\b/.test(text)
   ) {
     return { intent: 'draft_message', confidence: 0.85, route: 'draft' };
   }
@@ -65,7 +67,7 @@ function classifyIntent(message, options = {}) {
 
   // Low stock / restock
   if (
-    /\b(low stock|out of stock|restock|reorder|running low|stock alerts?|what (should|can) i (restock|reorder))\b/.test(text)
+    /\b(low stock|out of stock|restock|reorder|running low|stock alerts?|what (should|can) i (restock|reorder)|drugs? or products are low)\b/.test(text)
     || (/\b(stock|inventory)\b/.test(text) && /\b(low|alert|short|need)\b/.test(text))
   ) {
     return { intent: 'low_stock', confidence: 0.9, route: 'analysis' };
@@ -90,7 +92,7 @@ function classifyIntent(message, options = {}) {
   // Sales today
   if (
     /\b(today|todays)\b/.test(text)
-    && /\b(sales?|sold|revenue|performance|earn(ed|ings)?|take[- ]?home|how much)\b/.test(text)
+    && /\b(sales?|sold|revenue|performance|earn(ed|ings)?|take[- ]?home|how much|did i make)\b/.test(text)
   ) {
     return { intent: 'sales_today', confidence: 0.9, route: 'analysis' };
   }
@@ -106,11 +108,15 @@ function classifyIntent(message, options = {}) {
     return { intent: 'sales_this_month', confidence: 0.88, route: 'analysis' };
   }
 
-  // Performance summary (dashboard-friendly)
+  // Performance summary (dashboard-friendly) — before job phrases so "summarize performance" wins
   if (
     /\b(summarize|summary|overview|how (is|are) (my |the )?business|performance summary|dashboard insight)\b/.test(text)
     || (options.pageContext === 'dashboard' && /\b(summarize|insight|focus|performance)\b/.test(text))
   ) {
+    // Job-pipeline phrasing without performance → leave for support/Anthropic
+    if (/\b(open jobs?|job pipeline|jobs? (still )?need|which jobs)\b/.test(text) && !/\bperformance\b/.test(text)) {
+      return { intent: 'support_howto', confidence: 0.55, route: 'support' };
+    }
     return { intent: 'performance_summary', confidence: 0.82, route: 'analysis' };
   }
 
@@ -119,13 +125,18 @@ function classifyIntent(message, options = {}) {
     return { intent: 'performance_summary', confidence: 0.99, route: 'analysis' };
   }
 
+  // Job / pipeline phrasing (studio) — Anthropic support path until dedicated job metrics exist
+  if (/\b(open jobs?|job pipeline|jobs? (still )?need|which jobs|outstanding jobs?)\b/.test(text)) {
+    return { intent: 'support_howto', confidence: 0.6, route: 'support' };
+  }
+
   // Soft greetings → unsupported with suggestions (avoid Claude round-trip for empty chat)
   if (/^(hi|hello|hey|thanks|thank you|ok|okay)[\s!.]*$/.test(text)) {
     return {
       intent: null,
       confidence: 0.5,
       route: 'unsupported',
-      suggestedQuestions: FALLBACK_SUGGESTED_QUESTIONS,
+      suggestedQuestions: suggestions,
     };
   }
 
@@ -135,7 +146,7 @@ function classifyIntent(message, options = {}) {
       intent: null,
       confidence: 0.4,
       route: 'unsupported',
-      suggestedQuestions: FALLBACK_SUGGESTED_QUESTIONS,
+      suggestedQuestions: suggestions,
     };
   }
 
@@ -143,7 +154,7 @@ function classifyIntent(message, options = {}) {
     intent: null,
     confidence: 0.2,
     route: 'unsupported',
-    suggestedQuestions: FALLBACK_SUGGESTED_QUESTIONS,
+    suggestedQuestions: suggestions,
   };
 }
 

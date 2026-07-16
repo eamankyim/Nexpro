@@ -11,8 +11,7 @@ const { getTopProducts, getTopProductCompare } = require('./metrics/topProducts'
 const { getReceivables } = require('./metrics/receivables');
 const { getLowStock } = require('./metrics/lowStock');
 const {
-  getThisMonthRange,
-  parseSelectedPeriod,
+  resolveAnalysisPeriod,
   getEqualLengthPriorPeriod,
 } = require('./metrics/dates');
 
@@ -63,8 +62,10 @@ async function fetchMetricsForIntent(intent, ctx) {
       return getSalesVsPriorPeriod(ctx);
     case 'why_sales_down': {
       const compare = await getSalesVsPriorPeriod(ctx);
-      const selected = parseSelectedPeriod(ctx.startDate, ctx.endDate, ctx.periodLabel);
-      const currentRange = selected || getThisMonthRange();
+      const currentRange = resolveAnalysisPeriod(
+        { ...ctx, defaultPeriod: 'month' },
+        ctx.now
+      );
       const priorRange = getEqualLengthPriorPeriod(currentRange.start, currentRange.end);
       const topCompare = await getTopProductCompare(ctx, currentRange, priorRange);
       return {
@@ -112,6 +113,7 @@ async function fetchMetricsForIntent(intent, ctx) {
  *   tenantId: string,
  *   shopFilterId?: string|null,
  *   studioLocationFilterId?: string|null,
+ *   period?: string,
  *   startDate?: string,
  *   endDate?: string,
  *   periodLabel?: string,
@@ -123,19 +125,32 @@ async function fetchMetricsForIntent(intent, ctx) {
 async function runAnalysis(message, context = {}) {
   const classification = context.forceIntent && isAnalysisIntent(context.forceIntent)
     ? { intent: context.forceIntent, confidence: 1, route: 'analysis' }
-    : classifyIntent(message, { pageContext: context.pageContext });
+    : classifyIntent(message, {
+      pageContext: context.pageContext,
+      businessType: context.businessType,
+    });
 
   if (classification.route !== 'analysis' || !isAnalysisIntent(classification.intent)) {
     return { route: classification.route, classification };
   }
 
+  const resolvedPeriod = resolveAnalysisPeriod({
+    period: context.period,
+    startDate: context.startDate,
+    endDate: context.endDate,
+    periodLabel: context.periodLabel,
+    defaultPeriod:
+      classification.intent === 'sales_today' ? 'today' : 'month',
+  });
+
   const ctx = {
     tenantId: context.tenantId,
     shopFilterId: context.shopFilterId || null,
     studioLocationFilterId: context.studioLocationFilterId || null,
-    startDate: context.startDate,
-    endDate: context.endDate,
-    periodLabel: context.periodLabel,
+    period: resolvedPeriod.periodKey,
+    startDate: resolvedPeriod.startDate,
+    endDate: resolvedPeriod.endDate,
+    periodLabel: resolvedPeriod.label,
   };
 
   const metrics = await fetchMetricsForIntent(classification.intent, ctx);
@@ -167,6 +182,12 @@ async function runAnalysis(message, context = {}) {
       reasons,
       answerMarkdown,
       insight,
+      extraMeta: {
+        period: resolvedPeriod.periodKey,
+        periodLabel: resolvedPeriod.label,
+        startDate: resolvedPeriod.startDate,
+        endDate: resolvedPeriod.endDate,
+      },
     }),
   };
 }

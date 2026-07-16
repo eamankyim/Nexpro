@@ -5,6 +5,7 @@ type Message = { role: 'user' | 'assistant'; content: string };
 
 type ChatOptions = {
   pageContext?: string;
+  period?: string;
   startDate?: string;
   endDate?: string;
   periodLabel?: string;
@@ -15,6 +16,7 @@ type ChatOptions = {
 type AnalysisOptions = {
   intent?: string;
   pageContext?: string;
+  period?: string;
   startDate?: string;
   endDate?: string;
   periodLabel?: string;
@@ -36,12 +38,16 @@ export const assistantService = {
     const body: {
       messages: Message[];
       pageContext?: string;
+      period?: string;
       startDate?: string;
       endDate?: string;
       periodLabel?: string;
     } = { messages };
     if (options.pageContext) {
       body.pageContext = options.pageContext;
+    }
+    if (options.period) {
+      body.period = options.period;
     }
     if (options.startDate && options.endDate) {
       body.startDate = options.startDate;
@@ -87,6 +93,7 @@ export const assistantService = {
     const body: Record<string, string> = { message };
     if (options.intent) body.intent = options.intent;
     if (options.pageContext) body.pageContext = options.pageContext;
+    if (options.period) body.period = options.period;
     if (options.startDate && options.endDate) {
       body.startDate = options.startDate;
       body.endDate = options.endDate;

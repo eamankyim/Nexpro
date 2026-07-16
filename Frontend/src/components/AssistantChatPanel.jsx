@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, X } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { Send, Loader2, X, MessageSquarePlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -8,13 +8,17 @@ import { showError } from '@/utils/toast';
 import { getAiProviderErrorMessage } from '@/utils/aiProviderErrors';
 import { cn } from '@/lib/utils';
 import { formatAssistantMessage } from '@/utils/assistantMessageFormatter';
+import { useAuth } from '@/context/AuthContext';
+import { getAssistantPromptSets } from '@/constants/assistantPrompts';
 import {
-  ASSISTANT_BUSINESS_PROMPTS,
-  ASSISTANT_DRAFT_PROMPTS,
-  ASSISTANT_SUPPORT_PROMPTS,
-} from '@/constants/assistantPrompts';
+  ASSISTANT_PERIOD_OPTIONS,
+  resolveAssistantPeriod,
+} from '@/utils/assistantPeriod';
+
+const PERIOD_SELECTED = { backgroundColor: '#166534', color: '#fff', borderColor: '#166534' };
 
 function PromptList({ title, prompts, onSelect, loading }) {
+  if (!prompts?.length) return null;
   return (
     <>
       <p className="text-xs font-medium text-foreground pt-1">{title}</p>
@@ -44,12 +48,25 @@ function PromptList({ title, prompts, onSelect, loading }) {
  * Floating ABS Assistant chat panel (web).
  */
 export default function AssistantChatPanel({ open, onOpenChange, pageContext }) {
+  const { activeTenant } = useAuth();
+  const businessType = activeTenant?.businessType || 'printing_press';
+  const shopType = activeTenant?.metadata?.shopType || null;
+
+  const [selectedPeriod, setSelectedPeriod] = useState('today');
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef(null);
   const lastSendAtRef = useRef(0);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const SEND_DEBOUNCE_MS = 800;
+
+  const periodRange = useMemo(() => resolveAssistantPeriod(selectedPeriod), [selectedPeriod]);
+  const promptSets = useMemo(
+    () => getAssistantPromptSets({ businessType, shopType }),
+    [businessType, shopType]
+  );
 
   const scrollToBottom = useCallback(() => {
     if (scrollRef.current) {
@@ -74,44 +91,135 @@ export default function AssistantChatPanel({ open, onOpenChange, pageContext }) 
     }
   }, [open, onOpenChange]);
 
-  const handleSend = useCallback(async (text) => {
-    const trimmed = (text || inputValue).trim();
-    if (!trimmed || loading) return;
+  const contextOptions = useMemo(
+    () => ({
+      pageContext,
+      period: periodRange.period,
+      startDate: periodRange.startDate,
+      endDate: periodRange.endDate,
+      periodLabel: periodRange.periodLabel,
+    }),
+    [pageContext, periodRange]
+  );
 
-    const now = Date.now();
-    if (now - lastSendAtRef.current < SEND_DEBOUNCE_MS) return;
-    lastSendAtRef.current = now;
+  const handleSend = useCallback(
+    async (text) => {
+      const trimmed = (text || inputValue).trim();
+      if (!trimmed || loading) return;
 
-    const userMessage = { role: 'user', content: trimmed };
-    setMessages((prev) => [...prev, userMessage]);
-    setInputValue('');
-    setLoading(true);
+      const now = Date.now();
+      if (now - lastSendAtRef.current < SEND_DEBOUNCE_MS) return;
+      lastSendAtRef.current = now;
 
-    try {
-      const conversation = [...messages, userMessage];
-      const result = await assistantService.chat(conversation, { pageContext });
-      const assistantContent = result?.message ?? result?.error ?? 'No response from the assistant.';
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: assistantContent },
-      ]);
-      scrollToBottom();
-    } catch (err) {
-      const aiMessage = getAiProviderErrorMessage(err);
-      if (aiMessage) {
+      const userMessage = { role: 'user', content: trimmed };
+      const conversation = [...messagesRef.current, userMessage];
+      setMessages(conversation);
+      setInputValue('');
+      setLoading(true);
+
+      try {
+        const result = await assistantService.chat(conversation, contextOptions);
+        const assistantContent = result?.message ?? result?.error ?? 'No response from the assistant.';
         setMessages((prev) => [
           ...prev,
-          { role: 'assistant', content: aiMessage },
+          {
+            role: 'assistant',
+            content: assistantContent,
+            meta: result?.meta || null,
+          },
         ]);
         scrollToBottom();
-      } else {
-        showError(err, 'Failed to get a response. Please try again.');
-        setMessages((prev) => prev.slice(0, -1));
+      } catch (err) {
+        const aiMessage = getAiProviderErrorMessage(err);
+        if (aiMessage) {
+          setMessages((prev) => [...prev, { role: 'assistant', content: aiMessage }]);
+          scrollToBottom();
+        } else {
+          showError(err, 'Failed to get a response. Please try again.');
+          setMessages((prev) => prev.slice(0, -1));
+        }
+      } finally {
+        setLoading(false);
       }
-    } finally {
-      setLoading(false);
-    }
-  }, [inputValue, loading, messages, pageContext, scrollToBottom]);
+    },
+    [inputValue, loading, contextOptions, scrollToBottom]
+  );
+
+  const refreshLastAnalysis = useCallback(
+    async (range) => {
+      const current = messagesRef.current;
+      let lastAssistantIdx = -1;
+      for (let i = current.length - 1; i >= 0; i -= 1) {
+        if (
+          current[i].role === 'assistant' &&
+          (current[i].meta?.source === 'analysis_engine' || current[i].meta?.intent)
+        ) {
+          lastAssistantIdx = i;
+          break;
+        }
+      }
+      if (lastAssistantIdx < 0) return;
+
+      let lastUserQuestion = '';
+      for (let i = lastAssistantIdx - 1; i >= 0; i -= 1) {
+        if (current[i].role === 'user') {
+          lastUserQuestion = current[i].content;
+          break;
+        }
+      }
+      if (!lastUserQuestion) return;
+
+      const intent = current[lastAssistantIdx].meta?.intent || undefined;
+      setLoading(true);
+      try {
+        const res = await assistantService.askAnalysis(lastUserQuestion, {
+          intent,
+          period: range.period,
+          startDate: range.startDate,
+          endDate: range.endDate,
+          periodLabel: range.periodLabel,
+          pageContext,
+        });
+        const content = res?.message || res?.answerMarkdown || 'No response from assistant.';
+        const prefix = `For **${range.periodLabel}**:\n\n`;
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: content.startsWith('For **') ? content : `${prefix}${content}`,
+            meta: {
+              ...(res?.meta || {}),
+              source: 'analysis_engine',
+              intent: res?.intent || intent || res?.meta?.intent,
+              periodRefresh: true,
+            },
+          },
+        ]);
+        scrollToBottom();
+      } catch (err) {
+        const aiMessage = getAiProviderErrorMessage(err);
+        if (aiMessage) {
+          setMessages((prev) => [...prev, { role: 'assistant', content: aiMessage }]);
+        } else {
+          showError(err, 'Failed to refresh for the selected period');
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    [pageContext, scrollToBottom]
+  );
+
+  const handlePeriodSelect = useCallback(
+    (periodKey) => {
+      if (loading || periodKey === selectedPeriod) return;
+      const range = resolveAssistantPeriod(periodKey);
+      setSelectedPeriod(periodKey);
+      if (messagesRef.current.length === 0) return;
+      refreshLastAnalysis(range);
+    },
+    [loading, selectedPeriod, refreshLastAnalysis]
+  );
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -123,6 +231,12 @@ export default function AssistantChatPanel({ open, onOpenChange, pageContext }) 
   const handleSuggestionClick = (prompt) => {
     handleSend(prompt);
   };
+
+  const handleNewChat = useCallback(() => {
+    if (loading) return;
+    setMessages([]);
+    setInputValue('');
+  }, [loading]);
 
   if (!open) return null;
 
@@ -144,24 +258,66 @@ export default function AssistantChatPanel({ open, onOpenChange, pageContext }) 
           'flex flex-col p-0 gap-0'
         )}
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 shrink-0">
-          <h2 className="text-base font-semibold">ABS Assistant</h2>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label="Close"
-            className="h-8 w-8"
-            onClick={() => onOpenChange(false)}
-          >
-            <X className="h-4 w-4" />
-          </Button>
+        <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-200 shrink-0">
+          <h2 className="text-base font-semibold truncate">ABS Assistant</h2>
+          <div className="flex items-center gap-1 shrink-0">
+            {messages.length > 0 && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label="New chat"
+                className="h-8 px-2 text-xs"
+                onClick={handleNewChat}
+                disabled={loading}
+              >
+                <MessageSquarePlus className="h-3.5 w-3.5 mr-1" />
+                New chat
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Close"
+              className="h-8 w-8"
+              onClick={() => onOpenChange(false)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
 
-        <ScrollArea
-          ref={scrollRef}
-          className="flex-1 min-h-0 px-4 py-3"
+        <div
+          className="px-4 py-2 border-b border-gray-200 shrink-0 overflow-x-auto"
+          role="group"
+          aria-label="Analysis period"
         >
+          <div className="flex gap-2">
+            {ASSISTANT_PERIOD_OPTIONS.map((opt) => {
+              const selected = selectedPeriod === opt.key;
+              return (
+                <button
+                  key={opt.key}
+                  type="button"
+                  disabled={loading}
+                  onClick={() => handlePeriodSelect(opt.key)}
+                  className={cn(
+                    'shrink-0 rounded-md border px-2.5 py-1 text-xs font-medium',
+                    'disabled:opacity-50',
+                    !selected && 'border-gray-200 bg-background text-foreground'
+                  )}
+                  style={selected ? PERIOD_SELECTED : undefined}
+                  aria-pressed={selected}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <ScrollArea ref={scrollRef} className="flex-1 min-h-0 px-4 py-3">
           {messages.length === 0 ? (
             <div className="space-y-4">
               <p className="text-sm text-gray-500">
@@ -169,19 +325,19 @@ export default function AssistantChatPanel({ open, onOpenChange, pageContext }) 
               </p>
               <PromptList
                 title="Business insights"
-                prompts={ASSISTANT_BUSINESS_PROMPTS}
+                prompts={promptSets.business}
                 onSelect={handleSuggestionClick}
                 loading={loading}
               />
               <PromptList
                 title="ABS support"
-                prompts={ASSISTANT_SUPPORT_PROMPTS}
+                prompts={promptSets.support}
                 onSelect={handleSuggestionClick}
                 loading={loading}
               />
               <PromptList
                 title="Draft messages"
-                prompts={ASSISTANT_DRAFT_PROMPTS}
+                prompts={promptSets.draft}
                 onSelect={handleSuggestionClick}
                 loading={loading}
               />
@@ -191,10 +347,7 @@ export default function AssistantChatPanel({ open, onOpenChange, pageContext }) 
               {messages.map((msg, i) => (
                 <div
                   key={i}
-                  className={cn(
-                    'flex',
-                    msg.role === 'user' ? 'justify-end' : 'justify-start'
-                  )}
+                  className={cn('flex', msg.role === 'user' ? 'justify-end' : 'justify-start')}
                 >
                   <div
                     className={cn(
@@ -228,7 +381,9 @@ export default function AssistantChatPanel({ open, onOpenChange, pageContext }) 
         </ScrollArea>
 
         <div className="px-4 py-3 border-t border-gray-200 space-y-2 shrink-0">
-          <p className="text-xs text-gray-400">AI predictions are estimates only.</p>
+          <p className="text-xs text-gray-400">
+            Business numbers come from your workspace data. Drafts are guidance.
+          </p>
           <div className="flex gap-2">
             <Input
               value={inputValue}

@@ -662,7 +662,7 @@ exports.chat = async (req, res, next) => {
       });
     }
 
-    const { messages, pageContext, startDate, endDate, periodLabel } = req.body;
+    const { messages, pageContext, period, startDate, endDate, periodLabel } = req.body;
     if (!Array.isArray(messages) || messages.length === 0) {
       logAssistantTiming({ outcome: 'validation_error' });
       return res.status(400).json({
@@ -689,6 +689,7 @@ exports.chat = async (req, res, next) => {
     // Analysis path first: owned engine needs no Anthropic key / billing circuit
     const analysisClassification = classifyIntent(lastMessage.content, {
       pageContext: typeof pageContext === 'string' ? pageContext : undefined,
+      businessType: req.tenant?.businessType,
     });
 
     if (analysisClassification.route === 'analysis') {
@@ -698,10 +699,12 @@ exports.chat = async (req, res, next) => {
         tenantId: req.tenantId,
         shopFilterId: req.shopFilterId || null,
         studioLocationFilterId: req.studioLocationFilterId || null,
+        period: typeof period === 'string' ? period : undefined,
         startDate: typeof startDate === 'string' ? startDate : undefined,
         endDate: typeof endDate === 'string' ? endDate : undefined,
         periodLabel: typeof periodLabel === 'string' ? periodLabel : undefined,
         pageContext: typeof pageContext === 'string' ? pageContext : undefined,
+        businessType: req.tenant?.businessType,
       });
       timings.contextMs = toDurationMs(contextStart);
       timings.providerMs = 0;
@@ -747,6 +750,7 @@ exports.chat = async (req, res, next) => {
     const contextOptions = {
       shopFilterId: req.shopFilterId || null,
       studioLocationFilterId: req.studioLocationFilterId || null,
+      period: typeof period === 'string' ? period : undefined,
       startDate: typeof startDate === 'string' ? startDate : undefined,
       endDate: typeof endDate === 'string' ? endDate : undefined,
       periodLabel: typeof periodLabel === 'string' ? periodLabel : undefined,

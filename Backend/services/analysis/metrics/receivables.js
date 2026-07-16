@@ -5,10 +5,16 @@ const { roundMoney } = require('../profitFormulas');
 
 /**
  * Receivables / who-owes metrics.
+ *
+ * Semantics: point-in-time outstanding balances (as of now), not invoices created
+ * in the Ask AI period. Period chips still refresh this snapshot and label it
+ * clearly ("As of today…") so users aren't misled into thinking week/month
+ * filters open AR by invoice date.
+ *
  * @param {Object} ctx
  */
 async function getReceivables(ctx) {
-  const today = new Date();
+  const today = ctx.now instanceof Date ? ctx.now : new Date();
   const invoiceWhereBase = { tenantId: ctx.tenantId };
   if (ctx.studioLocationFilterId) {
     invoiceWhereBase.studioLocationId = ctx.studioLocationFilterId;
@@ -85,6 +91,10 @@ async function getReceivables(ctx) {
         ? Number(((overdueOutstanding / totalOutstanding) * 100).toFixed(2))
         : 0,
     topDebtors,
+    // Point-in-time: period chips do not date-filter open balances
+    periodSemantics: 'point_in_time',
+    asOfLabel: 'today',
+    selectedPeriodLabel: ctx.periodLabel || null,
   };
 }
 

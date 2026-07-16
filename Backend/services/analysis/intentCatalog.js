@@ -109,15 +109,35 @@ const ANALYSIS_INTENTS = [
 
 const ANALYSIS_INTENT_IDS = new Set(ANALYSIS_INTENTS.map((i) => i.id));
 
-/** Suggested chips when analysis cannot answer. */
+/** Suggested chips when analysis cannot answer (retail default). */
 const FALLBACK_SUGGESTED_QUESTIONS = [
-  "How much did I sell today?",
+  'How much did I sell today?',
   'How are sales this month?',
   'Who owes me money?',
   'What are my top products?',
   'What should I restock?',
   'Why are sales down?',
 ];
+
+const FALLBACK_SUGGESTED_QUESTIONS_STUDIO = [
+  'How much revenue did I make today?',
+  'How is revenue this month?',
+  'Who owes me money?',
+  'Summarize performance',
+  'Why is revenue down?',
+  'Compare this period to the previous period',
+];
+
+/**
+ * @param {string|null|undefined} businessType
+ * @returns {string[]}
+ */
+function getFallbackSuggestedQuestions(businessType) {
+  const studio = ['printing_press', 'mechanic', 'barber', 'salon', 'studio'].includes(
+    businessType || ''
+  );
+  return studio ? FALLBACK_SUGGESTED_QUESTIONS_STUDIO : FALLBACK_SUGGESTED_QUESTIONS;
+}
 
 /**
  * @param {string} intentId
@@ -131,5 +151,7 @@ module.exports = {
   ANALYSIS_INTENTS,
   ANALYSIS_INTENT_IDS,
   FALLBACK_SUGGESTED_QUESTIONS,
+  FALLBACK_SUGGESTED_QUESTIONS_STUDIO,
+  getFallbackSuggestedQuestions,
   getIntentById,
 };

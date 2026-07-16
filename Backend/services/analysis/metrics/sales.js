@@ -8,10 +8,8 @@ const {
   percentChange,
 } = require('../profitFormulas');
 const {
-  getTodayRange,
-  getThisMonthRange,
   getEqualLengthPriorPeriod,
-  parseSelectedPeriod,
+  resolveAnalysisPeriod,
   countInclusiveDays,
 } = require('./dates');
 
@@ -181,29 +179,39 @@ async function fetchPeriodSnapshot({
 }
 
 /**
- * Sales today metrics.
+ * Sales for today — or the Ask AI selected period when dates/period are provided.
  */
 async function getSalesToday(ctx) {
   const meta = await resolveTenantMeta(ctx.tenantId);
-  const range = getTodayRange();
+  const range = resolveAnalysisPeriod(
+    { ...ctx, defaultPeriod: 'today' },
+    ctx.now
+  );
   const snapshot = await fetchPeriodSnapshot({
     ...ctx,
     ...meta,
-    ...range,
+    start: range.start,
+    end: range.end,
+    label: range.label,
   });
   return { period: snapshot };
 }
 
 /**
- * Sales this month metrics.
+ * Sales this month — or the Ask AI selected period when dates/period are provided.
  */
 async function getSalesThisMonth(ctx) {
   const meta = await resolveTenantMeta(ctx.tenantId);
-  const range = getThisMonthRange();
+  const range = resolveAnalysisPeriod(
+    { ...ctx, defaultPeriod: 'month' },
+    ctx.now
+  );
   const snapshot = await fetchPeriodSnapshot({
     ...ctx,
     ...meta,
-    ...range,
+    start: range.start,
+    end: range.end,
+    label: range.label,
   });
   return { period: snapshot };
 }
@@ -213,8 +221,10 @@ async function getSalesThisMonth(ctx) {
  */
 async function getSalesVsPriorPeriod(ctx) {
   const meta = await resolveTenantMeta(ctx.tenantId);
-  const selected = parseSelectedPeriod(ctx.startDate, ctx.endDate, ctx.periodLabel);
-  const currentRange = selected || getThisMonthRange();
+  const currentRange = resolveAnalysisPeriod(
+    { ...ctx, defaultPeriod: 'month' },
+    ctx.now
+  );
   const priorRange = getEqualLengthPriorPeriod(currentRange.start, currentRange.end);
 
   const [current, prior] = await Promise.all([

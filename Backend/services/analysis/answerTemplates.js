@@ -3,6 +3,7 @@ const { FALLBACK_SUGGESTED_QUESTIONS } = require('./intentCatalog');
 
 /**
  * Templated answers from metrics (+ optional reasons). No LLM rephrase.
+ * Tone: helpful colleague — natural lead sentence, then optional compact detail.
  */
 
 function money(n) {
@@ -15,125 +16,198 @@ function pct(n) {
   return `${sign}${formatDecimal(v, 1)}%`;
 }
 
-function renderPeriodBlock(period, { showCogs = false } = {}) {
+/**
+ * Compact metric lines (secondary to the conversational lead).
+ * @param {Object} period
+ * @param {{ showCogs?: boolean }} [opts]
+ * @returns {string}
+ */
+function renderCompactMetrics(period, { showCogs = false } = {}) {
   if (!period) return '';
   const lines = [
-    `**${period.label || 'Period'}**`,
     `- Revenue: ${money(period.revenue)}`,
     `- Expenses: ${money(period.expenses)}${showCogs && period.isRetail ? ` (operating ${money(period.operatingExpenses)} + COGS ${money(period.cogs)})` : ''}`,
     `- Profit: ${money(period.profit)}`,
   ];
   if (period.saleCount != null) {
-    lines.push(`- Transactions: ${period.saleCount} (AOV ${money(period.aov)})`);
+    lines.push(`- Transactions: ${period.saleCount} (avg ${money(period.aov)} each)`);
   }
   return lines.join('\n');
 }
 
-function templateSalesToday(metrics) {
+function templateSalesForPeriod(metrics) {
   const p = metrics.period;
+  const label = p?.label || 'This period';
+  if (!(p?.revenue > 0)) {
+    return `No completed sales for **${label}** yet. Once sales come in, I'll summarize revenue and profit here.`;
+  }
+  const txnBit =
+    p.saleCount != null
+      ? ` across **${p.saleCount}** transaction${p.saleCount === 1 ? '' : 's'}`
+      : '';
   return [
-    `### Today's sales`,
+    `For **${label}** you've brought in **${money(p.revenue)}** in revenue${txnBit}, with **${money(p.profit)}** profit after expenses.`,
     '',
-    renderPeriodBlock(p, { showCogs: true }),
-    '',
-    p.revenue > 0
-      ? `You made **${money(p.revenue)}** in revenue today with **${money(p.profit)}** profit.`
-      : 'No completed sales recorded for today yet.',
+    'At a glance:',
+    renderCompactMetrics(p, { showCogs: true }),
   ].join('\n');
 }
 
+function templateSalesToday(metrics) {
+  return templateSalesForPeriod(metrics);
+}
+
 function templateSalesThisMonth(metrics) {
-  const p = metrics.period;
-  return [
-    `### This month's sales`,
-    '',
-    renderPeriodBlock(p, { showCogs: true }),
-    '',
-    `Month-to-date revenue is **${money(p.revenue)}** with profit of **${money(p.profit)}**.`,
-  ].join('\n');
+  return templateSalesForPeriod(metrics);
+}
+
+function describeChange(label, changePct) {
+  const v = Number(changePct) || 0;
+  if (Math.abs(v) < 0.5) return `${label} is about flat`;
+  if (v > 0) return `${label} is up **${pct(v)}**`;
+  return `${label} is down **${pct(v)}**`;
 }
 
 function templateSalesVsPrior(metrics) {
   const { current, prior, changes } = metrics;
+  const rev = describeChange('Revenue', changes.revenuePct);
+  const profit = describeChange('profit', changes.profitPct);
+
   return [
-    `### Sales vs prior period`,
+    `Comparing **${current.label || 'this period'}** to **${prior.label || 'the prior period'}**: ${rev}, and ${profit}.`,
     '',
-    renderPeriodBlock(current, { showCogs: true }),
+    `**${current.label || 'Current'}** — revenue ${money(current.revenue)}, profit ${money(current.profit)}.`,
+    `**${prior.label || 'Prior'}** — revenue ${money(prior.revenue)}, profit ${money(prior.profit)}.`,
     '',
-    renderPeriodBlock(prior, { showCogs: true }),
-    '',
-    `**Changes:** revenue ${pct(changes.revenuePct)}, profit ${pct(changes.profitPct)}, transactions ${pct(changes.saleCountPct)}, AOV ${pct(changes.aovPct)}.`,
+    `Also: transactions ${pct(changes.saleCountPct)}, average order ${pct(changes.aovPct)}.`,
   ].join('\n');
+}
+
+/**
+ * Plain-language sentence for a sales-drop reason (uses structured reason fields).
+ * @param {{ code?: string, label?: string, detail?: string }} reason
+ * @returns {string}
+ */
+function reasonInPlainLanguage(reason) {
+  const code = reason?.code || '';
+  const detail = reason?.detail || '';
+  switch (code) {
+    case 'lower_volume':
+    case 'slightly_lower_volume':
+      return detail || 'Fewer customers bought than in the prior period.';
+    case 'lower_aov':
+    case 'aov_drag':
+      return detail || 'Customers spent less per order on average.';
+    case 'top_product_decline':
+      return detail || 'Your former top seller brought in less than before.';
+    case 'shorter_period':
+      return detail || 'This period has fewer days, so totals alone can look worse.';
+    case 'lower_daily_pace':
+      return detail || 'Sales per day are running slower than before.';
+    case 'expenses_up_while_sales_down':
+      return detail || 'Costs rose while sales fell, which squeezes profit harder.';
+    case 'not_down':
+      return detail || 'Sales are not down versus the prior period.';
+    default:
+      return detail || reason?.label || 'Revenue declined without a single clear driver.';
+  }
 }
 
 function templateWhySalesDown(metrics, reasonsResult) {
   const { current, prior, changes } = metrics.compare || metrics;
   const reasons = reasonsResult?.reasons || [];
+  const absPct = Math.abs(Number(changes.revenuePct) || 0).toFixed(1);
+
   const headline = reasonsResult?.isDown
-    ? `Revenue is **down ${Math.abs(changes.revenuePct).toFixed(1)}%** vs the prior period.`
-    : 'Sales are not down vs the prior period.';
+    ? `Revenue is down about **${absPct}%** versus **${prior.label || 'the prior period'}** — here's what stands out from your data.`
+    : `Good news: sales are **not** down versus **${prior.label || 'the prior period'}**.`;
 
-  const reasonLines = reasons.map((r, i) => `${i + 1}. **${r.label}** — ${r.detail}`);
+  const reasonLines = reasons.map((r, i) => `${i + 1}. ${reasonInPlainLanguage(r)}`);
 
-  return [
-    `### Why sales look down`,
-    '',
+  const body = [
     headline,
     '',
-    renderPeriodBlock(current),
-    '',
-    renderPeriodBlock(prior),
-    '',
-    '**Likely drivers:**',
-    ...reasonLines,
-  ].join('\n');
+    `This period: **${money(current.revenue)}** revenue and **${money(current.profit)}** profit.`,
+    `Prior period: **${money(prior.revenue)}** revenue and **${money(prior.profit)}** profit.`,
+  ];
+
+  if (reasonLines.length > 0) {
+    body.push('', reasonsResult?.isDown ? "What's driving it:" : 'Context:', ...reasonLines);
+  }
+
+  return body.join('\n');
 }
 
 function templateTopProducts(metrics) {
   if (!metrics.isRetail) {
-    return '### Top products\n\nTop product breakdown is available for shop and pharmacy workspaces.';
+    return 'Top product breakdown is available for shop and pharmacy workspaces. For this business type, try asking about sales or receivables instead.';
   }
   const products = metrics.products || [];
   if (products.length === 0) {
-    return `### Top products\n\nNo product sales found for **${metrics.periodLabel}**.`;
+    return `I didn't find product sales for **${metrics.periodLabel}**. Once items sell, I'll rank them here.`;
   }
+  const top = products[0];
   const lines = products.map(
     (p, i) => `${i + 1}. **${p.productName}** — ${money(p.totalRevenue)} (${formatDecimal(p.totalQuantity, 0)} units)`
   );
-  return [`### Top products (${metrics.periodLabel})`, '', ...lines].join('\n');
+  return [
+    `Your best seller for **${metrics.periodLabel}** is **${top.productName}** at **${money(top.totalRevenue)}**. Here's the full ranking:`,
+    '',
+    ...lines,
+  ].join('\n');
 }
 
 function templateReceivables(metrics, { focusDebtors = false } = {}) {
-  const lines = [
-    focusDebtors ? '### Who owes you' : '### Receivables',
-    '',
-    `- Outstanding: **${money(metrics.totalOutstanding)}** across ${metrics.outstandingInvoiceCount} invoice(s)`,
-    `- Overdue: **${money(metrics.overdueOutstanding)}** (${formatDecimal(metrics.overdueRatioPercent, 1)}% of outstanding)`,
-  ];
+  const outstanding = metrics.totalOutstanding || 0;
+  const overdue = metrics.overdueOutstanding || 0;
+  const count = metrics.outstandingInvoiceCount || 0;
+  // Receivables are point-in-time outstanding, not filtered by the period chip range.
+  const asOfNote =
+    'As of today (open balances — not filtered by the period chip):';
+
+  if (outstanding <= 0) {
+    return focusDebtors
+      ? `${asOfNote} nobody owes you right now — there are no open customer balances.`
+      : `${asOfNote} you're all clear on receivables — nothing outstanding.`;
+  }
+
+  const lead = focusDebtors
+    ? `${asOfNote} customers currently owe you **${money(outstanding)}** across **${count}** open invoice${count === 1 ? '' : 's'}.`
+    : `${asOfNote} you have **${money(outstanding)}** outstanding across **${count}** invoice${count === 1 ? '' : 's'}.`;
+
+  const lines = [lead];
+  if (overdue > 0) {
+    lines.push(
+      `Of that, **${money(overdue)}** is overdue (${formatDecimal(metrics.overdueRatioPercent, 1)}% of outstanding) — worth following up soon.`
+    );
+  } else {
+    lines.push('None of that looks overdue yet.');
+  }
+
   const debtors = metrics.topDebtors || [];
   if (debtors.length > 0) {
-    lines.push('', '**Top balances:**');
+    lines.push('', 'Largest balances:');
     debtors.slice(0, 5).forEach((d, i) => {
       lines.push(`${i + 1}. ${d.customerName} — ${money(d.outstanding)}`);
     });
-  } else {
-    lines.push('', 'No open customer balances right now.');
   }
   return lines.join('\n');
 }
 
 function templateLowStock(metrics) {
   if (!metrics.isRetail) {
-    return '### Low stock\n\nStock alerts are available for shop and pharmacy workspaces.';
+    return 'Stock alerts are available for shop and pharmacy workspaces.';
   }
   if (!metrics.lowStockCount) {
-    return '### Low stock\n\nNo products are at or below reorder level.';
+    return "Stock looks healthy — nothing is at or below reorder level right now.";
   }
+  const n = metrics.lowStockCount;
   const lines = (metrics.products || []).map(
-    (p) => `- **${p.name}**: ${formatDecimal(p.quantityOnHand, 0)} ${p.unit || ''} (reorder at ${formatDecimal(p.reorderLevel, 0)})`
+    (p) =>
+      `- **${p.name}**: ${formatDecimal(p.quantityOnHand, 0)} ${p.unit || ''} left (reorder at ${formatDecimal(p.reorderLevel, 0)})`
   );
   return [
-    `### Low stock (${metrics.lowStockCount} item${metrics.lowStockCount === 1 ? '' : 's'})`,
+    `**${n}** product${n === 1 ? '' : 's'} ${n === 1 ? 'is' : 'are'} running low — restock soon to avoid missed sales:`,
     '',
     ...lines,
   ].join('\n');
@@ -141,29 +215,46 @@ function templateLowStock(metrics) {
 
 function templatePerformanceSummary(metrics) {
   const { current, prior, changes, lowStockCount, receivables } = metrics;
+  const revPct = Number(changes.revenuePct) || 0;
   const direction =
-    changes.revenuePct > 5 ? 'up' : changes.revenuePct < -5 ? 'down' : 'steady';
-  const title =
-    direction === 'up'
-      ? 'Performance is trending up'
-      : direction === 'down'
-        ? 'Performance needs attention'
-        : 'Performance looks steady';
+    revPct > 5 ? 'up' : revPct < -5 ? 'down' : 'steady';
 
-  const lines = [
-    `### ${title}`,
-    '',
-    `${current.label}: revenue **${money(current.revenue)}**, profit **${money(current.profit)}** (${pct(changes.revenuePct)} vs prior).`,
-  ];
+  let lead;
+  if (direction === 'up') {
+    lead = `Here's a quick read on **${current.label || 'this period'}**: things are trending up — revenue is **${money(current.revenue)}** (${pct(revPct)} vs prior), with **${money(current.profit)}** profit.`;
+  } else if (direction === 'down') {
+    lead = `Here's a quick read on **${current.label || 'this period'}**: revenue needs attention — you're at **${money(current.revenue)}** (${pct(revPct)} vs prior), with **${money(current.profit)}** profit.`;
+  } else {
+    lead = `Here's a quick read on **${current.label || 'this period'}**: performance looks steady — revenue **${money(current.revenue)}** and profit **${money(current.profit)}** (${pct(revPct)} vs prior).`;
+  }
+
+  const lines = [lead];
+
+  if (prior) {
+    lines.push(`For context, the prior period brought in ${money(prior.revenue)} revenue.`);
+  }
   if (receivables?.totalOutstanding > 0) {
-    lines.push(`Outstanding receivables: ${money(receivables.totalOutstanding)}.`);
+    lines.push(
+      `You still have **${money(receivables.totalOutstanding)}** in outstanding receivables to collect.`
+    );
   }
   if (lowStockCount > 0) {
-    lines.push(`${lowStockCount} product(s) are low on stock.`);
+    lines.push(
+      `Also, **${lowStockCount}** product${lowStockCount === 1 ? ' is' : 's are'} low on stock.`
+    );
   }
-  if (prior) {
-    lines.push('', `Prior period revenue was ${money(prior.revenue)}.`);
+
+  lines.push(
+    '',
+    'Snapshot:',
+    `- Revenue: ${money(current.revenue)}`,
+    `- Expenses: ${money(current.expenses)}`,
+    `- Profit: ${money(current.profit)}`
+  );
+  if (current.saleCount != null) {
+    lines.push(`- Transactions: ${current.saleCount}`);
   }
+
   return lines.join('\n');
 }
 

@@ -1,9 +1,6 @@
 const { sequelize } = require('../../../config/database');
 const { resolveTenantMeta } = require('./sales');
-const {
-  getThisMonthRange,
-  parseSelectedPeriod,
-} = require('./dates');
+const { resolveAnalysisPeriod } = require('./dates');
 const { roundMoney } = require('../profitFormulas');
 
 /**
@@ -13,8 +10,10 @@ const { roundMoney } = require('../profitFormulas');
  */
 async function getTopProducts(ctx) {
   const meta = await resolveTenantMeta(ctx.tenantId);
-  const selected = parseSelectedPeriod(ctx.startDate, ctx.endDate, ctx.periodLabel);
-  const range = selected || getThisMonthRange();
+  const range = resolveAnalysisPeriod(
+    { ...ctx, defaultPeriod: 'month' },
+    ctx.now
+  );
 
   if (!meta.isRetail) {
     return {

@@ -28,4 +28,5 @@ module.exports = {
   isRetailBusinessType,
   roundMoney,
   percentChange,
+  getFallbackSuggestedQuestions: require('./intentCatalog').getFallbackSuggestedQuestions,
 };

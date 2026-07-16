@@ -50,8 +50,8 @@ function buildSalesDropReasons(input = {}) {
       label: 'Sales are not down',
       detail:
         revenueChangePct > 0
-          ? `Revenue is up ${Math.abs(revenueChangePct).toFixed(1)}% vs the prior period.`
-          : 'Revenue is flat vs the prior period.',
+          ? `Revenue is actually up ${Math.abs(revenueChangePct).toFixed(1)}% versus the prior period.`
+          : 'Revenue is about flat versus the prior period.',
       severity: 'info',
     });
     return { isDown: false, revenueChangePct, reasons };
@@ -66,15 +66,15 @@ function buildSalesDropReasons(input = {}) {
   if (dayDiff < 0 && perDayPct > -5 && revenueChangePct < -5) {
     reasons.push({
       code: 'shorter_period',
-      label: 'Fewer days in the current period',
-      detail: `Current period has ${current.dayCount} day(s) vs ${prior.dayCount} before. Daily average revenue is ${perDayPct >= 0 ? 'stable or up' : `down ${Math.abs(perDayPct).toFixed(1)}%`} — totals alone may overstate the drop.`,
+      label: 'Fewer days so far',
+      detail: `This period has ${current.dayCount} day(s) vs ${prior.dayCount} before, so totals alone can look worse. Daily average revenue is ${perDayPct >= 0 ? 'holding steady or up' : `down ${Math.abs(perDayPct).toFixed(1)}%`}.`,
       severity: 'medium',
     });
   } else if (perDayPct <= -8) {
     reasons.push({
       code: 'lower_daily_pace',
-      label: 'Lower daily sales pace',
-      detail: `Revenue per day is down ${Math.abs(perDayPct).toFixed(1)}% (${formatMoney(current.revenuePerDay)}/day vs ${formatMoney(prior.revenuePerDay)}/day).`,
+      label: 'Slower daily pace',
+      detail: `You're selling less each day — about ${formatMoney(current.revenuePerDay)}/day vs ${formatMoney(prior.revenuePerDay)}/day before (${Math.abs(perDayPct).toFixed(1)}% slower).`,
       severity: 'high',
     });
   }
@@ -82,15 +82,15 @@ function buildSalesDropReasons(input = {}) {
   if (volumePct <= -8) {
     reasons.push({
       code: 'lower_volume',
-      label: 'Fewer transactions',
-      detail: `Sale/invoice count is down ${Math.abs(volumePct).toFixed(1)}% (${current.saleCount} vs ${prior.saleCount}).`,
+      label: 'Fewer customers bought',
+      detail: `Fewer customers bought — ${current.saleCount} transactions vs ${prior.saleCount} before (${Math.abs(volumePct).toFixed(1)}% fewer).`,
       severity: 'high',
     });
   } else if (volumePct < 0) {
     reasons.push({
       code: 'slightly_lower_volume',
-      label: 'Slightly fewer transactions',
-      detail: `Transaction count slipped ${Math.abs(volumePct).toFixed(1)}% (${current.saleCount} vs ${prior.saleCount}).`,
+      label: 'Slightly fewer purchases',
+      detail: `A bit fewer purchases came through — ${current.saleCount} vs ${prior.saleCount} (${Math.abs(volumePct).toFixed(1)}% fewer).`,
       severity: 'medium',
     });
   }
@@ -98,15 +98,15 @@ function buildSalesDropReasons(input = {}) {
   if (aovPct <= -8) {
     reasons.push({
       code: 'lower_aov',
-      label: 'Lower average order value',
-      detail: `Average order value is down ${Math.abs(aovPct).toFixed(1)}% (${formatMoney(current.aov)} vs ${formatMoney(prior.aov)}).`,
+      label: 'Smaller average purchase',
+      detail: `Customers spent less per order on average — ${formatMoney(current.aov)} vs ${formatMoney(prior.aov)} (${Math.abs(aovPct).toFixed(1)}% lower).`,
       severity: 'high',
     });
   } else if (aovPct < 0 && volumePct >= 0) {
     reasons.push({
       code: 'aov_drag',
-      label: 'AOV is dragging totals',
-      detail: `Volume held up, but average order value is down ${Math.abs(aovPct).toFixed(1)}%.`,
+      label: 'Smaller basket sizes',
+      detail: `Purchase count held up, but people spent less each time (average order down ${Math.abs(aovPct).toFixed(1)}%).`,
       severity: 'medium',
     });
   }
@@ -116,8 +116,8 @@ function buildSalesDropReasons(input = {}) {
     if (productPct <= -10) {
       reasons.push({
         code: 'top_product_decline',
-        label: 'Top product declined',
-        detail: `"${topProduct.priorName}" revenue is down ${Math.abs(productPct).toFixed(1)}% (${formatMoney(topProduct.currentRevenue)} vs ${formatMoney(topProduct.priorRevenue)}).`,
+        label: 'Top seller slowed',
+        detail: `Your former top seller "${topProduct.priorName}" brought in less — ${formatMoney(topProduct.currentRevenue)} vs ${formatMoney(topProduct.priorRevenue)} (${Math.abs(productPct).toFixed(1)}% down).`,
         severity: 'high',
       });
     }
@@ -127,8 +127,8 @@ function buildSalesDropReasons(input = {}) {
   if (Number(current.expenses) > 0 && expensePct >= 10 && revenueChangePct < 0) {
     reasons.push({
       code: 'expenses_up_while_sales_down',
-      label: 'Expenses rose while sales fell',
-      detail: `Expenses are up ${expensePct.toFixed(1)}% while revenue declined — margin pressure may feel worse than the sales drop alone.`,
+      label: 'Costs rose as sales fell',
+      detail: `Costs rose ${expensePct.toFixed(1)}% while sales fell, so profit may feel worse than the sales drop alone.`,
       severity: 'medium',
     });
   }
@@ -136,8 +136,8 @@ function buildSalesDropReasons(input = {}) {
   if (reasons.length === 0) {
     reasons.push({
       code: 'general_decline',
-      label: 'Overall revenue decline',
-      detail: `Revenue is down ${Math.abs(revenueChangePct).toFixed(1)}% vs the prior period with no single dominant driver from volume, AOV, or top product.`,
+      label: 'Overall softer sales',
+      detail: `Revenue is down ${Math.abs(revenueChangePct).toFixed(1)}% vs the prior period, without one clear driver from volume, basket size, or a top product.`,
       severity: 'medium',
     });
   }

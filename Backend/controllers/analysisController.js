@@ -28,6 +28,7 @@ exports.ask = async (req, res, next) => {
       message,
       question,
       intent: forceIntent,
+      period,
       startDate,
       endDate,
       periodLabel,
@@ -49,11 +50,13 @@ exports.ask = async (req, res, next) => {
       tenantId: req.tenantId,
       shopFilterId: req.shopFilterId || null,
       studioLocationFilterId: req.studioLocationFilterId || null,
+      period: typeof period === 'string' ? period : undefined,
       startDate: typeof startDate === 'string' ? startDate : undefined,
       endDate: typeof endDate === 'string' ? endDate : undefined,
       periodLabel: typeof periodLabel === 'string' ? periodLabel : undefined,
       pageContext: typeof pageContext === 'string' ? pageContext : undefined,
       forceIntent: typeof forceIntent === 'string' ? forceIntent : undefined,
+      businessType: req.tenant?.businessType,
     });
 
     if (analysis.route === 'analysis' && analysis.result) {

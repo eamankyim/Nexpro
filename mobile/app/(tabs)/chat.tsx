@@ -17,23 +17,25 @@ import { AppIcon } from '@/components/AppIcon';
 import { assistantService } from '@/services/assistantService';
 import { useAuth } from '@/context/AuthContext';
 import { useScreenColors } from '@/hooks/useScreenColors';
-import { ScreenShell } from '@/components/ScreenShell';
 import { logger } from '@/utils/logger';
-import { SHOP_TYPES } from '@/constants';
 import { getAiProviderErrorMessage } from '@/utils/aiProviderErrors';
 import {
-  ASSISTANT_BUSINESS_PROMPTS,
-  ASSISTANT_DRAFT_PROMPTS,
-  ASSISTANT_PAGE_PROMPTS,
-  ASSISTANT_RESTAURANT_PROMPTS,
-  ASSISTANT_SUPPORT_PROMPTS,
+  getAssistantPromptSets,
+  getPagePrompts,
 } from '@/constants/assistantPrompts';
+import {
+  ASSISTANT_PERIOD_OPTIONS,
+  resolveAssistantPeriod,
+  type AssistantPeriodKey,
+} from '@/utils/assistantPeriod';
 
 type Message = {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   reasons?: Array<{ code?: string; label: string; detail?: string }>;
+  intent?: string;
+  source?: string;
 };
 type TextSegment = { text: string; bold: boolean };
 
@@ -156,24 +158,29 @@ export default function ChatScreen() {
   const pageContext = Array.isArray(params.pageContext) ? params.pageContext[0] : params.pageContext;
 
   const { activeTenant } = useAuth();
-  const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg, resolvedTheme } = useScreenColors();
-  const isRestaurant = activeTenant?.metadata?.shopType === SHOP_TYPES.RESTAURANT;
+  const { colors, bg, cardBg, borderColor, textColor, mutedColor, resolvedTheme } = useScreenColors();
+  const businessType = activeTenant?.businessType || 'printing_press';
+  const shopType = activeTenant?.metadata?.shopType || null;
+
+  const [selectedPeriod, setSelectedPeriod] = useState<AssistantPeriodKey>('today');
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const handledInitialPromptRef = useRef<string | null>(null);
   const lastSendAtRef = useRef(0);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const SEND_DEBOUNCE_MS = 800;
 
-  const pagePrompts = useMemo(
-    () => (pageContext ? ASSISTANT_PAGE_PROMPTS[pageContext] || [] : []),
-    [pageContext]
+  const periodRange = useMemo(() => resolveAssistantPeriod(selectedPeriod), [selectedPeriod]);
+  const promptSets = useMemo(
+    () => getAssistantPromptSets({ businessType, shopType }),
+    [businessType, shopType]
   );
-
-  const businessPrompts = useMemo(
-    () => (isRestaurant ? ASSISTANT_RESTAURANT_PROMPTS : ASSISTANT_BUSINESS_PROMPTS),
-    [isRestaurant]
+  const pagePrompts = useMemo(
+    () => getPagePrompts(pageContext, { businessType, shopType }),
+    [pageContext, businessType, shopType]
   );
 
   const sendMessage = useCallback(
@@ -190,18 +197,26 @@ export default function ChatScreen() {
 
       setInput('');
       const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', content: text };
-      setMessages((prev) => [...prev, userMsg]);
+      const nextMessages = [...messagesRef.current, userMsg];
+      setMessages(nextMessages);
       setLoading(true);
 
       try {
-        const history: { role: 'user' | 'assistant'; content: string }[] = [
-          ...messages.map((m) => ({ role: m.role, content: m.content })),
-          { role: 'user', content: text },
-        ];
+        const history: { role: 'user' | 'assistant'; content: string }[] = nextMessages.map((m) => ({
+          role: m.role,
+          content: m.content,
+        }));
         const uiPrepMs = Date.now() - tapAt;
         logger.info('Assistant', 'perf:history_ready', { tapAt, uiPrepMs, historyCount: history.length });
 
-        const res = await assistantService.chat(history, { pageContext, clientSubmittedAt: tapAt });
+        const res = await assistantService.chat(history, {
+          pageContext,
+          period: periodRange.period,
+          startDate: periodRange.startDate,
+          endDate: periodRange.endDate,
+          periodLabel: periodRange.periodLabel,
+          clientSubmittedAt: tapAt,
+        });
         const reply = res?.message || '';
         const reasons = Array.isArray(res?.meta?.reasons) ? res.meta.reasons : undefined;
         const assistantMsg: Message = {
@@ -209,6 +224,8 @@ export default function ChatScreen() {
           role: 'assistant',
           content: reply || 'No response.',
           reasons,
+          intent: res?.meta?.intent,
+          source: res?.meta?.source,
         };
         setMessages((prev) => [...prev, assistantMsg]);
       } catch (err: unknown) {
@@ -220,21 +237,94 @@ export default function ChatScreen() {
           'Failed to get response';
         const errorCode = responseData?.errorCode || responseData?.code;
         const aiMessage = getAiProviderErrorMessage(err);
-        const content = aiMessage || `Sorry, I couldn't process that. ${msg}`;
-        logger.warn('Assistant', 'perf:send_failed', { tapAt, errorCode, msg: content });
+        const errContent = aiMessage || `Sorry, I couldn't process that. ${msg}`;
+        logger.warn('Assistant', 'perf:send_failed', { tapAt, errorCode, msg: errContent });
         setMessages((prev) => [
           ...prev,
           {
             id: `e-${Date.now()}`,
             role: 'assistant',
-            content,
+            content: errContent,
           },
         ]);
       } finally {
         setLoading(false);
       }
     },
-    [input, messages, pageContext, loading]
+    [input, pageContext, loading, periodRange]
+  );
+
+  const refreshLastAnalysis = useCallback(
+    async (range: ReturnType<typeof resolveAssistantPeriod>) => {
+      const current = messagesRef.current;
+      let lastAssistantIdx = -1;
+      for (let i = current.length - 1; i >= 0; i -= 1) {
+        if (current[i].role === 'assistant' && (current[i].source === 'analysis_engine' || current[i].intent)) {
+          lastAssistantIdx = i;
+          break;
+        }
+      }
+      if (lastAssistantIdx < 0) return;
+
+      let lastUserQuestion = '';
+      for (let i = lastAssistantIdx - 1; i >= 0; i -= 1) {
+        if (current[i].role === 'user') {
+          lastUserQuestion = current[i].content;
+          break;
+        }
+      }
+      if (!lastUserQuestion) return;
+
+      const intent = current[lastAssistantIdx].intent;
+      setLoading(true);
+      try {
+        const res = await assistantService.askAnalysis(lastUserQuestion, {
+          intent,
+          period: range.period,
+          startDate: range.startDate,
+          endDate: range.endDate,
+          periodLabel: range.periodLabel,
+          pageContext,
+        });
+        const reply = res?.message || res?.answerMarkdown || 'No response.';
+        const prefix = `For **${range.periodLabel}**:\n\n`;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `a-${Date.now()}`,
+            role: 'assistant',
+            content: reply.startsWith('For **') ? reply : `${prefix}${reply}`,
+            intent: res?.intent || intent || res?.meta?.intent,
+            source: 'analysis_engine',
+            reasons: Array.isArray(res?.meta?.reasons) ? res.meta.reasons : undefined,
+          },
+        ]);
+      } catch (err: unknown) {
+        const aiMessage = getAiProviderErrorMessage(err);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `e-${Date.now()}`,
+            role: 'assistant',
+            content: aiMessage || 'Failed to refresh for the selected period.',
+          },
+        ]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [pageContext]
+  );
+
+  const handlePeriodSelect = useCallback(
+    (periodKey: AssistantPeriodKey) => {
+      if (loading || periodKey === selectedPeriod) return;
+      const range = resolveAssistantPeriod(periodKey);
+      setSelectedPeriod(periodKey);
+      if (messagesRef.current.length === 0) return;
+      refreshLastAnalysis(range);
+    },
+    [loading, selectedPeriod, refreshLastAnalysis]
   );
 
   useEffect(() => {
@@ -249,6 +339,13 @@ export default function ChatScreen() {
     sendMessage(prompt);
   }, [prompt, sendMessage]);
 
+  const handleNewChat = useCallback(() => {
+    if (loading) return;
+    setMessages([]);
+    setInput('');
+    handledInitialPromptRef.current = null;
+  }, [loading]);
+
   const bubbleUser = colors.tint;
 
   const renderItem = ({ item }: { item: Message }) => (
@@ -262,21 +359,41 @@ export default function ChatScreen() {
         ]}
       >
         <FormattedMessage content={item.content} color={item.role === 'user' ? '#fff' : textColor} />
-        {item.role === 'assistant' && item.reasons && item.reasons.length > 0 ? (
-          <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: borderColor }}>
-            {item.reasons.slice(0, 4).map((reason) => (
-              <Text
-                key={reason.code || reason.label}
-                style={{ color: mutedColor, fontSize: 12, marginBottom: 4 }}
-              >
-                • {reason.label}
-                {reason.detail ? ` — ${reason.detail}` : ''}
-              </Text>
-            ))}
-          </View>
-        ) : null}
       </View>
     </View>
+  );
+
+  const periodBar = (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.periodRow}
+      style={[styles.periodBar, { borderBottomColor: borderColor, backgroundColor: cardBg }]}
+      keyboardShouldPersistTaps="handled"
+    >
+      {ASSISTANT_PERIOD_OPTIONS.map((opt) => {
+        const selected = selectedPeriod === opt.key;
+        return (
+          <Pressable
+            key={opt.key}
+            onPress={() => handlePeriodSelect(opt.key)}
+            disabled={loading}
+            style={[
+              styles.periodChip,
+              {
+                borderColor: selected ? colors.tint : borderColor,
+                backgroundColor: selected ? colors.tint : cardBg,
+                opacity: loading ? 0.5 : 1,
+              },
+            ]}
+            accessibilityRole="button"
+            accessibilityState={{ selected }}
+          >
+            <Text style={[styles.periodChipText, { color: selected ? '#fff' : textColor }]}>{opt.label}</Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
   );
 
   return (
@@ -285,6 +402,29 @@ export default function ChatScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={100}
     >
+      {messages.length > 0 ? (
+        <View style={[styles.toolbar, { borderBottomColor: borderColor, backgroundColor: cardBg }]}>
+          <Text style={[styles.toolbarTitle, { color: textColor }]}>ABS Assistant</Text>
+          <Pressable
+            onPress={handleNewChat}
+            disabled={loading}
+            style={({ pressed }) => [
+              styles.newChatBtn,
+              { borderColor },
+              pressed && styles.pressed,
+              loading && { opacity: 0.5 },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="New chat"
+          >
+            <AppIcon name="plus" size={16} color={colors.tint} />
+            <Text style={[styles.newChatText, { color: colors.tint }]}>New chat</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {periodBar}
+
       {messages.length === 0 ? (
         <ScrollView contentContainerStyle={styles.welcomeScroll} keyboardShouldPersistTaps="handled">
           <AppIcon name="brain" size={48} color={colors.tabIconDefault} />
@@ -303,7 +443,7 @@ export default function ChatScreen() {
           />
           <PromptSection
             title="Business insights"
-            prompts={businessPrompts}
+            prompts={promptSets.business}
             onPress={sendMessage}
             loading={loading}
             cardBg={cardBg}
@@ -312,7 +452,7 @@ export default function ChatScreen() {
           />
           <PromptSection
             title="ABS support"
-            prompts={ASSISTANT_SUPPORT_PROMPTS}
+            prompts={promptSets.support}
             onPress={sendMessage}
             loading={loading}
             cardBg={cardBg}
@@ -321,7 +461,7 @@ export default function ChatScreen() {
           />
           <PromptSection
             title="Draft messages"
-            prompts={ASSISTANT_DRAFT_PROMPTS}
+            prompts={promptSets.draft}
             onPress={sendMessage}
             loading={loading}
             cardBg={cardBg}
@@ -373,6 +513,42 @@ export default function ChatScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  toolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+  },
+  toolbarTitle: { fontSize: 16, fontWeight: '600' },
+  newChatBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  newChatText: { fontSize: 14, fontWeight: '600' },
+  periodBar: {
+    borderBottomWidth: 1,
+    maxHeight: 52,
+  },
+  periodRow: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 8,
+    alignItems: 'center',
+  },
+  periodChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  periodChipText: { fontSize: 13, fontWeight: '600' },
   welcomeScroll: {
     flexGrow: 1,
     alignItems: 'center',
