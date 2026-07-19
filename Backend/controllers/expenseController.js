@@ -46,6 +46,34 @@ const {
 } = require('../utils/expenseApprovalDefaults');
 
 /**
+ * Auth middleware sets `req.user` (not `req.userId`). Prefer `req.user.id`.
+ * @param {import('express').Request} req
+ * @returns {string|null}
+ */
+const getActorUserId = (req) => req.user?.id || req.userId || null;
+
+/**
+ * Prefer persisted submitter; fall back to creation-activity actor or approver for display.
+ * Covers older rows created when submittedBy was not persisted correctly.
+ * @param {Object} expensePlain - Plain expense JSON (with includes)
+ * @returns {Object}
+ */
+const withSubmitterFallback = (expensePlain) => {
+  if (!expensePlain || expensePlain.submitter) return expensePlain;
+
+  const creationActor = (expensePlain.activities || []).find(
+    (activity) => activity?.type === 'creation' && activity.createdByUser
+  )?.createdByUser;
+  if (creationActor) {
+    return { ...expensePlain, submitter: creationActor };
+  }
+  if (expensePlain.approver) {
+    return { ...expensePlain, submitter: expensePlain.approver };
+  }
+  return expensePlain;
+};
+
+/**
  * Validate expense create payload before DB work (fail fast).
  * @param {Object} payload - Sanitized request body
  * @returns {string|null} Error message or null when valid
@@ -423,7 +451,7 @@ exports.getExpenses = async (req, res, next) => {
         limit,
         totalPages: Math.ceil(count / limit)
       },
-      data: rows
+      data: rows.map((row) => withSubmitterFallback(row.toJSON ? row.toJSON() : row))
     });
   } catch (error) {
     next(error);
@@ -509,9 +537,10 @@ exports.getExpense = async (req, res, next) => {
       throw accessErr;
     }
 
+    const expensePlain = expense.toJSON ? expense.toJSON() : expense;
     res.status(200).json({
       success: true,
-      data: expense
+      data: withSubmitterFallback(expensePlain)
     });
   } catch (error) {
     next(error);
@@ -574,7 +603,7 @@ exports.createExpense = async (req, res, next) => {
         jobForResponse = job;
       }
 
-      const approvalDefaults = getCreateApprovalDefaults(payload, req.userId);
+      const approvalDefaults = getCreateApprovalDefaults(payload, getActorUserId(req));
       stripCreateApprovalFields(payload);
 
       const expense = await Expense.create(
@@ -582,7 +611,7 @@ exports.createExpense = async (req, res, next) => {
           ...payload,
           tenantId: req.tenantId,
           expenseNumber,
-          submittedBy: req.userId,
+          submittedBy: getActorUserId(req),
           approvalStatus: approvalDefaults.approvalStatus,
           approvedBy: approvalDefaults.approvedBy,
           approvedAt: approvalDefaults.approvedAt,
@@ -613,7 +642,7 @@ exports.createExpense = async (req, res, next) => {
           type: 'creation',
           subject: 'Expense Created',
           notes: `Expense ${expense.expenseNumber} was created${approvalDefaults.isExpenseRequest ? ' as an approval request' : ' and auto-approved'}`,
-          createdBy: req.userId,
+          createdBy: getActorUserId(req),
           metadata: {
             amount: expense.amount,
             category: expense.category,
@@ -636,7 +665,7 @@ exports.createExpense = async (req, res, next) => {
       if (!approvalDefaults.isExpenseRequest) {
         setImmediate(async () => {
           try {
-            await createExpenseJournal(expenseWithDetails, req.userId);
+            await createExpenseJournal(expenseWithDetails, getActorUserId(req));
           } catch (journalError) {
             console.error('Failed to create accounting entry for auto-approved expense', journalError?.message);
           }
@@ -771,7 +800,7 @@ exports.createBulkExpenses = async (req, res, next) => {
       }
 
       const expenseNumber = await exports.generateExpenseNumber(req.tenantId, transaction);
-      const approvalDefaults = getCreateApprovalDefaults(finalExpenseData, req.userId);
+      const approvalDefaults = getCreateApprovalDefaults(finalExpenseData, getActorUserId(req));
       stripCreateApprovalFields(finalExpenseData);
 
       const expense = await Expense.create(
@@ -779,7 +808,7 @@ exports.createBulkExpenses = async (req, res, next) => {
           ...finalExpenseData,
           tenantId: req.tenantId,
           expenseNumber,
-          submittedBy: req.userId,
+          submittedBy: getActorUserId(req),
           approvalStatus: approvalDefaults.approvalStatus,
           approvedBy: approvalDefaults.approvedBy,
           approvedAt: approvalDefaults.approvedAt,
@@ -827,7 +856,7 @@ exports.createBulkExpenses = async (req, res, next) => {
           type: 'creation',
           subject: 'Expense Created',
           notes: `Expense ${expense.expenseNumber} was created${approvalDefaults?.isExpenseRequest ? ' as an approval request' : ' and auto-approved'}`,
-          createdBy: req.userId,
+          createdBy: getActorUserId(req),
           metadata: {
             amount: expense.amount,
             category: expense.category,
@@ -846,7 +875,7 @@ exports.createBulkExpenses = async (req, res, next) => {
       }
 
       try {
-        await createExpenseJournal(exp, req.userId);
+        await createExpenseJournal(exp, getActorUserId(req));
       } catch (journalError) {
         console.error('Failed to create accounting entry for auto-approved expense', exp.expenseNumber, journalError?.message);
       }
@@ -900,7 +929,7 @@ exports.updateExpense = async (req, res, next) => {
     }
 
     if (updatePayload.approvalStatus === 'approved') {
-      updatePayload.approvedBy = req.userId;
+      updatePayload.approvedBy = getActorUserId(req);
       updatePayload.approvedAt = new Date();
     }
 
@@ -1071,7 +1100,7 @@ exports.archiveExpense = async (req, res, next) => {
         type: 'note',
         subject: 'Expense Archived',
         notes: `Expense ${expense.expenseNumber} was archived`,
-        createdBy: req.userId,
+        createdBy: getActorUserId(req),
         metadata: {
           archived: true
         }
@@ -1291,7 +1320,7 @@ exports.submitExpense = async (req, res, next) => {
 
     await expense.update({
       approvalStatus: 'pending_approval',
-      submittedBy: req.userId
+      submittedBy: getActorUserId(req)
     });
 
     const updatedExpense = await Expense.findOne({
@@ -1315,7 +1344,7 @@ exports.submitExpense = async (req, res, next) => {
         type: 'submission',
         subject: 'Expense Submitted for Approval',
         notes: `Expense ${expense.expenseNumber} was submitted for approval`,
-        createdBy: req.userId,
+        createdBy: getActorUserId(req),
         metadata: {
           previousStatus: 'draft',
           newStatus: 'pending_approval'
@@ -1362,7 +1391,7 @@ exports.approveExpense = async (req, res, next) => {
 
     await expense.update({
       approvalStatus: 'approved',
-      approvedBy: req.userId,
+      approvedBy: getActorUserId(req),
       approvedAt: new Date()
     });
 
@@ -1387,7 +1416,7 @@ exports.approveExpense = async (req, res, next) => {
         type: 'approval',
         subject: 'Expense Approved',
         notes: `Expense ${expense.expenseNumber} was approved`,
-        createdBy: req.userId,
+        createdBy: getActorUserId(req),
         metadata: {
           previousStatus: 'pending_approval',
           newStatus: 'approved',
@@ -1400,7 +1429,7 @@ exports.approveExpense = async (req, res, next) => {
 
     // Post to accounting (Dr Expense Cr Cash/Bank)
     try {
-      await createExpenseJournal(updatedExpense, req.userId);
+      await createExpenseJournal(updatedExpense, getActorUserId(req));
     } catch (journalError) {
       console.error('Failed to create accounting entry for approved expense', journalError?.message);
     }
@@ -1446,7 +1475,7 @@ exports.rejectExpense = async (req, res, next) => {
 
     await expense.update({
       approvalStatus: 'rejected',
-      approvedBy: req.userId,
+      approvedBy: getActorUserId(req),
       approvedAt: new Date(),
       rejectionReason: rejectionReason || 'No reason provided'
     });
@@ -1472,7 +1501,7 @@ exports.rejectExpense = async (req, res, next) => {
         type: 'rejection',
         subject: 'Expense Rejected',
         notes: `Expense ${expense.expenseNumber} was rejected${rejectionReason ? `: ${rejectionReason}` : ''}`,
-        createdBy: req.userId,
+        createdBy: getActorUserId(req),
         metadata: {
           previousStatus: 'pending_approval',
           newStatus: 'rejected',
@@ -1542,7 +1571,7 @@ exports.addExpenseActivity = async (req, res, next) => {
       type: payload.type || 'note',
       subject: payload.subject || null,
       notes: payload.notes || null,
-      createdBy: req.userId,
+      createdBy: getActorUserId(req),
       metadata: payload.metadata || {}
     });
 

@@ -724,9 +724,11 @@ const AdminExpenses = () => {
                   <DescriptionItem label="Approval Status">
                     <StatusChip status={viewingExpense.approvalStatus} />
                   </DescriptionItem>
-                  {viewingExpense.submitter && (
+                  {(viewingExpense.submitter || viewingExpense.approver) && (
                     <DescriptionItem label="Submitted By">
-                      {viewingExpense.submitter.name} ({viewingExpense.submitter.email})
+                      {(viewingExpense.submitter || viewingExpense.approver).name}
+                      {' '}
+                      ({(viewingExpense.submitter || viewingExpense.approver).email})
                     </DescriptionItem>
                   )}
                   {viewingExpense.approver && (

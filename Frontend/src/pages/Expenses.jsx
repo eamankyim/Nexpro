@@ -889,7 +889,11 @@ const Expenses = () => {
     {
       key: 'submitter',
       label: 'Submitted By',
-      render: (_, record) => <span className="text-foreground">{record?.submitter?.name || '—'}</span>
+      render: (_, record) => (
+        <span className="text-foreground">
+          {record?.submitter?.name || record?.approver?.name || '—'}
+        </span>
+      )
     },
     {
       key: 'approvalStatus',
@@ -2114,7 +2118,7 @@ const Expenses = () => {
             id: 'creation',
             type: 'creation',
             createdAt: viewingExpense.createdAt,
-            createdByUser: viewingExpense.submitter || null
+            createdByUser: viewingExpense.submitter || viewingExpense.approver || null
           };
 
           const allActivities = [creationActivity, ...activities];
@@ -2266,8 +2270,12 @@ const Expenses = () => {
                     </DescriptionItem>
                   )}
                   <DescriptionItem label="Submitted By">
-                    {viewingExpense.submitter ? (
-                      <span>{viewingExpense.submitter.name} ({viewingExpense.submitter.email})</span>
+                    {(viewingExpense.submitter || viewingExpense.approver) ? (
+                      <span>
+                        {(viewingExpense.submitter || viewingExpense.approver).name}
+                        {' '}
+                        ({(viewingExpense.submitter || viewingExpense.approver).email})
+                      </span>
                     ) : '-'}
                   </DescriptionItem>
                   {viewingExpense.approver && (
