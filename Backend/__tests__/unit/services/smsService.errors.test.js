@@ -65,7 +65,7 @@ describe('smsService.classifySmsProviderError', () => {
 
   it('maps coverage-not-active separately from balance', () => {
     expect(classifySmsProviderError('Phone coverage not active', { providerCode: '104' })).toEqual({
-      error: 'SMS provider cannot reach this number — network coverage is not active for the destination',
+      error: 'Arkesel cannot reach this number — network coverage is not active for the destination',
       errorCode: 'SMS_PROVIDER_COVERAGE',
     });
   });

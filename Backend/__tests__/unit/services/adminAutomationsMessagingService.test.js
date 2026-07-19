@@ -144,7 +144,8 @@ describe('adminAutomationsMessagingService aggregation', () => {
         smsBalance: 42.5,
         mainBalance: 100,
         currency: null,
-        raw: { sms_balance: 42.5, main_balance: 100 },
+        bonus: null,
+        raw: { sms_balance: 42.5, main_balance: 100, bonus: null },
       });
     });
 

@@ -275,7 +275,7 @@ async function getPlatformSmsUsageByTenant({ yearMonth } = {}) {
 }
 
 /**
- * Sanitize Arkesel balance payload — no secrets.
+ * Sanitize SMS provider balance payload — no secrets.
  * @param {object|null} data
  */
 function sanitizeBalancePayload(data) {
@@ -284,38 +284,46 @@ function sanitizeBalancePayload(data) {
     smsBalance: data.sms_balance ?? data.smsBalance ?? data.balance ?? null,
     mainBalance: data.main_balance ?? data.mainBalance ?? null,
     currency: data.currency || null,
+    bonus: data.bonus ?? null,
     raw: {
-      sms_balance: data.sms_balance ?? data.smsBalance ?? null,
+      sms_balance: data.sms_balance ?? data.smsBalance ?? data.balance ?? null,
       main_balance: data.main_balance ?? data.mainBalance ?? null,
+      bonus: data.bonus ?? null,
     },
   };
 }
 
 /**
- * Optional Arkesel balance refresh using saved platform SMS settings.
+ * Refresh active platform SMS provider wallet/credits using saved settings.
  * @param {{ userId?: string, requestId?: string }} meta
  */
-async function fetchArkeselBalance(meta = {}) {
+async function fetchPlatformSmsProviderBalance(meta = {}) {
   try {
     const result = await testPlatformSmsConnection({
       payload: {},
       userId: meta.userId,
       requestId: meta.requestId,
     });
+    const provider = result.provider || 'arkesel';
     return {
       ok: true,
-      provider: result.provider || 'arkesel',
+      provider,
       message: result.message,
       balance: sanitizeBalancePayload(result.data),
     };
   } catch (error) {
     return {
       ok: false,
-      provider: 'arkesel',
-      message: error.message || 'Failed to fetch Arkesel balance',
+      provider: null,
+      message: error.message || 'Failed to fetch SMS provider balance',
       balance: null,
     };
   }
+}
+
+/** @deprecated Prefer fetchPlatformSmsProviderBalance */
+async function fetchArkeselBalance(meta = {}) {
+  return fetchPlatformSmsProviderBalance(meta);
 }
 
 /**
@@ -509,7 +517,7 @@ async function getMessagingUsage(query = {}, meta = {}) {
   const [platformSms, channels, balance] = await Promise.all([
     getPlatformSmsUsageByTenant({ yearMonth }),
     getChannelCountsFromRuns({ from: period.from, to: period.to }),
-    includeBalance ? fetchArkeselBalance(meta) : Promise.resolve(null),
+    includeBalance ? fetchPlatformSmsProviderBalance(meta) : Promise.resolve(null),
   ]);
 
   return {
@@ -540,6 +548,7 @@ module.exports = {
   getPlatformSmsUsageByTenant,
   sanitizeBalancePayload,
   fetchArkeselBalance,
+  fetchPlatformSmsProviderBalance,
   listAutomationsOverview,
   getAutomationsMessagingOverview,
   getMessagingUsage,

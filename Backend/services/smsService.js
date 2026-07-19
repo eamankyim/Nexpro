@@ -8,6 +8,7 @@ const {
 } = require('./platformSmsUsageService');
 
 const ARKESEL_BASE_URL = 'https://sms.arkesel.com';
+const MNOTIFY_BASE_URL = process.env.MNOTIFY_BASE_URL || 'https://api.mnotify.com/api';
 /** Provider send APIs (e.g. Arkesel) can take 30–40s before responding. */
 const SMS_SEND_TIMEOUT_MS = 45000;
 /** Shorter timeout for balance/credential verification calls. */
@@ -48,14 +49,16 @@ function extractSmsProviderRawMessage(error) {
  * Distinguishes provider wallet/coverage failures from ABS platform monthly quota.
  * @param {Error|object|string} errorOrMessage - Axios error, provider payload, or raw message
  * @param {object} [hints]
- * @param {string|number} [hints.providerCode] - Arkesel-style status code when known
+ * @param {string|number} [hints.providerCode] - Provider status code when known
  * @param {number} [hints.httpStatus] - HTTP status from provider response
+ * @param {string} [hints.providerName] - Display name (Arkesel, Mnotify, …)
  * @returns {{ error: string, errorCode?: string }}
  * @example
  * classifySmsProviderError({ response: { data: { message: 'Insufficient balance or invalid coverage!' } } })
  * // → { error: 'SMS provider (Arkesel) balance empty…', errorCode: 'SMS_PROVIDER_BALANCE_OR_COVERAGE' }
  */
 function classifySmsProviderError(errorOrMessage, hints = {}) {
+  const providerLabel = hints.providerName || 'Arkesel';
   const isTimeoutObject = errorOrMessage
     && typeof errorOrMessage === 'object'
     && (errorOrMessage.code === 'ECONNABORTED' || /timeout/i.test(String(errorOrMessage.message || '')));
@@ -96,7 +99,7 @@ function classifySmsProviderError(errorOrMessage, hints = {}) {
   if (looksLikeBalanceOrCoverage) {
     return {
       error:
-        'SMS provider (Arkesel) balance empty or destination not covered — top up Arkesel (this is not the ABS platform SMS quota)',
+        `SMS provider (${providerLabel}) balance empty or destination not covered — top up ${providerLabel} (this is not the ABS platform SMS quota)`,
       errorCode: 'SMS_PROVIDER_BALANCE_OR_COVERAGE',
     };
   }
@@ -107,7 +110,7 @@ function classifySmsProviderError(errorOrMessage, hints = {}) {
     || /coverage not active/i.test(lower)
   ) {
     return {
-      error: 'SMS provider cannot reach this number — network coverage is not active for the destination',
+      error: `${providerLabel} cannot reach this number — network coverage is not active for the destination`,
       errorCode: 'SMS_PROVIDER_COVERAGE',
     };
   }
@@ -141,6 +144,25 @@ function formatSmsProviderError(error) {
  */
 function toArkeselRecipient(e164Phone) {
   return String(e164Phone || '').replace(/^\+/, '');
+}
+
+/**
+ * Format E.164 phone for Mnotify recipients (digits only, no +).
+ * @param {string} e164Phone
+ * @returns {string}
+ */
+function toMnotifyRecipient(e164Phone) {
+  return String(e164Phone || '').replace(/^\+/, '');
+}
+
+function providerDisplayName(provider) {
+  const key = String(provider || '').toLowerCase();
+  if (key === 'mnotify') return 'Mnotify';
+  if (key === 'arkesel') return 'Arkesel';
+  if (key === 'termii') return 'Termii';
+  if (key === 'twilio') return 'Twilio';
+  if (key === 'africas_talking') return "Africa's Talking";
+  return 'SMS provider';
 }
 
 /**
@@ -210,12 +232,12 @@ class SMSService {
   /**
    * Resolve SMS config:
    * 1. Tenant own SMS (enabled + valid creds) → source tenant, limited false
-   * 2. Platform SMS (enabled + Arkesel creds) → source platform, limited true
-   * 3. null
-   * @param {string} tenantId
-   * @returns {Promise<Object|null>}
-   */
-  async getResolvedConfig(tenantId) {
+ * 2. Platform SMS (enabled + active provider creds) → source platform, limited true
+ * 3. null
+ * @param {string} tenantId
+ * @returns {Promise<Object|null>}
+ */
+async getResolvedConfig(tenantId) {
     const tenantConfig = await this.getConfig(tenantId);
     if (hasValidTenantSmsCredentials(tenantConfig)) {
       return {
@@ -317,6 +339,9 @@ class SMSService {
           break;
         case 'arkesel':
           result = await this.sendViaArkesel(config, formattedPhone, message, fromNumber);
+          break;
+        case 'mnotify':
+          result = await this.sendViaMnotify(config, formattedPhone, message, fromNumber);
           break;
         case 'twilio':
           result = await this.sendViaTwilio(config, formattedPhone, message, fromNumber);
@@ -510,7 +535,11 @@ class SMSService {
       if (!isProviderAcceptedResponse(response)) {
         const classified = classifySmsProviderError(
           response.data?.message || `Arkesel returned unexpected status ${response.status}`,
-          { httpStatus: response.status, providerCode: response.data?.code || response.data?.status }
+          {
+            httpStatus: response.status,
+            providerCode: response.data?.code || response.data?.status,
+            providerName: 'Arkesel',
+          }
         );
         return {
           success: false,
@@ -527,7 +556,11 @@ class SMSService {
       if (bodyLooksFailed) {
         const classified = classifySmsProviderError(
           response.data?.message || response.data?.error || `Arkesel status: ${bodyStatus}`,
-          { providerCode: response.data?.code || response.data?.status, httpStatus: response.status }
+          {
+            providerCode: response.data?.code || response.data?.status,
+            httpStatus: response.status,
+            providerName: 'Arkesel',
+          }
         );
         return {
           success: false,
@@ -553,7 +586,112 @@ class SMSService {
       };
     } catch (error) {
       console.error('[SMS] Arkesel error:', error.response?.data || error.message);
-      const classified = classifySmsProviderError(error);
+      const classified = classifySmsProviderError(error, { providerName: 'Arkesel' });
+      return {
+        success: false,
+        error: classified.error,
+        errorCode: classified.errorCode,
+      };
+    }
+  }
+
+  /**
+   * Send SMS via Mnotify quick SMS API.
+   * @param {object} config
+   * @param {string} to - E.164 phone
+   * @param {string} message
+   * @param {string|null} from
+   * @returns {Promise<object>}
+   */
+  async sendViaMnotify(config, to, message, from) {
+    try {
+      const apiKey = config.apiKey;
+      const senderId = (from || config.senderId || '').substring(0, 11);
+
+      if (!apiKey || !senderId) {
+        return {
+          success: false,
+          error: 'Mnotify API key and Sender ID are required',
+        };
+      }
+
+      const url = `${MNOTIFY_BASE_URL.replace(/\/$/, '')}/sms/quick`;
+      const response = await axios.post(
+        url,
+        {
+          recipient: [toMnotifyRecipient(to)],
+          sender: senderId,
+          message,
+          is_schedule: false,
+          schedule_date: '',
+        },
+        {
+          headers: {
+            Authorization: apiKey,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          params: { key: apiKey },
+          timeout: SMS_SEND_TIMEOUT_MS,
+        }
+      );
+
+      if (!isProviderAcceptedResponse(response)) {
+        const classified = classifySmsProviderError(
+          response.data?.message || `Mnotify returned unexpected status ${response.status}`,
+          {
+            httpStatus: response.status,
+            providerCode: response.data?.code || response.data?.status,
+            providerName: 'Mnotify',
+          }
+        );
+        return {
+          success: false,
+          error: classified.error,
+          errorCode: classified.errorCode,
+        };
+      }
+
+      const bodyStatus = String(response.data?.status || response.data?.code || '').toLowerCase();
+      const bodyLooksFailed = bodyStatus
+        && bodyStatus !== 'success'
+        && bodyStatus !== 'ok'
+        && bodyStatus !== '200';
+      if (bodyLooksFailed) {
+        const classified = classifySmsProviderError(
+          response.data?.message || response.data?.error || `Mnotify status: ${bodyStatus}`,
+          {
+            providerCode: response.data?.code || response.data?.status,
+            httpStatus: response.status,
+            providerName: 'Mnotify',
+          }
+        );
+        return {
+          success: false,
+          error: classified.error,
+          errorCode: classified.errorCode,
+          data: response.data,
+        };
+      }
+
+      const messageId = response.data?.summary?._id
+        || response.data?.summary?.id
+        || response.data?.message_id
+        || response.data?._id;
+
+      console.log('[SMS] Message sent successfully via Mnotify:', {
+        phoneNumber: to.substring(0, 7) + '***',
+        messageId,
+      });
+
+      return {
+        success: true,
+        messageId,
+        data: response.data,
+      };
+    } catch (error) {
+      console.error('[SMS] Mnotify error:', error.response?.data || error.message);
+      const classified = classifySmsProviderError(error, { providerName: 'Mnotify' });
       return {
         success: false,
         error: classified.error,
@@ -673,6 +811,32 @@ class SMSService {
           };
         }
 
+        case 'mnotify': {
+          if (!config.apiKey) {
+            return { success: false, error: 'Mnotify API key is required' };
+          }
+          const balanceUrl = `${MNOTIFY_BASE_URL.replace(/\/$/, '')}/balance/sms`;
+          const mnotifyResponse = await axios.get(balanceUrl, {
+            headers: {
+              Authorization: config.apiKey,
+              Accept: 'application/json',
+            },
+            params: { key: config.apiKey },
+            timeout: SMS_CONNECTION_TEST_TIMEOUT_MS,
+          });
+          return {
+            success: true,
+            message: 'Mnotify connection verified',
+            data: {
+              balance: mnotifyResponse.data?.balance,
+              bonus: mnotifyResponse.data?.bonus,
+              status: mnotifyResponse.data?.status,
+              sms_balance: mnotifyResponse.data?.balance,
+              ...mnotifyResponse.data,
+            },
+          };
+        }
+
         case 'twilio': {
           if (!config.accountSid || !config.authToken) {
             return { success: false, error: 'Twilio Account SID and Auth Token are required' };
@@ -733,6 +897,8 @@ class SMSService {
 module.exports = new SMSService();
 module.exports.hasValidTenantSmsCredentials = hasValidTenantSmsCredentials;
 module.exports.toArkeselRecipient = toArkeselRecipient;
+module.exports.toMnotifyRecipient = toMnotifyRecipient;
+module.exports.providerDisplayName = providerDisplayName;
 module.exports.formatSmsProviderError = formatSmsProviderError;
 module.exports.classifySmsProviderError = classifySmsProviderError;
 module.exports.isProviderAcceptedResponse = isProviderAcceptedResponse;

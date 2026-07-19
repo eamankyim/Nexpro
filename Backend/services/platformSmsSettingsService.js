@@ -5,6 +5,7 @@ const PLATFORM_SMS_SETTINGS_KEY = 'platform:sms';
 const PLATFORM_SMS_CREDENTIALS_ENCRYPTION_KEY = 'PLATFORM_SMS_CREDENTIALS_ENCRYPTION_KEY';
 const DEFAULT_SENDER_ID = 'ABS';
 const DEFAULT_MONTHLY_LIMIT = 100;
+const PLATFORM_SMS_PROVIDERS = ['arkesel', 'mnotify'];
 
 const clean = (value) => String(value || '').trim();
 const isRealSecret = (value) => typeof value === 'string' && value.trim() !== '' && value !== '***';
@@ -22,19 +23,54 @@ function encryptionConfigured() {
     || hasKey('PLATFORM_EMAIL_CREDENTIALS_ENCRYPTION_KEY');
 }
 
-function getPublicSummary(value = {}) {
+/**
+ * Normalize provider id to a supported platform SMS provider.
+ * @param {string} value
+ * @returns {'arkesel'|'mnotify'}
+ */
+function normalizeProvider(value) {
+  const provider = clean(value).toLowerCase();
+  return PLATFORM_SMS_PROVIDERS.includes(provider) ? provider : 'arkesel';
+}
+
+/**
+ * Migrate legacy `provider` field into `activeProvider` shape without dropping Arkesel creds.
+ * @param {object} value
+ * @returns {object}
+ */
+function normalizeStoredValue(value = {}) {
+  const activeProvider = normalizeProvider(value.activeProvider || value.provider || 'arkesel');
   return {
-    enabled: value.enabled === true,
-    provider: 'arkesel',
+    ...value,
+    activeProvider,
+    provider: activeProvider,
+    arkesel: { ...(value.arkesel || {}) },
+    mnotify: { ...(value.mnotify || {}) },
+  };
+}
+
+function providerPublicSummary(blob = {}) {
+  return {
+    apiKeyConfigured: Boolean(blob.apiKey),
+    apiKeyMasked: maskLast4(blob.apiKeyLast4),
+    senderId: clean(blob.senderId) || DEFAULT_SENDER_ID,
+    updatedAt: blob.updatedAt || null,
+    lastTestAt: blob.lastTestAt || null,
+    lastError: blob.lastError || null,
+  };
+}
+
+function getPublicSummary(value = {}) {
+  const normalized = normalizeStoredValue(value);
+  return {
+    enabled: normalized.enabled === true,
+    activeProvider: normalized.activeProvider,
+    provider: normalized.activeProvider,
     encryptionConfigured: encryptionConfigured(),
-    arkesel: {
-      apiKeyConfigured: Boolean(value.arkesel?.apiKey),
-      apiKeyMasked: maskLast4(value.arkesel?.apiKeyLast4),
-      senderId: clean(value.arkesel?.senderId) || DEFAULT_SENDER_ID,
-      updatedAt: value.arkesel?.updatedAt || null,
-    },
-    monthlyLimit: parseMonthlyLimit(value.monthlyLimit),
-    updatedAt: value.updatedAt || null,
+    arkesel: providerPublicSummary(normalized.arkesel),
+    mnotify: providerPublicSummary(normalized.mnotify),
+    monthlyLimit: parseMonthlyLimit(normalized.monthlyLimit),
+    updatedAt: normalized.updatedAt || null,
   };
 }
 
@@ -49,21 +85,39 @@ function decryptStoredSecret(value) {
   return value ? decryptSecret(value, PLATFORM_SMS_CREDENTIALS_ENCRYPTION_KEY) : '';
 }
 
+/**
+ * Whether the active provider has enough credentials to send.
+ * @param {object} value
+ * @returns {boolean}
+ */
 function hasActiveCredentials(value = {}) {
-  return Boolean(value.enabled === true && value.arkesel?.apiKey && clean(value.arkesel?.senderId || DEFAULT_SENDER_ID));
+  const normalized = normalizeStoredValue(value);
+  if (normalized.enabled !== true) return false;
+  const blob = normalized[normalized.activeProvider] || {};
+  return Boolean(blob.apiKey && clean(blob.senderId || DEFAULT_SENDER_ID));
 }
 
+/**
+ * Build runtime config for the currently active platform SMS provider.
+ * @param {object} value
+ * @returns {object|null}
+ */
 function buildStoredConfig(value = {}) {
-  if (!hasActiveCredentials(value)) return null;
-  const apiKey = decryptStoredSecret(value.arkesel?.apiKey);
-  const senderId = clean(value.arkesel?.senderId) || DEFAULT_SENDER_ID;
+  const normalized = normalizeStoredValue(value);
+  if (!hasActiveCredentials(normalized)) return null;
+
+  const provider = normalized.activeProvider;
+  const blob = normalized[provider] || {};
+  const apiKey = decryptStoredSecret(blob.apiKey);
+  const senderId = clean(blob.senderId) || DEFAULT_SENDER_ID;
   if (!apiKey || !senderId) return null;
+
   return {
     enabled: true,
-    provider: 'arkesel',
+    provider,
     apiKey,
     senderId: senderId.substring(0, 11),
-    monthlyLimit: parseMonthlyLimit(value.monthlyLimit),
+    monthlyLimit: parseMonthlyLimit(normalized.monthlyLimit),
     source: 'platform',
     limited: true,
   };
@@ -93,36 +147,55 @@ function requireEncryptionForNewSecret(secret) {
   }
 }
 
+/**
+ * Merge provider credential blob (apiKey / senderId) into stored settings.
+ * @param {object} existingBlob
+ * @param {object} payloadBlob
+ * @param {string|null} userId
+ * @param {string} now
+ * @returns {object}
+ */
+function mergeProviderBlob(existingBlob = {}, payloadBlob = {}, userId, now) {
+  const next = { ...existingBlob };
+
+  if (payloadBlob.senderId !== undefined) {
+    next.senderId = clean(payloadBlob.senderId) || DEFAULT_SENDER_ID;
+  } else if (!next.senderId) {
+    next.senderId = DEFAULT_SENDER_ID;
+  }
+
+  if (isRealSecret(payloadBlob.apiKey)) {
+    requireEncryptionForNewSecret(payloadBlob.apiKey);
+    const apiKey = clean(payloadBlob.apiKey);
+    next.apiKey = encryptSecret(apiKey, PLATFORM_SMS_CREDENTIALS_ENCRYPTION_KEY);
+    next.apiKeyLast4 = last4(apiKey);
+    next.updatedAt = now;
+    next.updatedBy = userId || null;
+    next.lastError = null;
+  }
+
+  return next;
+}
+
 function mergeSettings({ existing = {}, payload = {}, userId }) {
   const now = new Date().toISOString();
-  const arkeselPayload = payload.arkesel || {};
-  const arkeselExisting = existing.arkesel || {};
+  const existingNorm = normalizeStoredValue(existing);
+  const activeProvider = normalizeProvider(
+    payload.activeProvider || payload.provider || existingNorm.activeProvider
+  );
 
   const next = {
-    enabled: payload.enabled !== undefined ? payload.enabled === true : existing.enabled === true,
-    provider: 'arkesel',
-    arkesel: { ...arkeselExisting },
+    enabled: payload.enabled !== undefined ? payload.enabled === true : existingNorm.enabled === true,
+    activeProvider,
+    provider: activeProvider,
+    arkesel: mergeProviderBlob(existingNorm.arkesel, payload.arkesel || {}, userId, now),
+    mnotify: mergeProviderBlob(existingNorm.mnotify, payload.mnotify || {}, userId, now),
     monthlyLimit: payload.monthlyLimit !== undefined
       ? parseMonthlyLimit(payload.monthlyLimit)
-      : parseMonthlyLimit(existing.monthlyLimit),
+      : parseMonthlyLimit(existingNorm.monthlyLimit),
     updatedAt: now,
     updatedBy: userId || null,
   };
-
-  if (arkeselPayload.senderId !== undefined) {
-    next.arkesel.senderId = clean(arkeselPayload.senderId) || DEFAULT_SENDER_ID;
-  } else if (!next.arkesel.senderId) {
-    next.arkesel.senderId = DEFAULT_SENDER_ID;
-  }
-
-  if (isRealSecret(arkeselPayload.apiKey)) {
-    requireEncryptionForNewSecret(arkeselPayload.apiKey);
-    const apiKey = clean(arkeselPayload.apiKey);
-    next.arkesel.apiKey = encryptSecret(apiKey, PLATFORM_SMS_CREDENTIALS_ENCRYPTION_KEY);
-    next.arkesel.apiKeyLast4 = last4(apiKey);
-    next.arkesel.updatedAt = now;
-    next.arkesel.updatedBy = userId || null;
-  }
 
   return next;
 }
@@ -133,24 +206,29 @@ async function savePlatformSmsSettings({ payload = {}, userId }) {
   });
   const existing = setting?.value || {};
   const value = mergeSettings({ existing, payload, userId });
+  const provider = value.activeProvider;
+  const providerLabel = provider === 'mnotify' ? 'Mnotify' : 'Arkesel';
 
-  const submittedApiKey = isRealSecret(payload.arkesel?.apiKey);
-  if (value.enabled && !hasActiveCredentials(value) && submittedApiKey) {
-    const error = new Error('Arkesel API key and sender ID are required when platform SMS is enabled.');
+  if (value.enabled && !hasActiveCredentials(value)) {
+    const error = new Error(
+      `${providerLabel} API key and sender ID are required when platform SMS is enabled.`
+    );
     error.statusCode = 400;
     throw error;
   }
 
+  const description = 'Platform SMS provider credentials (multi-provider)';
+
   if (setting) {
     setting.value = value;
-    setting.description = 'Platform SMS provider credentials (Arkesel)';
+    setting.description = description;
     await setting.save();
   } else {
     await Setting.create({
       tenantId: null,
       key: PLATFORM_SMS_SETTINGS_KEY,
       value,
-      description: 'Platform SMS provider credentials (Arkesel)',
+      description,
     });
   }
 
@@ -169,23 +247,33 @@ function readStoredSecret(value) {
   }
 }
 
+/**
+ * Build a test config for the requested (or active) provider.
+ * @param {{ payload?: object, existing?: object }} args
+ * @returns {{ provider: string, apiKey: string, senderId: string }}
+ */
 function buildTestConfig({ payload = {}, existing = {} }) {
-  const arkeselPayload = payload.arkesel || {};
-  const arkeselExisting = existing.arkesel || {};
-  const apiKey = isRealSecret(arkeselPayload.apiKey)
-    ? clean(arkeselPayload.apiKey)
-    : readStoredSecret(arkeselExisting.apiKey) || '';
+  const existingNorm = normalizeStoredValue(existing);
+  const provider = normalizeProvider(
+    payload.activeProvider || payload.provider || existingNorm.activeProvider
+  );
+  const payloadBlob = payload[provider] || {};
+  const existingBlob = existingNorm[provider] || {};
+  const apiKey = isRealSecret(payloadBlob.apiKey)
+    ? clean(payloadBlob.apiKey)
+    : readStoredSecret(existingBlob.apiKey) || '';
 
   if (!apiKey) {
-    const error = new Error('Enter an Arkesel API key or save one first before testing.');
+    const label = provider === 'mnotify' ? 'Mnotify' : 'Arkesel';
+    const error = new Error(`Enter a ${label} API key or save one first before testing.`);
     error.statusCode = 400;
     throw error;
   }
 
   return {
-    provider: 'arkesel',
+    provider,
     apiKey,
-    senderId: clean(arkeselPayload.senderId) || clean(arkeselExisting.senderId) || DEFAULT_SENDER_ID,
+    senderId: clean(payloadBlob.senderId) || clean(existingBlob.senderId) || DEFAULT_SENDER_ID,
   };
 }
 
@@ -193,17 +281,16 @@ async function testPlatformSmsConnection({ payload = {}, userId, requestId }) {
   const setting = await Setting.findOne({
     where: { tenantId: null, key: PLATFORM_SMS_SETTINGS_KEY },
   });
-  const config = buildTestConfig({
-    payload,
-    existing: setting?.value || {},
-  });
+  const existing = setting?.value || {};
+  const config = buildTestConfig({ payload, existing });
   const smsService = require('./smsService');
+  const providerPayload = payload[config.provider] || {};
   const result = await smsService.testConnection(config, {
     context: {
       requestId,
       userId,
       source: 'platform_settings_sms_test',
-      mode: isRealSecret(payload.arkesel?.apiKey) ? 'form_values' : 'saved',
+      mode: isRealSecret(providerPayload.apiKey) ? 'form_values' : 'saved',
     },
   });
 
@@ -213,8 +300,23 @@ async function testPlatformSmsConnection({ payload = {}, userId, requestId }) {
     throw error;
   }
 
+  // Soft-record last successful test on saved provider when testing saved credentials
+  if (setting?.value && !isRealSecret(providerPayload.apiKey)) {
+    try {
+      const normalized = normalizeStoredValue(setting.value);
+      const blob = { ...(normalized[config.provider] || {}) };
+      blob.lastTestAt = new Date().toISOString();
+      blob.lastError = null;
+      normalized[config.provider] = blob;
+      setting.value = normalized;
+      await setting.save();
+    } catch (persistError) {
+      console.warn('[Platform SMS settings] Could not persist lastTestAt:', persistError?.message);
+    }
+  }
+
   return {
-    provider: 'arkesel',
+    provider: config.provider,
     message: result.message || 'Platform SMS connection verified successfully',
     data: result.data,
   };
@@ -237,23 +339,27 @@ async function migrateLegacySmsSender() {
 
   const value = {
     enabled: false,
+    activeProvider: 'arkesel',
     provider: 'arkesel',
     arkesel: { senderId: legacySender },
+    mnotify: { senderId: DEFAULT_SENDER_ID },
     monthlyLimit: DEFAULT_MONTHLY_LIMIT,
     updatedAt: new Date().toISOString(),
     migratedFrom: 'platform:communications.smsSender',
   };
 
+  const description = 'Platform SMS provider credentials (multi-provider)';
+
   if (smsSetting) {
     smsSetting.value = value;
-    smsSetting.description = 'Platform SMS provider credentials (Arkesel)';
+    smsSetting.description = description;
     await smsSetting.save();
   } else {
     await Setting.create({
       tenantId: null,
       key: PLATFORM_SMS_SETTINGS_KEY,
       value,
-      description: 'Platform SMS provider credentials (Arkesel)',
+      description,
     });
   }
 }
@@ -261,8 +367,11 @@ async function migrateLegacySmsSender() {
 module.exports = {
   PLATFORM_SMS_SETTINGS_KEY,
   PLATFORM_SMS_CREDENTIALS_ENCRYPTION_KEY,
+  PLATFORM_SMS_PROVIDERS,
   DEFAULT_SENDER_ID,
   DEFAULT_MONTHLY_LIMIT,
+  normalizeProvider,
+  normalizeStoredValue,
   getPlatformSmsSettingsSummary,
   getSavedPlatformSmsConfig,
   getPublicSummary,
@@ -270,4 +379,6 @@ module.exports = {
   testPlatformSmsConnection,
   migrateLegacySmsSender,
   parseMonthlyLimit,
+  hasActiveCredentials,
+  buildTestConfig,
 };

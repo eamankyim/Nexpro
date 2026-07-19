@@ -33,6 +33,7 @@ describe('platformSmsSettingsService', () => {
       userId: 'admin-1',
       payload: {
         enabled: true,
+        activeProvider: 'arkesel',
         arkesel: {
           apiKey: 'arkesel-secret-key-1234',
           senderId: 'ABS',
@@ -50,6 +51,7 @@ describe('platformSmsSettingsService', () => {
       key: 'platform:sms',
       value: expect.objectContaining({
         enabled: true,
+        activeProvider: 'arkesel',
         arkesel: expect.objectContaining({
           apiKey: 'enc:arkesel-secret-key-1234',
           apiKeyLast4: '1234',
@@ -58,9 +60,49 @@ describe('platformSmsSettingsService', () => {
         monthlyLimit: 150,
       }),
     }));
+    expect(summary.activeProvider).toBe('arkesel');
     expect(summary.arkesel.apiKeyConfigured).toBe(true);
     expect(summary.arkesel.apiKeyMasked).toBe('•••• 1234');
     expect(JSON.stringify(summary)).not.toContain('arkesel-secret-key-1234');
+  });
+
+  it('can switch active provider to Mnotify while keeping Arkesel credentials', async () => {
+    Setting.findOne.mockResolvedValue({
+      value: {
+        enabled: true,
+        activeProvider: 'arkesel',
+        arkesel: {
+          apiKey: 'enc:arkesel-secret-key-1234',
+          apiKeyLast4: '1234',
+          senderId: 'ABS',
+        },
+        mnotify: { senderId: 'ABS' },
+      },
+      save: jest.fn(),
+    });
+
+    const setting = await Setting.findOne();
+    Setting.findOne.mockResolvedValue(setting);
+
+    const summary = await platformSmsSettingsService.savePlatformSmsSettings({
+      userId: 'admin-1',
+      payload: {
+        enabled: true,
+        activeProvider: 'mnotify',
+        mnotify: {
+          apiKey: 'mnotify-secret-key-9876',
+          senderId: 'ABS',
+        },
+      },
+    });
+
+    expect(setting.save).toHaveBeenCalled();
+    expect(setting.value.activeProvider).toBe('mnotify');
+    expect(setting.value.arkesel.apiKey).toBe('enc:arkesel-secret-key-1234');
+    expect(setting.value.mnotify.apiKey).toBe('enc:mnotify-secret-key-9876');
+    expect(summary.activeProvider).toBe('mnotify');
+    expect(summary.mnotify.apiKeyMasked).toBe('•••• 9876');
+    expect(summary.arkesel.apiKeyConfigured).toBe(true);
   });
 
   it('returns a validation error when saving a new secret without an encryption key', async () => {
@@ -84,20 +126,23 @@ describe('platformSmsSettingsService', () => {
     expect(Setting.create).not.toHaveBeenCalled();
   });
 
-  it('tests Arkesel connection with form-entered credentials', async () => {
-    Setting.findOne.mockResolvedValue({ value: { enabled: true, arkesel: {} } });
+  it('tests Mnotify connection with form-entered credentials', async () => {
+    Setting.findOne.mockResolvedValue({
+      value: { enabled: true, activeProvider: 'mnotify', mnotify: {} },
+    });
     smsService.testConnection.mockResolvedValue({
       success: true,
-      message: 'Arkesel connection verified',
+      message: 'Mnotify connection verified',
       data: { balance: 10 },
     });
 
     const result = await platformSmsSettingsService.testPlatformSmsConnection({
       userId: 'admin-1',
-      requestId: 'req-arkesel',
+      requestId: 'req-mnotify',
       payload: {
-        arkesel: {
-          apiKey: 'arkesel-test-key',
+        activeProvider: 'mnotify',
+        mnotify: {
+          apiKey: 'mnotify-test-key',
           senderId: 'ABS',
         },
       },
@@ -105,8 +150,8 @@ describe('platformSmsSettingsService', () => {
 
     expect(smsService.testConnection).toHaveBeenCalledWith(
       expect.objectContaining({
-        provider: 'arkesel',
-        apiKey: 'arkesel-test-key',
+        provider: 'mnotify',
+        apiKey: 'mnotify-test-key',
         senderId: 'ABS',
       }),
       expect.objectContaining({
@@ -116,6 +161,34 @@ describe('platformSmsSettingsService', () => {
         }),
       })
     );
-    expect(result.provider).toBe('arkesel');
+    expect(result.provider).toBe('mnotify');
+  });
+
+  it('builds runtime config from active provider only', async () => {
+    Setting.findOne.mockResolvedValue({
+      value: {
+        enabled: true,
+        activeProvider: 'mnotify',
+        arkesel: {
+          apiKey: 'enc:arkesel-secret-key-1234',
+          apiKeyLast4: '1234',
+          senderId: 'ABS',
+        },
+        mnotify: {
+          apiKey: 'enc:mnotify-secret-key-9876',
+          apiKeyLast4: '9876',
+          senderId: 'ABSMSG',
+        },
+      },
+    });
+
+    const config = await platformSmsSettingsService.getSavedPlatformSmsConfig();
+    expect(config).toMatchObject({
+      provider: 'mnotify',
+      apiKey: 'mnotify-secret-key-9876',
+      senderId: 'ABSMSG',
+      source: 'platform',
+      limited: true,
+    });
   });
 });

@@ -160,13 +160,15 @@ const AdminAutomationsMessaging = () => {
       if (response?.success) {
         setUsage(response.data);
         if (response.data?.balance?.ok) {
-          showSuccess('Arkesel balance refreshed');
+          const provider = response.data.balance.provider || 'provider';
+          const label = provider === 'mnotify' ? 'Mnotify' : provider === 'arkesel' ? 'Arkesel' : 'SMS provider';
+          showSuccess(`${label} balance refreshed`);
         } else {
-          showError(response.data?.balance?.message || 'Could not refresh Arkesel balance');
+          showError(response.data?.balance?.message || 'Could not refresh SMS provider balance');
         }
       }
     } catch (error) {
-      handleApiError(error, 'Failed to refresh Arkesel balance');
+      handleApiError(error, 'Failed to refresh SMS provider balance');
     } finally {
       setBalanceLoading(false);
     }
@@ -230,7 +232,7 @@ const AdminAutomationsMessaging = () => {
             className="bg-[#166534] hover:bg-[#14532d] text-white"
           >
             <RefreshCw className={`h-4 w-4 mr-2 ${balanceLoading ? 'animate-spin' : ''}`} />
-            Refresh Arkesel balance
+            Refresh provider balance
           </Button>
         </div>
       </div>
@@ -347,7 +349,12 @@ const AdminAutomationsMessaging = () => {
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-amber-600" />
-              Arkesel balance
+              Provider balance
+              {usage?.balance?.provider ? (
+                <Badge variant="outline" className="font-normal">
+                  {usage.balance.provider === 'mnotify' ? 'Mnotify' : usage.balance.provider === 'arkesel' ? 'Arkesel' : usage.balance.provider}
+                </Badge>
+              ) : null}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
@@ -361,10 +368,16 @@ const AdminAutomationsMessaging = () => {
                   Main balance:{' '}
                   <span className="font-semibold">{balance.mainBalance ?? '—'}</span>
                 </p>
+                {balance.bonus != null && (
+                  <p>
+                    Bonus:{' '}
+                    <span className="font-semibold">{balance.bonus}</span>
+                  </p>
+                )}
               </>
             ) : (
               <p className="text-muted-foreground">
-                Click &quot;Refresh Arkesel balance&quot; to check platform SMS credit.
+                Click &quot;Refresh provider balance&quot; to check platform SMS credit.
               </p>
             )}
             {usage?.balance && !usage.balance.ok && (

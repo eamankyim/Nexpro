@@ -98,7 +98,9 @@ const defaultFormValues = {
   },
   platformSms: {
     enabled: false,
+    activeProvider: 'arkesel',
     arkesel: { senderId: 'ABS' },
+    mnotify: { senderId: 'ABS' },
     monthlyLimit: 100,
     encryptionConfigured: true,
   },
@@ -110,8 +112,10 @@ const PLATFORM_EMAIL_ENCRYPTION_KEY_MESSAGE =
 const PLATFORM_SMS_ENCRYPTION_KEY_MESSAGE =
   'Server is missing PLATFORM_SMS_CREDENTIALS_ENCRYPTION_KEY (64 hex chars). Configure it before saving platform SMS credentials.';
 
-const hasSavedPlatformSmsCredentials = (platformSms = {}) =>
-  Boolean(platformSms.arkesel?.apiKeyConfigured);
+const hasSavedPlatformSmsCredentials = (platformSms = {}) => {
+  const provider = platformSms.activeProvider || platformSms.provider || 'arkesel';
+  return Boolean(platformSms?.[provider]?.apiKeyConfigured);
+};
 
 const hasSavedPlatformEmailCredentials = (platformEmail = {}) => {
   const provider = platformEmail.provider || 'sendgrid';
@@ -299,7 +303,19 @@ const AdminSettings = () => {
           'platform:sms': platformSms = defaultFormValues.platformSms,
         } = response.data || {};
         const normalizedPlatformEmail = platformEmail || defaultFormValues.platformEmail;
-        const normalizedPlatformSms = platformSms || defaultFormValues.platformSms;
+        const normalizedPlatformSms = {
+          ...defaultFormValues.platformSms,
+          ...(platformSms || {}),
+          activeProvider: platformSms?.activeProvider || platformSms?.provider || 'arkesel',
+          arkesel: {
+            ...defaultFormValues.platformSms.arkesel,
+            ...(platformSms?.arkesel || {}),
+          },
+          mnotify: {
+            ...defaultFormValues.platformSms.mnotify,
+            ...(platformSms?.mnotify || {}),
+          },
+        };
         form.reset({
           branding,
           featureFlags,
@@ -368,7 +384,9 @@ const AdminSettings = () => {
     const hasEnteredPlatformSecret = Boolean(
       platformEmail.sendgrid?.apiKey?.trim() || platformEmail.smtp?.password?.trim()
     );
-    const hasEnteredPlatformSmsSecret = Boolean(platformSms.arkesel?.apiKey?.trim());
+    const hasEnteredPlatformSmsSecret = Boolean(
+      platformSms.arkesel?.apiKey?.trim() || platformSms.mnotify?.apiKey?.trim()
+    );
 
     if (hasEnteredPlatformSecret && platformEmail.encryptionConfigured === false) {
       showError(null, PLATFORM_EMAIL_ENCRYPTION_KEY_MESSAGE);
@@ -461,7 +479,10 @@ const AdminSettings = () => {
   const handleSavePlatformSms = async () => {
     const values = form.getValues();
     const platformSms = values?.platformSms || {};
-    const hasEnteredPlatformSmsSecret = Boolean(platformSms.arkesel?.apiKey?.trim());
+    const activeProvider = platformSms.activeProvider || platformSms.provider || 'arkesel';
+    const hasEnteredPlatformSmsSecret = Boolean(platformSms?.[activeProvider]?.apiKey?.trim())
+      || Boolean(platformSms.arkesel?.apiKey?.trim())
+      || Boolean(platformSms.mnotify?.apiKey?.trim());
 
     if (hasEnteredPlatformSmsSecret && platformSms.encryptionConfigured === false) {
       showError(null, PLATFORM_SMS_ENCRYPTION_KEY_MESSAGE);
@@ -489,10 +510,12 @@ const AdminSettings = () => {
 
   const handleTestPlatformSms = async () => {
     const platformSms = form.getValues('platformSms') || {};
-    const hasEnteredKey = Boolean(platformSms.arkesel?.apiKey?.trim());
-    const hasSavedKey = platformSms.arkesel?.apiKeyConfigured;
+    const activeProvider = platformSms.activeProvider || platformSms.provider || 'arkesel';
+    const providerLabel = activeProvider === 'mnotify' ? 'Mnotify' : 'Arkesel';
+    const hasEnteredKey = Boolean(platformSms?.[activeProvider]?.apiKey?.trim());
+    const hasSavedKey = platformSms?.[activeProvider]?.apiKeyConfigured;
     if (!hasEnteredKey && !hasSavedKey) {
-      showError(null, 'Enter an Arkesel API key or save one first before testing.');
+      showError(null, `Enter a ${providerLabel} API key or save one first before testing.`);
       return;
     }
 
@@ -893,10 +916,16 @@ const AdminSettings = () => {
   );
   const platformEmailProviderLabel = platformEmailProvider === 'smtp' ? 'SMTP' : 'SendGrid';
   const platformSmsArkesel = useWatch({ control: form.control, name: 'platformSms.arkesel' }) || {};
+  const platformSmsMnotify = useWatch({ control: form.control, name: 'platformSms.mnotify' }) || {};
+  const platformSmsActiveProviderRaw = useWatch({ control: form.control, name: 'platformSms.activeProvider' });
+  const platformSmsProviderFallback = useWatch({ control: form.control, name: 'platformSms.provider' });
+  const platformSmsActiveProvider = platformSmsActiveProviderRaw || platformSmsProviderFallback || 'arkesel';
   const platformSmsEncryptionConfigured = useWatch({ control: form.control, name: 'platformSms.encryptionConfigured' });
   const platformSmsEnabled = useWatch({ control: form.control, name: 'platformSms.enabled' }) === true;
   const currentPlatformSms = useWatch({ control: form.control, name: 'platformSms' }) || {};
   const platformSmsHasSavedCredentials = hasSavedPlatformSmsCredentials(currentPlatformSms);
+  const platformSmsActiveLabel = platformSmsActiveProvider === 'mnotify' ? 'Mnotify' : 'Arkesel';
+  const platformSmsActiveBlob = platformSmsActiveProvider === 'mnotify' ? platformSmsMnotify : platformSmsArkesel;
   const isEnterprisePlanForm = String(watchedPlanId || '').toLowerCase() === 'enterprise';
 
   const handleEnterpriseTierChange = useCallback((tierId) => {
@@ -1735,9 +1764,9 @@ const AdminSettings = () => {
               <div className="rounded-lg border border-border p-4 space-y-4">
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div>
-                    <h3 className="font-semibold">Platform SMS (Arkesel)</h3>
+                    <h3 className="font-semibold">Platform SMS</h3>
                     <p className="text-sm text-muted-foreground">
-                      Default SMS for tenants without their own provider. Sender ID ABS; each tenant has a monthly message quota.
+                      Default SMS for tenants without their own provider. Switch between Arkesel and Mnotify without a deploy. Each tenant still has a monthly ABS message quota.
                     </p>
                   </div>
                   {!platformSmsEditing && (
@@ -1773,27 +1802,77 @@ const AdminSettings = () => {
                         </FormItem>
                       )}
                     />
-                    <Badge variant={platformSmsArkesel.apiKeyConfigured ? 'secondary' : 'outline'}>
-                      Arkesel key {platformSmsArkesel.apiKeyConfigured ? `saved ${platformSmsArkesel.apiKeyMasked || ''}` : 'not saved'}
-                    </Badge>
                     <FormField
                       control={form.control}
-                      name="platformSms.arkesel.apiKey"
+                      name="platformSms.activeProvider"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Arkesel API key</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="password"
-                              placeholder={platformSmsArkesel.apiKeyConfigured ? 'Leave blank to keep saved API key' : 'Enter Arkesel API key'}
-                              {...field}
-                            />
-                          </FormControl>
+                          <FormLabel>Active provider</FormLabel>
+                          <Select value={field.value || 'arkesel'} onValueChange={field.onChange}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select provider" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="arkesel">Arkesel</SelectItem>
+                              <SelectItem value="mnotify">Mnotify</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormDescription>
+                            Tenants on ABS platform SMS use this provider. Merchants with their own SMS are unaffected.
+                          </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
                     />
-                    <div className="grid gap-4 md:grid-cols-2">
+                    <FormField
+                      control={form.control}
+                      name="platformSms.monthlyLimit"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Monthly limit per tenant</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              min={1}
+                              value={field.value ?? 100}
+                              onChange={(e) => field.onChange(parseInt(e.target.value, 10) || 100)}
+                            />
+                          </FormControl>
+                          <FormDescription>Default 100 SMS per tenant per month (Africa/Accra).</FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <div className="rounded-lg border border-border p-4 space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <h4 className="font-medium">Arkesel</h4>
+                        <Badge variant={platformSmsActiveProvider === 'arkesel' ? 'secondary' : 'outline'}>
+                          {platformSmsActiveProvider === 'arkesel' ? 'Active' : 'Standby'}
+                        </Badge>
+                      </div>
+                      <Badge variant={platformSmsArkesel.apiKeyConfigured ? 'secondary' : 'outline'}>
+                        Key {platformSmsArkesel.apiKeyConfigured ? `saved ${platformSmsArkesel.apiKeyMasked || ''}` : 'not saved'}
+                      </Badge>
+                      <FormField
+                        control={form.control}
+                        name="platformSms.arkesel.apiKey"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Arkesel API key</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="password"
+                                placeholder={platformSmsArkesel.apiKeyConfigured ? 'Leave blank to keep saved API key' : 'Enter Arkesel API key'}
+                                {...field}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
                       <FormField
                         control={form.control}
                         name="platformSms.arkesel.senderId"
@@ -1807,21 +1886,44 @@ const AdminSettings = () => {
                           </FormItem>
                         )}
                       />
+                    </div>
+
+                    <div className="rounded-lg border border-border p-4 space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <h4 className="font-medium">Mnotify</h4>
+                        <Badge variant={platformSmsActiveProvider === 'mnotify' ? 'secondary' : 'outline'}>
+                          {platformSmsActiveProvider === 'mnotify' ? 'Active' : 'Standby'}
+                        </Badge>
+                      </div>
+                      <Badge variant={platformSmsMnotify.apiKeyConfigured ? 'secondary' : 'outline'}>
+                        Key {platformSmsMnotify.apiKeyConfigured ? `saved ${platformSmsMnotify.apiKeyMasked || ''}` : 'not saved'}
+                      </Badge>
                       <FormField
                         control={form.control}
-                        name="platformSms.monthlyLimit"
+                        name="platformSms.mnotify.apiKey"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Monthly limit per tenant</FormLabel>
+                            <FormLabel>Mnotify API key</FormLabel>
                             <FormControl>
                               <Input
-                                type="number"
-                                min={1}
-                                value={field.value ?? 100}
-                                onChange={(e) => field.onChange(parseInt(e.target.value, 10) || 100)}
+                                type="password"
+                                placeholder={platformSmsMnotify.apiKeyConfigured ? 'Leave blank to keep saved API key' : 'Enter Mnotify API key'}
+                                {...field}
                               />
                             </FormControl>
-                            <FormDescription>Default 100 SMS per tenant per month (Africa/Accra).</FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="platformSms.mnotify.senderId"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Sender ID</FormLabel>
+                            <FormControl>
+                              <Input placeholder="ABS" maxLength={11} {...field} />
+                            </FormControl>
                             <FormMessage />
                           </FormItem>
                         )}
@@ -1830,21 +1932,30 @@ const AdminSettings = () => {
                   </>
                 ) : (
                   <div className="space-y-3">
-                    <Badge variant={platformSmsEnabled ? 'secondary' : 'outline'}>
-                      Platform SMS {platformSmsEnabled ? 'enabled' : 'disabled'}
-                    </Badge>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant={platformSmsEnabled ? 'secondary' : 'outline'}>
+                        Platform SMS {platformSmsEnabled ? 'enabled' : 'disabled'}
+                      </Badge>
+                      <Badge variant="outline">Active: {platformSmsActiveLabel}</Badge>
+                    </div>
                     <div className="grid gap-3 md:grid-cols-2">
                       <div>
-                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">API key</p>
-                        <p className="text-sm text-foreground">{platformSmsArkesel.apiKeyMasked || 'Not saved'}</p>
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Active API key</p>
+                        <p className="text-sm text-foreground">{platformSmsActiveBlob.apiKeyMasked || 'Not saved'}</p>
                       </div>
                       <div>
                         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Sender ID</p>
-                        <p className="text-sm text-foreground">{platformSmsArkesel.senderId || 'ABS'}</p>
+                        <p className="text-sm text-foreground">{platformSmsActiveBlob.senderId || 'ABS'}</p>
                       </div>
                       <div>
                         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Monthly limit</p>
                         <p className="text-sm text-foreground">{currentPlatformSms.monthlyLimit || 100} per tenant</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Standby providers</p>
+                        <p className="text-sm text-foreground">
+                          Arkesel {platformSmsArkesel.apiKeyConfigured ? 'saved' : 'not saved'} · Mnotify {platformSmsMnotify.apiKeyConfigured ? 'saved' : 'not saved'}
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -1853,7 +1964,9 @@ const AdminSettings = () => {
                   <div className="flex flex-col gap-3 rounded-lg border border-border p-4 md:flex-row md:items-center md:justify-between">
                     <div>
                       <p className="text-sm font-medium">Verify platform SMS credentials</p>
-                      <p className="text-sm text-muted-foreground">Tests Arkesel balance endpoint without sending SMS.</p>
+                      <p className="text-sm text-muted-foreground">
+                        Tests the selected active provider ({platformSmsActiveLabel}) without sending SMS.
+                      </p>
                     </div>
                     <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
                       {platformSmsHasSavedCredentials && (
