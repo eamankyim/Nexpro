@@ -32,12 +32,12 @@ import {
 } from '@/components/ui/form';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
-import saleService from '../services/saleService';
-import productService from '../services/productService';
-import { useDebounce } from '../hooks/useDebounce';
-import { showError, showSuccess } from '../utils/toast';
-import { formatAmount } from '../utils/formatNumber';
-import { numberInputValue, handleNumberChange } from '../utils/formUtils';
+import saleService from '../../services/saleService';
+import productService from '../../services/productService';
+import { useDebounce } from '../../hooks/useDebounce';
+import { showError, showSuccess } from '../../utils/toast';
+import { formatAmount } from '../../utils/formatNumber';
+import { numberInputValue, handleNumberChange } from '../../utils/formUtils';
 import {
   SALE_RETURN_REASON_CODES,
   SALE_RETURN_REASON_LABELS,
@@ -45,7 +45,7 @@ import {
   SALE_RETURN_DISPOSITION_LABELS,
   SALE_RETURN_TYPES,
   PAYMENT_METHODS,
-} from '../constants';
+} from '../../constants';
 
 const STEPS = ['items', 'reason', 'exchange', 'money', 'confirm'];
 

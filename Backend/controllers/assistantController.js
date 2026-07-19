@@ -16,6 +16,7 @@ const {
   buildUnsupportedResponse,
   classifyIntent,
 } = require('../services/analysis');
+const { trySmallTalk } = require('../services/assistant/smallTalk');
 
 const sendAssistantError = (res, error) => {
   const classified = classifyAiProviderError(error);
@@ -685,11 +686,32 @@ exports.chat = async (req, res, next) => {
     }
 
     const preflightStart = process.hrtime.bigint();
+    const businessTypeForRouting = req.tenant?.businessType;
 
-    // Analysis path first: owned engine needs no Anthropic key / billing circuit
+    // Small talk first: greetings / identity / help — no Anthropic key
+    const smallTalk = trySmallTalk(lastMessage.content, {
+      businessType: businessTypeForRouting,
+    });
+    if (smallTalk.matched) {
+      timings.preflightMs = toDurationMs(preflightStart);
+      timings.contextMs = 0;
+      timings.providerMs = 0;
+      logAssistantTiming({
+        outcome: 'success',
+        source: 'small_talk',
+        intent: smallTalk.intent,
+      });
+      return res.status(200).json({
+        success: true,
+        message: smallTalk.answerMarkdown,
+        meta: smallTalk.meta,
+      });
+    }
+
+    // Analysis path: owned engine needs no Anthropic key / billing circuit
     const analysisClassification = classifyIntent(lastMessage.content, {
       pageContext: typeof pageContext === 'string' ? pageContext : undefined,
-      businessType: req.tenant?.businessType,
+      businessType: businessTypeForRouting,
     });
 
     if (analysisClassification.route === 'analysis') {
@@ -704,7 +726,7 @@ exports.chat = async (req, res, next) => {
         endDate: typeof endDate === 'string' ? endDate : undefined,
         periodLabel: typeof periodLabel === 'string' ? periodLabel : undefined,
         pageContext: typeof pageContext === 'string' ? pageContext : undefined,
-        businessType: req.tenant?.businessType,
+        businessType: businessTypeForRouting,
       });
       timings.contextMs = toDurationMs(contextStart);
       timings.providerMs = 0;

@@ -50,7 +50,7 @@ describe('intentClassifier', () => {
     expect(r.route).toBe('draft');
   });
 
-  it('returns unsupported with suggestions for greetings', () => {
+  it('returns unsupported with suggestions for bare greetings (chat uses smallTalk separately)', () => {
     const r = classifyIntent('hello');
     expect(r.route).toBe('unsupported');
     expect(r.suggestedQuestions?.length).toBeGreaterThan(0);

@@ -130,15 +130,8 @@ function classifyIntent(message, options = {}) {
     return { intent: 'support_howto', confidence: 0.6, route: 'support' };
   }
 
-  // Soft greetings → unsupported with suggestions (avoid Claude round-trip for empty chat)
-  if (/^(hi|hello|hey|thanks|thank you|ok|okay)[\s!.]*$/.test(text)) {
-    return {
-      intent: null,
-      confidence: 0.5,
-      route: 'unsupported',
-      suggestedQuestions: suggestions,
-    };
-  }
+  // Bare greetings are handled by smallTalk in assistant chat (before this classifier).
+  // Analysis API still maps them to unsupported with suggestions below.
 
   // Predictions / forecasts — not Phase 1 analysis
   if (/\b(predict|forecast|next week|will i sell)\b/.test(text)) {

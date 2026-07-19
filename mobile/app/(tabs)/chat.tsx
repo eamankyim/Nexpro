@@ -430,7 +430,7 @@ export default function ChatScreen() {
           <AppIcon name="brain" size={48} color={colors.tabIconDefault} />
           <Text style={[styles.welcomeTitle, { color: textColor }]}>ABS Assistant</Text>
           <Text style={[styles.welcomeSubtitle, { color: mutedColor }]}>
-            Business insights, ABS support, and message drafts using your workspace data.
+            Say hi or ask about today’s sales, collections, stock or jobs, ABS how-tos, and drafts.
           </Text>
           <PromptSection
             title="For this screen"

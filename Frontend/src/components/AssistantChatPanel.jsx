@@ -321,7 +321,7 @@ export default function AssistantChatPanel({ open, onOpenChange, pageContext }) 
           {messages.length === 0 ? (
             <div className="space-y-4">
               <p className="text-sm text-gray-500">
-                Business insights, ABS support, and customer message drafts — powered by your workspace data.
+                Say hi or ask about today’s sales, collections, stock or jobs, ABS how-tos, and drafts.
               </p>
               <PromptList
                 title="Business insights"

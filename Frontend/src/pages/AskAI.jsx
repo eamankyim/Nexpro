@@ -382,7 +382,7 @@ export default function AskAI() {
           <h1 className="text-2xl md:text-3xl lg:text-4xl font-bold text-foreground">Ask AI</h1>
         </div>
         <p className="text-muted-foreground mt-2 text-sm md:text-base max-w-3xl">
-          ABS Assistant helps with business insights, ABS support, payment reminders, and customer message drafts.
+          Say hi or ask about today’s sales, collections, stock or jobs, ABS how-tos, and message drafts.
         </p>
       </div>
 

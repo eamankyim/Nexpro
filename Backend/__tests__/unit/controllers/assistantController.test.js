@@ -93,7 +93,7 @@ describe('assistantController.chat', () => {
       tenantId: 'tenant-1',
       tenant: { businessType: 'shop' },
       body: {
-        messages: [{ role: 'user', content: 'How are sales today?' }],
+        messages: [{ role: 'user', content: 'How do I add a customer?' }],
       },
       headers: {},
     };
@@ -112,6 +112,54 @@ describe('assistantController.chat', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
+  it('answers small talk without Anthropic', async () => {
+    process.env.ANTHROPIC_API_KEY = '';
+    const req = {
+      tenantId: 'tenant-1',
+      tenant: { businessType: 'shop' },
+      body: {
+        messages: [{ role: 'user', content: 'hi' }],
+      },
+      headers: {},
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    await chat(req, res, next);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.message).toMatch(/ABS AI/i);
+    expect(res.body.meta).toMatchObject({
+      source: 'small_talk',
+      intent: 'small_talk_greeting',
+    });
+    expect(openaiService.chatWithContext).not.toHaveBeenCalled();
+    expect(Customer.count).not.toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('answers identity small talk without Anthropic', async () => {
+    process.env.ANTHROPIC_API_KEY = '';
+    const req = {
+      tenantId: 'tenant-1',
+      tenant: { businessType: 'shop' },
+      body: {
+        messages: [{ role: 'user', content: 'who are you?' }],
+      },
+      headers: {},
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    await chat(req, res, next);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.meta.intent).toBe('small_talk_identity');
+    expect(res.body.message).toMatch(/ABS AI|ABS Assistant/i);
+    expect(openaiService.chatWithContext).not.toHaveBeenCalled();
+  });
+
   it('returns 402 for provider billing errors instead of a generic 500', async () => {
     openaiService.chatWithContext.mockRejectedValue({
       status: 400,
@@ -126,7 +174,7 @@ describe('assistantController.chat', () => {
       tenantId: 'tenant-1',
       tenant: { businessType: 'shop' },
       body: {
-        messages: [{ role: 'user', content: 'Summarize this month' }],
+        messages: [{ role: 'user', content: 'How do I create an invoice?' }],
       },
       headers: {
         'x-client-submitted-at': String(Date.now() - 250),
@@ -165,7 +213,7 @@ describe('assistantController.chat', () => {
       tenantId: 'tenant-1',
       tenant: { businessType: 'shop' },
       body: {
-        messages: [{ role: 'user', content: 'Summarize this month' }],
+        messages: [{ role: 'user', content: 'How do I record a payment on an invoice?' }],
       },
       headers: {},
     };
@@ -195,7 +243,7 @@ describe('assistantController.chat', () => {
       tenantId: 'tenant-1',
       tenant: { businessType: 'shop' },
       body: {
-        messages: [{ role: 'user', content: 'Summarize this month' }],
+        messages: [{ role: 'user', content: 'How do I add an expense?' }],
       },
       headers: {},
     };
