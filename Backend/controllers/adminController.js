@@ -47,6 +47,7 @@ const {
 const {
   resolveBillingStatus,
   recordSubscriptionPaymentAndActivate,
+  resetTenantTrial,
   toBillingPayload,
   normalizePlan,
   normalizeBillingPeriod,
@@ -1452,7 +1453,7 @@ exports.getTenantById = async (req, res, next) => {
   try {
     const { Setting } = require('../models');
     
-    const tenant = await Tenant.findByPk(req.params.id, {
+    const tenant = await Tenant.scope('withOptionalColumns').findByPk(req.params.id, {
       include: [
         {
           model: UserTenant,
@@ -1697,6 +1698,42 @@ exports.updateTenantAccess = async (req, res, next) => {
       }
     });
   } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Reset a tenant's free trial (grant another ~1 month)
+ * @route   POST /api/admin/tenants/:id/reset-trial
+ * @access  Platform admin (tenants.update)
+ */
+exports.resetTenantTrial = async (req, res, next) => {
+  try {
+    const result = await resetTenantTrial(req.params.id, {
+      actorUserId: req.user?.id || null,
+      reason: req.body?.reason,
+    });
+
+    const freshTenant = await Tenant.scope('withOptionalColumns').findByPk(req.params.id, {
+      attributes: ['id', 'name', 'slug', 'plan', 'status', 'trialEndsAt', 'metadata', 'createdAt'],
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Free trial reset successfully',
+      data: {
+        ...result,
+        tenant: freshTenant,
+      },
+    });
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+        errorCode: error.errorCode || undefined,
+      });
+    }
     next(error);
   }
 };

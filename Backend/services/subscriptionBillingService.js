@@ -1,7 +1,12 @@
 const { Op } = require('sequelize');
-const { Tenant, Setting, SubscriptionPayment } = require('../models');
+const dayjs = require('dayjs');
+const { Tenant, Setting, SubscriptionPayment, TenantAccessAudit } = require('../models');
 const { normalizeTenantInstanceForRequest } = require('../utils/tenantClassification');
 const { getFallbackAmountPesewas } = require('../config/paystackPlans');
+const {
+  DEFAULT_TRIAL_MONTHS,
+  buildTrialSubscriptionSettingValue,
+} = require('../utils/subscriptionDefaults');
 
 const PAID_PLANS = new Set(['starter', 'professional', 'enterprise']);
 const PAYMENT_STATUSES = new Set(['success', 'pending', 'failed', 'refunded']);
@@ -412,6 +417,173 @@ async function applySubscriptionFromPaystackTransaction(paymentData, source = 'v
 }
 
 /**
+ * Grant another free trial period (now + DEFAULT_TRIAL_MONTHS) for a tenant.
+ * Allowed for expired/unpaid/trialing tenants. Blocked when there is an active
+ * paid subscription period or an active enterprise contract plan.
+ *
+ * Updates tenant.plan / tenant.trialEndsAt, syncs the subscription Setting to
+ * trialing, and writes a TenantAccessAudit row. Idempotent-safe: calling again
+ * simply moves trialEndsAt to a fresh window from `at`.
+ *
+ * @param {string} tenantId
+ * @param {{ actorUserId?: string|null, reason?: string|null, at?: Date }} [options]
+ * @returns {Promise<{
+ *   tenantId: string,
+ *   plan: string,
+ *   trialEndsAt: Date,
+ *   billing: ReturnType<typeof toBillingPayload>,
+ *   before: object,
+ *   after: object,
+ * }>}
+ * @throws {Error} statusCode 404 when tenant missing; 409 when paid/active
+ * @example
+ * await resetTenantTrial(tenantId, { actorUserId: adminId, reason: 'Customer support' });
+ */
+async function resetTenantTrial(tenantId, options = {}) {
+  const at = options.at || new Date();
+  const actorUserId = options.actorUserId || null;
+  const reason =
+    options.reason != null && String(options.reason).trim()
+      ? String(options.reason).trim().slice(0, 500)
+      : 'Granted another 1-month free trial';
+
+  if (!tenantId) {
+    const err = new Error('Tenant id is required');
+    err.statusCode = 400;
+    err.errorCode = 'TENANT_ID_REQUIRED';
+    throw err;
+  }
+
+  const tenant = await Tenant.scope('withOptionalColumns').findByPk(tenantId);
+  if (!tenant) {
+    const err = new Error('Tenant not found');
+    err.statusCode = 404;
+    err.errorCode = 'TENANT_NOT_FOUND';
+    throw err;
+  }
+
+  const subscriptionSetting = await getSubscriptionSetting(tenant.id);
+  const billing = await resolveBillingStatus(tenant, { at, subscriptionSetting });
+  const billingPlan = normalizePlan(billing.plan);
+  const hasActivePaidPayment =
+    Boolean(billing.activePayment) && PAID_PLANS.has(normalizePlan(billing.activePayment.plan));
+  const isActivePaidBilling =
+    billing.billingStatus === 'active' && PAID_PLANS.has(billingPlan);
+
+  if (hasActivePaidPayment || isActivePaidBilling) {
+    const err = new Error(
+      'Cannot reset trial while this tenant has an active paid subscription. Wait for the paid period to end, or change their plan first.'
+    );
+    err.statusCode = 409;
+    err.errorCode = 'ACTIVE_PAID_SUBSCRIPTION';
+    throw err;
+  }
+
+  const trialEndsAt = dayjs(at).add(DEFAULT_TRIAL_MONTHS, 'month').toDate();
+  const beforeSnapshot = {
+    plan: tenant.plan,
+    trialEndsAt: tenant.trialEndsAt || subscriptionSetting?.trialEndsAt || null,
+    status: tenant.status,
+    subscriptionStatus: subscriptionSetting?.status || null,
+    accessState: tenant.metadata?.entitlements?.accessState || null,
+  };
+
+  const metadata =
+    tenant.metadata && typeof tenant.metadata === 'object' ? { ...tenant.metadata } : {};
+  const entitlements =
+    metadata.entitlements && typeof metadata.entitlements === 'object'
+      ? { ...metadata.entitlements }
+      : {};
+
+  // Restore app access for billing-restricted states without clearing platform suspension.
+  if (entitlements.accessState === 'restricted' || entitlements.accessState === 'read_only') {
+    entitlements.accessState = 'active';
+  }
+  if (entitlements.billingOverride === 'locked') {
+    delete entitlements.billingOverride;
+  }
+  entitlements.updatedAt = at.toISOString();
+  entitlements.updatedBy = actorUserId;
+  metadata.entitlements = entitlements;
+  metadata.lastTrialResetAt = at.toISOString();
+  metadata.lastTrialResetBy = actorUserId;
+
+  const nextTenantStatus =
+    tenant.status === 'suspended' || tenant.status === 'paused' ? tenant.status : 'active';
+
+  await tenant.update({
+    plan: 'trial',
+    trialEndsAt,
+    status: nextTenantStatus,
+    metadata,
+  });
+
+  const [setting] = await Setting.findOrCreate({
+    where: { tenantId: tenant.id, key: 'subscription' },
+    defaults: {
+      tenantId: tenant.id,
+      key: 'subscription',
+      value: buildTrialSubscriptionSettingValue(trialEndsAt),
+      description: 'Subscription and billing information',
+    },
+  });
+
+  const prev =
+    setting.value && typeof setting.value === 'object' ? { ...setting.value } : {};
+  const history = Array.isArray(prev.history) ? [...prev.history] : [];
+  history.unshift({
+    at: at.toISOString(),
+    event: 'trial_reset',
+    trialEndsAt: trialEndsAt.toISOString(),
+    actorUserId,
+    reason,
+  });
+
+  await setting.update({
+    value: {
+      ...prev,
+      ...buildTrialSubscriptionSettingValue(trialEndsAt),
+      history: history.slice(0, 100),
+    },
+  });
+
+  const afterSnapshot = {
+    plan: 'trial',
+    trialEndsAt,
+    status: nextTenantStatus,
+    subscriptionStatus: 'trialing',
+    accessState: entitlements.accessState || null,
+  };
+
+  await TenantAccessAudit.create({
+    tenantId: tenant.id,
+    actorUserId,
+    action: 'tenant_trial_reset',
+    before: beforeSnapshot,
+    after: {
+      ...afterSnapshot,
+      trialEndsAt: trialEndsAt.toISOString(),
+    },
+    reason,
+  });
+
+  const freshTenant = await Tenant.scope('withOptionalColumns').findByPk(tenant.id);
+  const nextBilling = toBillingPayload(
+    await resolveBillingStatus(freshTenant, { at })
+  );
+
+  return {
+    tenantId: tenant.id,
+    plan: 'trial',
+    trialEndsAt,
+    status: nextTenantStatus,
+    billing: nextBilling,
+    before: beforeSnapshot,
+    after: afterSnapshot,
+  };
+}
+
+/**
  * JSON-safe billing payload for API responses.
  * @param {Awaited<ReturnType<typeof resolveBillingStatus>>} billing
  */
@@ -456,5 +628,6 @@ module.exports = {
   recordSubscriptionPaymentAndActivate,
   syncTenantSubscriptionState,
   applySubscriptionFromPaystackTransaction,
+  resetTenantTrial,
   toBillingPayload,
 };

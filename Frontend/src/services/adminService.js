@@ -59,6 +59,10 @@ const deleteTenant = async (tenantId, confirmSlug) =>
 const updateTenantAccess = async (tenantId, payload) =>
   api.patch(`/admin/tenants/${tenantId}/access`, payload);
 
+/** Grant another ~1-month free trial (expired/unpaid tenants only). */
+const resetTenantTrial = async (tenantId, payload = {}) =>
+  api.post(`/admin/tenants/${tenantId}/reset-trial`, payload);
+
 const updateTenantBranding = async (tenantId, payload) =>
   api.patch(`/admin/tenants/${tenantId}/branding`, payload);
 
@@ -254,6 +258,7 @@ export default {
   updateTenantStatus,
   deleteTenant,
   updateTenantAccess,
+  resetTenantTrial,
   updateTenantBranding,
   getTenantSettings,
   updateTenantSettings,

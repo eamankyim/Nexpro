@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, useCallback } from 'react';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Building2, CreditCard, Zap, Crown, Eye, EyeOff, UserPlus, Trash2, Copy, Shield, Package, Receipt, ShoppingCart, FileText } from 'lucide-react';
+import { Loader2, Building2, CreditCard, Zap, Crown, Eye, EyeOff, UserPlus, Trash2, Copy, Shield, Package, Receipt, ShoppingCart, FileText, RotateCcw } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { Textarea } from '@/components/ui/textarea';
 import { useDebounce } from '../../hooks/useDebounce';
@@ -190,10 +190,22 @@ const AdminTenants = () => {
   const [cleanupDialog, setCleanupDialog] = useState({ open: false, type: null });
   const [cleanupConfirmSlug, setCleanupConfirmSlug] = useState('');
   const [cleanupSubmitting, setCleanupSubmitting] = useState(false);
+  const [resetTrialDialogOpen, setResetTrialDialogOpen] = useState(false);
+  const [resettingTrial, setResettingTrial] = useState(false);
 
   const canDeleteTenants = hasPermission('tenants.delete');
   const canUpdateTenants = hasPermission('tenants.update');
   const debouncedCleanupSearch = useDebounce(cleanupSearch, DEBOUNCE_DELAYS.SEARCH);
+
+  const hasActivePaidSubscription = useMemo(() => {
+    if (!tenantBillingStatus) return false;
+    const billingPlan = normalizePlanId(tenantBillingStatus.plan || '');
+    const paidPlans = ['starter', 'professional', 'enterprise'];
+    if (tenantBillingStatus.billingStatus === 'active' && paidPlans.includes(billingPlan)) {
+      return true;
+    }
+    return Boolean(tenantBillingStatus.activePayment);
+  }, [tenantBillingStatus]);
 
   const canonicalPlanCatalog = useMemo(() => {
     const fallbackLabels = {
@@ -263,6 +275,31 @@ const AdminTenants = () => {
       handleApiError(error, { context: 'update tenant status' });
     } finally {
       setStatusUpdating(false);
+    }
+  };
+
+  const handleResetTrial = async () => {
+    if (!selectedTenant?.id) return;
+    setResettingTrial(true);
+    try {
+      const response = await adminService.resetTenantTrial(selectedTenant.id);
+      const nextTrialEndsAt = response?.data?.trialEndsAt || response?.data?.tenant?.trialEndsAt;
+      showSuccess(
+        nextTrialEndsAt
+          ? `Trial reset — ends ${dayjs(nextTrialEndsAt).format('MMM D, YYYY')}`
+          : 'Trial reset successfully'
+      );
+      setResetTrialDialogOpen(false);
+      await Promise.all([
+        fetchTenantDetail(selectedTenant.id),
+        fetchTenantSubscriptionPayments(selectedTenant.id),
+        fetchTenantAccessAudit(selectedTenant.id),
+        fetchTenants(pagination.current, pagination.pageSize),
+      ]);
+    } catch (error) {
+      handleApiError(error, { context: 'reset tenant trial' });
+    } finally {
+      setResettingTrial(false);
     }
   };
 
@@ -1282,6 +1319,28 @@ const AdminTenants = () => {
                   >
                     Suspend
                   </Button>
+                  {canUpdateTenants && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span>
+                          <Button
+                            variant="outline"
+                            onClick={() => setResetTrialDialogOpen(true)}
+                            disabled={hasActivePaidSubscription || resettingTrial}
+                            loading={resettingTrial}
+                          >
+                            <RotateCcw className="h-4 w-4 mr-2" />
+                            Reset trial
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      {hasActivePaidSubscription ? (
+                        <TooltipContent>
+                          Cannot reset trial while the tenant has an active paid subscription
+                        </TooltipContent>
+                      ) : null}
+                    </Tooltip>
+                  )}
                   {canDeleteTenants && selectedTenant.slug !== 'platform' && (
                     <Button
                       variant="outline"
@@ -1464,6 +1523,30 @@ const AdminTenants = () => {
                           <p className="text-muted-foreground">
                             Trial ends {dayjs(tenantBillingStatus.trialEndsAt).format('MMM D, YYYY')}
                           </p>
+                        )}
+                        {canUpdateTenants && (
+                          <div className="pt-2">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span>
+                                  <Button
+                                    variant="outline"
+                                    onClick={() => setResetTrialDialogOpen(true)}
+                                    disabled={hasActivePaidSubscription || resettingTrial}
+                                    loading={resettingTrial}
+                                  >
+                                    <RotateCcw className="h-4 w-4 mr-2" />
+                                    Reset trial
+                                  </Button>
+                                </span>
+                              </TooltipTrigger>
+                              {hasActivePaidSubscription ? (
+                                <TooltipContent>
+                                  Cannot reset trial while the tenant has an active paid subscription
+                                </TooltipContent>
+                              ) : null}
+                            </Tooltip>
+                          </div>
                         )}
                       </>
                     )}
@@ -1906,6 +1989,35 @@ const AdminTenants = () => {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {deletingTenant ? 'Deleting…' : 'Delete permanently'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={resetTrialDialogOpen} onOpenChange={setResetTrialDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset free trial?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Grant another 1-month free trial?
+              {selectedTenant?.name ? (
+                <>
+                  {' '}
+                  This applies to <span className="font-medium text-foreground">{selectedTenant.name}</span>.
+                </>
+              ) : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={resettingTrial}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={resettingTrial}
+              onClick={(e) => {
+                e.preventDefault();
+                handleResetTrial();
+              }}
+            >
+              {resettingTrial ? 'Resetting…' : 'Reset trial'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

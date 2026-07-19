@@ -1,10 +1,9 @@
 jest.mock('../../../models', () => ({
   SubscriptionPayment: { findOne: jest.fn().mockResolvedValue(null), create: jest.fn() },
   Setting: { findOne: jest.fn().mockResolvedValue(null), findOrCreate: jest.fn() },
+  TenantAccessAudit: { create: jest.fn() },
   Tenant: {
-    scope: () => ({
-      findByPk: jest.fn(),
-    }),
+    scope: jest.fn(),
     findByPk: jest.fn(),
   },
 }));
@@ -16,7 +15,10 @@ const {
   addPeriod,
   DEFAULT_GRACE_DAYS,
   recordSubscriptionPaymentAndActivate,
+  resetTenantTrial,
 } = require('../../../services/subscriptionBillingService');
+
+const { Tenant, Setting, SubscriptionPayment, TenantAccessAudit } = require('../../../models');
 
 const baseTenant = (overrides = {}) => ({
   id: 'tenant-1',
@@ -24,12 +26,16 @@ const baseTenant = (overrides = {}) => ({
   status: 'active',
   trialEndsAt: new Date('2030-01-15'),
   metadata: { entitlements: {} },
+  update: jest.fn().mockResolvedValue(undefined),
   ...overrides,
 });
 
 describe('subscriptionBillingService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    Tenant.scope.mockImplementation(() => ({
+      findByPk: Tenant.findByPk,
+    }));
   });
 
   describe('normalizePlan', () => {
@@ -129,7 +135,6 @@ describe('subscriptionBillingService', () => {
     });
 
     it('returns unknown when tenant object has no id (avoids undefined tenantId queries)', async () => {
-      const { Setting, SubscriptionPayment } = require('../../../models');
       Setting.findOne.mockClear();
       SubscriptionPayment.findOne.mockClear();
 
@@ -149,7 +154,6 @@ describe('subscriptionBillingService', () => {
 
   describe('recordSubscriptionPaymentAndActivate', () => {
     it('records pending payments without activating tenant billing', async () => {
-      const { Setting, SubscriptionPayment } = require('../../../models');
       const payment = {
         id: 'payment-1',
         tenantId: 'tenant-1',
@@ -179,6 +183,114 @@ describe('subscriptionBillingService', () => {
         })
       );
       expect(Setting.findOrCreate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('resetTenantTrial', () => {
+    const at = new Date('2026-06-15T12:00:00.000Z');
+
+    beforeEach(() => {
+      Setting.findOne.mockResolvedValue(null);
+      SubscriptionPayment.findOne.mockResolvedValue(null);
+      TenantAccessAudit.create.mockResolvedValue({});
+      Setting.findOrCreate.mockResolvedValue([
+        {
+          value: { plan: 'trial', status: 'trialing' },
+          update: jest.fn().mockResolvedValue(undefined),
+        },
+      ]);
+    });
+
+    it('resets expired trial to now + 1 month and audits the change', async () => {
+      const tenant = baseTenant({
+        trialEndsAt: new Date('2026-01-01'),
+        metadata: { entitlements: { accessState: 'restricted' } },
+      });
+      Tenant.findByPk
+        .mockResolvedValueOnce(tenant)
+        .mockResolvedValueOnce({
+          ...tenant,
+          plan: 'trial',
+          trialEndsAt: new Date('2026-07-15T12:00:00.000Z'),
+          metadata: { entitlements: { accessState: 'active' } },
+        });
+
+      const result = await resetTenantTrial(tenant.id, {
+        actorUserId: 'admin-1',
+        reason: 'Support courtesy',
+        at,
+      });
+
+      expect(tenant.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          plan: 'trial',
+          trialEndsAt: new Date('2026-07-15T12:00:00.000Z'),
+          status: 'active',
+          metadata: expect.objectContaining({
+            lastTrialResetBy: 'admin-1',
+            entitlements: expect.objectContaining({ accessState: 'active' }),
+          }),
+        })
+      );
+      expect(TenantAccessAudit.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: tenant.id,
+          actorUserId: 'admin-1',
+          action: 'tenant_trial_reset',
+          reason: 'Support courtesy',
+        })
+      );
+      expect(result.plan).toBe('trial');
+      expect(result.billing.billingStatus).toBe('trialing');
+      expect(result.billing.canAccessApp).toBe(true);
+    });
+
+    it('blocks reset when tenant has an active paid subscription', async () => {
+      const tenant = baseTenant({
+        plan: 'starter',
+        trialEndsAt: new Date('2020-01-01'),
+      });
+      Tenant.findByPk.mockResolvedValue(tenant);
+      SubscriptionPayment.findOne.mockResolvedValue({
+        id: 'pay-1',
+        plan: 'starter',
+        periodStart: new Date('2026-06-01'),
+        periodEnd: new Date('2026-07-01'),
+      });
+
+      await expect(
+        resetTenantTrial(tenant.id, { actorUserId: 'admin-1', at })
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        errorCode: 'ACTIVE_PAID_SUBSCRIPTION',
+      });
+      expect(tenant.update).not.toHaveBeenCalled();
+      expect(TenantAccessAudit.create).not.toHaveBeenCalled();
+    });
+
+    it('blocks reset for active enterprise tenants', async () => {
+      const tenant = baseTenant({
+        plan: 'enterprise',
+        trialEndsAt: new Date('2020-01-01'),
+      });
+      Tenant.findByPk.mockResolvedValue(tenant);
+
+      await expect(
+        resetTenantTrial(tenant.id, { actorUserId: 'admin-1', at })
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        errorCode: 'ACTIVE_PAID_SUBSCRIPTION',
+      });
+      expect(tenant.update).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 when tenant is missing', async () => {
+      Tenant.findByPk.mockResolvedValue(null);
+
+      await expect(resetTenantTrial('missing', { at })).rejects.toMatchObject({
+        statusCode: 404,
+        errorCode: 'TENANT_NOT_FOUND',
+      });
     });
   });
 });
