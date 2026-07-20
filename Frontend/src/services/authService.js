@@ -188,13 +188,14 @@ const authService = {
    * @returns {Promise<{ data }>} - Same shape as login (user, token, memberships, defaultTenantId)
    */
   googleAuth: async (idToken, options = {}) => {
-    const { signUp = false, companyName, acceptedTerms, termsVersion } = options;
+    const { signUp = false, companyName, acceptedTerms, termsVersion, agentCode } = options;
     const response = await api.post('/auth/google', {
       idToken,
       signUp,
       ...(companyName && { companyName }),
       ...(acceptedTerms !== undefined && { acceptedTerms }),
       ...(termsVersion && { termsVersion }),
+      ...(agentCode && { agentCode }),
     });
     const payload = response?.data || response || {};
     persistAuthPayload(payload);

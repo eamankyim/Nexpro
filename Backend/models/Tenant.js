@@ -105,6 +105,20 @@ const Tenant = sequelize.define('Tenant', {
     allowNull: false,
     defaultValue: false,
     comment: 'Whether default equipment categories have been seeded for this tenant'
+  },
+  referredByAgentId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    comment: 'Sales agent who referred this tenant (growth attribution)'
+  },
+  referredByAgentCode: {
+    type: DataTypes.STRING(64),
+    allowNull: true,
+    comment: 'Agent code used at signup for attribution audit'
+  },
+  agentAttributedAt: {
+    type: DataTypes.DATE,
+    allowNull: true
   }
 }, {
   tableName: 'tenants',

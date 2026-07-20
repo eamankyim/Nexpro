@@ -110,6 +110,7 @@ const addBranchFieldsToAutomationRules = require('./add-branch-fields-to-automat
 const addCustomDomainToOnlineStoreSettings = require('./add-custom-domain-to-online-store-settings');
 const addSoftDeleteFieldsToSales = require('./add-soft-delete-fields-to-sales');
 const addReceiptSentToSaleActivitiesType = require('./add-receipt-sent-to-sale-activities-type');
+const createSalesAgentTables = require('./create-sales-agent-tables');
 
 const migrate = async () => {
   try {
@@ -408,6 +409,9 @@ const migrate = async () => {
     // POS refunds & exchanges (SaleReturn + line items; separate from marketplace Trade Assurance)
     const createSaleReturnsTables = require('./create-sale-returns-tables');
     await createSaleReturnsTables();
+
+    // Sales agent growth: agents, codes, tenant attribution, commission ledger
+    await createSalesAgentTables({ closeConnection: false });
 
     console.log('\n✅ Database migration completed successfully!');
     console.log('📊 Incremental schema updates applied.');

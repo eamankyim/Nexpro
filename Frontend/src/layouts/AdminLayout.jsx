@@ -21,6 +21,7 @@ import {
   LifeBuoy,
   ShoppingBag,
   Workflow,
+  BadgePercent,
 } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -66,6 +67,7 @@ const menuItems = [
   { path: '/admin/customers', icon: UserCircle, label: 'Customers' },
   { path: '/admin/users', icon: UserCog, label: 'Internal Users' },
   { path: '/admin/leads', icon: UserCheck, label: 'Leads' },
+  { path: '/admin/sales-agents', icon: BadgePercent, label: 'Sales Agents' },
   { path: '/admin/jobs', icon: Briefcase, label: 'Jobs' },
   { path: '/admin/expenses', icon: Receipt, label: 'Expenses' },
   { path: '/admin/billing', icon: Currency, label: 'Billing' },
@@ -122,6 +124,7 @@ const AdminLayout = () => {
           '/admin/customers': 'tenants.view',
           '/admin/users': 'users.view',
           '/admin/leads': 'leads.view',
+          '/admin/sales-agents': 'tenants.view',
           '/admin/jobs': 'jobs.view',
           '/admin/expenses': 'expenses.view',
           '/admin/billing': 'billing.view',

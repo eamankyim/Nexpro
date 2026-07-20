@@ -67,6 +67,8 @@ exports.signupTenant = async (req, res, next) => {
     businessInfo, // NEW: business information object
     acceptedTerms,
     termsVersion,
+    agentCode,
+    code: referralCode,
   } = req.body || {};
 
   try {
@@ -83,6 +85,20 @@ exports.signupTenant = async (req, res, next) => {
         success: false,
         message: TERMS_ACCEPTANCE_REQUIRED_MESSAGE,
       });
+    }
+
+    const salesAgentService = require('../services/salesAgentService');
+    const requestedAgentCode = agentCode || referralCode || null;
+    if (salesAgentService.normalizeAgentCode(requestedAgentCode)) {
+      const codeCheck = await salesAgentService.validateAgentCode(requestedAgentCode);
+      if (!codeCheck.valid) {
+        return res.status(400).json({
+          success: false,
+          message: codeCheck.error || 'Invalid sales agent code',
+          error: codeCheck.error || 'Invalid sales agent code',
+          errorCode: codeCheck.errorCode || 'AGENT_CODE_NOT_FOUND',
+        });
+      }
     }
 
     const normalizedEmail = adminEmail.trim().toLowerCase();
@@ -182,6 +198,19 @@ exports.signupTenant = async (req, res, next) => {
         },
         { transaction }
       );
+
+      if (salesAgentService.normalizeAgentCode(requestedAgentCode)) {
+        const attribution = await salesAgentService.applyAgentCodeToTenant({
+          tenant,
+          rawCode: requestedAgentCode,
+          transaction,
+          requireCode: true,
+        });
+        if (attribution.trialEndsAt) {
+          // Keep local trialEndDate aligned for subscription setting below
+          trialEndDate.setTime(attribution.trialEndsAt.getTime());
+        }
+      }
 
       // Category seeding moved to after response – runs in background so signup returns quickly
 
@@ -287,6 +316,9 @@ exports.signupTenant = async (req, res, next) => {
               trialEndsAt: trialEndDate,
               paymentMethod: null,
               seats: 1,
+              ...(tenant.referredByAgentId
+                ? { salesAgentFreeMonths: salesAgentService.AGENT_FREE_MONTHS }
+                : {}),
             },
             description: 'Subscription and billing information',
           },

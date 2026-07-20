@@ -321,6 +321,19 @@ async function recordSubscriptionPaymentAndActivate(params) {
       lastPaymentReference: providerReference,
       payment,
     });
+
+    // Sales agent commissions: up to 3 successful paid subscription events per attributed tenant.
+    // Assumption: this is the single payment-success path for SaaS subscriptions (manual admin
+    // recording and Paystack apply both call recordSubscriptionPaymentAndActivate).
+    try {
+      const salesAgentService = require('./salesAgentService');
+      await salesAgentService.maybeCreateCommissionForSuccessfulPayment(payment);
+    } catch (commissionErr) {
+      console.error(
+        '[subscriptionBilling] sales agent commission hook failed:',
+        commissionErr?.message || commissionErr
+      );
+    }
   }
 
   return { payment, alreadyRecorded: false };

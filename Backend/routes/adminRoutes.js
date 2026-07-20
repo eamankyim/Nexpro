@@ -100,6 +100,16 @@ const {
   getAdminAutomationsOverview,
   getAdminMessagingUsage,
 } = require('../controllers/adminAutomationsController');
+const {
+  listSalesAgents,
+  getSalesAgent,
+  createSalesAgent,
+  updateSalesAgent,
+  approveSalesAgent,
+  createSalesAgentCode,
+  updateSalesAgentCode,
+  updateSalesAgentCommission,
+} = require('../controllers/adminSalesAgentController');
 
 const router = express.Router();
 
@@ -452,6 +462,27 @@ router.delete('/customers/:id', requirePlatformAdminPermission('tenants.view'), 
  *         description: Tenant branding updated.
  */
 router.patch('/tenants/:id/branding', requirePlatformAdminPermission('tenants.update'), updateTenantBranding);
+
+/**
+ * Sales agents (growth / referral attribution + commissions)
+ * Specific /codes and /commissions paths must be registered before /:id.
+ */
+router.get('/sales-agents', requirePlatformAdminPermission('tenants.view'), listSalesAgents);
+router.post('/sales-agents', requirePlatformAdminPermission('tenants.create'), createSalesAgent);
+router.patch(
+  '/sales-agents/codes/:codeId',
+  requirePlatformAdminPermission('tenants.update'),
+  updateSalesAgentCode
+);
+router.patch(
+  '/sales-agents/commissions/:commissionId',
+  requireAnyPlatformAdminPermission(['billing.manage', 'tenants.update']),
+  updateSalesAgentCommission
+);
+router.get('/sales-agents/:id', requirePlatformAdminPermission('tenants.view'), getSalesAgent);
+router.patch('/sales-agents/:id', requirePlatformAdminPermission('tenants.update'), updateSalesAgent);
+router.post('/sales-agents/:id/approve', requirePlatformAdminPermission('tenants.update'), approveSalesAgent);
+router.post('/sales-agents/:id/codes', requirePlatformAdminPermission('tenants.update'), createSalesAgentCode);
 
 module.exports = router;
 

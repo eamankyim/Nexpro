@@ -148,6 +148,29 @@ router.get('/pricing', getPublicPlans);
 router.post('/demo-booking', submitDemoBooking);
 router.post('/feature-request', publicFeedbackSubmitLimiter, submitFeatureRequest);
 router.post('/sales-agent-application', publicFeedbackSubmitLimiter, submitSalesAgentApplication);
+router.get('/sales-agent-codes/:code/validate', async (req, res, next) => {
+  try {
+    const salesAgentService = require('../services/salesAgentService');
+    const result = await salesAgentService.validateAgentCode(req.params.code);
+    if (!result.valid) {
+      return res.status(404).json({
+        success: false,
+        error: result.error,
+        errorCode: result.errorCode || 'AGENT_CODE_NOT_FOUND',
+      });
+    }
+    return res.json({
+      success: true,
+      data: {
+        code: result.code,
+        agentName: result.agentName,
+        freeMonths: result.freeMonths,
+      },
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
 
 // Public invoice routes (no authentication required)
 router.get('/invoices/:token', getInvoiceByToken);

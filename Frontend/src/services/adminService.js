@@ -172,6 +172,17 @@ const updateFeatureMatrix = async (matrix) => api.put('/platform-settings/featur
 const getModules = async () => api.get('/platform-settings/modules');
 
 // Admin Leads
+const getSalesAgents = async (params = {}) => api.get('/admin/sales-agents', { params });
+const getSalesAgent = async (id) => api.get(`/admin/sales-agents/${id}`);
+const createSalesAgent = async (payload) => api.post('/admin/sales-agents', payload);
+const updateSalesAgent = async (id, payload) => api.patch(`/admin/sales-agents/${id}`, payload);
+const approveSalesAgent = async (id, payload = {}) => api.post(`/admin/sales-agents/${id}/approve`, payload);
+const createSalesAgentCode = async (id, payload) => api.post(`/admin/sales-agents/${id}/codes`, payload);
+const updateSalesAgentCode = async (codeId, payload) =>
+  api.patch(`/admin/sales-agents/codes/${codeId}`, payload);
+const updateSalesAgentCommission = async (commissionId, payload) =>
+  api.patch(`/admin/sales-agents/commissions/${commissionId}`, payload);
+
 const getAdminLeads = async (params = {}) => api.get('/admin/leads', { params });
 const getAdminLead = async (id) => api.get(`/admin/leads/${id}`);
 const createAdminLead = async (data) => api.post('/admin/leads', data);
@@ -296,6 +307,15 @@ export default {
   getFeatureMatrix,
   updateFeatureMatrix,
   getModules,
+  // Sales Agents
+  getSalesAgents,
+  getSalesAgent,
+  createSalesAgent,
+  updateSalesAgent,
+  approveSalesAgent,
+  createSalesAgentCode,
+  updateSalesAgentCode,
+  updateSalesAgentCommission,
   // Admin Leads
   getAdminLeads,
   getAdminLead,

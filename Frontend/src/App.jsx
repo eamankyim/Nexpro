@@ -103,6 +103,7 @@ const AdminSettings = lazy(() => import('./pages/admin/AdminSettings'));
 const AdminUsers = lazy(() => import('./pages/admin/AdminUsers'));
 const AdminCustomers = lazy(() => import('./pages/admin/AdminCustomers'));
 const AdminSupportTickets = lazy(() => import('./pages/admin/AdminSupportTickets'));
+const AdminSalesAgents = lazy(() => import('./pages/admin/AdminSalesAgents'));
 const SabitoAdmin = lazy(() => import('./pages/admin/SabitoAdmin'));
 const Tasks = lazy(() => import('./pages/Tasks'));
 const Deliveries = lazy(() => import('./pages/Deliveries'));
@@ -404,6 +405,7 @@ function AppContent() {
             <Route path="health" element={<AdminHealth />} />
             <Route path="automations" element={<AdminAutomationsMessaging />} />
             <Route path="support-tickets" element={<AdminSupportTickets />} />
+            <Route path="sales-agents" element={<AdminSalesAgents />} />
             <Route path="sabito" element={<Navigate to="/admin/sabito/overview" replace />} />
             <Route path="sabito/overview" element={<SabitoAdmin section="overview" />} />
             <Route path="sabito/stores" element={<SabitoAdmin section="stores" />} />

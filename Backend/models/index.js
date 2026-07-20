@@ -103,6 +103,9 @@ const Dealer = require('./Dealer');
 const DealerLedgerEntry = require('./DealerLedgerEntry');
 const DealerPriceTier = require('./DealerPriceTier');
 const DealerProductPrice = require('./DealerProductPrice');
+const SalesAgent = require('./SalesAgent');
+const SalesAgentCode = require('./SalesAgentCode');
+const SalesAgentCommission = require('./SalesAgentCommission');
 
 // Define relationships
 Tenant.hasMany(Customer, { foreignKey: 'tenantId', as: 'customers' });
@@ -862,6 +865,24 @@ MarketingCampaign.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 MarketingCampaign.hasMany(WhatsAppMessageEvent, { foreignKey: 'campaignId', as: 'whatsAppMessageEvents' });
 WhatsAppMessageEvent.belongsTo(MarketingCampaign, { foreignKey: 'campaignId', as: 'campaign' });
 
+// Sales agent growth attribution
+SalesAgent.hasMany(SalesAgentCode, { foreignKey: 'salesAgentId', as: 'codes' });
+SalesAgentCode.belongsTo(SalesAgent, { foreignKey: 'salesAgentId', as: 'agent' });
+SalesAgent.hasMany(SalesAgentCommission, { foreignKey: 'salesAgentId', as: 'commissions' });
+SalesAgentCommission.belongsTo(SalesAgent, { foreignKey: 'salesAgentId', as: 'agent' });
+SalesAgent.hasMany(Tenant, { foreignKey: 'referredByAgentId', as: 'referredTenants' });
+Tenant.belongsTo(SalesAgent, { foreignKey: 'referredByAgentId', as: 'referredByAgent' });
+SalesAgentCommission.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Tenant.hasMany(SalesAgentCommission, { foreignKey: 'tenantId', as: 'salesAgentCommissions' });
+SalesAgentCommission.belongsTo(SubscriptionPayment, {
+  foreignKey: 'subscriptionPaymentId',
+  as: 'subscriptionPayment',
+});
+SubscriptionPayment.hasMany(SalesAgentCommission, {
+  foreignKey: 'subscriptionPaymentId',
+  as: 'salesAgentCommissions',
+});
+
 module.exports = {
   User,
   Customer,
@@ -968,6 +989,9 @@ module.exports = {
   DealerLedgerEntry,
   DealerPriceTier,
   DealerProductPrice,
+  SalesAgent,
+  SalesAgentCode,
+  SalesAgentCommission,
 };
 
 

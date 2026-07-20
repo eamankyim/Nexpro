@@ -107,6 +107,7 @@ const TermsAcceptanceField = ({ control, isMobile }) => (
 const signupSchema = z.object({
   name: z.string().min(2, 'Enter your full name'),
   email: z.string().email('Enter a valid email'),
+  agentCode: z.string().optional().or(z.literal('')),
   acceptedTerms: z.boolean().refine((value) => value === true, TERMS_ACCEPTANCE_MESSAGE),
 });
 
@@ -123,6 +124,7 @@ const inviteStep2Schema = z.object({
   name: z.string().min(2, 'Enter your full name'),
   password: z.string().min(6, 'Use at least 6 characters'),
   confirmPassword: z.string().min(6, 'Confirm your password'),
+  agentCode: z.string().optional().or(z.literal('')),
   acceptedTerms: z.boolean().refine((value) => value === true, TERMS_ACCEPTANCE_MESSAGE),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
@@ -140,6 +142,7 @@ const Signup = () => {
   const [signupData, setSignupData] = useState({ name: '', email: '' });
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token');
+  const agentCodeFromUrl = (searchParams.get('code') || '').trim().toUpperCase();
   const navigate = useNavigate();
   const location = useLocation();
   const {
@@ -162,6 +165,7 @@ const Signup = () => {
   const { isMobile } = useResponsive();
   const [checkingEmail, setCheckingEmail] = useState(false);
   const [registeredAsInvitedMember, setRegisteredAsInvitedMember] = useState(false);
+  const [signupAgentCode, setSignupAgentCode] = useState(agentCodeFromUrl);
   const inviteType = String(inviteData?.inviteType || '').trim().toLowerCase();
   const isPlatformAdminInvite = inviteType === 'platform_admin';
   const isNewTenantInvite =
@@ -208,6 +212,7 @@ const Signup = () => {
     defaultValues: {
       name: '',
       email: '',
+      agentCode: agentCodeFromUrl,
       acceptedTerms: false,
     },
   });
@@ -226,6 +231,14 @@ const Signup = () => {
     }
   }, [cameFromGoogleSignin, form, googleSignupEmail, googleSignupName, token]);
 
+  useEffect(() => {
+    if (!agentCodeFromUrl) return;
+    setSignupAgentCode(agentCodeFromUrl);
+    form.setValue('agentCode', agentCodeFromUrl, { shouldValidate: false });
+    inviteStep2Form.setValue('agentCode', agentCodeFromUrl, { shouldValidate: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setValue is stable; avoid form identity churn
+  }, [agentCodeFromUrl]);
+
   const passwordForm = useForm({
     resolver: zodResolver(passwordSchema),
     defaultValues: {
@@ -240,6 +253,7 @@ const Signup = () => {
       name: '',
       password: '',
       confirmPassword: '',
+      agentCode: agentCodeFromUrl,
       acceptedTerms: false,
     },
   });
@@ -349,7 +363,14 @@ const Signup = () => {
       setCheckingEmail(false);
     }
 
-    setSignupData({ name: trimmedName, email: trimmedEmail, acceptedTerms: values.acceptedTerms });
+    const trimmedAgentCode = (values.agentCode || '').trim().toUpperCase();
+    setSignupAgentCode(trimmedAgentCode);
+    setSignupData({
+      name: trimmedName,
+      email: trimmedEmail,
+      acceptedTerms: values.acceptedTerms,
+      agentCode: trimmedAgentCode,
+    });
     setCurrentStep(2);
   };
 
@@ -361,6 +382,7 @@ const Signup = () => {
     setLoading(true);
     setIsSubmitting(true);
     try {
+      const trimmedAgentCode = (values.agentCode || signupAgentCode || '').trim().toUpperCase();
       const registerData = {
         name: values.name,
         email: inviteData.email,
@@ -368,6 +390,7 @@ const Signup = () => {
         inviteToken: token,
         acceptedTerms: values.acceptedTerms,
         termsVersion: TERMS_VERSION,
+        ...(trimmedAgentCode ? { agentCode: trimmedAgentCode } : {}),
       };
       const apiStart = Date.now();
       const response = await registerWithAuth(registerData);
@@ -395,6 +418,7 @@ const Signup = () => {
     setLoading(true);
     setIsSubmitting(true);
     try {
+      const trimmedAgentCode = (signupData.agentCode || signupAgentCode || '').trim().toUpperCase();
       const payload = {
         companyName: 'My Business', // Placeholder; user sets real business name in onboarding
         companyEmail: signupData.email,
@@ -404,6 +428,7 @@ const Signup = () => {
         plan: 'trial',
         acceptedTerms: signupData.acceptedTerms,
         termsVersion: TERMS_VERSION,
+        ...(trimmedAgentCode ? { agentCode: trimmedAgentCode } : {}),
       };
       const apiStart = Date.now();
       await tenantSignup(payload);
@@ -438,11 +463,15 @@ const Signup = () => {
       setLoading(true);
       setIsSubmitting(true);
       try {
+        const trimmedAgentCode = (
+          form.getValues('agentCode') || signupAgentCode || ''
+        ).trim().toUpperCase();
         await googleAuth(idToken, {
           signUp: true,
           companyName: 'My Business',
           acceptedTerms: true,
           termsVersion: TERMS_VERSION,
+          ...(trimmedAgentCode ? { agentCode: trimmedAgentCode } : {}),
         });
         setRegisteredAsPlatformAdmin(false);
         setWelcomeStatus('success');
@@ -455,7 +484,7 @@ const Signup = () => {
         setIsSubmitting(false);
       }
     },
-    [form, googleAuth]
+    [form, googleAuth, signupAgentCode]
   );
 
   const handleGoogleSignupError = useCallback(() => {
@@ -764,6 +793,37 @@ const Signup = () => {
                         </FormItem>
                       )}
                     />
+                    {isNewTenantInvite && (
+                      <FormField
+                        control={inviteStep2Form.control}
+                        name="agentCode"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className={`${isMobile ? 'text-sm' : ''} text-gray-700`}>
+                              Sales agent code (optional)
+                            </FormLabel>
+                            <FormControl>
+                              <Input
+                                {...field}
+                                value={field.value || ''}
+                                onChange={(e) => {
+                                  const next = e.target.value.toUpperCase();
+                                  field.onChange(next);
+                                  setSignupAgentCode(next.trim());
+                                }}
+                                className={`${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} uppercase bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-brand focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-brand focus-visible:border`}
+                                placeholder="e.g. SA-AB12CD"
+                                autoComplete="off"
+                              />
+                            </FormControl>
+                            <FormDescription className="text-xs text-muted-foreground">
+                              Have a sales agent code? Enter it for 3 months free.
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
                     <TermsAcceptanceField control={inviteStep2Form.control} isMobile={isMobile} />
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -835,6 +895,35 @@ const Signup = () => {
                                 />
                               </div>
                             </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="agentCode"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className={`${isMobile ? 'text-sm' : ''} text-gray-700`}>
+                              Sales agent code (optional)
+                            </FormLabel>
+                            <FormControl>
+                              <Input
+                                {...field}
+                                value={field.value || ''}
+                                onChange={(e) => {
+                                  const next = e.target.value.toUpperCase();
+                                  field.onChange(next);
+                                  setSignupAgentCode(next.trim());
+                                }}
+                                className={`${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} uppercase bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-brand focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-brand focus-visible:border`}
+                                placeholder="e.g. SA-AB12CD"
+                                autoComplete="off"
+                              />
+                            </FormControl>
+                            <FormDescription className="text-xs text-muted-foreground">
+                              Have a sales agent code? Enter it for 3 months free.
+                            </FormDescription>
                             <FormMessage />
                           </FormItem>
                         )}

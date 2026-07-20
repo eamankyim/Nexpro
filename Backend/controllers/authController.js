@@ -255,6 +255,20 @@ exports.register = async (req, res, next) => {
     if (normalizedInviteType === 'new_tenant') {
       // Admin-invited tenant: create new tenant + user as owner, then mark invite used
       const trimmedCompanyName = 'My Business';
+      const salesAgentService = require('../services/salesAgentService');
+      const requestedAgentCode = req.body?.agentCode || req.body?.code || null;
+      if (salesAgentService.normalizeAgentCode(requestedAgentCode)) {
+        const codeCheck = await salesAgentService.validateAgentCode(requestedAgentCode);
+        if (!codeCheck.valid) {
+          return res.status(400).json({
+            success: false,
+            message: codeCheck.error || 'Invalid sales agent code',
+            error: codeCheck.error || 'Invalid sales agent code',
+            errorCode: codeCheck.errorCode || 'AGENT_CODE_NOT_FOUND',
+          });
+        }
+      }
+
       const transaction = await sequelize.transaction();
       try {
         const slug = await generateUniqueSlug(trimmedCompanyName, transaction);
@@ -277,6 +291,18 @@ exports.register = async (req, res, next) => {
           },
           { transaction }
         );
+
+        if (salesAgentService.normalizeAgentCode(requestedAgentCode)) {
+          const attribution = await salesAgentService.applyAgentCodeToTenant({
+            tenant,
+            rawCode: requestedAgentCode,
+            transaction,
+            requireCode: true,
+          });
+          if (attribution.trialEndsAt) {
+            trialEndDate.setTime(attribution.trialEndsAt.getTime());
+          }
+        }
 
         const user = await User.create(
           {
@@ -334,6 +360,9 @@ exports.register = async (req, res, next) => {
                 trialEndsAt: trialEndDate,
                 paymentMethod: null,
                 seats: 1,
+                ...(tenant.referredByAgentId
+                  ? { salesAgentFreeMonths: salesAgentService.AGENT_FREE_MONTHS }
+                  : {}),
               },
               description: 'Subscription and billing information',
             },
@@ -759,12 +788,28 @@ exports.googleAuth = async (req, res, next) => {
       companyName,
       acceptedTerms,
       termsVersion,
+      agentCode,
+      code: referralCode,
     } = req.body || {};
     if (!idToken) {
       return res.status(400).json({
         success: false,
         message: 'Google ID token is required',
       });
+    }
+
+    const salesAgentService = require('../services/salesAgentService');
+    const requestedAgentCode = agentCode || referralCode || null;
+    if (signUp && salesAgentService.normalizeAgentCode(requestedAgentCode)) {
+      const codeCheck = await salesAgentService.validateAgentCode(requestedAgentCode);
+      if (!codeCheck.valid) {
+        return res.status(400).json({
+          success: false,
+          message: codeCheck.error || 'Invalid sales agent code',
+          error: codeCheck.error || 'Invalid sales agent code',
+          errorCode: codeCheck.errorCode || 'AGENT_CODE_NOT_FOUND',
+        });
+      }
     }
 
     const client = new OAuth2Client(googleClientId);
@@ -897,6 +942,18 @@ exports.googleAuth = async (req, res, next) => {
         { transaction }
       );
 
+      if (salesAgentService.normalizeAgentCode(requestedAgentCode)) {
+        const attribution = await salesAgentService.applyAgentCodeToTenant({
+          tenant,
+          rawCode: requestedAgentCode,
+          transaction,
+          requireCode: true,
+        });
+        if (attribution.trialEndsAt) {
+          trialEndDate.setTime(attribution.trialEndsAt.getTime());
+        }
+      }
+
       const randomPassword = crypto.randomBytes(32).toString('hex');
       newUser = await User.create(
         {
@@ -955,6 +1012,9 @@ exports.googleAuth = async (req, res, next) => {
               trialEndsAt: trialEndDate,
               paymentMethod: null,
               seats: 1,
+              ...(tenant.referredByAgentId
+                ? { salesAgentFreeMonths: salesAgentService.AGENT_FREE_MONTHS }
+                : {}),
             },
             description: 'Subscription and billing information',
           },
