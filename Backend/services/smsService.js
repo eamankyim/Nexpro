@@ -125,6 +125,21 @@ function classifySmsProviderError(errorOrMessage, hints = {}) {
     };
   }
 
+  if (
+    /sender id is not registered/i.test(lower)
+    || /sender.?id.*(not|un).*(registered|approved)/i.test(lower)
+    || /sender.*(not|un).*(registered|approved)/i.test(lower)
+    || /unregistered sender/i.test(lower)
+  ) {
+    return {
+      error:
+        `Sender ID is not registered or approved with ${providerLabel}. `
+        + 'Register/approve this exact Sender ID in your provider dashboard (Ghana networks require approval). '
+        + 'API key tests only check credentials — they do not validate Sender ID.',
+      errorCode: 'SMS_PROVIDER_SENDER_NOT_APPROVED',
+    };
+  }
+
   return { error: raw || 'Failed to send SMS message' };
 }
 
@@ -786,7 +801,7 @@ async getResolvedConfig(tenantId) {
           });
           return {
             success: true,
-            message: 'Termii connection verified',
+            message: 'Termii API key verified (balance OK). Sender ID is not checked until you send an SMS.',
             data: {
               balance: termiiResponse.data?.balance,
               currency: termiiResponse.data?.currency || 'NGN',
@@ -806,7 +821,7 @@ async getResolvedConfig(tenantId) {
           });
           return {
             success: true,
-            message: 'Arkesel connection verified',
+            message: 'Arkesel API key verified (balance OK). Sender ID is not checked until you send an SMS.',
             data: arkeselResponse.data,
           };
         }
@@ -826,7 +841,7 @@ async getResolvedConfig(tenantId) {
           });
           return {
             success: true,
-            message: 'Mnotify connection verified',
+            message: 'Mnotify API key verified (balance OK). Sender ID is not checked until you send an SMS.',
             data: {
               balance: mnotifyResponse.data?.balance,
               bonus: mnotifyResponse.data?.bonus,

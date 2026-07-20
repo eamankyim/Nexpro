@@ -1,5 +1,6 @@
 const { Op } = require('sequelize');
 const { AutomationRule, Setting, SaleActivity } = require('../models');
+const { isInternalAudience } = require('./automationRecipientService');
 
 /** Dedupe window for receipt sends (built-in vs POS auto_send vs automation). */
 const RECEIPT_DEDUPE_WINDOW_MINUTES = 5;
@@ -52,6 +53,7 @@ const ACTION_TYPE_TO_CHANNEL = {
  * @param {string} templateKey
  * @returns {Promise<object|null>}
  */
+// audience lives on metadata/actionConfig, not a table column — never select it here
 const AUTOMATION_RULE_ATTRIBUTES = [
   'id',
   'name',
@@ -59,7 +61,6 @@ const AUTOMATION_RULE_ATTRIBUTES = [
   'metadata',
   'enabled',
   'actionConfig',
-  'audience',
 ];
 
 async function getEnabledRuleByTemplateKey(tenantId, templateKey) {
@@ -88,7 +89,7 @@ async function getEnabledCustomerRulesForTemplate(tenantId, templateKey) {
   return rules.filter((rule) => {
     const ruleTemplateKey = rule.metadata?.templateKey;
     if (STAFF_TEMPLATE_KEYS.has(ruleTemplateKey)) return false;
-    if (rule.audience === 'internal') return false;
+    if (isInternalAudience({ rule })) return false;
     if (ruleTemplateKey === templateKey) return true;
     if (triggerType && rule.triggerType === triggerType) return true;
     return false;

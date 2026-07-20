@@ -103,6 +103,12 @@ const Quote = sequelize.define('Quote', {
     type: DataTypes.STRING,
     allowNull: true,
     unique: true
+  },
+  attachments: {
+    type: DataTypes.JSONB,
+    allowNull: false,
+    defaultValue: [],
+    comment: 'Typed files: proposal, requirements, agreement, other'
   }
 }, {
   timestamps: true,

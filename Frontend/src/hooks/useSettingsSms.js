@@ -114,7 +114,12 @@ export const useSettingsSms = () => {
 
   const testSMSMutation = useMutation({
     mutationFn: (config) => smsService.testConnection(config),
-    onSuccess: () => showSuccess('SMS connection test successful!'),
+    onSuccess: (data) => {
+      const msg = data?.message
+        || data?.data?.message
+        || 'API key verified. Sender ID is only checked when a message is sent.';
+      showSuccess(msg);
+    },
     onError: (error) => {
       const errMsg = error?.response?.data?.error || error?.response?.data?.message || 'Connection test failed';
       showError(error, errMsg);
@@ -254,7 +259,7 @@ export const useSettingsSms = () => {
       .mutateAsync(config)
       .then(() => {
         fieldOnChange(true);
-        showSuccess('Connection verified. SMS is enabled.');
+        showSuccess('API key verified. SMS is enabled. Sender ID is only checked when a message is sent.');
       })
       .catch(() => {});
   }, [getSMSTestConfig, smsForm, testSMSMutation]);

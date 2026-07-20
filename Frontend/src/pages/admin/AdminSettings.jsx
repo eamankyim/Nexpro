@@ -1882,6 +1882,9 @@ const AdminSettings = () => {
                             <FormControl>
                               <Input placeholder="ABS" maxLength={11} {...field} />
                             </FormControl>
+                            <FormDescription>
+                              Must match a Sender ID already registered and approved in your Arkesel account (required for Ghana networks). Default &quot;ABS&quot; only works if Arkesel has approved it.
+                            </FormDescription>
                             <FormMessage />
                           </FormItem>
                         )}
@@ -1924,6 +1927,9 @@ const AdminSettings = () => {
                             <FormControl>
                               <Input placeholder="ABS" maxLength={11} {...field} />
                             </FormControl>
+                            <FormDescription>
+                              Must match a Sender ID already registered and approved in your Mnotify account (required for Ghana networks). Default &quot;ABS&quot; only works if Mnotify has approved it.
+                            </FormDescription>
                             <FormMessage />
                           </FormItem>
                         )}
@@ -1965,7 +1971,7 @@ const AdminSettings = () => {
                     <div>
                       <p className="text-sm font-medium">Verify platform SMS credentials</p>
                       <p className="text-sm text-muted-foreground">
-                        Tests the selected active provider ({platformSmsActiveLabel}) without sending SMS.
+                        Checks the {platformSmsActiveLabel} API key via balance lookup only — does not send SMS or confirm Sender ID approval.
                       </p>
                     </div>
                     <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">

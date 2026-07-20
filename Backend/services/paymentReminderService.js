@@ -124,10 +124,8 @@ class PaymentReminderService {
             continue;
           }
 
-          const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-          const paymentLink = invoice.paymentToken
-            ? `${frontendUrl}/pay-invoice/${invoice.paymentToken}`
-            : `${frontendUrl}/invoices/${invoice.id}`;
+          const { buildInvoicePaymentLink } = require('../utils/frontendUrl');
+          const paymentLink = buildInvoicePaymentLink(invoice);
 
           let reminderSent = false;
           const { isChannelEnabledForEvent } = require('./messageDeliveryRulesService');

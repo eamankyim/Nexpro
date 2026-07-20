@@ -47,6 +47,7 @@ const mobileMoneyService = require('../services/mobileMoneyService');
 const { getResolvedMtnConfigForTenant } = require('../services/tenantMomoCollectionService');
 const { getResolvedHubtelConfigForTenant } = require('../services/tenantHubtelCollectionService');
 const { buildPublicPaymentOptions } = require('../services/paymentCollectionRouter');
+const { buildInvoicePaymentLink } = require('../utils/frontendUrl');
 const {
   initiateDirectMoMoCharge,
   checkDirectMoMoStatus,
@@ -1937,8 +1938,7 @@ exports.sendInvoice = async (req, res, next) => {
     });
 
     // Generate payment link
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-    const paymentLink = `${frontendUrl}/pay-invoice/${updatedInvoice.paymentToken}`;
+    const paymentLink = buildInvoicePaymentLink(updatedInvoice, req);
 
     const prefsSetting = await Setting.findOne({ where: { tenantId: req.tenantId, key: 'customer-notification-preferences' } });
 
@@ -2235,8 +2235,7 @@ async function sendInvoiceToCustomer(tenantId, invoice, options = {}) {
     where: applyTenantFilter(tenantId, { id: invoice.id }),
     include: [{ model: Customer, as: 'customer' }, { model: Job, as: 'job' }]
   });
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-  const paymentLink = `${frontendUrl}/pay-invoice/${updatedInvoice.paymentToken}`;
+  const paymentLink = buildInvoicePaymentLink(updatedInvoice);
 
   await deliverInvoiceToCustomer({
     tenantId,
@@ -2283,8 +2282,7 @@ exports.ensureInvoicePaymentLink = async (req, res, next) => {
       where: applyTenantFilter(req.tenantId, { id: invoice.id }),
       include: invoiceResponseIncludes()
     });
-    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
-    const paymentLink = `${frontendUrl}/pay-invoice/${updatedInvoice.paymentToken}`;
+    const paymentLink = buildInvoicePaymentLink(updatedInvoice, req);
 
     return res.status(200).json({
       success: true,
@@ -2762,8 +2760,7 @@ exports.initializePaystackForInvoice = async (req, res, next) => {
       });
     }
 
-    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
-    const callbackUrl = `${frontendUrl}/pay-invoice/${token}?paystack=1`;
+    const callbackUrl = `${buildInvoicePaymentLink({ paymentToken: token }, req)}?paystack=1`;
     const orgRow = await Setting.findOne({ where: { tenantId: invoice.tenantId, key: 'organization' } });
     const orgTax = orgRow?.value?.tax || {};
     const oc = orgTax?.otherCharges || {};

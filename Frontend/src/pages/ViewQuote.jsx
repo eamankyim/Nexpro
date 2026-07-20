@@ -10,8 +10,15 @@ import { API_BASE_URL } from '../services/api';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import PrintableQuote from '../components/PrintableQuote';
-import { FileText, Printer, Download, Loader2, CheckCircle, XCircle, MessageSquare } from 'lucide-react';
+import { FileText, Printer, Download, Loader2, CheckCircle, XCircle, MessageSquare, Paperclip } from 'lucide-react';
 import { generatePDF } from '../utils/pdfUtils';
+
+const ATTACHMENT_TYPE_LABELS = {
+  proposal: 'Proposal',
+  requirements: 'Requirements / SOW',
+  agreement: 'Agreement',
+  other: 'Other',
+};
 
 export default function ViewQuote() {
   const { token } = useParams();
@@ -212,6 +219,38 @@ export default function ViewQuote() {
             <p className="text-sm text-muted-foreground">
               This quote has been {quote.status === 'accepted' ? 'accepted' : 'declined'}.
             </p>
+          </div>
+        )}
+
+        {Array.isArray(quote?.attachments) && quote.attachments.length > 0 && (
+          <div className="mb-4 p-4 rounded-lg border border-border bg-card print:hidden">
+            <p className="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
+              <Paperclip className="h-4 w-4" />
+              Documents
+            </p>
+            <ul className="space-y-2">
+              {quote.attachments.map((file) => {
+                const fileName = file.originalName || file.name || 'Attachment';
+                const typeLabel = ATTACHMENT_TYPE_LABELS[file.type] || 'Other';
+                const href = file.url || file.fileUrl;
+                return (
+                  <li key={file.id || fileName} className="flex items-center justify-between gap-3 text-sm">
+                    <div className="min-w-0">
+                      <div className="font-medium text-foreground truncate">{fileName}</div>
+                      <div className="text-muted-foreground text-xs">{typeLabel}</div>
+                    </div>
+                    {href ? (
+                      <Button asChild type="button" variant="outline" size="sm">
+                        <a href={href} download={fileName} target="_blank" rel="noopener noreferrer">
+                          <Download className="h-4 w-4 mr-1" />
+                          Download
+                        </a>
+                      </Button>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
           </div>
         )}
 

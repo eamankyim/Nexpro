@@ -69,4 +69,19 @@ describe('smsService.classifySmsProviderError', () => {
       errorCode: 'SMS_PROVIDER_COVERAGE',
     });
   });
+
+  it('maps unregistered sender ID to an actionable message', () => {
+    expect(
+      classifySmsProviderError(
+        'sender id is not registered or approved. please contact our support',
+        { providerName: 'Arkesel' }
+      )
+    ).toEqual({
+      error:
+        'Sender ID is not registered or approved with Arkesel. '
+        + 'Register/approve this exact Sender ID in your provider dashboard (Ghana networks require approval). '
+        + 'API key tests only check credentials — they do not validate Sender ID.',
+      errorCode: 'SMS_PROVIDER_SENDER_NOT_APPROVED',
+    });
+  });
 });

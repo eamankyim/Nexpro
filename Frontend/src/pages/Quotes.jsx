@@ -25,7 +25,7 @@ import {
   Pencil,
   Trash2,
   Search,
-  ChevronDown
+  ChevronDown,
 } from 'lucide-react';
 import { generatePDF, openPrintDialog } from '../utils/pdfUtils';
 import dayjs from 'dayjs';
@@ -45,6 +45,8 @@ import { queryKeys } from '../utils/queryKeys';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
 import DrawerSectionCard from '../components/DrawerSectionCard';
+import FileUpload from '../components/FileUpload';
+import FilePreview from '../components/FilePreview';
 import PrintableInvoice from '../components/PrintableInvoice';
 import StatusChip from '../components/StatusChip';
 import TableSkeleton from '../components/TableSkeleton';
@@ -68,6 +70,19 @@ import {
   numberOrEmptySchema,
   integerOrEmptySchema,
 } from '../utils/formUtils';
+
+const uploadMaxSizeMb = Number.parseFloat(import.meta.env.VITE_UPLOAD_MAX_SIZE_MB ?? '') || 20;
+
+const QUOTE_ATTACHMENT_TYPE_OPTIONS = [
+  { value: 'proposal', label: 'Proposal' },
+  { value: 'requirements', label: 'Requirements / SOW' },
+  { value: 'agreement', label: 'Agreement' },
+  { value: 'other', label: 'Other' },
+];
+
+const quoteAttachmentTypeLabel = (type) => (
+  QUOTE_ATTACHMENT_TYPE_OPTIONS.find((option) => option.value === type)?.label || 'Other'
+);
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -415,6 +430,10 @@ const Quotes = () => {
   const [convertJobModalOpen, setConvertJobModalOpen] = useState(false);
   const [quoteToConvert, setQuoteToConvert] = useState(null);
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const [attachmentType, setAttachmentType] = useState('proposal');
+  const [attachmentPreview, setAttachmentPreview] = useState(null);
+  const [attachmentPreviewVisible, setAttachmentPreviewVisible] = useState(false);
   const [lineItemDescriptionOptions, setLineItemDescriptionOptions] = useState([]);
   const [categoryOtherInputs, setCategoryOtherInputs] = useState({});
   const quotesQueryEnabled = scopeReady && !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId);
@@ -820,7 +839,53 @@ const Quotes = () => {
   const handleCloseDrawer = () => {
     setDrawerVisible(false);
     setViewingQuote(null);
+    setAttachmentPreview(null);
+    setAttachmentPreviewVisible(false);
   };
+
+  const handleAttachmentUpload = useCallback(async ({ file, onSuccess, onError }) => {
+    if (!viewingQuote?.id) {
+      onError?.(new Error('No quote selected'));
+      return;
+    }
+    try {
+      setUploadingAttachment(true);
+      await quoteService.uploadAttachment(viewingQuote.id, file, attachmentType);
+      await fetchQuoteDetails(viewingQuote.id);
+      showSuccess(`${file.name} uploaded successfully`);
+      onSuccess?.('ok', file);
+    } catch (error) {
+      const errMsg = error?.response?.data?.message || 'Failed to upload attachment';
+      showError(errMsg);
+      onError?.(error);
+    } finally {
+      setUploadingAttachment(false);
+    }
+  }, [viewingQuote?.id, attachmentType]);
+
+  const handleAttachmentRemove = useCallback(async (attachment) => {
+    if (!viewingQuote?.id) return;
+    try {
+      await quoteService.deleteAttachment(viewingQuote.id, attachment.id);
+      await fetchQuoteDetails(viewingQuote.id);
+      showSuccess('Attachment removed');
+    } catch (error) {
+      const errMsg = error?.response?.data?.message || 'Failed to remove attachment';
+      showError(errMsg);
+    }
+  }, [viewingQuote?.id]);
+
+  const handleAttachmentPreview = useCallback((attachment) => {
+    setAttachmentPreview(attachment);
+    setAttachmentPreviewVisible(true);
+  }, []);
+
+  const attachmentList = useMemo(
+    () => (Array.isArray(viewingQuote?.attachments) ? viewingQuote.attachments : []),
+    [viewingQuote?.attachments]
+  );
+
+  const canEditAttachments = viewingQuote && ['draft', 'sent'].includes(viewingQuote.status);
 
   const handleAddQuote = async () => {
     form.reset({
@@ -1275,7 +1340,7 @@ const Quotes = () => {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 md:gap-4">
         <WelcomeSection
           welcomeMessage="Quotes"
-          subText="Create and manage quotes for your customers."
+          subText="Create quotes, attach proposal documents, and share them with customers."
         />
         <div className="flex items-center gap-2 flex-1 min-w-0 sm:justify-end sm:ml-auto">
           <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
@@ -1562,6 +1627,50 @@ const Quotes = () => {
                   <Alert>
                     <AlertDescription>No line items found for this quote.</AlertDescription>
                   </Alert>
+                )}
+              </DrawerSectionCard>
+            )
+          },
+          {
+            key: 'attachments',
+            label: 'Attachments',
+            content: (
+              <DrawerSectionCard title="Proposal documents">
+                <p className="text-sm text-muted-foreground mb-3">
+                  Attach proposal PDFs, requirements, agreements, or other supporting files.
+                </p>
+                {canEditAttachments && (
+                  <div className="mb-4 space-y-2">
+                    <Label>Document type</Label>
+                    <Select value={attachmentType} onValueChange={setAttachmentType}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {QUOTE_ATTACHMENT_TYPE_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                <FileUpload
+                  onFileSelect={({ file }) => handleAttachmentUpload({ file, onSuccess: () => {}, onError: () => {} })}
+                  disabled={!canEditAttachments || uploadingAttachment}
+                  uploading={uploadingAttachment}
+                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.rar,.txt"
+                  maxSizeMB={uploadMaxSizeMb}
+                  uploadedFiles={attachmentList.map((file) => ({
+                    ...file,
+                    originalName: `[${quoteAttachmentTypeLabel(file.type)}] ${file.originalName || file.name || 'Attachment'}`,
+                  }))}
+                  onFilePreview={handleAttachmentPreview}
+                  onFileRemove={canEditAttachments ? handleAttachmentRemove : undefined}
+                />
+                {!canEditAttachments && attachmentList.length === 0 && (
+                  <p className="text-sm text-muted-foreground mt-2">No attachments on this quote.</p>
                 )}
               </DrawerSectionCard>
             )
@@ -2450,6 +2559,20 @@ const Quotes = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <FilePreview
+        open={attachmentPreviewVisible}
+        onClose={() => {
+          setAttachmentPreviewVisible(false);
+          setAttachmentPreview(null);
+        }}
+        file={attachmentPreview ? {
+          fileUrl: attachmentPreview.fileUrl || attachmentPreview.url,
+          title: attachmentPreview.originalName || attachmentPreview.filename || attachmentPreview.name || 'Attachment',
+          type: attachmentPreview.mimeType || attachmentPreview.type,
+          metadata: attachmentPreview.metadata || {},
+        } : null}
+      />
     </div>
   );
 };

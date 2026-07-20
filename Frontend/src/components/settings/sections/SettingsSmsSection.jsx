@@ -315,6 +315,9 @@ const SettingsSmsSection = () => {
                               <FormControl>
                                 <Input placeholder="e.g. MyShop" maxLength={11} {...field} />
                               </FormControl>
+                              <FormDescription>
+                                Must be registered and approved with your SMS provider (required for Ghana numbers). Connection test only checks the API key.
+                              </FormDescription>
                               <FormMessage />
                             </FormItem>
                           )}

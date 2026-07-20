@@ -1900,10 +1900,8 @@ async function executeRule({
 }
 
 function paymentLinkForInvoice(invoice) {
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-  return invoice.paymentToken
-    ? `${frontendUrl}/pay-invoice/${invoice.paymentToken}`
-    : `${frontendUrl}/invoices/${invoice.id}`;
+  const { buildInvoicePaymentLink } = require('../utils/frontendUrl');
+  return buildInvoicePaymentLink(invoice);
 }
 
 function reviewLinkForTenant(slug) {

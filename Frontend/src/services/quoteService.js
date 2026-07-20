@@ -52,7 +52,20 @@ const quoteService = {
   // Add quote activity
   addActivity: async (quoteId, activityData) => {
     return await api.post(`/quotes/${quoteId}/activities`, activityData);
-  }
+  },
+
+  uploadAttachment: async (id, file, type = 'other') => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('type', type);
+    return await api.post(`/quotes/${id}/attachments`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+
+  deleteAttachment: async (id, attachmentId) => {
+    return await api.delete(`/quotes/${id}/attachments/${attachmentId}`);
+  },
 };
 
 export default quoteService;

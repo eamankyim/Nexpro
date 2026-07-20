@@ -23,11 +23,51 @@ const {
   organizationToEmailCompany,
 } = require('../utils/documentOrganizationUtils');
 const { resolveQuoteItemCategory } = require('../utils/resolveQuoteItemCategory');
+const { v4: uuidv4 } = require('uuid');
+
+const QUOTE_ATTACHMENT_TYPES = new Set(['proposal', 'requirements', 'agreement', 'other']);
+const QUOTE_ATTACHMENT_EDITABLE_STATUSES = new Set(['draft', 'sent']);
 
 const quoteBranchIncludes = () => [
   { model: Shop, as: 'shop', required: false },
   { model: StudioLocation, as: 'studioLocation', required: false },
 ];
+
+/**
+ * Normalize a quote attachment for API responses.
+ * @param {object} attachment
+ * @param {{ includeFile?: boolean }} [options]
+ * @returns {object|null}
+ */
+const formatQuoteAttachment = (attachment, { includeFile = true } = {}) => {
+  if (!attachment) return null;
+  const normalized = {
+    id: attachment.id,
+    type: attachment.type || 'other',
+    originalName: attachment.originalName || attachment.name || 'Attachment',
+    name: attachment.originalName || attachment.name || 'Attachment',
+    mimeType: attachment.mimeType || 'application/octet-stream',
+    size: attachment.size || 0,
+    uploadedAt: attachment.uploadedAt || null,
+    uploadedBy: attachment.uploadedBy || null,
+  };
+
+  if (includeFile) {
+    if (attachment.fileData) {
+      normalized.url = attachment.fileData;
+    } else if (attachment.url) {
+      normalized.url = attachment.url;
+    }
+  }
+
+  return normalized;
+};
+
+const formatQuoteAttachments = (attachments, options = {}) => (
+  (Array.isArray(attachments) ? attachments : [])
+    .map((item) => formatQuoteAttachment(item, options))
+    .filter(Boolean)
+);
 
 const generateQuoteNumber = async (tenantId) => {
   const date = new Date();
@@ -53,7 +93,7 @@ const generateQuoteNumber = async (tenantId) => {
   return `QTE-${year}${month}-${String(sequence).padStart(4, '0')}`;
 };
 
-const formatQuoteResponse = (quote) => ({
+const formatQuoteResponse = (quote, { includeAttachmentFiles = true } = {}) => ({
   id: quote.id,
   quoteNumber: quote.quoteNumber,
   title: quote.title,
@@ -78,7 +118,8 @@ const formatQuoteResponse = (quote) => ({
   shop: quote.shop || null,
   studioLocation: quote.studioLocation || null,
   convertedJobId: quote.convertedJobId || null,
-  convertedJobNumber: quote.convertedJobNumber || null
+  convertedJobNumber: quote.convertedJobNumber || null,
+  attachments: formatQuoteAttachments(quote.attachments, { includeFile: includeAttachmentFiles }),
 });
 
 const calculateTotals = (items = []) => {
@@ -158,7 +199,7 @@ exports.getQuotes = async (req, res, next) => {
         limit,
         totalPages: Math.ceil(count / limit)
       },
-      data: rows.map(formatQuoteResponse)
+      data: rows.map((row) => formatQuoteResponse(row, { includeAttachmentFiles: false }))
     });
   } catch (error) {
     console.error('Error fetching quotes:', error);
@@ -1302,6 +1343,7 @@ exports.convertQuoteToJob = async (req, res, next) => {
       quotedPrice: quote.totalAmount,
       finalPrice: quote.totalAmount,
       notes: quote.notes,
+      attachments: Array.isArray(quote.attachments) ? quote.attachments : [],
       tenantId: req.tenantId,
       studioLocationId: resolveStudioLocationIdForJobFromQuote(req, quote),
       createdBy: req.user?.id || null,
@@ -1818,3 +1860,145 @@ exports.convertQuoteToSale = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * Upload a typed attachment on a quote (proposal / requirements / agreement / other).
+ * @route POST /api/quotes/:id/attachments
+ */
+exports.uploadQuoteAttachment = async (req, res, next) => {
+  try {
+    const quote = await Quote.findOne({
+      where: quoteWhere(req, { id: req.params.id }),
+    });
+    if (!quote) {
+      return res.status(404).json({ success: false, message: 'Quote not found' });
+    }
+    if (!QUOTE_ATTACHMENT_EDITABLE_STATUSES.has(quote.status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Attachments can only be added while the quote is draft or sent',
+      });
+    }
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+
+    const attachmentType = String(req.body?.type || req.query?.type || 'other').toLowerCase();
+    if (!QUOTE_ATTACHMENT_TYPES.has(attachmentType)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid attachment type. Use proposal, requirements, agreement, or other.',
+      });
+    }
+
+    const mimeType = req.file.mimetype || 'application/octet-stream';
+    let fileData;
+    if (req.file.buffer) {
+      fileData = `data:${mimeType};base64,${req.file.buffer.toString('base64')}`;
+    } else {
+      return res.status(400).json({ success: false, message: 'Unable to process uploaded file' });
+    }
+
+    const attachment = {
+      id: uuidv4(),
+      type: attachmentType,
+      originalName: req.file.originalname,
+      mimeType,
+      size: req.file.size,
+      fileData,
+      uploadedAt: new Date().toISOString(),
+      uploadedBy: req.user
+        ? { id: req.user.id, name: req.user.name, email: req.user.email }
+        : null,
+    };
+
+    const attachments = Array.isArray(quote.attachments) ? [...quote.attachments] : [];
+    attachments.push(attachment);
+    quote.attachments = attachments;
+    quote.changed('attachments', true);
+    await quote.save();
+
+    await QuoteActivity.create({
+      quoteId: quote.id,
+      tenantId: req.tenantId,
+      type: 'note',
+      subject: 'Attachment added',
+      notes: `Added ${attachmentType} file: ${attachment.originalName}`,
+      createdBy: req.user?.id || null,
+      metadata: {
+        action: 'attachment_added',
+        attachmentId: attachment.id,
+        attachmentType,
+        originalName: attachment.originalName,
+      },
+    });
+
+    return res.status(201).json({
+      success: true,
+      data: formatQuoteAttachment(attachment, { includeFile: true }),
+      attachments: formatQuoteAttachments(attachments, { includeFile: true }),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Remove a quote attachment.
+ * @route DELETE /api/quotes/:id/attachments/:attachmentId
+ */
+exports.deleteQuoteAttachment = async (req, res, next) => {
+  try {
+    const quote = await Quote.findOne({
+      where: quoteWhere(req, { id: req.params.id }),
+    });
+    if (!quote) {
+      return res.status(404).json({ success: false, message: 'Quote not found' });
+    }
+    if (!QUOTE_ATTACHMENT_EDITABLE_STATUSES.has(quote.status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Attachments can only be removed while the quote is draft or sent',
+      });
+    }
+
+    const attachments = Array.isArray(quote.attachments) ? [...quote.attachments] : [];
+    const index = attachments.findIndex((item) => item.id === req.params.attachmentId);
+    if (index === -1) {
+      return res.status(404).json({ success: false, message: 'Attachment not found' });
+    }
+
+    const [removed] = attachments.splice(index, 1);
+    quote.attachments = attachments;
+    quote.changed('attachments', true);
+    await quote.save();
+
+    await QuoteActivity.create({
+      quoteId: quote.id,
+      tenantId: req.tenantId,
+      type: 'note',
+      subject: 'Attachment removed',
+      notes: `Removed ${removed?.type || 'other'} file: ${removed?.originalName || 'Attachment'}`,
+      createdBy: req.user?.id || null,
+      metadata: {
+        action: 'attachment_removed',
+        attachmentId: removed?.id,
+        attachmentType: removed?.type,
+        originalName: removed?.originalName,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Attachment removed',
+      attachments: formatQuoteAttachments(attachments, { includeFile: true }),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Exported for unit tests
+exports._formatQuoteResponse = formatQuoteResponse;
+exports._formatQuoteAttachments = formatQuoteAttachments;
+exports._QUOTE_ATTACHMENT_TYPES = QUOTE_ATTACHMENT_TYPES;

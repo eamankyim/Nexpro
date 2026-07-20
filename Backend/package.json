@@ -13,6 +13,7 @@
     "migrate:recurring": "node migrations/create-recurring-journals.js",
     "migrate:subscription-payments": "node migrations/create-subscription-payments-table.js",
     "migrate:sales-agents": "node migrations/create-sales-agent-tables.js",
+    "migrate:quote-attachments": "node migrations/add-attachments-to-quotes.js",
     "migrate:trial-defaults": "node migrations/backfill-trial-plan-defaults.js",
     "migrate:shop-default": "node migrations/add-isDefault-to-shops.js",
     "migrate:shop-type": "node migrations/add-shop-type-to-shops.js",

@@ -167,8 +167,7 @@ describe('customerNotificationBridgeService', () => {
           id: 'staff-rule',
           enabled: true,
           triggerType: 'sale_completed_staff',
-          audience: 'internal',
-          metadata: { templateKey: 'sale_completed_staff' },
+          metadata: { templateKey: 'sale_completed_staff', audience: 'internal' },
           actionConfig: { actions: [{ type: 'send_sms', audience: 'internal' }] },
         },
         {

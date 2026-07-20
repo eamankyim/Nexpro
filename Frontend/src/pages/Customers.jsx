@@ -67,7 +67,6 @@ import FormFieldGrid from '../components/FormFieldGrid';
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -975,8 +974,8 @@ const Customers = () => {
                   </FormItem>
                 )}
               />
-              <FormItem>
-                <FormLabel>Birthday (optional)</FormLabel>
+              <div className="space-y-2">
+                <Label>Birthday (optional)</Label>
                 <div className="grid grid-cols-2 gap-2">
                   <FormField
                     control={form.control}
@@ -1054,8 +1053,8 @@ const Customers = () => {
                     }}
                   />
                 </div>
-                <FormDescription>Day and month only</FormDescription>
-              </FormItem>
+                <p className="text-sm text-muted-foreground">Day and month only</p>
+              </div>
             </FormFieldGrid>
 
               <FormField
