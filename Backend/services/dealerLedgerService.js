@@ -78,10 +78,41 @@ const recordAdjustment = (params) => {
   });
 };
 
+/**
+ * Reverse dealer balance impact for ledger rows tied to a sale, then delete those rows.
+ * Used when an admin permanently deletes a paid/dealer sale.
+ * @param {{ tenantId: string, saleId: string, transaction: import('sequelize').Transaction }} params
+ * @returns {Promise<number>}
+ */
+const reverseAndDestroyLedgerEntriesForSale = async ({ tenantId, saleId, transaction }) => {
+  if (!tenantId || !saleId || !transaction) return 0;
+
+  const entries = await DealerLedgerEntry.findAll({
+    where: { tenantId, saleId },
+    order: [['createdAt', 'DESC'], ['id', 'DESC']],
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+  });
+
+  for (const entry of entries) {
+    const reverseDirection = entry.direction === 'debit' ? 'credit' : 'debit';
+    await applyBalanceChange({
+      dealerId: entry.dealerId,
+      direction: reverseDirection,
+      amount: entry.amount,
+      transaction,
+    });
+    await entry.destroy({ transaction });
+  }
+
+  return entries.length;
+};
+
 module.exports = {
   recordLedgerEntry,
   recordOpeningBalance,
   recordSaleCharge,
   recordPayment,
   recordAdjustment,
+  reverseAndDestroyLedgerEntriesForSale,
 };

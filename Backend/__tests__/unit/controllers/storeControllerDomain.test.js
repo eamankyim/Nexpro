@@ -86,6 +86,8 @@ describe('storeController — "Online Store" custom domain', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     delete process.env.STOREFRONT_CNAME_TARGET;
+    delete process.env.ONLINE_STORE_URL;
+    delete process.env.STOREFRONT_URL;
   });
 
   describe('getDomainSettings', () => {
@@ -112,7 +114,43 @@ describe('storeController — "Online Store" custom domain', () => {
         customDomain: null,
         customDomainStatus: 'none',
       });
-      expect(payload.cnameTarget).toBeTruthy();
+      expect(payload.cnameTarget).toBe('www.absghana.com');
+    });
+
+    it('does not use Sabito STOREFRONT_URL for cnameTarget', async () => {
+      process.env.STOREFRONT_URL = 'https://sabitostore.com';
+      OnlineStoreSettings.findOne.mockResolvedValueOnce({
+        id: 's1',
+        slug: 'my-shop',
+        displayName: 'My Shop',
+        enabled: true,
+        customDomain: null,
+        customDomainStatus: 'none',
+      });
+      const req = buildReq();
+      const res = buildRes();
+
+      await storeController.getDomainSettings(req, res, jest.fn());
+
+      expect(res.json.mock.calls[0][0].data.cnameTarget).toBe('www.absghana.com');
+    });
+
+    it('prefers STOREFRONT_CNAME_TARGET over defaults', async () => {
+      process.env.STOREFRONT_CNAME_TARGET = 'https://store.absghana.com/';
+      OnlineStoreSettings.findOne.mockResolvedValueOnce({
+        id: 's1',
+        slug: 'my-shop',
+        displayName: 'My Shop',
+        enabled: true,
+        customDomain: null,
+        customDomainStatus: 'none',
+      });
+      const req = buildReq();
+      const res = buildRes();
+
+      await storeController.getDomainSettings(req, res, jest.fn());
+
+      expect(res.json.mock.calls[0][0].data.cnameTarget).toBe('store.absghana.com');
     });
 
     it('reports hasStoreSettings:false when store setup has not started', async () => {

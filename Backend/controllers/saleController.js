@@ -1,10 +1,11 @@
-const { Sale, SaleItem, Product, ProductVariant, Customer, Dealer, Shop, Invoice, User, SaleActivity, Tenant, Payment, Setting, Barcode } = require('../models');
+const { Sale, SaleItem, Product, ProductVariant, Customer, Dealer, Shop, Invoice, User, SaleActivity, Tenant, Payment, Setting, Barcode, SaleReturn } = require('../models');
 const { createInvoiceRevenueJournal } = require('../services/invoiceAccountingService');
 const { updateCustomerBalance } = require('../services/customerBalanceService');
 const { syncSaleInvoiceAndRefreshCustomerBalance } = require('../services/invoiceSaleService');
 const { checkCreditLimit } = require('../services/dealerBalanceService');
-const { recordSaleCharge } = require('../services/dealerLedgerService');
+const { recordSaleCharge, reverseAndDestroyLedgerEntriesForSale } = require('../services/dealerLedgerService');
 const { createSaleCogsJournal, createSaleRevenueJournal } = require('../services/saleAccountingService');
+const { reverseAndDestroyJournalEntries } = require('../services/accountingService');
 const { Op } = require('sequelize');
 const { applyTenantFilter, sanitizePayload, findTenantWithOptionalColumns } = require('../utils/tenantUtils');
 const { resolvePaymentNotesFromBody } = require('../utils/paymentNoteUtils');
@@ -3130,7 +3131,35 @@ exports.deleteSale = async (req, res, next) => {
       });
     }
 
-    // Admin hard-delete: restore stock, remove linked invoice (including paid), then destroy the sale.
+    // Admin hard-delete: restore stock and cascade-remove payments, invoices, journals,
+    // and dealer ledger rows so accounting stays consistent for paid/dealer sales.
+    const returnCount = await SaleReturn.count({
+      where: applyTenantFilter(req.tenantId, { originalSaleId: sale.id }),
+      transaction,
+    });
+    if (returnCount > 0) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot permanently delete a sale that has returns or exchanges. Remove those first, or keep the sale for audit.',
+      });
+    }
+
+    const linkedInvoices = await Invoice.findAll({
+      where: {
+        tenantId: req.tenantId,
+        [Op.or]: [
+          { saleId: sale.id },
+          ...(sale.invoiceId ? [{ id: sale.invoiceId }] : []),
+        ],
+      },
+      transaction,
+    });
+    const invoiceIds = [...new Set(linkedInvoices.map((invoice) => invoice.id).filter(Boolean))];
+    const customerIds = new Set(
+      [sale.customerId, ...linkedInvoices.map((invoice) => invoice.customerId)].filter(Boolean)
+    );
+
     if (sale.status !== 'cancelled' && sale.status !== 'refunded') {
       for (const item of sale.items || []) {
         const product = item.productId
@@ -3154,12 +3183,54 @@ exports.deleteSale = async (req, res, next) => {
       }
     }
 
-    if (sale.invoice) {
-      // Clear the sale → invoice FK first so destroy order does not trip constraints.
-      if (sale.invoiceId) {
-        await sale.update({ invoiceId: null }, { transaction });
+    await reverseAndDestroyLedgerEntriesForSale({
+      tenantId: req.tenantId,
+      saleId: sale.id,
+      transaction,
+    });
+
+    const paymentOr = [
+      { description: `sale:${sale.id}` },
+      { description: { [Op.like]: `sale:${sale.id}%` } },
+      ...invoiceIds.flatMap((invoiceId) => ([
+        { description: `invoice:${invoiceId}` },
+        { description: { [Op.like]: `%invoice:${invoiceId}%` } },
+      ])),
+    ];
+    await Payment.destroy({
+      where: {
+        tenantId: req.tenantId,
+        [Op.or]: paymentOr,
+      },
+      transaction,
+    });
+
+    const journalSources = [
+      { source: 'sale_revenue', sourceId: sale.id },
+      { source: 'sale_cogs', sourceId: sale.id },
+      ...invoiceIds.flatMap((invoiceId) => ([
+        { source: 'invoice_revenue', sourceId: invoiceId },
+        { source: 'invoice_payment', sourceId: invoiceId },
+      ])),
+    ];
+    await reverseAndDestroyJournalEntries({
+      tenantId: req.tenantId,
+      sources: journalSources,
+      transaction,
+    });
+
+    if (sale.invoiceId) {
+      await sale.update({ invoiceId: null }, { transaction });
+    }
+    for (const invoice of linkedInvoices) {
+      if (invoice.saleId === sale.id) {
+        await invoice.update({ saleId: null }, { transaction });
       }
-      await sale.invoice.destroy({ transaction });
+      await invoice.destroy({ transaction });
+    }
+
+    for (const customerId of customerIds) {
+      await updateCustomerBalance(customerId, transaction);
     }
 
     // Delete sale activities
@@ -3174,15 +3245,18 @@ exports.deleteSale = async (req, res, next) => {
       transaction
     });
 
-    // Delete the sale
+    // Delete the sale (marketplace/storefront children cascade at DB where configured)
     await sale.destroy({ transaction });
 
     await transaction.commit();
     invalidateSaleMutationCaches(req.tenantId);
+    if (invoiceIds.length) {
+      invalidateInvoiceListCache(req.tenantId);
+    }
 
     res.status(200).json({
       success: true,
-      message: 'Sale deleted successfully'
+      message: 'Sale deleted successfully. Related payments, invoices, and accounting entries were removed.'
     });
   } catch (error) {
     await transaction.rollback();

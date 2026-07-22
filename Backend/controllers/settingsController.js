@@ -2583,9 +2583,9 @@ exports.verifyPaymentCollectionPassword = async (req, res, next) => {
     }
     const isGoogleUser = Boolean(user.googleId);
     if (isGoogleUser) {
-      console.log('[Payment OTP] verify-password: skipped for Google user userId=', req.user?.id);
-      return res.status(200).json({
-        success: true,
+      console.log('[Payment OTP] verify-password: rejected for Google user userId=', req.user?.id);
+      return res.status(400).json({
+        success: false,
         message: 'Use the email verification code for your Google account',
         data: { passwordRequired: false, otpRequired: true, authMethod: 'otp' },
       });

@@ -1965,11 +1965,23 @@ exports.checkSlugAvailability = async (req, res, next) => {
 // Independent of the Sabito marketplace `enabled` flag. See docs/CUSTOM_DOMAIN.md-style
 // notes inline below for what is and is not automated yet.
 
-/** Host the merchant must CNAME their custom domain to (documented, not auto-provisioned). */
+/**
+ * Host merchants must CNAME their custom domain to (documented, not auto-provisioned).
+ * Defaults to the ABS Online Store host — never Sabito's STOREFRONT_URL (marketplace).
+ */
+const DEFAULT_ONLINE_STORE_CNAME_TARGET = 'www.absghana.com';
+
+const hostFromUrl = (value) => String(value || '')
+  .trim()
+  .replace(/^https?:\/\//i, '')
+  .replace(/\/+$/g, '')
+  .split('/')[0]
+  .toLowerCase();
+
 const getCustomDomainCnameTarget = () => (
-  process.env.STOREFRONT_CNAME_TARGET
-  || (process.env.STOREFRONT_URL || '').replace(/^https?:\/\//i, '').replace(/\/+$/g, '')
-  || 'store.abs.app'
+  hostFromUrl(process.env.STOREFRONT_CNAME_TARGET)
+  || hostFromUrl(process.env.ONLINE_STORE_URL)
+  || DEFAULT_ONLINE_STORE_CNAME_TARGET
 );
 
 /**
@@ -1987,7 +1999,7 @@ const normalizeCustomDomain = (value) => {
 };
 
 const DOMAIN_PATTERN = /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/;
-const RESERVED_DOMAIN_SUFFIXES = ['.abs.app', '.sabito.app', 'localhost'];
+const RESERVED_DOMAIN_SUFFIXES = ['.abs.app', '.sabito.app', '.absghana.com', '.africanbusinesssuite.com', 'localhost'];
 
 const assertValidCustomDomain = (host) => {
   if (!host || !DOMAIN_PATTERN.test(host)) {

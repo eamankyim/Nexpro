@@ -148,10 +148,10 @@ describe('settingsController payment collection verification', () => {
 
     await settingsController.verifyPaymentCollectionPassword(req, res, jest.fn());
 
-    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
-        success: true,
+        success: false,
         data: expect.objectContaining({
           passwordRequired: false,
           otpRequired: true,

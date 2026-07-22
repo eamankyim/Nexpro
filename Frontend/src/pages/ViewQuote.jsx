@@ -4,12 +4,14 @@
  * API: GET /api/public/quotes/view/:token
  * Customers can view, print, download PDF, and respond (Accept / Reject / Comment).
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { API_BASE_URL } from '../services/api';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import PrintableQuote from '../components/PrintableQuote';
+import PrintableInvoice from '../components/PrintableInvoice';
+import PrintableQuotation from '../components/PrintableQuotation';
+import { buildQuotePrintModel } from '../utils/buildQuotePrintModel';
 import { FileText, Printer, Download, Loader2, CheckCircle, XCircle, MessageSquare, Paperclip } from 'lucide-react';
 import { generatePDF } from '../utils/pdfUtils';
 
@@ -60,12 +62,22 @@ export default function ViewQuote() {
       .finally(() => setLoading(false));
   }, [token]);
 
+  const printModel = useMemo(
+    () => buildQuotePrintModel(quote, {
+      businessType: organization?.businessType,
+      organization: organization || {},
+    }),
+    [quote, organization]
+  );
+
   const handlePrint = () => {
     window.print();
   };
 
   const handleDownloadPDF = async () => {
-    const element = document.querySelector('.printable-quote');
+    const element = document.querySelector('.printable-quotation')
+      || document.querySelector('.printable-quote')
+      || document.querySelector('.printable-invoice');
     if (!element) return;
     setDownloading(true);
     try {
@@ -255,7 +267,19 @@ export default function ViewQuote() {
         )}
 
         <div className="bg-card rounded-lg border border-border overflow-hidden">
-          <PrintableQuote quote={quote} organization={organization} />
+          {printModel?.templateKind === 'project' ? (
+            <PrintableQuotation model={printModel} organization={organization || {}} />
+          ) : printModel ? (
+            <PrintableInvoice
+              invoice={printModel.invoicePayload}
+              documentTitle={printModel.documentTitle}
+              documentSubtitle={printModel.documentSubtitle}
+              organization={organization || {}}
+              showProductCode={printModel.sections.items.showProductCode}
+              showBalanceDue={false}
+              showJobDetails={false}
+            />
+          ) : null}
         </div>
       </div>
     </div>

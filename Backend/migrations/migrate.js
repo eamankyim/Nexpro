@@ -40,6 +40,7 @@ const addInviteEmailStatusFields = require('./add-invite-email-status-fields');
 const addNotificationPreferencesToUsers = require('./add-notification-preferences-to-users');
 const addTaxToQuotes = require('./add-tax-to-quotes');
 const addAttachmentsToQuotes = require('./add-attachments-to-quotes');
+const addStudioQuotationFieldsToQuotes = require('./add-studio-quotation-fields-to-quotes');
 const addJobQueryIndexes = require('./add-job-query-indexes');
 const createUserTasksTable = require('./create-user-tasks-table');
 const addAssigneeToUserTasks = require('./add-assignee-to-user-tasks');
@@ -416,6 +417,9 @@ const migrate = async () => {
 
     // Quote file attachments (proposal / requirements / agreement docs)
     await addAttachmentsToQuotes();
+
+    // Studio quotation PDF fields (payment schedule, scope, terms, acceptance)
+    await addStudioQuotationFieldsToQuotes();
 
     console.log('\n✅ Database migration completed successfully!');
     console.log('📊 Incremental schema updates applied.');

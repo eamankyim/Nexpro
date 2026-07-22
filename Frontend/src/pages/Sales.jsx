@@ -1712,7 +1712,7 @@ const Sales = () => {
             <AlertDialogDescription>
               {saleToDelete
                 ? isAdmin
-                  ? `Are you sure you want to permanently delete sale "${saleToDelete.saleNumber || saleToDelete.id}"? This action cannot be undone.`
+                  ? `Permanently delete sale "${saleToDelete.saleNumber || saleToDelete.id}"? This also removes related payments, invoices, and accounting entries. Only admins can do this. It cannot be undone.`
                   : `Sale "${saleToDelete.saleNumber || saleToDelete.id}" will be removed from the sales list. It stays on record for audit purposes. Please provide a reason.`
                 : ''}
             </AlertDialogDescription>

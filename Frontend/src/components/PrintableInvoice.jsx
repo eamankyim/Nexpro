@@ -70,6 +70,10 @@ const PrintableInvoice = ({
   screenLayout = 'auto',
   /** Retail/shop types show product codes on line items; studio-like types hide them. */
   showProductCode = true,
+  /** Hide Balance Due (e.g. quotations are not invoices). Default true for real invoices. */
+  showBalanceDue = true,
+  /** Hide Job Details column (e.g. product/proforma quotes without a linked job). */
+  showJobDetails = true,
 }) => {
   if (!invoice) return null;
 
@@ -858,6 +862,7 @@ const PrintableInvoice = ({
               {invoice.customer?.phone && <div>{invoice.customer.phone}</div>}
             </div>
           </div>
+          {showJobDetails && (
           <div className="billing-section">
             <div className="section-title">Job Details:</div>
             <div className="billing-info">
@@ -876,6 +881,7 @@ const PrintableInvoice = ({
               {!invoice.job?.jobNumber && !invoice.paymentTerms && <div>—</div>}
             </div>
           </div>
+          )}
         </div>
 
         {/* Items: list for receipts, table for invoices */}
@@ -983,12 +989,14 @@ const PrintableInvoice = ({
               <span>{amountDisplay(invoice.amountPaid)}</span>
             </div>
           )}
-          <div className={`total-row ${isReceipt && invoice.balance <= 0 ? '' : 'balance'}`}>
-            <span>{isReceipt && invoice.balance <= 0 ? 'Status:' : 'Balance Due:'}</span>
-            <span style={isReceipt && invoice.balance <= 0 ? { color: '#52c41a' } : undefined}>
-              {isReceipt && invoice.balance <= 0 ? 'Paid' : amountDisplay(invoice.balance)}
-            </span>
-          </div>
+          {showBalanceDue && (
+            <div className={`total-row ${isReceipt && invoice.balance <= 0 ? '' : 'balance'}`}>
+              <span>{isReceipt && invoice.balance <= 0 ? 'Status:' : 'Balance Due:'}</span>
+              <span style={isReceipt && invoice.balance <= 0 ? { color: '#52c41a' } : undefined}>
+                {isReceipt && invoice.balance <= 0 ? 'Paid' : amountDisplay(invoice.balance)}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Pay to (payment details) */}

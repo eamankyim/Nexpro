@@ -105,6 +105,11 @@ const saleService = {
   },
 
   // Delete a sale. Admins hard-delete; managers/staff soft-delete a paid sale and must pass a reason.
+  /**
+   * Delete a sale.
+   * Admin: permanent hard-delete (cascades payments, invoices, journals, dealer ledger).
+   * Manager/staff: soft-delete paid sales with a reason (audit only).
+   */
   deleteSale: async (id, reason) => {
     return api.delete(`/sales/${id}`, reason ? { data: { reason } } : undefined);
   },

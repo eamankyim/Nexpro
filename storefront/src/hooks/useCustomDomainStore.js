@@ -2,13 +2,25 @@ import { useQuery } from '@tanstack/react-query';
 import storeService from '../services/storeService';
 import { STOREFRONT_URL } from '../config';
 
+const ABS_STOREFRONT_HOSTS = new Set([
+  'absghana.com',
+  'www.absghana.com',
+  'store.absghana.com',
+  'africanbusinesssuite.com',
+  'www.africanbusinesssuite.com',
+  'store.africanbusinesssuite.com',
+  'sabitostore.com',
+  'www.sabitostore.com',
+]);
+
 /**
- * Hosts that always mean "shared marketplace domain" — skip the domain lookup network
+ * Hosts that always mean "shared marketplace / ABS template domain" — skip the domain lookup network
  * round-trip on the common paths (local dev, Vite preview, the configured storefront origin).
  */
 const isKnownMarketplaceHost = (hostname) => {
   if (!hostname) return true;
   if (hostname === 'localhost' || hostname === '127.0.0.1') return true;
+  if (ABS_STOREFRONT_HOSTS.has(hostname)) return true;
   try {
     if (hostname === new URL(STOREFRONT_URL).hostname) return true;
   } catch {

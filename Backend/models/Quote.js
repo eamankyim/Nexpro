@@ -109,6 +109,28 @@ const Quote = sequelize.define('Quote', {
     allowNull: false,
     defaultValue: [],
     comment: 'Typed files: proposal, requirements, agreement, other'
+  },
+  paymentSchedule: {
+    type: DataTypes.JSONB,
+    allowNull: false,
+    defaultValue: [],
+    comment: 'Milestone payments: [{ label, percent?, amount }]'
+  },
+  scopeOfWork: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    comment: 'Project scope text for studio quotations'
+  },
+  termsAndConditions: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    comment: 'Quotation terms; falls back to notes / org defaults when empty'
+  },
+  showClientAcceptance: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: true,
+    comment: 'Show client acceptance signature block on project quotation PDF'
   }
 }, {
   timestamps: true,

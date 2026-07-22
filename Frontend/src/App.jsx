@@ -341,14 +341,14 @@ function AppContent() {
             <Route path="shops" element={<FeatureRoute featureKey="shopsModule"><RequireWorkspaceManager><Shops /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="store" element={<SabitoStoreRoute><StoreDashboard /></SabitoStoreRoute>} />
             <Route path="store/dashboard" element={<SabitoStoreRoute><StoreDashboard /></SabitoStoreRoute>} />
-            <Route path="store/setup" element={<SabitoStoreRoute><RequireWorkspaceManager><StoreSetup /></RequireWorkspaceManager></SabitoStoreRoute>} />
+            <Route path="store/setup" element={<RequireWorkspaceManager><StoreSetup /></RequireWorkspaceManager>} />
             <Route path="store/listings" element={<SabitoStoreRoute><StoreListings /></SabitoStoreRoute>} />
             <Route path="store/listings/:productId/edit" element={<SabitoStoreRoute><StoreListingEditor /></SabitoStoreRoute>} />
             <Route path="store/listings/:productId/published" element={<SabitoStoreRoute><StoreListingPublished /></SabitoStoreRoute>} />
             <Route path="store/services" element={<SabitoStoreRoute><StoreServices /></SabitoStoreRoute>} />
             <Route path="store/services/:serviceId/edit" element={<SabitoStoreRoute><StoreServiceEditor /></SabitoStoreRoute>} />
             <Route path="store/orders" element={<SabitoStoreRoute><OnlineOrders /></SabitoStoreRoute>} />
-            <Route path="store/settings" element={<SabitoStoreRoute><RequireWorkspaceManager><StoreSettings /></RequireWorkspaceManager></SabitoStoreRoute>} />
+            <Route path="store/settings" element={<RequireWorkspaceManager><StoreSettings /></RequireWorkspaceManager>} />
             <Route path="online-store" element={<OnlineStore />} />
             <Route path="studio-locations" element={<FeatureRoute featureKey="studioLocationsModule"><RequireWorkspaceManager><StudioLocations /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="pharmacies" element={<FeatureRoute featureKey="pharmacyOps"><Pharmacies /></FeatureRoute>} />

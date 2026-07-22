@@ -48,6 +48,8 @@ import DrawerSectionCard from '../components/DrawerSectionCard';
 import FileUpload from '../components/FileUpload';
 import FilePreview from '../components/FilePreview';
 import PrintableInvoice from '../components/PrintableInvoice';
+import PrintableQuotation from '../components/PrintableQuotation';
+import { buildQuotePrintModel, DEFAULT_STUDIO_QUOTE_TERMS } from '../utils/buildQuotePrintModel';
 import StatusChip from '../components/StatusChip';
 import TableSkeleton from '../components/TableSkeleton';
 import DetailSkeleton from '../components/DetailSkeleton';
@@ -141,6 +143,7 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
 import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../constants';
 
 /**
@@ -182,6 +185,12 @@ const quickCustomerSchema = z.object({
   phone: z.string().optional(),
 });
 
+const paymentScheduleItemSchema = z.object({
+  label: z.string().optional().or(z.literal('')),
+  amount: numberOrEmptySchema(z),
+  percent: numberOrEmptySchema(z),
+});
+
 const quoteSchema = z.object({
   customerId: z.string().min(1, 'Customer is required'),
   title: z.string().min(1, 'Quote title is required'),
@@ -189,6 +198,10 @@ const quoteSchema = z.object({
   status: z.enum(['draft', 'sent', 'accepted', 'declined', 'expired']).default('draft'),
   validUntil: z.date().optional().nullable(),
   notes: z.string().optional(),
+  scopeOfWork: z.string().optional(),
+  termsAndConditions: z.string().optional(),
+  paymentSchedule: z.array(paymentScheduleItemSchema).optional(),
+  showClientAcceptance: z.boolean().optional(),
   items: z.array(quoteItemSchema).min(1, 'At least one item is required'),
   autoSendToCustomer: z.boolean().optional(),
   sendMessage: z.string().optional(),
@@ -558,6 +571,10 @@ const Quotes = () => {
       status: 'draft',
       validUntil: null,
       notes: '',
+      scopeOfWork: '',
+      termsAndConditions: '',
+      paymentSchedule: [],
+      showClientAcceptance: true,
       items: [{ productId: '', category: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
       autoSendToCustomer: false,
       sendMessage: DEFAULT_QUOTE_SEND_MESSAGE,
@@ -568,6 +585,15 @@ const Quotes = () => {
   const { fields, append, remove } = useFieldArray({
     control: form.control,
     name: 'items',
+  });
+
+  const {
+    fields: paymentScheduleFields,
+    append: appendPaymentSchedule,
+    remove: removePaymentSchedule,
+  } = useFieldArray({
+    control: form.control,
+    name: 'paymentSchedule',
   });
 
   const customerForm = useForm({
@@ -704,32 +730,17 @@ const Quotes = () => {
 
   const buildPrintableQuote = (quote) => {
     if (!quote) return null;
-    return {
-      ...quote,
-      invoiceNumber: quote.quoteNumber,
-      invoiceDate: quote.createdAt || quote.updatedAt || new Date(),
-      dueDate: quote.validUntil || quote.createdAt || new Date(),
-      subtotal: parseFloat(quote.subtotal || 0),
-      taxAmount: parseFloat(quote.taxAmount || 0),
-      taxRate: parseFloat(quote.taxRate || 0),
-      discountAmount: parseFloat(quote.discountTotal || 0),
-      discountType: quote.discountType || 'fixed',
-      discountValue: parseFloat(quote.discountValue || 0),
-      totalAmount: parseFloat(quote.totalAmount || 0),
-      amountPaid: 0,
-      balance: parseFloat(quote.totalAmount || 0),
-      // Show quote notes in the printable as Terms & Conditions / notes section
-      termsAndConditions: quote.notes || quote.description || '',
-      items: (quote.items || []).map((item) => ({
-        ...item,
-        description: item.description,
-        quantity: item.quantity,
-        unitPrice: parseFloat(item.unitPrice || 0),
-        total: parseFloat(item.total || (parseFloat(item.unitPrice || 0) * (item.quantity || 0))),
-        discountAmount: parseFloat(item.discountAmount || 0)
-      }))
-    };
+    return buildQuotePrintModel(quote, {
+      businessType: businessType || activeTenant?.businessType,
+      organization: quotePrintOrganization,
+    });
   };
+
+  const quotePrintModel = useMemo(
+    () => (quotePrintable ? buildPrintableQuote(quotePrintable) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- rebuild when quote / org / type change
+    [quotePrintable, quotePrintOrganization, businessType, activeTenant?.businessType]
+  );
 
   useEffect(() => {
     setPageSearchConfig({ scope: 'quotes', placeholder: SEARCH_PLACEHOLDERS.QUOTES });
@@ -747,6 +758,12 @@ const Quotes = () => {
         status: 'draft',
         validUntil: null,
         notes: '',
+        scopeOfWork: '',
+        termsAndConditions: !isRetailQuote
+          ? (organization?.defaultTermsAndConditions || DEFAULT_STUDIO_QUOTE_TERMS.join('\n'))
+          : '',
+        paymentSchedule: [],
+        showClientAcceptance: !isRetailQuote,
         items: [{ productId: '', category: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
         taxRate: '',
       });
@@ -895,6 +912,12 @@ const Quotes = () => {
       status: 'draft',
       validUntil: null,
       notes: '',
+      scopeOfWork: '',
+      termsAndConditions: !isRetailQuote
+        ? (organization?.defaultTermsAndConditions || DEFAULT_STUDIO_QUOTE_TERMS.join('\n'))
+        : '',
+      paymentSchedule: [],
+      showClientAcceptance: !isRetailQuote,
       items: [{ productId: '', category: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
       autoSendToCustomer: false,
       sendMessage: DEFAULT_QUOTE_SEND_MESSAGE,
@@ -922,6 +945,18 @@ const Quotes = () => {
       status: details.status,
       validUntil: details.validUntil ? new Date(details.validUntil) : null,
       notes: details.notes || '',
+      scopeOfWork: details.scopeOfWork || '',
+      termsAndConditions: details.termsAndConditions
+        || organization?.defaultTermsAndConditions
+        || (!isRetailQuote ? DEFAULT_STUDIO_QUOTE_TERMS.join('\n') : ''),
+      paymentSchedule: Array.isArray(details.paymentSchedule)
+        ? details.paymentSchedule.map((row) => ({
+            label: row?.label || '',
+            amount: row?.amount != null ? Number(row.amount) : '',
+            percent: row?.percent != null ? Number(row.percent) : '',
+          }))
+        : [],
+      showClientAcceptance: details.showClientAcceptance !== false,
       items: (details.items || []).map((item) => ({
         productId: item.productId || '',
         category: item.metadata?.category || '',
@@ -1000,6 +1035,18 @@ const Quotes = () => {
         };
       })
     };
+    if (!isRetailQuote) {
+      payload.scopeOfWork = values.scopeOfWork || null;
+      payload.termsAndConditions = values.termsAndConditions || null;
+      payload.showClientAcceptance = values.showClientAcceptance !== false;
+      payload.paymentSchedule = (values.paymentSchedule || [])
+        .map((row) => ({
+          label: String(row?.label || '').trim(),
+          amount: row?.amount === '' || row?.amount == null ? null : Number(row.amount),
+          percent: row?.percent === '' || row?.percent == null ? null : Number(row.percent),
+        }))
+        .filter((row) => row.label);
+    }
     if (organization.tax?.enabled && values.taxRate !== undefined && values.taxRate !== '') {
       payload.taxRate = Number(values.taxRate);
     }
@@ -1151,7 +1198,8 @@ const Quotes = () => {
     const target = quote || quotePrintable;
     if (!target) return;
     try {
-      const element = document.querySelector('.printable-invoice');
+      const element = document.querySelector('.printable-quotation')
+        || document.querySelector('.printable-invoice');
       if (!element) {
         if (!silent) {
           showError(null, 'Preview the quote before downloading');
@@ -1178,7 +1226,9 @@ const Quotes = () => {
 
   const handlePrintQuote = () => {
     if (!quotePrintable) return;
-    const wrapper = document.querySelector('.printable-invoice')?.parentElement;
+    const element = document.querySelector('.printable-quotation')
+      || document.querySelector('.printable-invoice');
+    const wrapper = element?.parentElement;
     if (wrapper) {
       openPrintDialog(wrapper, `Quote-${quotePrintable.quoteNumber}`);
     }
@@ -1893,9 +1943,9 @@ const Quotes = () => {
                   name="title"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Quote Title</FormLabel>
+                      <FormLabel>{isRetailQuote ? 'Quote Title' : 'Project Summary'}</FormLabel>
                       <FormControl>
-                        <Input {...field} placeholder="Quote title" />
+                        <Input {...field} placeholder={isRetailQuote ? 'Quote title' : 'Short project summary'} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -1924,14 +1974,171 @@ const Quotes = () => {
                 name="description"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Description (optional)</FormLabel>
+                    <FormLabel>
+                      {isRetailQuote ? 'Description (optional)' : 'Project Description (optional)'}
+                    </FormLabel>
                     <FormControl>
-                      <Textarea {...field} rows={3} placeholder="Describe the work or specifications" />
+                      <Textarea
+                        {...field}
+                        rows={3}
+                        placeholder={isRetailQuote ? 'Describe the work or specifications' : 'Brief project overview'}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
+
+            {!isRetailQuote && (
+              <>
+                <FormField
+                  control={form.control}
+                  name="scopeOfWork"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Scope of Work (optional)</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          {...field}
+                          rows={4}
+                          placeholder="Detailed deliverables and what is included in this quotation"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="termsAndConditions"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Terms &amp; Conditions (optional)</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          {...field}
+                          rows={5}
+                          placeholder="One term per line"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-medium">Payment Schedule (optional)</div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => appendPaymentSchedule({ label: '', amount: '', percent: '' })}
+                    >
+                      <Plus className="h-4 w-4 mr-1" />
+                      Add milestone
+                    </Button>
+                  </div>
+                  {paymentScheduleFields.length === 0 && (
+                    <p className="text-sm text-muted-foreground">
+                      Add milestones (e.g. Advance, Delivery) to show a payment schedule on the PDF.
+                    </p>
+                  )}
+                  {paymentScheduleFields.map((field, index) => (
+                    <div key={field.id} className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end border border-border rounded-md p-3">
+                      <FormField
+                        control={form.control}
+                        name={`paymentSchedule.${index}.label`}
+                        render={({ field: f }) => (
+                          <FormItem className="sm:col-span-5">
+                            <FormLabel>Milestone</FormLabel>
+                            <FormControl>
+                              <Input {...f} placeholder="e.g. Advance payment" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`paymentSchedule.${index}.percent`}
+                        render={({ field: f }) => (
+                          <FormItem className="sm:col-span-2">
+                            <FormLabel>% (optional)</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="text"
+                                inputMode="decimal"
+                                value={numberInputValue(f.value)}
+                                onChange={(e) => handleNumberChange(e, f.onChange)}
+                                placeholder="20"
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`paymentSchedule.${index}.amount`}
+                        render={({ field: f }) => (
+                          <FormItem className="sm:col-span-3">
+                            <FormLabel>Amount (optional)</FormLabel>
+                            <FormControl>
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">GH₵</span>
+                                <Input
+                                  type="text"
+                                  inputMode="decimal"
+                                  className="pl-12"
+                                  value={numberInputValue(f.value)}
+                                  onChange={(e) => handleNumberChange(e, f.onChange)}
+                                  placeholder="0.00"
+                                />
+                              </div>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <div className="sm:col-span-2 flex justify-end">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removePaymentSchedule(index)}
+                          aria-label="Remove milestone"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <FormField
+                  control={form.control}
+                  name="showClientAcceptance"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-start gap-3 rounded-lg border border-border p-4">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value !== false}
+                          onCheckedChange={(checked) => field.onChange(checked === true)}
+                        />
+                      </FormControl>
+                      <div className="space-y-1 leading-none">
+                        <FormLabel>Show client acceptance on PDF</FormLabel>
+                        <p className="text-sm text-muted-foreground">
+                          Include signature lines for the client to accept this quotation.
+                        </p>
+                      </div>
+                    </FormItem>
+                  )}
+                />
+              </>
+            )}
 
             {organization.tax?.enabled && (
               <FormField
@@ -2448,16 +2655,26 @@ const Quotes = () => {
             </div>
             </div>
           </DialogHeader>
-          {quotePrintable && (
+          {quotePrintable && quotePrintModel && (
             <div className="print-invoice-preview flex-1 min-h-0 overflow-y-auto overflow-x-auto bg-muted/30 p-2 sm:p-4 print-content-wrapper">
               <div className="print-invoice-preview-inner w-full min-w-0 max-w-full sm:max-w-[900px] sm:mx-auto">
-                <PrintableInvoice
-                  invoice={buildPrintableQuote(quotePrintable)}
-                  documentTitle="PROFORMA INVOICE"
-                  documentSubtitle={`Quote ${quotePrintable.quoteNumber}`}
-                  organization={quotePrintOrganization}
-                  screenLayout={isMobile ? 'mobile' : 'auto'}
-                />
+                {quotePrintModel.templateKind === 'project' ? (
+                  <PrintableQuotation
+                    model={quotePrintModel}
+                    organization={quotePrintOrganization}
+                  />
+                ) : (
+                  <PrintableInvoice
+                    invoice={quotePrintModel.invoicePayload}
+                    documentTitle={quotePrintModel.documentTitle}
+                    documentSubtitle={quotePrintModel.documentSubtitle}
+                    organization={quotePrintOrganization}
+                    screenLayout={isMobile ? 'mobile' : 'auto'}
+                    showProductCode={quotePrintModel.sections.items.showProductCode}
+                    showBalanceDue={false}
+                    showJobDetails={false}
+                  />
+                )}
               </div>
             </div>
           )}

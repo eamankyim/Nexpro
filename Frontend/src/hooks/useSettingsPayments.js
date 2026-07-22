@@ -272,7 +272,12 @@ export const useSettingsPayments = () => {
       if (isGoogleUser) {
         await settingsService.verifyPaymentCollectionOtp({ otp });
       } else {
-        await settingsService.verifyPaymentCollectionPassword(pwd);
+        const result = await settingsService.verifyPaymentCollectionPassword(pwd);
+        const data = result?.data ?? result;
+        if (data?.otpRequired === true || data?.authMethod === 'otp') {
+          showError(null, 'This account uses Google sign-in. Request an email verification code instead.');
+          return;
+        }
       }
       setPaymentVerificationDone(true);
       setPaymentVerifyModalOpen(false);
@@ -283,6 +288,14 @@ export const useSettingsPayments = () => {
       setPaymentPasswordVerifying(false);
     }
   }, [isGoogleUser, paymentVerifyOtp, paymentVerifyPassword]);
+
+  const openPaymentVerifyModal = useCallback(() => {
+    setPaymentVerifyPassword('');
+    setPaymentVerifyOtp('');
+    setPaymentOtpSent(false);
+    setPaymentVerificationDone(false);
+    setPaymentVerifyModalOpen(true);
+  }, []);
 
   const onPaymentCollectionSubmit = useCallback(async (values) => {
     const pwd = (paymentVerifyPassword || '').trim();
@@ -553,6 +566,7 @@ export const useSettingsPayments = () => {
     setPaymentVerifyOtp,
     paymentOtpSending,
     paymentOtpSent,
+    setPaymentOtpSent,
     paymentVerifyModalOpen,
     setPaymentVerifyModalOpen,
     paymentVerificationDone,
@@ -584,6 +598,7 @@ export const useSettingsPayments = () => {
     isGoogleUser,
     handleSendPaymentOtp,
     handleVerifyPaymentPassword,
+    openPaymentVerifyModal,
     onPaymentCollectionSubmit,
     updatePaymentCollectionMutation,
     handleMtnSendOtp,

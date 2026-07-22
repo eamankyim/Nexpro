@@ -77,6 +77,8 @@ function App() {
           <Route path="/about" element={<Navigate to={`/stores/${slug}/about`} replace />} />
           <Route path="/contact" element={<Navigate to={`/stores/${slug}/about`} replace />} />
           <Route path="/reviews" element={<Navigate to={`/stores/${slug}/reviews`} replace />} />
+          <Route path="/template" element={<Navigate to={`/stores/${slug}`} replace />} />
+          <Route path="/template/:storeSlug" element={<Navigate to={`/stores/${slug}`} replace />} />
           <Route path="/stores/:storeSlug" element={<PublicStoreHome />} />
           <Route path="/stores/:storeSlug/products" element={<PublicStoreHome />} />
           <Route path="/stores/:storeSlug/services" element={<PublicStoreHome />} />
@@ -161,6 +163,10 @@ function App() {
         <Route path="/store" element={<Navigate to="/" replace />} />
         <Route path="/store/:storeSlug" element={<NavigateToStore />} />
         <Route path="/store/:storeSlug/products/:productSlug" element={<NavigateToProduct />} />
+        {/* ABS Online Store template path (absghana.com/template/:slug) — same store page as /store */}
+        <Route path="/template" element={<Navigate to="/" replace />} />
+        <Route path="/template/:storeSlug" element={<NavigateToStore />} />
+        <Route path="/template/:storeSlug/products/:productSlug" element={<NavigateToProduct />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <ShopperAuthModal />

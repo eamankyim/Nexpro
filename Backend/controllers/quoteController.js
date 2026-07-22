@@ -106,6 +106,10 @@ const formatQuoteResponse = (quote, { includeAttachmentFiles = true } = {}) => (
   taxAmount: quote.taxAmount,
   totalAmount: quote.totalAmount,
   notes: quote.notes,
+  scopeOfWork: quote.scopeOfWork ?? null,
+  termsAndConditions: quote.termsAndConditions ?? null,
+  paymentSchedule: Array.isArray(quote.paymentSchedule) ? quote.paymentSchedule : [],
+  showClientAcceptance: quote.showClientAcceptance !== false,
   createdBy: quote.createdBy,
   acceptedAt: quote.acceptedAt,
   createdAt: quote.createdAt,
@@ -121,6 +125,48 @@ const formatQuoteResponse = (quote, { includeAttachmentFiles = true } = {}) => (
   convertedJobNumber: quote.convertedJobNumber || null,
   attachments: formatQuoteAttachments(quote.attachments, { includeFile: includeAttachmentFiles }),
 });
+
+const normalizePaymentSchedule = (value) => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((row) => {
+      if (!row || typeof row !== 'object') return null;
+      const label = String(row.label || '').trim();
+      if (!label) return null;
+      const amount = row.amount != null && row.amount !== '' ? Number(row.amount) : null;
+      const percent = row.percent != null && row.percent !== '' ? Number(row.percent) : null;
+      return {
+        label,
+        ...(Number.isFinite(amount) ? { amount } : {}),
+        ...(Number.isFinite(percent) ? { percent } : {}),
+      };
+    })
+    .filter(Boolean);
+};
+
+const pickStudioQuotationFields = (quoteData = {}) => {
+  const next = {};
+  if (Object.prototype.hasOwnProperty.call(quoteData, 'scopeOfWork')) {
+    next.scopeOfWork = quoteData.scopeOfWork != null ? String(quoteData.scopeOfWork) : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(quoteData, 'termsAndConditions')) {
+    next.termsAndConditions = quoteData.termsAndConditions != null
+      ? String(quoteData.termsAndConditions)
+      : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(quoteData, 'paymentSchedule')) {
+    next.paymentSchedule = normalizePaymentSchedule(quoteData.paymentSchedule);
+  }
+  if (Object.prototype.hasOwnProperty.call(quoteData, 'showClientAcceptance')) {
+    next.showClientAcceptance = !(
+      quoteData.showClientAcceptance === false
+      || quoteData.showClientAcceptance === 'false'
+      || quoteData.showClientAcceptance === 0
+      || quoteData.showClientAcceptance === '0'
+    );
+  }
+  return next;
+};
 
 const calculateTotals = (items = []) => {
   let subtotal = 0;
@@ -302,9 +348,19 @@ exports.createQuote = async (req, res, next) => {
       bodyTaxRate
     );
 
+    const tenant = await Tenant.findByPk(req.tenantId, { attributes: ['businessType'] });
+    const businessType = String(tenant?.businessType || '').toLowerCase();
+    const isRetailQuoteTenant = businessType === 'shop' || businessType === 'pharmacy';
+    const defaultShowClientAcceptance = !isRetailQuoteTenant;
+
     const quote = await Quote.create(
       attachScopedToPayload(req, {
         ...quoteData,
+        ...pickStudioQuotationFields(quoteData),
+        paymentSchedule: normalizePaymentSchedule(quoteData.paymentSchedule),
+        showClientAcceptance: Object.prototype.hasOwnProperty.call(quoteData, 'showClientAcceptance')
+          ? pickStudioQuotationFields(quoteData).showClientAcceptance
+          : defaultShowClientAcceptance,
         tenantId: req.tenantId,
         quoteNumber,
         subtotal: totals.subtotal,
@@ -1044,6 +1100,7 @@ exports.updateQuote = async (req, res, next) => {
 
     await quote.update({
       ...quoteData,
+      ...pickStudioQuotationFields(quoteData),
       ...(quoteData.status === 'accepted' && previousStatus !== 'accepted' ? { acceptedAt: new Date() } : {}),
       subtotal: totals.subtotal,
       discountTotal: totals.discountTotal,

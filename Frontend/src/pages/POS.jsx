@@ -1479,7 +1479,7 @@ const POS = () => {
                 </p>
                 {isManager ? (
                   <Button
-                    onClick={() => navigateRef('/settings?tab=payments')}
+                    onClick={() => navigateRef('/settings/payments?subtab=settlements')}
                     className="bg-green-700 hover:bg-green-800"
                   >
                     Go to Settings

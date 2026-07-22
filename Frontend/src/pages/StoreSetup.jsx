@@ -618,12 +618,11 @@ const resolvePaymentMethods = (savedMethods = {}, paymentCollection = null) => {
 
 const getPaymentCollectionSettingsUrl = (methodKey, returnTo = STORE_SETUP_PAYMENTS_RETURN) => {
   const params = new URLSearchParams({
-    tab: 'payment-collections',
     subtab: methodKey === 'mobileMoney' ? 'merchant-id' : 'settlements',
     method: methodKey,
     returnTo,
   });
-  return `/settings?${params.toString()}`;
+  return `/settings/payments?${params.toString()}`;
 };
 
 const defaultDeliveryOptions = {

@@ -65,6 +65,86 @@ const updateAccountBalances = async (tenantId, journalEntryId, transaction) => {
   }
 };
 
+/**
+ * Reverse posted account balances for a journal (subtract its lines), then destroy lines + entry.
+ * @param {string} tenantId
+ * @param {object} journal - JournalEntry instance with entryDate
+ * @param {import('sequelize').Transaction} transaction
+ */
+const reverseAccountBalancesForJournal = async (tenantId, journal, transaction) => {
+  const lines = await JournalEntryLine.findAll({
+    where: applyTenantFilter(tenantId, { journalEntryId: journal.id }),
+    transaction,
+  });
+  const entryDate = journal.entryDate ? new Date(journal.entryDate) : new Date();
+  const fiscalYear = entryDate.getFullYear();
+  const period = entryDate.getMonth() + 1;
+
+  for (const line of lines) {
+    const balance = await AccountBalance.findOne({
+      where: applyTenantFilter(tenantId, {
+        accountId: line.accountId,
+        fiscalYear,
+        period,
+      }),
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!balance) continue;
+
+    balance.debit = Math.max(0, parseFloat(balance.debit || 0) - parseFloat(line.debit || 0));
+    balance.credit = Math.max(0, parseFloat(balance.credit || 0) - parseFloat(line.credit || 0));
+    balance.balance = parseFloat(balance.debit) - parseFloat(balance.credit);
+    await balance.save({ transaction });
+  }
+};
+
+/**
+ * Reverse balances (if posted) and permanently delete journals matching source/sourceId pairs.
+ * @param {object} params
+ * @param {string} params.tenantId
+ * @param {Array<{ source: string, sourceId: string }>} params.sources
+ * @param {import('sequelize').Transaction} params.transaction
+ * @returns {Promise<number>} number of journals destroyed
+ */
+const reverseAndDestroyJournalEntries = async ({ tenantId, sources = [], transaction }) => {
+  if (!tenantId || !transaction || !Array.isArray(sources) || sources.length === 0) {
+    return 0;
+  }
+
+  const unique = [];
+  const seen = new Set();
+  sources.forEach((item) => {
+    if (!item?.source || !item?.sourceId) return;
+    const key = `${item.source}:${item.sourceId}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    unique.push(item);
+  });
+  if (!unique.length) return 0;
+
+  const journals = await JournalEntry.findAll({
+    where: {
+      tenantId,
+      [Op.or]: unique.map(({ source, sourceId }) => ({ source, sourceId })),
+    },
+    transaction,
+  });
+
+  for (const journal of journals) {
+    if (String(journal.status || '').toLowerCase() === 'posted') {
+      await reverseAccountBalancesForJournal(tenantId, journal, transaction);
+    }
+    await JournalEntryLine.destroy({
+      where: applyTenantFilter(tenantId, { journalEntryId: journal.id }),
+      transaction,
+    });
+    await journal.destroy({ transaction });
+  }
+
+  return journals.length;
+};
+
 const createJournalEntry = async ({
   tenantId,
   reference,
@@ -239,7 +319,8 @@ module.exports = {
   getAccountByCode,
   postJournalEntry,
   sumLines,
-  updateAccountBalances
+  updateAccountBalances,
+  reverseAndDestroyJournalEntries,
 };
 
 

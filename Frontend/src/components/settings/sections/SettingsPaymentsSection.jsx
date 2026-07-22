@@ -109,6 +109,7 @@ const SettingsPaymentsSection = () => {
     isGoogleUser,
     handleSendPaymentOtp,
     handleVerifyPaymentPassword,
+    openPaymentVerifyModal,
     onPaymentCollectionSubmit,
     updatePaymentCollectionMutation,
     handleMtnSendOtp,
@@ -122,7 +123,6 @@ const SettingsPaymentsSection = () => {
     pc,
     hasPaymentSubaccount,
     isMomoLinked,
-    paymentAlreadyLinked,
     paymentSettlementMethod,
     paymentDestinationLabel,
     paymentDestinationValue,
@@ -137,7 +137,7 @@ const SettingsPaymentsSection = () => {
       merchantStatus = 'needs_setup';
     }
 
-    const paystackStatus = hasPaymentSubaccount || paymentAlreadyLinked ? 'connected' : 'not_connected';
+    const paystackStatus = hasPaymentSubaccount ? 'connected' : 'not_connected';
 
     let hubtelStatus = 'not_connected';
     if (pc?.hubtel_collection?.encryptionConfigured === false && !pc?.hubtel_collection?.configured) {
@@ -166,7 +166,7 @@ const SettingsPaymentsSection = () => {
         status: hubtelStatus,
       },
     ];
-  }, [hasPaymentSubaccount, paymentAlreadyLinked, pc]);
+  }, [hasPaymentSubaccount, pc]);
 
   if (!canManageOrganization) {
     return (
@@ -479,13 +479,13 @@ const SettingsPaymentsSection = () => {
                 </DialogBody>
               </DialogContent>
             </Dialog>
-            {paymentAlreadyLinked && (
+            {hasPaymentSubaccount && (
               <div className="rounded-lg border border-gray-200 p-4 space-y-4">
                 <Alert>
                   <AlertTitle>Payout destination linked</AlertTitle>
                   <AlertDescription>
                     Your share of customer card and MoMo payments is settled to the linked payout destination below.
-                    Verify your identity to change it.
+                    Contact support if you need to change it.
                   </AlertDescription>
                 </Alert>
                 <Descriptions>
@@ -501,34 +501,32 @@ const SettingsPaymentsSection = () => {
                   ) : null}
                   <DescriptionItem label="Contact email">{pc?.primary_contact_email || 'Not set'}</DescriptionItem>
                   <DescriptionItem label="Paystack subaccount">
-                    {hasPaymentSubaccount ? pc?.paystack_subaccount_code_masked || 'Linked' : 'Not linked'}
+                    {pc?.paystack_subaccount_code_masked || 'Linked'}
                   </DescriptionItem>
                 </Descriptions>
               </div>
             )}
             {!paymentVerificationDone ? (
               <div className="space-y-4 py-4">
-                <p className="text-sm text-muted-foreground">
-                  {paymentAlreadyLinked
-                    ? 'Verify your identity to update the linked bank account or MoMo number for customer payment collections.'
-                    : 'To receive card and MoMo payments from customers, link a bank account or MoMo number. You will verify your identity in the next step.'}
-                </p>
-                <Button
-                  type="button"
-                  onClick={() => {
-                    setPaymentVerifyPassword('');
-                    setPaymentVerifyOtp('');
-                    setPaymentOtpSent(false);
-                    setPaymentVerifyModalOpen(true);
-                  }}
-                >
-                  <CreditCard className="h-4 w-4 mr-2" />
-                  {paymentAlreadyLinked ? 'Verify identity to change' : 'Link payment account'}
-                </Button>
+                {hasPaymentSubaccount ? (
+                  <p className="text-sm text-muted-foreground">
+                    A Paystack payout destination is already linked for this workspace. Contact support if you need to change it.
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-sm text-muted-foreground">
+                      To receive card and MoMo payments from customers, link a bank account or MoMo number. You will verify your identity in the next step.
+                    </p>
+                    <Button type="button" onClick={openPaymentVerifyModal}>
+                      <CreditCard className="h-4 w-4 mr-2" />
+                      Link payment account
+                    </Button>
+                  </>
+                )}
               </div>
             ) : (
           <div className="space-y-4">
-            {isMomoLinked && (
+            {isMomoLinked && !hasPaymentSubaccount && (
               <>
                 <Alert>
                   <AlertTitle>MoMo number linked</AlertTitle>
@@ -542,12 +540,7 @@ const SettingsPaymentsSection = () => {
                     type="button"
                     variant="link"
                     className="h-auto p-0 text-primary"
-                    onClick={() => {
-                      setPaymentVerifyPassword('');
-                      setPaymentVerifyOtp('');
-                      setPaymentOtpSent(false);
-                      setPaymentVerifyModalOpen(true);
-                    }}
+                    onClick={openPaymentVerifyModal}
                   >
                     Verify identity
                   </Button>

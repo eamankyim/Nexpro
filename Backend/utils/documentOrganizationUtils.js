@@ -111,6 +111,7 @@ const loadTenantOrganization = async (tenantId) => {
     address: orgSettings.address || locationToAddress(null),
     tax: orgSettings.tax || {},
     primaryColor: orgSettings.primaryColor || tenantMetadata.primaryColor || '#166534',
+    businessType: tenant?.businessType || '',
     source: 'tenant',
   };
 
