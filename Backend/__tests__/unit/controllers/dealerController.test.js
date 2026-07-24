@@ -14,10 +14,21 @@ jest.mock('../../../models', () => ({
   },
   DealerLedgerEntry: {},
   DealerPriceTier: {},
-  DealerProductPrice: {},
-  Payment: {},
+  DealerProductPrice: {
+    destroy: jest.fn(),
+  },
+  Payment: {
+    count: jest.fn(),
+    destroy: jest.fn(),
+  },
   User: {},
   Shop: {},
+  Sale: {
+    count: jest.fn(),
+    findAll: jest.fn(),
+  },
+  SaleItem: {},
+  Invoice: {},
 }));
 
 jest.mock('../../../utils/tenantUtils', () => ({
@@ -44,6 +55,7 @@ jest.mock('../../../services/dealerLedgerService', () => ({
   recordOpeningBalance: jest.fn(),
   recordPayment: jest.fn(),
   recordAdjustment: jest.fn(),
+  reverseAndDestroyLedgerEntriesForDealer: jest.fn().mockResolvedValue(0),
 }));
 
 jest.mock('../../../services/dealerPricingService', () => ({
@@ -58,10 +70,23 @@ jest.mock('../../../services/dealerStatementService', () => ({
   getOutstandingDealersReport: jest.fn(),
 }));
 
+jest.mock('../../../services/saleHardDeleteService', () => ({
+  hardDeleteSaleInTransaction: jest.fn().mockResolvedValue({ invoiceIds: [] }),
+}));
+
+jest.mock('../../../middleware/cache', () => ({
+  invalidateSaleListCache: jest.fn(),
+  invalidateInvoiceListCache: jest.fn(),
+  invalidateAfterMutation: jest.fn(),
+}));
+
 const { sequelize } = require('../../../config/database');
-const { Dealer } = require('../../../models');
+const { Dealer, Sale, Payment, DealerProductPrice } = require('../../../models');
 const { applyTenantFilter } = require('../../../utils/tenantUtils');
+const { hardDeleteSaleInTransaction } = require('../../../services/saleHardDeleteService');
+const { reverseAndDestroyLedgerEntriesForDealer } = require('../../../services/dealerLedgerService');
 const dealerController = require('../../../controllers/dealerController');
+const dealerRoutes = require('../../../routes/dealerRoutes');
 
 describe('dealerController tenant scope', () => {
   const mockRes = () => {
@@ -229,5 +254,191 @@ describe('dealerController tenant scope', () => {
       expect.any(Object),
     );
     expect(res.status).toHaveBeenCalledWith(201);
+  });
+});
+
+describe('dealerController deleteDealer', () => {
+  const mockRes = () => {
+    const res = {};
+    res.status = jest.fn().mockReturnValue(res);
+    res.json = jest.fn().mockReturnValue(res);
+    return res;
+  };
+
+  let transaction;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    transaction = { commit: jest.fn(), rollback: jest.fn(), LOCK: { UPDATE: 'UPDATE' } };
+    sequelize.transaction.mockResolvedValue(transaction);
+    hardDeleteSaleInTransaction.mockResolvedValue({ invoiceIds: [] });
+    reverseAndDestroyLedgerEntriesForDealer.mockResolvedValue(1);
+    Payment.destroy.mockResolvedValue(1);
+    DealerProductPrice.destroy.mockResolvedValue(1);
+  });
+
+  it('cascades hard-delete of sales, remaining payments, ledger, prices, then dealer', async () => {
+    const sale = { id: 'sale-1', dealerId: 'dealer-1', items: [] };
+    const dealer = {
+      id: 'dealer-1',
+      businessName: 'Acme Wholesale',
+      balance: 120,
+      destroy: jest.fn().mockResolvedValue(undefined),
+    };
+    Dealer.findOne.mockResolvedValue(dealer);
+    Sale.findAll.mockResolvedValue([sale]);
+
+    const req = {
+      params: { id: 'dealer-1' },
+      tenantId: 'tenant-1',
+      body: { confirmName: 'Acme Wholesale' },
+      user: { id: 'admin-1' },
+    };
+    const res = mockRes();
+    const next = jest.fn();
+
+    await dealerController.deleteDealer(req, res, next);
+
+    expect(hardDeleteSaleInTransaction).toHaveBeenCalledWith(expect.objectContaining({
+      sale,
+      tenantId: 'tenant-1',
+      transaction,
+    }));
+    expect(reverseAndDestroyLedgerEntriesForDealer).toHaveBeenCalledWith({
+      tenantId: 'tenant-1',
+      dealerId: 'dealer-1',
+      transaction,
+    });
+    expect(Payment.destroy).toHaveBeenCalled();
+    expect(DealerProductPrice.destroy).toHaveBeenCalledWith({
+      where: { tenantId: 'tenant-1', dealerId: 'dealer-1' },
+      transaction,
+    });
+    expect(dealer.destroy).toHaveBeenCalledWith({ transaction });
+    expect(transaction.commit).toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      success: true,
+      data: expect.objectContaining({ salesDeleted: 1 }),
+    }));
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('requires typing the dealer business name', async () => {
+    const dealer = {
+      id: 'dealer-1',
+      businessName: 'Acme Wholesale',
+      destroy: jest.fn(),
+    };
+    Dealer.findOne.mockResolvedValue(dealer);
+
+    const req = {
+      params: { id: 'dealer-1' },
+      tenantId: 'tenant-1',
+      body: { confirmName: 'wrong name' },
+    };
+    const res = mockRes();
+    const next = jest.fn();
+
+    await dealerController.deleteDealer(req, res, next);
+
+    expect(hardDeleteSaleInTransaction).not.toHaveBeenCalled();
+    expect(dealer.destroy).not.toHaveBeenCalled();
+    expect(transaction.rollback).toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      errorCode: 'CONFIRM_NAME_REQUIRED',
+    }));
+  });
+
+  it('aborts dealer delete when a related sale has returns', async () => {
+    const sale = { id: 'sale-1', dealerId: 'dealer-1', items: [] };
+    const dealer = {
+      id: 'dealer-1',
+      businessName: 'Acme Wholesale',
+      destroy: jest.fn(),
+    };
+    Dealer.findOne.mockResolvedValue(dealer);
+    Sale.findAll.mockResolvedValue([sale]);
+    const err = new Error('Cannot permanently delete a sale that has returns or exchanges. Remove those first, or keep the sale for audit.');
+    err.statusCode = 400;
+    err.errorCode = 'SALE_HAS_RETURNS';
+    hardDeleteSaleInTransaction.mockRejectedValue(err);
+
+    const req = {
+      params: { id: 'dealer-1' },
+      tenantId: 'tenant-1',
+      body: { confirmName: 'Acme Wholesale' },
+    };
+    const res = mockRes();
+    const next = jest.fn();
+
+    await dealerController.deleteDealer(req, res, next);
+
+    expect(dealer.destroy).not.toHaveBeenCalled();
+    expect(transaction.rollback).toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining('returns'),
+    }));
+  });
+
+  it('getDealerDeleteImpact returns sales, payments, and balance counts', async () => {
+    Dealer.findOne.mockResolvedValue({
+      id: 'dealer-1',
+      businessName: 'Acme Wholesale',
+      balance: 250,
+    });
+    Sale.count.mockResolvedValue(3);
+    Payment.count.mockResolvedValue(2);
+
+    const req = { params: { id: 'dealer-1' }, tenantId: 'tenant-1' };
+    const res = mockRes();
+    const next = jest.fn();
+
+    await dealerController.getDealerDeleteImpact(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        salesCount: 3,
+        paymentsCount: 2,
+        balance: 250,
+        businessName: 'Acme Wholesale',
+      }),
+    }));
+  });
+});
+
+describe('dealerRoutes delete authorization', () => {
+  it('registers DELETE /:id and GET delete-impact (admin middleware stack)', () => {
+    const stack = dealerRoutes.stack || [];
+    const deleteLayer = stack.find((layer) =>
+      layer.route
+      && layer.route.path === '/:id'
+      && layer.route.methods?.delete
+    );
+    const impactLayer = stack.find((layer) =>
+      layer.route
+      && layer.route.path === '/:id/delete-impact'
+      && layer.route.methods?.get
+    );
+
+    expect(deleteLayer).toBeTruthy();
+    expect(impactLayer).toBeTruthy();
+    // authorize('admin') + timeCrudAction + handler (non-admin blocked by authorize)
+    expect(deleteLayer.route.stack.length).toBeGreaterThanOrEqual(2);
+    expect(impactLayer.route.stack.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('wires authorize(admin) for dealer delete so non-admins cannot call it', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const source = fs.readFileSync(
+      path.join(__dirname, '../../../routes/dealerRoutes.js'),
+      'utf8',
+    );
+    expect(source).toMatch(/\.delete\(\s*authorize\(\s*'admin'\s*\)/);
+    expect(source).toMatch(/delete-impact[\s\S]*?authorize\(\s*'admin'\s*\)/);
   });
 });

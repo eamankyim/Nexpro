@@ -1712,7 +1712,17 @@ const Sales = () => {
             <AlertDialogDescription>
               {saleToDelete
                 ? isAdmin
-                  ? `Permanently delete sale "${saleToDelete.saleNumber || saleToDelete.id}"? This also removes related payments, invoices, and accounting entries. Only admins can do this. It cannot be undone.`
+                  ? (() => {
+                      const saleLabel = saleToDelete.saleNumber || saleToDelete.id;
+                      const paid = parseFloat(saleToDelete.amountPaid || 0) > 0;
+                      if (isDealerSale(saleToDelete)) {
+                        return `Permanently delete dealer sale "${saleLabel}"? This removes related payments, invoices, accounting entries, and dealer ledger charges for this sale. ABS does not refund cash or MoMo already collected. Only admins can do this. It cannot be undone.`;
+                      }
+                      if (String(saleToDelete.paymentMethod || '').toLowerCase() === 'credit' || paid) {
+                        return `Permanently delete sale "${saleLabel}"? This removes related payments, invoices, and accounting entries. ABS removes records but does not refund cash or MoMo. Only admins can do this. It cannot be undone.`;
+                      }
+                      return `Permanently delete sale "${saleLabel}"? This also removes related payments, invoices, and accounting entries. Only admins can do this. It cannot be undone.`;
+                    })()
                   : `Sale "${saleToDelete.saleNumber || saleToDelete.id}" will be removed from the sales list. It stays on record for audit purposes. Please provide a reason.`
                 : ''}
             </AlertDialogDescription>

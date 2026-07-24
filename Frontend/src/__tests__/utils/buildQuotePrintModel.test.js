@@ -24,7 +24,6 @@ describe('buildQuotePrintModel', () => {
       items: [{ description: 'Design', quantity: 1, unitPrice: 1000, total: 1000 }],
       scopeOfWork: 'Discovery, design, handoff',
       paymentSchedule: [{ label: 'Advance', percent: 20, amount: 200 }],
-      showClientAcceptance: true,
     }, { businessType: 'printing_press' });
 
     expect(model.templateKind).toBe('project');
@@ -33,7 +32,6 @@ describe('buildQuotePrintModel', () => {
     expect(model.sections.totals.showBalanceDue).toBe(false);
     expect(model.sections.scopeOfWork).toBe(true);
     expect(model.sections.paymentSchedule).toBe(true);
-    expect(model.sections.clientAcceptance).toBe(true);
     expect(model.data.termsBullets.length).toBeGreaterThan(0);
     expect(model.data.termsBullets).toEqual(DEFAULT_STUDIO_QUOTE_TERMS);
   });
@@ -51,7 +49,6 @@ describe('buildQuotePrintModel', () => {
     expect(model.documentTitle).toBe('PROFORMA INVOICE');
     expect(model.sections.items.showProductCode).toBe(true);
     expect(model.sections.totals.showBalanceDue).toBe(false);
-    expect(model.sections.clientAcceptance).toBe(false);
     expect(model.invoicePayload.invoiceNumber).toBe('Q-2');
   });
 });

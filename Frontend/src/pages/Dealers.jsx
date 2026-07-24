@@ -6,7 +6,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import {
-  Plus, Loader2, RefreshCw, Building2, Wallet, CreditCard, Pencil, Printer, Download, ShoppingCart,
+  Plus, Loader2, RefreshCw, Building2, Wallet, CreditCard, Pencil, Printer, Download, ShoppingCart, Trash2,
 } from 'lucide-react';
 import dealerService from '../services/dealerService';
 import settingsService from '../services/settingsService';
@@ -36,6 +36,17 @@ import {
 import {
   Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Label } from '@/components/ui/label';
 import MobileFormDialog from '../components/MobileFormDialog';
 import FormFieldGrid from '../components/FormFieldGrid';
 import {
@@ -98,6 +109,10 @@ const Dealers = () => {
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingDealer, setViewingDealer] = useState(null);
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
+  const [deleteDealerTarget, setDeleteDealerTarget] = useState(null);
+  const [deleteConfirmName, setDeleteConfirmName] = useState('');
+  const [deleteImpact, setDeleteImpact] = useState(null);
+  const [deleteImpactLoading, setDeleteImpactLoading] = useState(false);
   const [statementData, setStatementData] = useState(null);
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [organization, setOrganization] = useState(null);
@@ -233,6 +248,43 @@ const Dealers = () => {
     },
     onError: (err) => handleApiError(err, 'Failed to record payment'),
   });
+
+  const openDeleteDealerDialog = useCallback(async (dealer) => {
+    if (!dealer?.id) return;
+    setDeleteDealerTarget(dealer);
+    setDeleteConfirmName('');
+    setDeleteImpact(null);
+    setDeleteImpactLoading(true);
+    try {
+      const res = await dealerService.getDeleteImpact(dealer.id);
+      setDeleteImpact(res?.data?.data || res?.data || res);
+    } catch (err) {
+      handleApiError(err, 'Failed to load delete impact');
+      setDeleteDealerTarget(null);
+    } finally {
+      setDeleteImpactLoading(false);
+    }
+  }, []);
+
+  const deleteDealerMutation = useMutation({
+    mutationFn: ({ id, confirmName }) => dealerService.delete(id, { confirmName }),
+    onSuccess: () => {
+      showSuccess('Dealer permanently deleted');
+      setDeleteDealerTarget(null);
+      setDeleteConfirmName('');
+      setDeleteImpact(null);
+      setDrawerVisible(false);
+      setViewingDealer(null);
+      queryClient.invalidateQueries({ queryKey: queryKeys.dealers.all });
+    },
+    onError: (err) => handleApiError(err, 'Failed to delete dealer'),
+  });
+
+  const deleteConfirmMatches = useMemo(() => {
+    const expected = String(deleteDealerTarget?.businessName || '').trim().toLowerCase();
+    const typed = String(deleteConfirmName || '').trim().toLowerCase();
+    return Boolean(expected) && expected === typed;
+  }, [deleteDealerTarget?.businessName, deleteConfirmName]);
 
   const loadStatement = useCallback(async () => {
     if (!viewingDealer?.id) return;
@@ -533,6 +585,22 @@ const Dealers = () => {
               Record payment
             </Button>
           )}
+          {isAdmin && (
+            <div className="pt-2 border-t border-[#e5e7eb] space-y-2">
+              <Alert className="border border-[#e5e7eb]">
+                <AlertDescription className="text-sm">
+                  Permanent delete removes this dealer, all related sales (stock restored), payments, ledger entries, and prices. ABS does not refund cash or MoMo.
+                </AlertDescription>
+              </Alert>
+              <Button
+                variant="outline"
+                className="text-destructive border-destructive/40 hover:bg-destructive/10"
+                onClick={() => openDeleteDealerDialog(viewingDealer)}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />Delete dealer
+              </Button>
+            </div>
+          )}
         </div>
       ) : null,
     },
@@ -547,6 +615,7 @@ const Dealers = () => {
     isManager,
     isAdmin,
     openPaymentDialog,
+    openDeleteDealerDialog,
     loadStatement,
     handlePrintStatement,
     handleDownloadStatementPdf,
@@ -783,6 +852,86 @@ const Dealers = () => {
           </DialogContent>
         )}
       </Dialog>
+
+      <AlertDialog
+        open={!!deleteDealerTarget}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteDealerTarget(null);
+            setDeleteConfirmName('');
+            setDeleteImpact(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete dealer permanently?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-sm text-muted-foreground">
+                <p>
+                  This permanently removes{' '}
+                  <span className="font-medium text-foreground">
+                    {deleteDealerTarget?.businessName || 'this dealer'}
+                  </span>{' '}
+                  and all related records. It cannot be undone.
+                </p>
+                {deleteImpactLoading ? (
+                  <p className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />Loading impact…
+                  </p>
+                ) : deleteImpact ? (
+                  <ul className="list-disc pl-5 space-y-1">
+                    <li>{deleteImpact.salesCount ?? 0} sale{(deleteImpact.salesCount === 1) ? '' : 's'} (stock restored where applicable)</li>
+                    <li>{deleteImpact.paymentsCount ?? 0} payment{(deleteImpact.paymentsCount === 1) ? '' : 's'}</li>
+                    <li>Outstanding balance {formatAmount(deleteImpact.balance ?? deleteDealerTarget?.balance ?? 0)}</li>
+                  </ul>
+                ) : null}
+                <p>
+                  ABS removes accounting records but does not refund cash or MoMo already collected.
+                  Sales with returns or exchanges will block this delete.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="delete-dealer-confirm-name">
+              Type <span className="font-medium text-foreground">{deleteDealerTarget?.businessName}</span> to confirm
+            </Label>
+            <Input
+              id="delete-dealer-confirm-name"
+              value={deleteConfirmName}
+              onChange={(e) => setDeleteConfirmName(e.target.value)}
+              placeholder="Dealer business name"
+              autoComplete="off"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={
+                deleteDealerMutation.isPending
+                || deleteImpactLoading
+                || !deleteConfirmMatches
+              }
+              onClick={(e) => {
+                e.preventDefault();
+                if (!deleteDealerTarget || !deleteConfirmMatches) return;
+                deleteDealerMutation.mutate({
+                  id: deleteDealerTarget.id,
+                  confirmName: deleteConfirmName.trim(),
+                });
+              }}
+            >
+              {deleteDealerMutation.isPending ? (
+                <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Deleting…</>
+              ) : (
+                'Delete permanently'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

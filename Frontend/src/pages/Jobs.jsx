@@ -568,6 +568,18 @@ const Jobs = () => {
     return byGroup;
   }, [jobItemCategoriesApi]);
 
+  const persistedCustomCategories = useMemo(() => {
+    const builtIn = new Set();
+    jobItemCategoriesGrouped.forEach((groupItems) => {
+      groupItems.forEach((cat) => builtIn.add(String(cat.value || '').toLowerCase()));
+    });
+    return (Array.isArray(customCategories) ? customCategories : []).filter((cat) => {
+      const value = String(cat?.value || '').trim();
+      if (!value || value === '__OTHER__') return false;
+      return !builtIn.has(value.toLowerCase());
+    });
+  }, [customCategories, jobItemCategoriesGrouped]);
+
   const getItemDescriptionPlaceholder = useCallback(
     (category) => {
       // Default placeholder before a category is chosen
@@ -2844,11 +2856,11 @@ useEffect(() => {
                                         ))}
                                       </div>
                                     ))}
-                                    {customCategories.length > 0 && (
+                                    {persistedCustomCategories.length > 0 && (
                                       <>
-                                        <div className="px-2 py-1.5 text-sm font-semibold">Custom Categories</div>
-                                        {customCategories.map(cat => (
-                                          <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>
+                                        <div className="px-2 py-1.5 text-sm font-semibold">Custom</div>
+                                        {persistedCustomCategories.map(cat => (
+                                          <SelectItem key={cat.value} value={cat.value}>{cat.label || cat.value}</SelectItem>
                                         ))}
                                       </>
                                     )}

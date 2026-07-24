@@ -7,6 +7,9 @@ const {
   Payment,
   User,
   Shop,
+  Sale,
+  SaleItem,
+  Invoice,
 } = require('../models');
 const { Op } = require('sequelize');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
@@ -24,6 +27,7 @@ const {
   recordOpeningBalance,
   recordPayment,
   recordAdjustment,
+  reverseAndDestroyLedgerEntriesForDealer,
 } = require('../services/dealerLedgerService');
 const {
   resolvePrice,
@@ -35,6 +39,12 @@ const {
   getDealerStatement,
   getOutstandingDealersReport,
 } = require('../services/dealerStatementService');
+const { hardDeleteSaleInTransaction } = require('../services/saleHardDeleteService');
+const {
+  invalidateSaleListCache,
+  invalidateInvoiceListCache,
+  invalidateAfterMutation,
+} = require('../middleware/cache');
 
 const dealerWhere = (req, extra = {}) => applyTenantFilter(req.tenantId, extra);
 
@@ -310,6 +320,157 @@ exports.patchDealer = async (req, res, next) => {
     await dealer.update(updates);
     res.status(200).json({ success: true, data: mapDealerSummary(dealer) });
   } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Counts used by the admin delete confirmation UI.
+ * @param {string} tenantId
+ * @param {string} dealerId
+ * @returns {Promise<{ salesCount: number, paymentsCount: number }>}
+ */
+const countDealerDeleteImpact = async (tenantId, dealerId) => {
+  const [salesCount, paymentsCount] = await Promise.all([
+    Sale.count({ where: { tenantId, dealerId } }),
+    Payment.count({
+      where: {
+        tenantId,
+        [Op.or]: [
+          { dealerId },
+          { description: `dealer:${dealerId}` },
+          { description: { [Op.like]: `dealer:${dealerId}%` } },
+        ],
+      },
+    }),
+  ]);
+  return { salesCount, paymentsCount };
+};
+
+// @desc    Preview impact of permanently deleting a dealer (admin)
+// @route   GET /api/dealers/:id/delete-impact
+exports.getDealerDeleteImpact = async (req, res, next) => {
+  try {
+    const dealer = await Dealer.findOne({ where: dealerWhere(req, { id: req.params.id }) });
+    if (!dealer) {
+      return res.status(404).json({ success: false, message: 'Dealer not found' });
+    }
+    const { salesCount, paymentsCount } = await countDealerDeleteImpact(req.tenantId, dealer.id);
+    res.status(200).json({
+      success: true,
+      data: {
+        dealerId: dealer.id,
+        businessName: dealer.businessName,
+        balance: roundMoney(dealer.balance),
+        salesCount,
+        paymentsCount,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Permanently delete a dealer and cascade related sales/payments/ledger (admin)
+// @route   DELETE /api/dealers/:id
+exports.deleteDealer = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+  try {
+    const dealer = await Dealer.findOne({
+      where: dealerWhere(req, { id: req.params.id }),
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!dealer) {
+      await transaction.rollback();
+      return res.status(404).json({ success: false, message: 'Dealer not found' });
+    }
+
+    const confirmName = String(req.body?.confirmName || '').trim();
+    if (!confirmName || confirmName.toLowerCase() !== String(dealer.businessName || '').trim().toLowerCase()) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Type the dealer business name exactly to confirm permanent deletion',
+        errorCode: 'CONFIRM_NAME_REQUIRED',
+      });
+    }
+
+    const sales = await Sale.findAll({
+      where: { tenantId: req.tenantId, dealerId: dealer.id },
+      include: [
+        { model: SaleItem, as: 'items' },
+        { model: Invoice, as: 'invoice', required: false },
+      ],
+      transaction,
+    });
+
+    const invoiceIdSet = new Set();
+    for (const sale of sales) {
+      try {
+        const { invoiceIds } = await hardDeleteSaleInTransaction({
+          sale,
+          tenantId: req.tenantId,
+          transaction,
+        });
+        (invoiceIds || []).forEach((id) => invoiceIdSet.add(id));
+      } catch (hardDeleteErr) {
+        if (hardDeleteErr.statusCode === 400) {
+          await transaction.rollback();
+          return res.status(400).json({
+            success: false,
+            message: hardDeleteErr.message,
+            errorCode: hardDeleteErr.errorCode || undefined,
+          });
+        }
+        throw hardDeleteErr;
+      }
+    }
+
+    // Reverse remaining ledger (payments, opening balance, adjustments) before destroying payments.
+    await reverseAndDestroyLedgerEntriesForDealer({
+      tenantId: req.tenantId,
+      dealerId: dealer.id,
+      transaction,
+    });
+
+    await Payment.destroy({
+      where: {
+        tenantId: req.tenantId,
+        [Op.or]: [
+          { dealerId: dealer.id },
+          { description: `dealer:${dealer.id}` },
+          { description: { [Op.like]: `dealer:${dealer.id}%` } },
+        ],
+      },
+      transaction,
+    });
+
+    await DealerProductPrice.destroy({
+      where: { tenantId: req.tenantId, dealerId: dealer.id },
+      transaction,
+    });
+
+    await dealer.destroy({ transaction });
+
+    await transaction.commit();
+
+    invalidateSaleListCache(req.tenantId);
+    invalidateAfterMutation(req.tenantId);
+    if (invoiceIdSet.size) {
+      invalidateInvoiceListCache(req.tenantId);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Dealer and related sales, payments, and ledger entries were permanently deleted. ABS does not refund cash or MoMo.',
+      data: {
+        dealerId: dealer.id,
+        salesDeleted: sales.length,
+      },
+    });
+  } catch (error) {
+    await transaction.rollback();
     next(error);
   }
 };

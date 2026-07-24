@@ -29,6 +29,20 @@ const dealerService = {
 
   patch: async (id, data) => api.patch(`/dealers/${id}`, data),
 
+  /**
+   * Admin-only: preview cascade impact before permanently deleting a dealer.
+   * @param {string} id
+   */
+  getDeleteImpact: async (id) => api.get(`/dealers/${id}/delete-impact`),
+
+  /**
+   * Admin-only hard-delete. Requires confirmName matching the dealer business name.
+   * Cascades related sales (via shared hard-delete), remaining payments, ledger, and prices.
+   * @param {string} id
+   * @param {{ confirmName: string }} payload
+   */
+  delete: async (id, payload) => api.delete(`/dealers/${id}`, { data: payload }),
+
   posSearch: async (params = {}) => {
     const queryString = buildQueryString(params);
     return api.get(queryString ? `/dealers/pos-search?${queryString}` : '/dealers/pos-search');

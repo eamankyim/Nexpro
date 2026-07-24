@@ -109,7 +109,6 @@ const formatQuoteResponse = (quote, { includeAttachmentFiles = true } = {}) => (
   scopeOfWork: quote.scopeOfWork ?? null,
   termsAndConditions: quote.termsAndConditions ?? null,
   paymentSchedule: Array.isArray(quote.paymentSchedule) ? quote.paymentSchedule : [],
-  showClientAcceptance: quote.showClientAcceptance !== false,
   createdBy: quote.createdBy,
   acceptedAt: quote.acceptedAt,
   createdAt: quote.createdAt,
@@ -156,14 +155,6 @@ const pickStudioQuotationFields = (quoteData = {}) => {
   }
   if (Object.prototype.hasOwnProperty.call(quoteData, 'paymentSchedule')) {
     next.paymentSchedule = normalizePaymentSchedule(quoteData.paymentSchedule);
-  }
-  if (Object.prototype.hasOwnProperty.call(quoteData, 'showClientAcceptance')) {
-    next.showClientAcceptance = !(
-      quoteData.showClientAcceptance === false
-      || quoteData.showClientAcceptance === 'false'
-      || quoteData.showClientAcceptance === 0
-      || quoteData.showClientAcceptance === '0'
-    );
   }
   return next;
 };
@@ -348,19 +339,11 @@ exports.createQuote = async (req, res, next) => {
       bodyTaxRate
     );
 
-    const tenant = await Tenant.findByPk(req.tenantId, { attributes: ['businessType'] });
-    const businessType = String(tenant?.businessType || '').toLowerCase();
-    const isRetailQuoteTenant = businessType === 'shop' || businessType === 'pharmacy';
-    const defaultShowClientAcceptance = !isRetailQuoteTenant;
-
     const quote = await Quote.create(
       attachScopedToPayload(req, {
         ...quoteData,
         ...pickStudioQuotationFields(quoteData),
         paymentSchedule: normalizePaymentSchedule(quoteData.paymentSchedule),
-        showClientAcceptance: Object.prototype.hasOwnProperty.call(quoteData, 'showClientAcceptance')
-          ? pickStudioQuotationFields(quoteData).showClientAcceptance
-          : defaultShowClientAcceptance,
         tenantId: req.tenantId,
         quoteNumber,
         subtotal: totals.subtotal,

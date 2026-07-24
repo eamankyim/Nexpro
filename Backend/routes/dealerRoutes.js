@@ -6,6 +6,8 @@ const {
   createDealer,
   updateDealer,
   patchDealer,
+  deleteDealer,
+  getDealerDeleteImpact,
   getDealerLedger,
   recordDealerPayment,
   createLedgerAdjustment,
@@ -49,10 +51,14 @@ router.route('/')
   .get(timeCrudAction('dealers.list'), getDealers)
   .post(authorize('admin', 'manager', 'staff'), timeCrudAction('dealers.create'), createDealer);
 
+router.route('/:id/delete-impact')
+  .get(authorize('admin'), getDealerDeleteImpact);
+
 router.route('/:id')
   .get(timeCrudAction('dealers.read'), getDealer)
   .put(authorize('admin', 'manager', 'staff'), timeCrudAction('dealers.update'), updateDealer)
-  .patch(authorize('admin', 'manager'), patchDealer);
+  .patch(authorize('admin', 'manager'), patchDealer)
+  .delete(authorize('admin'), timeCrudAction('dealers.delete'), deleteDealer);
 
 router.route('/:id/ledger')
   .get(getDealerLedger);

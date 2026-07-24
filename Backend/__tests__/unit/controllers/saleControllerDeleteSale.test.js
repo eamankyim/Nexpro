@@ -11,34 +11,21 @@ jest.mock('../../../config/database', () => ({
 }));
 
 jest.mock('../../../models', () => ({
-  Sale: {
-    findOne: jest.fn(),
-  },
-  SaleItem: {
-    destroy: jest.fn(),
-  },
+  Sale: { findOne: jest.fn() },
+  SaleItem: { destroy: jest.fn() },
   Product: { findByPk: jest.fn() },
   ProductVariant: { findByPk: jest.fn() },
   Barcode: {},
   Customer: {},
   Dealer: {},
   Shop: {},
-  Invoice: {
-    findAll: jest.fn(),
-  },
+  Invoice: { findAll: jest.fn() },
   User: {},
-  SaleActivity: {
-    create: jest.fn(),
-    destroy: jest.fn(),
-  },
+  SaleActivity: { create: jest.fn(), destroy: jest.fn() },
   Tenant: {},
-  Payment: {
-    destroy: jest.fn(),
-  },
+  Payment: { destroy: jest.fn() },
   Setting: {},
-  SaleReturn: {
-    count: jest.fn(),
-  },
+  SaleReturn: { count: jest.fn() },
 }));
 
 jest.mock('../../../services/invoiceAccountingService', () => ({
@@ -54,6 +41,9 @@ jest.mock('../../../services/accountingService', () => ({
 jest.mock('../../../services/dealerLedgerService', () => ({
   recordSaleCharge: jest.fn(),
   reverseAndDestroyLedgerEntriesForSale: jest.fn().mockResolvedValue(0),
+}));
+jest.mock('../../../services/saleHardDeleteService', () => ({
+  hardDeleteSaleInTransaction: jest.fn(),
 }));
 jest.mock('../../../services/customerBalanceService', () => ({
   updateCustomerBalance: jest.fn().mockResolvedValue(undefined),
@@ -114,11 +104,10 @@ jest.mock('../../../config/config', () => ({
 }));
 
 const { sequelize } = require('../../../config/database');
-const { Sale, SaleItem, SaleActivity, Invoice, Payment, SaleReturn } = require('../../../models');
+const { Sale, SaleActivity } = require('../../../models');
 const { assertShopRecordAccess } = require('../../../utils/shopUtils');
-const { reverseAndDestroyJournalEntries } = require('../../../services/accountingService');
-const { reverseAndDestroyLedgerEntriesForSale } = require('../../../services/dealerLedgerService');
-const { updateCustomerBalance } = require('../../../services/customerBalanceService');
+const { hardDeleteSaleInTransaction } = require('../../../services/saleHardDeleteService');
+const { invalidateInvoiceListCache } = require('../../../middleware/cache');
 const saleController = require('../../../controllers/saleController');
 
 describe('saleController deleteSale (soft vs hard delete)', () => {
@@ -129,12 +118,7 @@ describe('saleController deleteSale (soft vs hard delete)', () => {
     assertShopRecordAccess.mockImplementation(() => undefined);
     transaction = { commit: jest.fn(), rollback: jest.fn(), LOCK: { UPDATE: 'UPDATE' } };
     sequelize.transaction.mockResolvedValue(transaction);
-    SaleReturn.count.mockResolvedValue(0);
-    Invoice.findAll.mockResolvedValue([]);
-    Payment.destroy.mockResolvedValue(0);
-    reverseAndDestroyJournalEntries.mockResolvedValue(0);
-    reverseAndDestroyLedgerEntriesForSale.mockResolvedValue(0);
-    updateCustomerBalance.mockResolvedValue(undefined);
+    hardDeleteSaleInTransaction.mockResolvedValue({ invoiceIds: [] });
   });
 
   const buildSale = (overrides = {}) => ({
@@ -157,11 +141,9 @@ describe('saleController deleteSale (soft vs hard delete)', () => {
     json: jest.fn(),
   });
 
-  it('hard-deletes the sale row for admins and cleans journals', async () => {
+  it('hard-deletes the sale row for admins via shared helper', async () => {
     const sale = buildSale();
     Sale.findOne.mockResolvedValue(sale);
-    SaleItem.destroy.mockResolvedValue(undefined);
-    SaleActivity.destroy.mockResolvedValue(undefined);
 
     const req = {
       params: { id: 'sale-1' },
@@ -175,16 +157,10 @@ describe('saleController deleteSale (soft vs hard delete)', () => {
 
     await saleController.deleteSale(req, res, next);
 
-    expect(sale.destroy).toHaveBeenCalled();
-    expect(reverseAndDestroyJournalEntries).toHaveBeenCalledWith(expect.objectContaining({
+    expect(hardDeleteSaleInTransaction).toHaveBeenCalledWith(expect.objectContaining({
+      sale,
       tenantId: 'tenant-1',
-      sources: expect.arrayContaining([
-        { source: 'sale_revenue', sourceId: 'sale-1' },
-        { source: 'sale_cogs', sourceId: 'sale-1' },
-      ]),
-    }));
-    expect(reverseAndDestroyLedgerEntriesForSale).toHaveBeenCalledWith(expect.objectContaining({
-      saleId: 'sale-1',
+      transaction,
     }));
     expect(transaction.commit).toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(200);
@@ -192,26 +168,16 @@ describe('saleController deleteSale (soft vs hard delete)', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('hard-deletes paid-invoice sales for admins (payments, journals, invoice)', async () => {
-    const invoice = {
-      id: 'inv-1',
-      status: 'paid',
-      saleId: 'sale-1',
-      customerId: 'cust-1',
-      update: jest.fn().mockResolvedValue(undefined),
-      destroy: jest.fn().mockResolvedValue(undefined),
-    };
+  it('hard-deletes paid credit / invoice sales for admins', async () => {
     const sale = buildSale({
       invoiceId: 'inv-1',
-      invoice,
       customerId: 'cust-1',
       amountPaid: 500,
+      paymentMethod: 'credit',
       status: 'completed',
     });
     Sale.findOne.mockResolvedValue(sale);
-    Invoice.findAll.mockResolvedValue([invoice]);
-    SaleItem.destroy.mockResolvedValue(undefined);
-    SaleActivity.destroy.mockResolvedValue(undefined);
+    hardDeleteSaleInTransaction.mockResolvedValue({ invoiceIds: ['inv-1'] });
 
     const req = {
       params: { id: 'sale-1' },
@@ -225,26 +191,21 @@ describe('saleController deleteSale (soft vs hard delete)', () => {
 
     await saleController.deleteSale(req, res, next);
 
-    expect(Payment.destroy).toHaveBeenCalled();
-    expect(reverseAndDestroyJournalEntries).toHaveBeenCalledWith(expect.objectContaining({
-      sources: expect.arrayContaining([
-        { source: 'invoice_revenue', sourceId: 'inv-1' },
-        { source: 'invoice_payment', sourceId: 'inv-1' },
-      ]),
-    }));
-    expect(sale.update).toHaveBeenCalledWith({ invoiceId: null }, { transaction });
-    expect(invoice.destroy).toHaveBeenCalledWith({ transaction });
-    expect(updateCustomerBalance).toHaveBeenCalledWith('cust-1', transaction);
-    expect(sale.destroy).toHaveBeenCalled();
+    expect(hardDeleteSaleInTransaction).toHaveBeenCalled();
+    expect(invalidateInvoiceListCache).toHaveBeenCalledWith('tenant-1');
     expect(transaction.commit).toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(200);
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('blocks permanent delete when the sale has returns', async () => {
-    const sale = buildSale();
+  it('hard-deletes dealer sales for admins (ledger handled in shared helper)', async () => {
+    const sale = buildSale({
+      dealerId: 'dealer-1',
+      saleChannel: 'dealer',
+      amountPaid: 50,
+      paymentMethod: 'cash',
+    });
     Sale.findOne.mockResolvedValue(sale);
-    SaleReturn.count.mockResolvedValue(2);
 
     const req = {
       params: { id: 'sale-1' },
@@ -258,7 +219,33 @@ describe('saleController deleteSale (soft vs hard delete)', () => {
 
     await saleController.deleteSale(req, res, next);
 
-    expect(sale.destroy).not.toHaveBeenCalled();
+    expect(hardDeleteSaleInTransaction).toHaveBeenCalledWith(expect.objectContaining({
+      sale: expect.objectContaining({ dealerId: 'dealer-1' }),
+    }));
+    expect(transaction.commit).toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('blocks permanent delete when the shared helper reports returns', async () => {
+    const sale = buildSale();
+    Sale.findOne.mockResolvedValue(sale);
+    const err = new Error('Cannot permanently delete a sale that has returns or exchanges. Remove those first, or keep the sale for audit.');
+    err.statusCode = 400;
+    err.errorCode = 'SALE_HAS_RETURNS';
+    hardDeleteSaleInTransaction.mockRejectedValue(err);
+
+    const req = {
+      params: { id: 'sale-1' },
+      tenantId: 'tenant-1',
+      tenantRole: 'admin',
+      user: { id: 'admin-1', role: 'admin' },
+      body: {},
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    await saleController.deleteSale(req, res, next);
+
     expect(transaction.rollback).toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
@@ -282,6 +269,7 @@ describe('saleController deleteSale (soft vs hard delete)', () => {
 
     await saleController.deleteSale(req, res, next);
 
+    expect(hardDeleteSaleInTransaction).not.toHaveBeenCalled();
     expect(sale.destroy).not.toHaveBeenCalled();
     expect(sale.update).toHaveBeenCalledWith(
       expect.objectContaining({

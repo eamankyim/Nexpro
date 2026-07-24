@@ -143,7 +143,6 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Switch } from '@/components/ui/switch';
-import { Checkbox } from '@/components/ui/checkbox';
 import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../constants';
 
 /**
@@ -201,7 +200,6 @@ const quoteSchema = z.object({
   scopeOfWork: z.string().optional(),
   termsAndConditions: z.string().optional(),
   paymentSchedule: z.array(paymentScheduleItemSchema).optional(),
-  showClientAcceptance: z.boolean().optional(),
   items: z.array(quoteItemSchema).min(1, 'At least one item is required'),
   autoSendToCustomer: z.boolean().optional(),
   sendMessage: z.string().optional(),
@@ -412,8 +410,13 @@ const Quotes = () => {
   const { activeTenantId, activeTenant, isAdmin } = useAuth();
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
-  const { activeStudioLocationId, scopeReady } = useWorkspaceScope();
+  const { activeStudioLocationId, activeStudioLocation, scopeReady } = useWorkspaceScope();
   const businessType = activeTenant?.businessType || 'printing_press';
+  const effectiveStudioType =
+    activeStudioLocation?.studioType ||
+    activeTenant?.metadata?.studioType ||
+    activeTenant?.metadata?.businessSubType ||
+    businessType;
   const isShop = businessType === 'shop';
   const isPharmacy = businessType === 'pharmacy';
   const isRetailQuote = isShop || isPharmacy;
@@ -513,14 +516,14 @@ const Quotes = () => {
   const organization = organizationData?.data?.data || organizationData?.data || {};
 
   const { data: customCategories = [] } = useQuery({
-    queryKey: ['customCategories'],
+    queryKey: ['customCategories', activeTenantId, activeStudioLocationId],
     queryFn: async () => customDropdownService.getCustomOptions('job_category') || [],
     enabled: scopeReady && !isRetailQuote,
     staleTime: QUERY_STALE.SLOW,
   });
 
   const { data: jobItemCategoriesApi = [] } = useQuery({
-    queryKey: queryKeys.jobs.categories(activeTenantId, activeStudioLocationId, businessType),
+    queryKey: queryKeys.jobs.categories(activeTenantId, activeStudioLocationId, effectiveStudioType),
     queryFn: () => jobService.getCategories(),
     enabled: scopeReady && !isRetailQuote,
     staleTime: QUERY_STALE.METADATA,
@@ -538,6 +541,19 @@ const Quotes = () => {
     });
     return byGroup;
   }, [jobItemCategoriesApi]);
+
+  /** Tenant-saved Other values that are not already in the branch catalog */
+  const persistedCustomCategories = useMemo(() => {
+    const builtIn = new Set();
+    jobItemCategoriesGrouped.forEach((groupItems) => {
+      groupItems.forEach((cat) => builtIn.add(String(cat.value || '').toLowerCase()));
+    });
+    return (Array.isArray(customCategories) ? customCategories : []).filter((cat) => {
+      const value = String(cat?.value || '').trim();
+      if (!value || value === '__OTHER__') return false;
+      return !builtIn.has(value.toLowerCase());
+    });
+  }, [customCategories, jobItemCategoriesGrouped]);
 
   const quotePrintOrganization = useMemo(() => {
     const branch = quotePrintable?.shop || quotePrintable?.studioLocation || null;
@@ -574,7 +590,6 @@ const Quotes = () => {
       scopeOfWork: '',
       termsAndConditions: '',
       paymentSchedule: [],
-      showClientAcceptance: true,
       items: [{ productId: '', category: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
       autoSendToCustomer: false,
       sendMessage: DEFAULT_QUOTE_SEND_MESSAGE,
@@ -657,7 +672,8 @@ const Quotes = () => {
     }
 
     try {
-      const saved = await customDropdownService.saveCustomOption('job_category', customValue.trim());
+      const trimmed = customValue.trim();
+      const saved = await customDropdownService.saveCustomOption('job_category', trimmed, trimmed);
       if (!saved) return;
 
       queryClient.invalidateQueries({ queryKey: ['customCategories'] });
@@ -671,7 +687,7 @@ const Quotes = () => {
         delete next[itemIndex];
         return next;
       });
-      showSuccess(`"${saved.label}" added to categories`);
+      showSuccess(`"${saved.label || trimmed}" added to categories`);
     } catch (error) {
       showError(error, error.response?.data?.error || 'Failed to save custom category');
     }
@@ -680,13 +696,23 @@ const Quotes = () => {
   const persistQuoteCustomCategories = useCallback(async (items = []) => {
     const uniqueCategories = collectResolvedCategories(items);
     if (uniqueCategories.length === 0) return;
+
+    const builtIn = new Set();
+    jobItemCategoriesGrouped.forEach((groupItems) => {
+      groupItems.forEach((cat) => builtIn.add(String(cat.value || '').toLowerCase()));
+    });
+    const customOnly = uniqueCategories.filter(
+      (category) => !builtIn.has(String(category).toLowerCase())
+    );
+    if (customOnly.length === 0) return;
+
     await Promise.allSettled(
-      uniqueCategories.map((category) =>
+      customOnly.map((category) =>
         customDropdownService.saveCustomOption('job_category', category, category)
       )
     );
     queryClient.invalidateQueries({ queryKey: ['customCategories'] });
-  }, [queryClient]);
+  }, [jobItemCategoriesGrouped, queryClient]);
 
   const persistLineItemDescriptions = useCallback(async (items = []) => {
     const uniqueDescriptions = [...new Set(
@@ -763,7 +789,6 @@ const Quotes = () => {
           ? (organization?.defaultTermsAndConditions || DEFAULT_STUDIO_QUOTE_TERMS.join('\n'))
           : '',
         paymentSchedule: [],
-        showClientAcceptance: !isRetailQuote,
         items: [{ productId: '', category: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
         taxRate: '',
       });
@@ -917,7 +942,6 @@ const Quotes = () => {
         ? (organization?.defaultTermsAndConditions || DEFAULT_STUDIO_QUOTE_TERMS.join('\n'))
         : '',
       paymentSchedule: [],
-      showClientAcceptance: !isRetailQuote,
       items: [{ productId: '', category: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
       autoSendToCustomer: false,
       sendMessage: DEFAULT_QUOTE_SEND_MESSAGE,
@@ -956,7 +980,6 @@ const Quotes = () => {
             percent: row?.percent != null ? Number(row.percent) : '',
           }))
         : [],
-      showClientAcceptance: details.showClientAcceptance !== false,
       items: (details.items || []).map((item) => ({
         productId: item.productId || '',
         category: item.metadata?.category || '',
@@ -1038,7 +1061,6 @@ const Quotes = () => {
     if (!isRetailQuote) {
       payload.scopeOfWork = values.scopeOfWork || null;
       payload.termsAndConditions = values.termsAndConditions || null;
-      payload.showClientAcceptance = values.showClientAcceptance !== false;
       payload.paymentSchedule = (values.paymentSchedule || [])
         .map((row) => ({
           label: String(row?.label || '').trim(),
@@ -2116,27 +2138,6 @@ const Quotes = () => {
                     </div>
                   ))}
                 </div>
-
-                <FormField
-                  control={form.control}
-                  name="showClientAcceptance"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-row items-start gap-3 rounded-lg border border-border p-4">
-                      <FormControl>
-                        <Checkbox
-                          checked={field.value !== false}
-                          onCheckedChange={(checked) => field.onChange(checked === true)}
-                        />
-                      </FormControl>
-                      <div className="space-y-1 leading-none">
-                        <FormLabel>Show client acceptance on PDF</FormLabel>
-                        <p className="text-sm text-muted-foreground">
-                          Include signature lines for the client to accept this quotation.
-                        </p>
-                      </div>
-                    </FormItem>
-                  )}
-                />
               </>
             )}
 
@@ -2274,11 +2275,13 @@ const Quotes = () => {
                                       ))}
                                     </div>
                                   ))}
-                                  {customCategories.length > 0 && (
+                                  {persistedCustomCategories.length > 0 && (
                                     <>
-                                      <div className="px-2 py-1.5 text-sm font-semibold">Custom Categories</div>
-                                      {customCategories.map((cat) => (
-                                        <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>
+                                      <div className="px-2 py-1.5 text-sm font-semibold">Custom</div>
+                                      {persistedCustomCategories.map((cat) => (
+                                        <SelectItem key={cat.value} value={cat.value}>
+                                          {cat.label || cat.value}
+                                        </SelectItem>
                                       ))}
                                     </>
                                   )}

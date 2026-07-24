@@ -2,7 +2,8 @@
  * Job/Quote/Invoice Item Categories by Studio Type
  *
  * These are the line-item categories for Jobs, Quotes, and Invoices.
- * Studio-only feature (printing_press, mechanic, barber, salon).
+ * Studio-only feature. Keys cover both legacy studioType values and
+ * onboarding businessSubType / studio location studioType ids.
  */
 
 const { resolveBusinessType } = require('./businessTypes');
@@ -46,6 +47,14 @@ const JOB_ITEM_CATEGORIES = {
     { value: 'Parts', label: 'Parts', group: 'Parts' },
     { value: 'Other Services', label: 'Other Services', group: 'Other' }
   ],
+  car_wash: [
+    { value: 'Exterior Wash', label: 'Exterior Wash', group: 'Services' },
+    { value: 'Interior Cleaning', label: 'Interior Cleaning', group: 'Services' },
+    { value: 'Full Detailing', label: 'Full Detailing', group: 'Services' },
+    { value: 'Wax & Polish', label: 'Wax & Polish', group: 'Services' },
+    { value: 'Engine Bay Clean', label: 'Engine Bay Clean', group: 'Services' },
+    { value: 'Other Services', label: 'Other Services', group: 'Other' }
+  ],
   barber: [
     { value: 'Haircuts', label: 'Haircuts', group: 'Services' },
     { value: 'Beard Trim', label: 'Beard Trim', group: 'Services' },
@@ -63,6 +72,13 @@ const JOB_ITEM_CATEGORIES = {
     { value: 'Skincare', label: 'Skincare', group: 'Services' },
     { value: 'Other Services', label: 'Other Services', group: 'Other' }
   ],
+  other_professional_services: [
+    { value: 'Consulting', label: 'Consulting', group: 'Services' },
+    { value: 'Training', label: 'Training', group: 'Services' },
+    { value: 'Project Work', label: 'Project Work', group: 'Services' },
+    { value: 'Retainer', label: 'Retainer', group: 'Services' },
+    { value: 'Other Services', label: 'Other Services', group: 'Other' }
+  ],
   default: [
     { value: 'Services', label: 'Services', group: 'Services' },
     { value: 'Materials', label: 'Materials', group: 'Materials' },
@@ -71,33 +87,99 @@ const JOB_ITEM_CATEGORIES = {
   ]
 };
 
-const LEGACY_TO_STUDIO = ['printing_press', 'mechanic', 'barber', 'salon'];
+/**
+ * Map studio location / businessSubType ids to JOB_ITEM_CATEGORIES keys.
+ * Studio locations store onboarding option ids (e.g. barber_shop, software_it_services).
+ */
+const STUDIO_TYPE_TO_CATEGORY_KEY = {
+  printing_press: 'printing_press',
+  software_it_services: 'software_it_services',
+  other_professional_services: 'other_professional_services',
+  barber_shop: 'barber',
+  barber: 'barber',
+  hair_salon: 'salon',
+  salon: 'salon',
+  spa_nail_bar: 'salon',
+  mechanic_workshop: 'mechanic',
+  mechanic: 'mechanic',
+  car_wash: 'car_wash',
+};
+
+/** Map subtype → legacy material type key used by getMaterialTypesForStudioType */
+const STUDIO_TYPE_TO_MATERIAL_KEY = {
+  printing_press: 'printing_press',
+  software_it_services: 'printing_press',
+  other_professional_services: 'printing_press',
+  barber_shop: 'barber',
+  barber: 'barber',
+  hair_salon: 'salon',
+  salon: 'salon',
+  spa_nail_bar: 'salon',
+  mechanic_workshop: 'mechanic',
+  mechanic: 'mechanic',
+  car_wash: 'mechanic',
+};
+
+/**
+ * Resolve the effective studio subtype from tenant + metadata.
+ * Prefers location studioType, then metadata.studioType / businessSubType, then legacy businessType.
+ * @param {string} businessType
+ * @param {object} metadata
+ * @returns {string|null}
+ */
+const resolveStudioSubtype = (businessType, metadata = {}) => {
+  const candidates = [
+    metadata?.studioType,
+    metadata?.businessSubType,
+    businessType,
+  ].filter(Boolean);
+  return candidates.find((value) => STUDIO_TYPE_TO_CATEGORY_KEY[value]) || candidates[0] || null;
+};
+
+/**
+ * @param {string} businessType
+ * @param {object} metadata
+ * @returns {string} Key into JOB_ITEM_CATEGORIES
+ */
+const resolveCategoryCatalogKey = (businessType, metadata = {}) => {
+  const subtype = resolveStudioSubtype(businessType, metadata);
+  if (!subtype) return 'default';
+  return STUDIO_TYPE_TO_CATEGORY_KEY[subtype] || 'default';
+};
 
 /**
  * Get job item categories for a tenant based on studio type
  * @param {string} businessType - Tenant businessType (printing_press, mechanic, barber, salon, or studio)
- * @param {object} metadata - Tenant metadata (may contain studioType)
+ * @param {object} metadata - Tenant metadata (may contain studioType / businessSubType)
  * @returns {Array} Array of { value, label, group } objects
  */
 const getJobItemCategories = (businessType, metadata = {}) => {
-  const studioType = metadata?.studioType || businessType;
   const resolved = resolveBusinessType(businessType);
 
   if (resolved !== 'studio') {
     return JOB_ITEM_CATEGORIES.default || [];
   }
 
-  // Software & IT services: use dedicated categories if businessSubType is set
-  const businessSubType = metadata?.businessSubType;
-  if (businessSubType === 'software_it_services') {
-    return JOB_ITEM_CATEGORIES.software_it_services || JOB_ITEM_CATEGORIES.default || [];
-  }
+  const catalogKey = resolveCategoryCatalogKey(businessType, metadata);
+  return JOB_ITEM_CATEGORIES[catalogKey] || JOB_ITEM_CATEGORIES.default || [];
+};
 
-  const type = LEGACY_TO_STUDIO.includes(studioType) ? studioType : 'default';
-  return JOB_ITEM_CATEGORIES[type] || JOB_ITEM_CATEGORIES.default || [];
+/**
+ * Resolve material-types studio key for the active branch subtype.
+ * @param {string} businessType
+ * @param {object} metadata
+ * @returns {string}
+ */
+const resolveMaterialStudioType = (businessType, metadata = {}) => {
+  const subtype = resolveStudioSubtype(businessType, metadata);
+  if (!subtype) return 'printing_press';
+  return STUDIO_TYPE_TO_MATERIAL_KEY[subtype] || 'printing_press';
 };
 
 module.exports = {
   JOB_ITEM_CATEGORIES,
-  getJobItemCategories
+  STUDIO_TYPE_TO_CATEGORY_KEY,
+  getJobItemCategories,
+  resolveCategoryCatalogKey,
+  resolveMaterialStudioType,
 };

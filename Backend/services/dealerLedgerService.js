@@ -108,6 +108,36 @@ const reverseAndDestroyLedgerEntriesForSale = async ({ tenantId, saleId, transac
   return entries.length;
 };
 
+/**
+ * Reverse dealer balance for every remaining ledger row for a dealer, then destroy those rows.
+ * Used after sale hard-deletes when permanently removing a dealer account.
+ * @param {{ tenantId: string, dealerId: string, transaction: import('sequelize').Transaction }} params
+ * @returns {Promise<number>}
+ */
+const reverseAndDestroyLedgerEntriesForDealer = async ({ tenantId, dealerId, transaction }) => {
+  if (!tenantId || !dealerId || !transaction) return 0;
+
+  const entries = await DealerLedgerEntry.findAll({
+    where: { tenantId, dealerId },
+    order: [['createdAt', 'DESC'], ['id', 'DESC']],
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+  });
+
+  for (const entry of entries) {
+    const reverseDirection = entry.direction === 'debit' ? 'credit' : 'debit';
+    await applyBalanceChange({
+      dealerId: entry.dealerId,
+      direction: reverseDirection,
+      amount: entry.amount,
+      transaction,
+    });
+    await entry.destroy({ transaction });
+  }
+
+  return entries.length;
+};
+
 module.exports = {
   recordLedgerEntry,
   recordOpeningBalance,
@@ -115,4 +145,5 @@ module.exports = {
   recordPayment,
   recordAdjustment,
   reverseAndDestroyLedgerEntriesForSale,
+  reverseAndDestroyLedgerEntriesForDealer,
 };

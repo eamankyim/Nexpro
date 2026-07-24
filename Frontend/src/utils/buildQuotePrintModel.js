@@ -76,8 +76,6 @@ export function buildQuotePrintModel(quote, options = {}) {
     }))
     .filter((row) => row.label);
 
-  const showClientAcceptance = isProject && quote.showClientAcceptance !== false;
-
   const items = (quote.items || []).map((item) => {
     const quantity = parseFloat(item.quantity || 0);
     const unitPrice = parseFloat(item.unitPrice || 0);
@@ -116,7 +114,6 @@ export function buildQuotePrintModel(quote, options = {}) {
       scopeOfWork: isProject && Boolean(scopeOfWork),
       terms: effectiveTermsBullets.length > 0,
       paymentSchedule: isProject && paymentSchedule.length > 0,
-      clientAcceptance: showClientAcceptance,
       jobDetails: false,
     },
     data: {
@@ -137,7 +134,6 @@ export function buildQuotePrintModel(quote, options = {}) {
       scopeOfWork,
       termsBullets: effectiveTermsBullets,
       paymentSchedule,
-      showClientAcceptance,
       notes: quote.notes || '',
     },
     // Legacy invoice-shaped payload for product PrintableInvoice path

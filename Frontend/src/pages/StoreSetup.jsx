@@ -168,14 +168,14 @@ const PAYMENT_OPTIONS = [
   {
     key: 'mobileMoney',
     label: 'Mobile Money',
-    description: 'Accept MTN MoMo, Vodafone Cash, and AirtelTigo Money through the existing checkout flow.',
+    description: 'Accept MTN MoMo, Vodafone Cash, and AirtelTigo Money via Paystack payment collection (Settings → Payments → Paystack).',
     icon: Smartphone,
     available: true,
   },
   {
     key: 'card',
     label: 'Card Payments',
-    description: 'Let shoppers pay with debit or credit cards where Paystack/card checkout is available.',
+    description: 'Let shoppers pay with debit or credit cards via the same Paystack payment collection.',
     icon: CreditCard,
     available: true,
   },
@@ -616,9 +616,14 @@ const resolvePaymentMethods = (savedMethods = {}, paymentCollection = null) => {
   };
 };
 
+/**
+ * Deep-link Store Setup "Configure" into Settings → Payments.
+ * Online store MoMo + card checkout use Paystack collection (settlements), not MTN Merchant ID.
+ * Merchant ID remains available under Settings → Payments as a separate direct-collection rail.
+ */
 const getPaymentCollectionSettingsUrl = (methodKey, returnTo = STORE_SETUP_PAYMENTS_RETURN) => {
   const params = new URLSearchParams({
-    subtab: methodKey === 'mobileMoney' ? 'merchant-id' : 'settlements',
+    subtab: 'settlements',
     method: methodKey,
     returnTo,
   });
@@ -1107,6 +1112,8 @@ const StoreSetup = () => {
     refetchOnWindowFocus: true,
     refetchOnMount: 'always',
   });
+  const paymentCollectionRef = useRef(paymentCollection);
+  paymentCollectionRef.current = paymentCollection;
 
   const form = useForm({
     resolver: zodResolver(setupSchema),
@@ -1324,7 +1331,7 @@ const StoreSetup = () => {
         organization,
         profile,
       });
-      const savedPaymentMethods = resolvePaymentMethods(metadata.paymentMethods);
+      const savedPaymentMethods = resolvePaymentMethods(metadata.paymentMethods, paymentCollectionRef.current);
       const savedDeliveryOptions = mergeOptions(defaultDeliveryOptions, {
         ...metadata.deliveryOptions,
         localDelivery: metadata.deliveryOptions?.localDelivery || {
@@ -1376,7 +1383,7 @@ const StoreSetup = () => {
         currency: resolveStoreCurrency(nextSettings?.currency, inferredDefaults.currency),
         paymentMethods: nextSettings?.id
           ? savedPaymentMethods
-          : resolvePaymentMethods(inferredDefaults.paymentMethods),
+          : resolvePaymentMethods(inferredDefaults.paymentMethods, paymentCollectionRef.current),
         deliveryOptions: nextSettings?.id ? savedDeliveryOptions : inferredDefaults.deliveryOptions,
         deliveryFee: Number(nextSettings?.deliveryFee || inferredDefaults.deliveryFee || 0),
         localDeliveryAreas: savedOrDefault(metadata.localDeliveryAreas, inferredDefaults.localDeliveryAreas),
@@ -1406,6 +1413,12 @@ const StoreSetup = () => {
           sanitizeStoreSetupDraftValues(form.getValues()),
         );
       }
+
+      // Draft/saved metadata can still say configured:false; live Paystack/MTN/Hubtel wins.
+      restoredValues = {
+        ...restoredValues,
+        paymentMethods: resolvePaymentMethods(restoredValues.paymentMethods, paymentCollectionRef.current),
+      };
 
       form.reset(restoredValues);
 
@@ -1453,8 +1466,10 @@ const StoreSetup = () => {
     loadStore();
   }, [loadStore]);
 
+  // Re-apply after loadStore reset and whenever payment-collection status arrives
+  // (avoids race where sync ran first, then form.reset wiped configured:true).
   useEffect(() => {
-    if (paymentCollectionLoading) return;
+    if (loading || paymentCollectionLoading || !draftInitializedRef.current) return;
     const currentPaymentMethods = form.getValues('paymentMethods');
     const nextPaymentMethods = resolvePaymentMethods(currentPaymentMethods, paymentCollection);
     const hasPaymentStatusChange = PAYMENT_OPTIONS.some((option) => (
@@ -1462,7 +1477,7 @@ const StoreSetup = () => {
     ));
     if (!hasPaymentStatusChange) return;
     form.setValue('paymentMethods', nextPaymentMethods, { shouldDirty: false, shouldValidate: true });
-  }, [form, paymentCollection, paymentCollectionLoading]);
+  }, [form, loading, paymentCollection, paymentCollectionLoading]);
 
   useEffect(() => {
     if (!draftInitializedRef.current || loading || settings?.id) return undefined;

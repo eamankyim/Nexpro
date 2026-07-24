@@ -16,7 +16,7 @@ const {
   attachStudioLocationToPayload,
 } = require('../utils/studioLocationUtils');
 const { parseDeliveryStatusInput } = require('../utils/deliveryStatus');
-const { getJobItemCategories } = require('../config/jobItemCategories');
+const { getJobItemCategories, resolveMaterialStudioType } = require('../config/jobItemCategories');
 const { getMaterialTypesForStudioType } = require('../config/studioTypes');
 const { buildCustomerFacingJobTitle } = require('../utils/jobCustomerMessageText');
 const { getTaxConfigForTenant } = require('../utils/taxConfig');
@@ -715,7 +715,6 @@ exports.getJobCategories = async (req, res, next) => {
     const tenant = req.tenant || (req.tenantMembership && await req.tenantMembership.getTenant());
     const businessType = tenant?.businessType || 'printing_press';
     const metadata = { ...(tenant?.metadata || {}) };
-    let studioType = metadata?.studioType || businessType;
 
     if (req.studioLocationFilterId) {
       const location = await StudioLocation.findOne({
@@ -727,16 +726,16 @@ exports.getJobCategories = async (req, res, next) => {
         attributes: ['id', 'studioType'],
       });
       if (location?.studioType) {
-        studioType = location.studioType;
+        // Branch studioType is the source of truth for this request's catalog.
+        // Keep businessSubType as fallback only when location has no type.
         metadata.studioType = location.studioType;
-        delete metadata.businessSubType;
+        metadata.businessSubType = location.studioType;
       }
     }
 
     const categories = getJobItemCategories(businessType, metadata);
-    const materialTypes = ['printing_press', 'mechanic', 'barber', 'salon'].includes(studioType)
-      ? getMaterialTypesForStudioType(studioType)
-      : getMaterialTypesForStudioType('printing_press');
+    const materialStudioType = resolveMaterialStudioType(businessType, metadata);
+    const materialTypes = getMaterialTypesForStudioType(materialStudioType);
 
     res.status(200).json({
       success: true,

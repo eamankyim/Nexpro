@@ -271,30 +271,6 @@ const PrintableQuotation = ({
           font-variant-numeric: tabular-nums;
         }
 
-        .pq-acceptance {
-          margin-top: 28px;
-          padding-top: 18px;
-          border-top: 1px solid #e5e7eb;
-        }
-
-        .pq-accept-grid {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 18px 28px;
-          margin-top: 14px;
-        }
-
-        .pq-accept-field {
-          font-size: 12px;
-          color: #4b5563;
-        }
-
-        .pq-accept-line {
-          margin-top: 22px;
-          border-bottom: 1px solid #9ca3af;
-          min-height: 18px;
-        }
-
         .pq-pay-to {
           margin-top: 10px;
           padding: 10px 12px;
@@ -490,30 +466,6 @@ const PrintableQuotation = ({
           <div className="pq-section">
             <div className="pq-section-title">Pay To</div>
             <div className="pq-pay-to">{companyInfo.paymentDetails}</div>
-          </div>
-        )}
-
-        {sections.clientAcceptance && (
-          <div className="pq-acceptance">
-            <div className="pq-section-title">Client Acceptance</div>
-            <div className="pq-accept-grid">
-              <div className="pq-accept-field">
-                Accepted By
-                <div className="pq-accept-line" />
-              </div>
-              <div className="pq-accept-field">
-                Signature
-                <div className="pq-accept-line" />
-              </div>
-              <div className="pq-accept-field">
-                Date
-                <div className="pq-accept-line" />
-              </div>
-              <div className="pq-accept-field">
-                Company Stamp
-                <div className="pq-accept-line" />
-              </div>
-            </div>
           </div>
         )}
 
