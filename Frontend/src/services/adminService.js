@@ -71,6 +71,13 @@ const updateOnlineStoreHeroColorway = async (id, formData) =>
 const deleteOnlineStoreHeroColorway = async (id) =>
   api.delete(`/admin/online-store/heroes/colorways/${id}`);
 
+const getOnlineStoreDomains = async (params = {}) =>
+  api.get('/admin/online-store/domains', { params });
+const getOnlineStorePendingDomainCount = async () =>
+  api.get('/admin/online-store/domains/pending-count');
+const updateOnlineStoreDomainStatus = async (id, action) =>
+  api.patch(`/admin/online-store/domains/${id}`, { action });
+
 const getActiveSupportAccess = async () => api.get('/admin/support-access/active');
 const startSupportAccess = async (tenantId, payload) =>
   api.post(`/admin/tenants/${tenantId}/support-access`, payload);
@@ -301,6 +308,9 @@ export default {
   createOnlineStoreHeroColorway,
   updateOnlineStoreHeroColorway,
   deleteOnlineStoreHeroColorway,
+  getOnlineStoreDomains,
+  getOnlineStorePendingDomainCount,
+  updateOnlineStoreDomainStatus,
   getActiveSupportAccess,
   startSupportAccess,
   endSupportAccess,

@@ -1,6 +1,13 @@
 /**
  * Shared CORS utilities - single source of truth for allowed origins.
  * Used by config (cors middleware), CSRF, and explicit OPTIONS handler.
+ *
+ * Connected merchant custom domains (online_store_settings.customDomainStatus
+ * = 'pending' | 'verified') are also allowed so storefronts on those hosts can
+ * call the public resolve-domain + store APIs. Pending is included intentionally:
+ * resolveStoreByDomain already serves pending hosts, and without CORS the browser
+ * cannot call that API — so the SPA falls through to Sabito marketplace chrome.
+ * Admins must still add the domain in Vercel (or the hosting DNS/proxy) manually.
  */
 
 const DEFAULT_ORIGINS = [
@@ -26,12 +33,94 @@ const DEFAULT_ORIGINS = [
   'https://templates.absghana.com',
 ];
 
+/** In-memory set of https:// / http:// origins for connected (pending|verified) custom domains. */
+let verifiedDomainOrigins = new Set();
+let verifiedOriginsLastRefresh = 0;
+const VERIFIED_ORIGINS_TTL_MS = 5 * 60 * 1000;
+let verifiedOriginsRefreshPromise = null;
+
 /**
  * Normalize origin (trim, remove trailing slash)
  * @param {string} o - Raw origin string
  * @returns {string}
  */
 const normalize = (o) => (o || '').trim().replace(/\/$/, '');
+
+/**
+ * Apex ↔ www host pair for a merchant domain (browsers often hit either).
+ * @param {string} host
+ * @returns {string[]}
+ */
+const hostVariants = (host) => {
+  const h = String(host || '').trim().toLowerCase().replace(/\.$/, '');
+  if (!h) return [];
+  const variants = [h];
+  if (h.startsWith('www.')) {
+    const apex = h.slice(4);
+    if (apex) variants.push(apex);
+  } else if (h.includes('.')) {
+    variants.push(`www.${h}`);
+  }
+  return [...new Set(variants)];
+};
+
+/**
+ * Build http/https origin strings for a hostname (includes www/apex variants).
+ * @param {string} host
+ * @returns {string[]}
+ */
+const originsForHost = (host) => {
+  const out = [];
+  for (const h of hostVariants(host)) {
+    out.push(`https://${h}`, `http://${h}`);
+  }
+  return out;
+};
+
+/**
+ * Refresh the connected-custom-domain origin cache from the DB (pending + verified).
+ * Safe to call often; coalesces concurrent refreshes.
+ * @returns {Promise<void>}
+ */
+const refreshVerifiedDomainOrigins = async () => {
+  if (verifiedOriginsRefreshPromise) return verifiedOriginsRefreshPromise;
+
+  verifiedOriginsRefreshPromise = (async () => {
+    try {
+      // Lazy require to avoid circular deps at module load (models ↔ config ↔ cors).
+      const { Op } = require('sequelize');
+      const { OnlineStoreSettings } = require('../models');
+      const rows = await OnlineStoreSettings.findAll({
+        where: {
+          customDomainStatus: { [Op.in]: ['verified', 'pending'] },
+          customDomain: { [Op.ne]: null },
+        },
+        attributes: ['customDomain'],
+        raw: true,
+      });
+      const next = new Set();
+      for (const row of rows) {
+        originsForHost(row.customDomain).forEach((o) => next.add(o));
+      }
+      verifiedDomainOrigins = next;
+      verifiedOriginsLastRefresh = Date.now();
+    } catch (err) {
+      console.error('[CORS] Failed loading custom domain origins:', err?.message || err);
+    } finally {
+      verifiedOriginsRefreshPromise = null;
+    }
+  })();
+
+  return verifiedOriginsRefreshPromise;
+};
+
+/**
+ * Kick a background refresh when the cache is stale (non-blocking for CORS checks).
+ */
+const maybeRefreshVerifiedDomainOrigins = () => {
+  if (Date.now() - verifiedOriginsLastRefresh < VERIFIED_ORIGINS_TTL_MS) return;
+  refreshVerifiedDomainOrigins().catch(() => {});
+};
 
 /**
  * Get allowed origins from env (CORS_ORIGIN, FRONTEND_URL) + defaults.
@@ -66,7 +155,8 @@ const isLanOrigin = (o) => {
 };
 
 /**
- * Check if an origin is allowed (exact match, vercel.app, or Cloudflare Pages *.pages.dev)
+ * Check if an origin is allowed (exact match, vercel.app, Cloudflare Pages *.pages.dev,
+ * or a connected merchant custom domain — pending or verified).
  * @param {string} origin - Request origin
  * @returns {boolean}
  */
@@ -81,7 +171,9 @@ const isOriginAllowed = (origin) => {
   if (isLanOrigin(o)) {
     console.warn('[CORS] LAN origin rejected (NODE_ENV=%s). Set NODE_ENV=development for mobile testing: %s', process.env.NODE_ENV, o);
   }
-  return getAllowedOrigins().includes(o);
+  if (getAllowedOrigins().includes(o)) return true;
+  maybeRefreshVerifiedDomainOrigins();
+  return verifiedDomainOrigins.has(o);
 };
 
 /** Headers the web/mobile clients may send (must match Frontend/mobile api interceptors). */
@@ -124,5 +216,8 @@ module.exports = {
   isOriginAllowed,
   setCorsHeaders,
   normalize,
+  hostVariants,
+  originsForHost,
   ALLOWED_CORS_HEADERS,
+  refreshVerifiedDomainOrigins,
 };

@@ -58,9 +58,13 @@ const isKnownSharedStorefrontHost = (hostname) => {
  * Template gallery host (`templates.*`) is never treated as a custom store domain.
  * ABS Online Store host (`store.absghana.com`) stays on the shared SPA (path-based /shop/:slug).
  *
+ * On lookup failure (CORS, network), `resolveFailed` is true so App does not fall through
+ * to Sabito marketplace chrome for an unknown host that is clearly not a platform domain.
+ *
  * @returns {{
  *   isLoading: boolean,
  *   matched: boolean,
+ *   resolveFailed: boolean,
  *   slug: string|null,
  *   launched: boolean,
  *   displayName: string|null,
@@ -74,18 +78,19 @@ export const useCustomDomainStore = () => {
   const onAbsOnlineStoreHost = isAbsOnlineStoreHost(hostname) || ABS_ONLINE_STORE_HOSTS.has(hostname);
   const skip = isKnownSharedStorefrontHost(hostname);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, isFetched, failureCount } = useQuery({
     queryKey: ['custom-domain-resolve', hostname],
     queryFn: () => storeService.resolveDomain(hostname),
     enabled: !skip,
     staleTime: 5 * 60 * 1000,
-    retry: 1,
+    retry: 2,
   });
 
   if (skip) {
     return {
       isLoading: false,
       matched: false,
+      resolveFailed: false,
       slug: null,
       launched: false,
       displayName: null,
@@ -95,9 +100,15 @@ export const useCustomDomainStore = () => {
   }
 
   const payload = data?.data?.data || data?.data || {};
+  const matched = Boolean(payload.matched);
+  // After retries exhausted with no successful payload, treat as resolve failure —
+  // never silently render Sabito marketplace on a merchant custom domain.
+  const resolveFailed = Boolean(isError && isFetched && !matched && failureCount > 0);
+
   return {
     isLoading,
-    matched: Boolean(payload.matched),
+    matched,
+    resolveFailed,
     slug: payload.slug || null,
     launched: Boolean(payload.launched),
     displayName: payload.displayName || null,

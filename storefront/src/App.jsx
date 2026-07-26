@@ -18,6 +18,7 @@ import {
   TemplatesHostApp,
   templatesGalleryRouteElements,
 } from './online-store/SingleStoreApp';
+import CustomDomainPendingPage from './pages/CustomDomainPendingPage';
 
 const MarketplaceHome = lazy(() => import('./pages/MarketplaceHome'));
 const MarketplaceProductsPage = lazy(() => import('./pages/MarketplaceProductsPage'));
@@ -136,6 +137,12 @@ function App() {
         </StorefrontModeProvider>
       </BrowserRouter>
     );
+  }
+
+  // Unknown host that is not a platform domain, but resolve-domain failed (CORS/network).
+  // Do not fall through to Sabito marketplace — that was the www.gapconnects.com bug.
+  if (customDomain.resolveFailed) {
+    return <CustomDomainPendingPage variant="unavailable" />;
   }
 
   if (customDomain.isAbsOnlineStoreHost) {

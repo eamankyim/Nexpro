@@ -2600,16 +2600,33 @@ const getCustomDomainCnameTarget = () => (
 
 /**
  * Normalizes a user-entered domain: strips protocol/path/port, lowercases, trims.
+ * Also takes the first host when proxies send a comma-separated X-Forwarded-Host list,
+ * and strips a trailing DNS dot (FQDN form).
  * @param {string} value - Raw input, e.g. "https://Shop.MyClient.com/"
  * @returns {string} Normalized hostname, e.g. "shop.myclient.com"
  */
 const normalizeCustomDomain = (value) => {
   let host = String(value || '').trim().toLowerCase();
   if (!host) return '';
+  // Proxies may send "www.client.com, store.absghana.com"
+  host = host.split(',')[0].trim();
   host = host.replace(/^https?:\/\//, '');
   host = host.split('/')[0];
   host = host.split(':')[0];
+  host = host.replace(/\.$/, '');
   return host;
+};
+
+/**
+ * Lookup candidates for a custom domain (exact + apex/www twin).
+ * Merchants often save one form and visitors hit the other.
+ * Shares hostVariants with CORS so allowlist and resolve stay in sync.
+ * @param {string} host - Already-normalized hostname
+ * @returns {string[]}
+ */
+const customDomainLookupHosts = (host) => {
+  const { hostVariants } = require('../utils/corsUtils');
+  return hostVariants(normalizeCustomDomain(host));
 };
 
 const DOMAIN_PATTERN = /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/;
@@ -2629,9 +2646,13 @@ const assertValidCustomDomain = (host) => {
 };
 
 const ensureCustomDomainAvailable = async ({ host, tenantId, currentId = null }) => {
+  const candidates = customDomainLookupHosts(host);
+  if (!candidates.length) return;
   const existing = await OnlineStoreSettings.findOne({
     where: {
-      customDomain: { [Op.iLike]: host },
+      [Op.or]: candidates.map((candidate) => ({
+        customDomain: { [Op.iLike]: candidate },
+      })),
       ...(currentId ? { id: { [Op.ne]: currentId } } : {}),
     },
     attributes: ['id', 'tenantId'],
@@ -2685,6 +2706,9 @@ exports.updateDomain = async (req, res, next) => {
     // Empty string / null disconnects the domain.
     if (rawDomain === null || rawDomain === undefined || String(rawDomain).trim() === '') {
       await settings.update({ customDomain: null, customDomainStatus: 'none' });
+      require('../utils/corsUtils').refreshVerifiedDomainOrigins().catch((err) => {
+        console.error('[StoreDomain] Failed refreshing CORS custom-domain origins:', err?.message || err);
+      });
       return res.status(200).json({ success: true, data: serializeDomainSettings(settings) });
     }
 
@@ -2697,7 +2721,35 @@ exports.updateDomain = async (req, res, next) => {
     // CNAME resolves to `getCustomDomainCnameTarget()` before flipping this to
     // "verified". Until verified, `resolveStoreByDomain` below still serves the
     // store (best-effort), since most CNAME setups work within minutes.
+    // CORS allowlist includes pending hosts so the storefront SPA can call the API.
+    const previousDomain = settings.customDomain;
+    const previousStatus = settings.customDomainStatus;
     await settings.update({ customDomain: host, customDomainStatus: 'pending' });
+
+    // Keep API CORS allowlist in sync so the new host can resolve immediately.
+    require('../utils/corsUtils').refreshVerifiedDomainOrigins().catch((err) => {
+      console.error('[StoreDomain] Failed refreshing CORS custom-domain origins:', err?.message || err);
+    });
+
+    // Notify platform admins / ops when a new pending domain is submitted
+    // (or the merchant changes the host while still pending).
+    const isNewPendingRequest =
+      previousStatus !== 'pending'
+      || String(previousDomain || '').toLowerCase() !== host;
+    if (isNewPendingRequest) {
+      const { notifyCustomDomainSubmitted } = require('../services/platformAdminNotificationService');
+      notifyCustomDomainSubmitted({
+        customDomain: host,
+        tenantName: req.tenant?.name,
+        tenantId: req.tenantId,
+        slug: settings.slug,
+        displayName: settings.displayName,
+        actorName: req.user?.name,
+        actorEmail: req.user?.email,
+      }).catch((err) => {
+        console.error('[StoreDomain] Failed notifying admins of domain submit:', err?.message || err);
+      });
+    }
 
     res.status(200).json({ success: true, data: serializeDomainSettings(settings) });
   } catch (error) {
@@ -2714,12 +2766,18 @@ exports.updateDomain = async (req, res, next) => {
 exports.resolveStoreByDomain = async (req, res, next) => {
   try {
     const host = normalizeCustomDomain(req.query.host || req.headers['x-forwarded-host'] || req.headers.host);
-    if (!host) {
+    const lookupHosts = customDomainLookupHosts(host);
+    if (!lookupHosts.length) {
       return res.status(200).json({ success: true, data: { matched: false } });
     }
 
+    // Match exact saved host or apex/www twin (status pending|verified both resolve).
     const settings = await OnlineStoreSettings.findOne({
-      where: { customDomain: { [Op.iLike]: host } },
+      where: {
+        [Op.or]: lookupHosts.map((candidate) => ({
+          customDomain: { [Op.iLike]: candidate },
+        })),
+      },
       attributes: ['id', 'tenantId', 'shopId', 'slug', 'displayName', 'enabled', 'customDomainStatus'],
       include: [
         { model: Tenant, as: 'tenant', attributes: ['id', 'businessType', 'status'], required: true },

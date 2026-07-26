@@ -64,9 +64,31 @@ jest.mock('../../../services/pushNotificationService', () => ({
   dispatchExpoPushToStorefrontCustomers: jest.fn(),
 }));
 
+jest.mock('../../../services/platformAdminNotificationService', () => ({
+  notifyCustomDomainSubmitted: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock('../../../utils/corsUtils', () => ({
+  refreshVerifiedDomainOrigins: jest.fn().mockResolvedValue(undefined),
+  hostVariants: (host) => {
+    const h = String(host || '').trim().toLowerCase().replace(/\.$/, '');
+    if (!h) return [];
+    const variants = [h];
+    if (h.startsWith('www.')) {
+      const apex = h.slice(4);
+      if (apex) variants.push(apex);
+    } else if (h.includes('.')) {
+      variants.push(`www.${h}`);
+    }
+    return [...new Set(variants)];
+  },
+}));
+
 const { Op } = require('sequelize');
 const { OnlineStoreSettings } = require('../../../models');
 const storeController = require('../../../controllers/storeController');
+const { notifyCustomDomainSubmitted } = require('../../../services/platformAdminNotificationService');
+const { refreshVerifiedDomainOrigins } = require('../../../utils/corsUtils');
 
 const buildRes = () => ({
   status: jest.fn().mockReturnThis(),
@@ -249,6 +271,34 @@ describe('storeController — "Online Store" custom domain', () => {
       const payload = res.json.mock.calls[0][0].data;
       expect(payload.customDomain).toBe('shop.myclient.com');
       expect(payload.customDomainStatus).toBe('pending');
+      expect(notifyCustomDomainSubmitted).toHaveBeenCalledWith(
+        expect.objectContaining({ customDomain: 'shop.myclient.com' }),
+      );
+      expect(refreshVerifiedDomainOrigins).toHaveBeenCalled();
+    });
+
+    it('rejects www twin when the apex is already connected to another tenant', async () => {
+      const settings = { id: 's1', update: jest.fn() };
+      OnlineStoreSettings.findOne
+        .mockResolvedValueOnce(settings)
+        .mockResolvedValueOnce({ id: 'other', tenantId: 'tenant-2' });
+      const req = buildReq({ body: { customDomain: 'www.gapconnects.com' } });
+      const res = buildRes();
+      const next = jest.fn();
+
+      await storeController.updateDomain(req, res, next);
+
+      expect(next).toHaveBeenCalled();
+      expect(next.mock.calls[0][0].statusCode).toBe(400);
+      expect(next.mock.calls[0][0].message).toMatch(/already connected/i);
+      const availabilityWhere = OnlineStoreSettings.findOne.mock.calls[1][0].where;
+      expect(availabilityWhere[Op.or]).toEqual(
+        expect.arrayContaining([
+          { customDomain: { [Op.iLike]: 'www.gapconnects.com' } },
+          { customDomain: { [Op.iLike]: 'gapconnects.com' } },
+        ]),
+      );
+      expect(settings.update).not.toHaveBeenCalled();
     });
 
     it('disconnects the domain when an empty value is submitted', async () => {
@@ -271,6 +321,7 @@ describe('storeController — "Online Store" custom domain', () => {
 
       expect(next).not.toHaveBeenCalled();
       expect(settings.update).toHaveBeenCalledWith({ customDomain: null, customDomainStatus: 'none' });
+      expect(refreshVerifiedDomainOrigins).toHaveBeenCalled();
     });
   });
 
@@ -362,7 +413,59 @@ describe('storeController — "Online Store" custom domain', () => {
 
       expect(OnlineStoreSettings.findOne).toHaveBeenCalledTimes(1);
       const whereArg = OnlineStoreSettings.findOne.mock.calls[0][0].where;
-      expect(whereArg.customDomain[Op.iLike]).toBe('shop.myclient.com');
+      expect(whereArg[Op.or]).toEqual(
+        expect.arrayContaining([
+          { customDomain: { [Op.iLike]: 'shop.myclient.com' } },
+          { customDomain: { [Op.iLike]: 'www.shop.myclient.com' } },
+        ]),
+      );
+    });
+
+    it('matches www twin when the visitor host differs from the saved domain', async () => {
+      OnlineStoreSettings.findOne.mockResolvedValueOnce({
+        id: 's1',
+        slug: 'gap-shop',
+        displayName: 'Gap Connects',
+        enabled: true,
+        customDomainStatus: 'pending',
+        tenant: { businessType: 'shop', status: 'active' },
+      });
+      const req = buildReq({ query: { host: 'www.gapconnects.com' } });
+      const res = buildRes();
+
+      await storeController.resolveStoreByDomain(req, res, jest.fn());
+
+      const whereArg = OnlineStoreSettings.findOne.mock.calls[0][0].where;
+      expect(whereArg[Op.or]).toEqual(
+        expect.arrayContaining([
+          { customDomain: { [Op.iLike]: 'www.gapconnects.com' } },
+          { customDomain: { [Op.iLike]: 'gapconnects.com' } },
+        ]),
+      );
+      expect(res.json.mock.calls[0][0].data).toMatchObject({
+        matched: true,
+        slug: 'gap-shop',
+        launched: true,
+      });
+    });
+
+    it('strips trailing DNS dots and takes the first X-Forwarded-Host value', async () => {
+      OnlineStoreSettings.findOne.mockResolvedValueOnce(null);
+      const req = buildReq({
+        query: {},
+        headers: { 'x-forwarded-host': 'www.gapconnects.com., store.absghana.com' },
+      });
+      const res = buildRes();
+
+      await storeController.resolveStoreByDomain(req, res, jest.fn());
+
+      const whereArg = OnlineStoreSettings.findOne.mock.calls[0][0].where;
+      expect(whereArg[Op.or]).toEqual(
+        expect.arrayContaining([
+          { customDomain: { [Op.iLike]: 'www.gapconnects.com' } },
+          { customDomain: { [Op.iLike]: 'gapconnects.com' } },
+        ]),
+      );
     });
   });
 });

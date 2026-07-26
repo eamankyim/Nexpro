@@ -8,6 +8,16 @@
 /** App display name (branding). Use useBranding().appName when inside BrandingProvider for tenant customization. */
 export const APP_NAME = 'ABS';
 
+/** Online Store paid setup help — WhatsApp (sales) + email fallback. */
+export const ONLINE_STORE_SUPPORT_WHATSAPP_NUMBER = '233555155972';
+export const ONLINE_STORE_SUPPORT_WHATSAPP_HREF =
+  `https://wa.me/${ONLINE_STORE_SUPPORT_WHATSAPP_NUMBER}?text=${encodeURIComponent(
+    'Hi ABS — I need help setting up my Online Store (paid setup).',
+  )}`;
+export const ONLINE_STORE_SUPPORT_EMAIL = 'info@africanbusinesssuite.com';
+export const ONLINE_STORE_SUPPORT_EMAIL_HREF =
+  `mailto:${ONLINE_STORE_SUPPORT_EMAIL}?subject=${encodeURIComponent('Online Store setup help (paid)')}`;
+
 // API Configuration
 export const API_CONFIG = {
   TIMEOUT: 30000, // 30 seconds

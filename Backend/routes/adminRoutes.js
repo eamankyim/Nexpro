@@ -390,6 +390,31 @@ router.post(
 );
 
 /**
+ * Online Store custom domains (manual verification queue).
+ */
+const {
+  listCustomDomains,
+  getPendingCustomDomainCount,
+  updateCustomDomainStatus,
+} = require('../controllers/adminOnlineStoreDomainController');
+
+router.get(
+  '/online-store/domains',
+  requirePlatformAdminPermission('settings.view'),
+  listCustomDomains
+);
+router.get(
+  '/online-store/domains/pending-count',
+  requirePlatformAdminPermission('settings.view'),
+  getPendingCustomDomainCount
+);
+router.patch(
+  '/online-store/domains/:id',
+  requirePlatformAdminPermission('settings.view'),
+  updateCustomDomainStatus
+);
+
+/**
  * @swagger
  * /api/admin/billing/summary:
  *   get:

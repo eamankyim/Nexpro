@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   BarChart3,
   Users,
@@ -23,11 +23,13 @@ import {
   Workflow,
   BadgePercent,
   GalleryHorizontal,
+  Globe,
 } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { SmartSearchProvider, useSmartSearch } from '../context/SmartSearchContext';
 import { usePlatformAdminPermissions } from '../context/PlatformAdminPermissionsContext';
+import adminService from '../services/adminService';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import AppLogo from '@/components/AppLogo';
@@ -77,7 +79,8 @@ const menuItems = [
   { path: '/admin/automations', icon: Workflow, label: 'Automations' },
   { path: '/admin/support-tickets', icon: LifeBuoy, label: 'Support Tickets' },
   { path: '/admin/sabito/overview', icon: ShoppingBag, label: 'Sabito Admin', activePrefix: '/admin/sabito' },
-  { path: '/admin/online-store/heroes', icon: GalleryHorizontal, label: 'Hero library', activePrefix: '/admin/online-store' },
+  { path: '/admin/online-store/domains', icon: Globe, label: 'Custom domains', activePrefix: '/admin/online-store/domains', badgeKey: 'pendingDomains' },
+  { path: '/admin/online-store/heroes', icon: GalleryHorizontal, label: 'Hero library', activePrefix: '/admin/online-store/heroes' },
   { path: '/admin/tasks', icon: CheckSquare, label: 'Tasks' },
   { path: '/admin/settings', icon: Settings, label: 'Settings' },
 ];
@@ -97,6 +100,7 @@ const AdminLayout = () => {
   const { hasPermission, loading: permissionsLoading } = usePlatformAdminPermissions();
   const { isMobile: isBelowTablet } = useResponsive({ mobileBreakpoint: BREAKPOINTS.TABLET });
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
+  const [pendingDomainCount, setPendingDomainCount] = useState(0);
   const isBootstrapSuperAdmin = useMemo(
     () => Boolean(user?.isPlatformAdmin) && isBootstrapPlatformSuperAdmin(user),
     [user]
@@ -105,6 +109,31 @@ const AdminLayout = () => {
     () => menuItems.filter((item) => !isBootstrapSuperAdmin || !bootstrapSuperAdminHiddenPaths.has(item.path)),
     [isBootstrapSuperAdmin]
   );
+
+  const canViewSettings = !permissionsLoading && hasPermission('settings.view');
+
+  useEffect(() => {
+    if (!canViewSettings) return undefined;
+
+    let cancelled = false;
+    const loadPendingCount = async () => {
+      try {
+        const res = await adminService.getOnlineStorePendingDomainCount();
+        if (!cancelled && res?.success) {
+          setPendingDomainCount(Number(res.data?.count) || 0);
+        }
+      } catch {
+        // Badge is best-effort; ignore failures
+      }
+    };
+
+    loadPendingCount();
+    const intervalId = window.setInterval(loadPendingCount, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [canViewSettings, location.pathname]);
 
   const handleNavigateToSabito = () => {
     const token = localStorage.getItem('token');
@@ -135,6 +164,7 @@ const AdminLayout = () => {
           '/admin/automations': 'automations.view',
           '/admin/support-tickets': 'tickets.view',
           '/admin/sabito/overview': 'overview.view',
+          '/admin/online-store/domains': 'settings.view',
           '/admin/online-store/heroes': 'settings.view',
           '/admin/tasks': 'settings.view',
           '/admin/settings': 'settings.view',
@@ -143,6 +173,7 @@ const AdminLayout = () => {
         if (requiredPermission && !permissionsLoading && !hasPermission(requiredPermission)) {
           return null;
         }
+        const badgeCount = item.badgeKey === 'pendingDomains' ? pendingDomainCount : 0;
         return (
           <button
             key={item.path}
@@ -158,7 +189,19 @@ const AdminLayout = () => {
             )}
           >
             <Icon className="h-4 w-4 flex-shrink-0" />
-            <span>{item.label}</span>
+            <span className="flex-1 text-left">{item.label}</span>
+            {badgeCount > 0 ? (
+              <span
+                className={cn(
+                  'min-w-[20px] h-5 px-1.5 flex items-center justify-center rounded-full text-[11px] font-bold',
+                  isActive
+                    ? 'bg-white text-brand'
+                    : 'bg-amber-100 text-amber-900 border border-amber-200'
+                )}
+              >
+                {badgeCount > 99 ? '99+' : badgeCount}
+              </span>
+            ) : null}
           </button>
         );
       })}

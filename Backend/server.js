@@ -414,6 +414,10 @@ if (!IS_VERCEL_SERVERLESS) {
     } else {
       console.warn(`[Server] Listening on port ${port} (production)`);
     }
+    // Warm CORS allowlist with connected (pending|verified) merchant custom domains
+    require('./utils/corsUtils').refreshVerifiedDomainOrigins().catch((err) => {
+      console.error('[Server] Failed loading custom-domain CORS origins:', err?.message || err);
+    });
     if (process.env.SABITO_SYNC_ENABLED !== 'false') {
       try {
         require('./services/sabitoScheduler').start();

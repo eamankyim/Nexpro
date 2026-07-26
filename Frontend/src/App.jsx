@@ -102,6 +102,7 @@ const AdminHealth = lazy(() => import('./pages/admin/AdminHealth'));
 const AdminAutomationsMessaging = lazy(() => import('./pages/admin/AdminAutomationsMessaging'));
 const AdminSettings = lazy(() => import('./pages/admin/AdminSettings'));
 const AdminOnlineStoreHeroes = lazy(() => import('./pages/admin/AdminOnlineStoreHeroes'));
+const AdminOnlineStoreDomains = lazy(() => import('./pages/admin/AdminOnlineStoreDomains'));
 const AdminUsers = lazy(() => import('./pages/admin/AdminUsers'));
 const AdminCustomers = lazy(() => import('./pages/admin/AdminCustomers'));
 const AdminSupportTickets = lazy(() => import('./pages/admin/AdminSupportTickets'));
@@ -419,6 +420,7 @@ function AppContent() {
             <Route path="sabito/customers" element={<SabitoAdmin section="customers" />} />
             <Route path="sabito/settings" element={<SabitoAdmin section="settings" />} />
             <Route path="online-store/heroes" element={<AdminOnlineStoreHeroes />} />
+            <Route path="online-store/domains" element={<AdminOnlineStoreDomains />} />
             <Route path="workspace" element={<AdminWorkspaceRedirect />} />
             <Route path="tasks" element={<HideForBootstrapSuperAdmin><Tasks /></HideForBootstrapSuperAdmin>} />
             <Route path="settings" element={<AdminSettings />} />

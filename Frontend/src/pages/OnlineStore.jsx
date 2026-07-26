@@ -20,9 +20,8 @@ import {
 } from '../utils/onlineStoreDefaults';
 import { showError, showSuccess } from '../utils/toast';
 import OnlineStoreWelcome from '../components/store/OnlineStoreWelcome';
-import OnlineStoreDashboard, {
-  buildDnsRecord,
-} from '../components/store/OnlineStoreDashboard';
+import OnlineStoreDashboard from '../components/store/OnlineStoreDashboard';
+import { buildDnsRecord } from '../components/store/ConnectDomainDialog';
 import StoreTemplateGalleryModal from '../components/store/StoreTemplateGalleryModal';
 
 /**

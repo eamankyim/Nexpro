@@ -1,10 +1,12 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Check,
   ChevronRight,
   Copy,
   ExternalLink,
+  Globe,
   HelpCircle,
   Package,
   Pencil,
@@ -12,9 +14,15 @@ import {
   Store,
 } from 'lucide-react';
 
+import storeService from '../../services/storeService';
 import { showError, showSuccess } from '../../utils/toast';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import ConnectDomainDialog, {
+  DomainStatusBadge,
+  buildDnsRecord,
+} from './ConnectDomainDialog';
+import OnlineStoreHelpBanner from './OnlineStoreHelpBanner';
 
 const CONFIG_STEPS = [
   { id: 'info', label: 'Store Information' },
@@ -33,12 +41,53 @@ const CONFIG_STEPS = [
  * }} props
  */
 const StoreSetupComplete = ({ publicStoreUrl, isStudioStore = false, onEditStep }) => {
+  const queryClient = useQueryClient();
+  const [domainDialogOpen, setDomainDialogOpen] = useState(false);
+  const [domainInput, setDomainInput] = useState('');
+
+  const { data: domainResponse } = useQuery({
+    queryKey: ['store', 'domain'],
+    queryFn: () => storeService.getDomainSettings(),
+  });
+
+  const domainData = domainResponse?.data ?? domainResponse ?? {};
+  const customDomain = domainData.customDomain || '';
+  const domainStatus = domainData.customDomainStatus || 'none';
+  const cnameTarget = domainData.cnameTarget || 'store.absghana.com';
+
   const displayUrl = useMemo(() => (
     String(publicStoreUrl || '').replace(/^https?:\/\//i, '')
   ), [publicStoreUrl]);
 
+  const dnsRecord = useMemo(
+    () => buildDnsRecord(customDomain, cnameTarget),
+    [customDomain, cnameTarget],
+  );
+
   const productsPath = isStudioStore ? '/store/services' : '/products';
   const productsLabel = isStudioStore ? 'Manage Services' : 'Manage Products';
+
+  useEffect(() => {
+    setDomainInput(customDomain);
+  }, [customDomain]);
+
+  const saveMutation = useMutation({
+    mutationFn: (domain) => storeService.updateDomain(domain),
+    onSuccess: () => {
+      showSuccess('Domain saved. Add the DNS record below at your domain provider.');
+      queryClient.invalidateQueries({ queryKey: ['store', 'domain'] });
+    },
+    onError: (error) => showError(error, 'Could not save domain'),
+  });
+
+  const disconnectMutation = useMutation({
+    mutationFn: () => storeService.updateDomain(''),
+    onSuccess: () => {
+      showSuccess('Custom domain disconnected');
+      queryClient.invalidateQueries({ queryKey: ['store', 'domain'] });
+    },
+    onError: (error) => showError(error, 'Could not disconnect domain'),
+  });
 
   const handleCopyLink = useCallback(async () => {
     if (!publicStoreUrl) {
@@ -52,6 +101,22 @@ const StoreSetupComplete = ({ publicStoreUrl, isStudioStore = false, onEditStep 
       showError('Could not copy the store link');
     }
   }, [publicStoreUrl]);
+
+  const handleSaveDomain = useCallback((event) => {
+    event.preventDefault();
+    saveMutation.mutate(domainInput.trim());
+  }, [domainInput, saveMutation]);
+
+  const handleCopyAllRecord = useCallback(async () => {
+    if (!dnsRecord) return;
+    const text = `Type: ${dnsRecord.type}\nHost / Name: ${dnsRecord.host}\nValue / Target / Points to: ${dnsRecord.value}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      showSuccess('DNS record copied');
+    } catch {
+      showError('Could not copy to clipboard');
+    }
+  }, [dnsRecord]);
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">
@@ -155,9 +220,19 @@ const StoreSetupComplete = ({ publicStoreUrl, isStudioStore = false, onEditStep 
 
       <Card className="border border-border">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Your Store Link</CardTitle>
+          <div className="flex flex-wrap items-center gap-2">
+            <CardTitle className="text-base">Your Store Link</CardTitle>
+            <DomainStatusBadge status={domainStatus} />
+          </div>
           <p className="text-sm text-muted-foreground">
             Share this URL so customers can shop from your storefront.
+            {customDomain ? (
+              <>
+                {' '}
+                Custom domain:{' '}
+                <span className="font-medium text-foreground">{customDomain}</span>
+              </>
+            ) : null}
           </p>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -166,7 +241,17 @@ const StoreSetupComplete = ({ publicStoreUrl, isStudioStore = false, onEditStep 
               {displayUrl || 'Store URL is not available yet'}
             </p>
           </div>
+          <OnlineStoreHelpBanner />
           <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              className="bg-background"
+              onClick={() => setDomainDialogOpen(true)}
+            >
+              <Globe className="mr-2 h-4 w-4" />
+              Connect Domain
+            </Button>
             <Button
               type="button"
               variant="outline"
@@ -178,14 +263,14 @@ const StoreSetupComplete = ({ publicStoreUrl, isStudioStore = false, onEditStep 
               Copy
             </Button>
             {publicStoreUrl ? (
-              <Button type="button" asChild>
+              <Button type="button" asChild className="bg-[#166534] text-white hover:bg-[#14532d]">
                 <a href={publicStoreUrl} target="_blank" rel="noreferrer">
                   <ExternalLink className="mr-2 h-4 w-4" />
                   Open Store
                 </a>
               </Button>
             ) : (
-              <Button type="button" disabled>
+              <Button type="button" disabled className="bg-[#166534] text-white hover:bg-[#14532d]">
                 <ExternalLink className="mr-2 h-4 w-4" />
                 Open Store
               </Button>
@@ -244,6 +329,22 @@ const StoreSetupComplete = ({ publicStoreUrl, isStudioStore = false, onEditStep 
           <Link to="/dashboard">Back to Dashboard</Link>
         </Button>
       </div>
+
+      <ConnectDomainDialog
+        open={domainDialogOpen}
+        onOpenChange={setDomainDialogOpen}
+        domainStatus={domainStatus}
+        domainInput={domainInput}
+        onDomainInputChange={setDomainInput}
+        customDomain={customDomain}
+        cnameTarget={cnameTarget}
+        dnsRecord={dnsRecord}
+        onSave={handleSaveDomain}
+        onDisconnect={() => disconnectMutation.mutate()}
+        onCopyAllRecord={handleCopyAllRecord}
+        savePending={saveMutation.isPending}
+        disconnectPending={disconnectMutation.isPending}
+      />
     </div>
   );
 };

@@ -25,6 +25,7 @@ const sendToPlatformAdmins = async ({ subject, html, text }) => {
     process.env.ADMIN_EMAIL,
     process.env.PLATFORM_ADMIN_EMAIL,
     process.env.SUPPORT_EMAIL,
+    process.env.ONLINE_STORE_OPS_EMAIL,
   ];
 
   const recipients = Array.from(
@@ -160,9 +161,61 @@ const notifyDataDeletionRequested = async ({
   await sendToPlatformAdmins({ subject, html, text });
 };
 
+/**
+ * Notify platform admins / ops when a merchant submits a custom domain for verification.
+ * @param {{
+ *   customDomain: string,
+ *   tenantName?: string,
+ *   tenantId?: string,
+ *   slug?: string,
+ *   displayName?: string,
+ *   actorName?: string,
+ *   actorEmail?: string,
+ * }} payload
+ */
+const notifyCustomDomainSubmitted = async ({
+  customDomain,
+  tenantName,
+  tenantId,
+  slug,
+  displayName,
+  actorName,
+  actorEmail,
+}) => {
+  const subject = `Online Store domain pending: ${toDisplay(customDomain)}`;
+  const html = `
+    <h2>Custom domain submitted</h2>
+    <p>A merchant requested custom domain verification for their Online Store.</p>
+    <ul>
+      <li><strong>Domain:</strong> ${escapeHtml(toDisplay(customDomain))}</li>
+      <li><strong>Store slug:</strong> ${escapeHtml(toDisplay(slug))}</li>
+      <li><strong>Store name:</strong> ${escapeHtml(toDisplay(displayName))}</li>
+      <li><strong>Tenant:</strong> ${escapeHtml(toDisplay(tenantName))}</li>
+      <li><strong>Tenant ID:</strong> ${escapeHtml(toDisplay(tenantId))}</li>
+      <li><strong>Submitted by:</strong> ${escapeHtml(toDisplay(actorName))} (${escapeHtml(toDisplay(actorEmail))})</li>
+    </ul>
+    <p>Review and verify in Control Center → Custom domains. Remember to add the domain in Vercel before marking verified.</p>
+  `.trim();
+
+  const text = [
+    'Custom domain submitted',
+    `Domain: ${toDisplay(customDomain)}`,
+    `Store slug: ${toDisplay(slug)}`,
+    `Store name: ${toDisplay(displayName)}`,
+    `Tenant: ${toDisplay(tenantName)}`,
+    `Tenant ID: ${toDisplay(tenantId)}`,
+    `Submitted by: ${toDisplay(actorName)} (${toDisplay(actorEmail)})`,
+    '',
+    'Review and verify in Control Center → Custom domains. Remember to add the domain in Vercel before marking verified.',
+  ].join('\n');
+
+  await sendToPlatformAdmins({ subject, html, text });
+};
+
 module.exports = {
   notifyAccountCreated,
   notifyTenantOnboarded,
   notifyDataDeletionRequested,
+  notifyCustomDomainSubmitted,
 };
 
