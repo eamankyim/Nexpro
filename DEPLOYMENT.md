@@ -292,7 +292,7 @@ cd ~/nexpro
 ./scripts/configure-sabitostore-production.sh
 ```
 
-The script backs up `Backend/.env`, sets `STOREFRONT_URL`, `FRONTEND_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, merges required origins into `CORS_ORIGIN`, writes `Frontend/.env.production` and `storefront/.env.production` (including `VITE_GOOGLE_CLIENT_ID`), restarts `nexpro-backend` (systemd, or pm2 fallback), and curls `/health`.
+The script backs up `Backend/.env`, sets `STOREFRONT_URL`, `FRONTEND_URL`, `ONLINE_STORE_URL`, `STOREFRONT_CNAME_TARGET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, merges required origins into `CORS_ORIGIN` (including `https://store.absghana.com`), writes `Frontend/.env.production` and `storefront/.env.production` (including `VITE_GOOGLE_CLIENT_ID`), restarts `nexpro-backend` (systemd, or pm2 fallback), and curls `/health`.
 
 | Flag | Effect |
 |------|--------|
@@ -306,3 +306,18 @@ The script backs up `Backend/.env`, sets `STOREFRONT_URL`, `FRONTEND_URL`, `GOOG
 | `--google-client-secret=…` | Google OAuth client secret (Backend `.env` only) |
 
 Run `./scripts/configure-sabitostore-production.sh --help` for full usage.
+
+### ABS Online Store only (`store.absghana.com`)
+
+To upsert just the Online Store backend keys from your laptop (SSH; no password in the script):
+
+```bash
+# Default host matches Backend/scripts docs: root@62.169.22.3
+./scripts/configure-online-store-production.sh
+
+# Or use an ~/.ssh/config Host alias / override:
+CONTABO_HOST=contabo ./scripts/configure-online-store-production.sh
+CONTABO_HOST=root@62.169.22.3 ./scripts/configure-online-store-production.sh --env-only
+```
+
+Sets `ONLINE_STORE_URL=https://store.absghana.com`, `STOREFRONT_CNAME_TARGET=store.absghana.com`, merges `https://store.absghana.com` into `CORS_ORIGIN`, backs up `Backend/.env`, and restarts `nexpro-backend` (unless `--env-only`). On the VPS itself: `./scripts/configure-online-store-production.sh --local`.

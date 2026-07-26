@@ -66,7 +66,12 @@ REQUIRED_CORS_ORIGINS=(
   "https://absghana.com"
   "https://www.absghana.com"
   "https://myapp.absghana.com"
+  "https://store.absghana.com"
 )
+
+# ABS Online Store (merchant shops / custom-domain CNAME target). Independent of Sabito STOREFRONT_URL.
+ONLINE_STORE_URL="${ONLINE_STORE_URL:-https://store.absghana.com}"
+STOREFRONT_CNAME_TARGET="${STOREFRONT_CNAME_TARGET:-store.absghana.com}"
 
 usage() {
   sed -n '3,36p' "$0" | sed 's/^# \{0,1\}//'
@@ -329,6 +334,8 @@ main() {
   FRONTEND_URL="$(strip_trailing_slash "$FRONTEND_URL")"
   API_URL="$(strip_trailing_slash "$API_URL")"
   DASHBOARD_URL="$(strip_trailing_slash "${DASHBOARD_URL:-$FRONTEND_URL}")"
+  ONLINE_STORE_URL="$(strip_trailing_slash "$ONLINE_STORE_URL")"
+  STOREFRONT_CNAME_TARGET="$(printf '%s' "$STOREFRONT_CNAME_TARGET" | sed -E 's#^https?://##I' | sed 's:/.*$::' | sed 's:/*$::')"
 
   detect_repo_root
 
@@ -353,6 +360,8 @@ main() {
 
   set_env_var "$backend_env" "STOREFRONT_URL" "$STOREFRONT_URL"
   set_env_var "$backend_env" "FRONTEND_URL" "$FRONTEND_URL"
+  set_env_var "$backend_env" "ONLINE_STORE_URL" "$ONLINE_STORE_URL"
+  set_env_var "$backend_env" "STOREFRONT_CNAME_TARGET" "$STOREFRONT_CNAME_TARGET"
   set_env_var "$backend_env" "CORS_ORIGIN" "$merged_cors"
   set_env_var "$backend_env" "GOOGLE_CLIENT_ID" "$GOOGLE_CLIENT_ID"
   if [[ -n "$GOOGLE_CLIENT_SECRET" ]]; then
@@ -375,6 +384,8 @@ main() {
   log "Backend ($backend_env):"
   log "  STOREFRONT_URL=$STOREFRONT_URL"
   log "  FRONTEND_URL=$FRONTEND_URL"
+  log "  ONLINE_STORE_URL=$ONLINE_STORE_URL"
+  log "  STOREFRONT_CNAME_TARGET=$STOREFRONT_CNAME_TARGET"
   log "  CORS_ORIGIN=$merged_cors"
   log "  GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID"
   log "  GOOGLE_CLIENT_SECRET=(set)"
