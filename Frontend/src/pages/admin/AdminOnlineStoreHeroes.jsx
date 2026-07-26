@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ImagePlus, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import adminService from '../../services/adminService';
 import { API_BASE_URL } from '../../services/api';
+import OnlineStoreAdminChrome from '../../components/admin/OnlineStoreAdminChrome';
 import { usePlatformAdminPermissions } from '../../context/PlatformAdminPermissionsContext';
 import { showError, showSuccess } from '../../utils/toast';
 import { Button } from '@/components/ui/button';
@@ -216,44 +217,39 @@ const AdminOnlineStoreHeroes = () => {
 
   if (permissionsLoading) {
     return (
-      <div className="flex min-h-[40vh] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-green-700" />
-      </div>
+      <OnlineStoreAdminChrome section="heroes">
+        <div className="flex min-h-[40vh] items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-green-700" />
+        </div>
+      </OnlineStoreAdminChrome>
     );
   }
 
   if (!canManage) {
     return (
-      <Card>
-        <CardContent className="p-6 text-sm text-slate-600">
+      <OnlineStoreAdminChrome section="heroes">
+        <p className="text-sm text-muted-foreground">
           You do not have permission to manage the hero library.
-        </CardContent>
-      </Card>
+        </p>
+      </OnlineStoreAdminChrome>
     );
   }
 
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-950">Hero library</h1>
-          <p className="mt-1 text-sm text-slate-600">
-            Upload Online Store hero designs with 3–5 colorways. Merchants pick designs; we match color to their brand.
-            Prefer 1920×600 images.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" onClick={load} disabled={loading}>
-            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
-          <Button type="button" className="bg-green-700 hover:bg-green-800" onClick={openCreateDesign}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add design
-          </Button>
-        </div>
-      </div>
+  const toolbar = (
+    <div className="flex flex-wrap gap-2">
+      <Button type="button" variant="outline" onClick={load} disabled={loading}>
+        <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+        Refresh
+      </Button>
+      <Button type="button" className="bg-green-700 hover:bg-green-800" onClick={openCreateDesign}>
+        <Plus className="mr-2 h-4 w-4" />
+        Add design
+      </Button>
+    </div>
+  );
 
+  return (
+    <OnlineStoreAdminChrome section="heroes" actions={toolbar}>
       <Card className="border border-slate-200">
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Categories</CardTitle>
@@ -470,7 +466,7 @@ const AdminOnlineStoreHeroes = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </OnlineStoreAdminChrome>
   );
 };
 

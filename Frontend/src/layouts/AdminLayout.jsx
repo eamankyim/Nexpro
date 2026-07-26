@@ -22,8 +22,7 @@ import {
   ShoppingBag,
   Workflow,
   BadgePercent,
-  GalleryHorizontal,
-  Globe,
+  Store,
 } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -79,8 +78,15 @@ const menuItems = [
   { path: '/admin/automations', icon: Workflow, label: 'Automations' },
   { path: '/admin/support-tickets', icon: LifeBuoy, label: 'Support Tickets' },
   { path: '/admin/sabito/overview', icon: ShoppingBag, label: 'Sabito Admin', activePrefix: '/admin/sabito' },
-  { path: '/admin/online-store/domains', icon: Globe, label: 'Custom domains', activePrefix: '/admin/online-store/domains', badgeKey: 'pendingDomains' },
-  { path: '/admin/online-store/heroes', icon: GalleryHorizontal, label: 'Hero library', activePrefix: '/admin/online-store/heroes' },
+  {
+    path: '/admin/online-store/domains',
+    icon: Store,
+    label: 'Online Store Admin',
+    activePrefix: '/admin/online-store',
+    badgeKey: 'pendingDomains',
+    // Visible if any Online Store Admin child is accessible
+    anyPermission: ['tenants.view', 'settings.view'],
+  },
   { path: '/admin/tasks', icon: CheckSquare, label: 'Tasks' },
   { path: '/admin/settings', icon: Settings, label: 'Settings' },
 ];
@@ -110,10 +116,11 @@ const AdminLayout = () => {
     [isBootstrapSuperAdmin]
   );
 
-  const canViewSettings = !permissionsLoading && hasPermission('settings.view');
+  // Same gate as Tenants — all platform admin roles have tenants.view
+  const canViewCustomDomains = !permissionsLoading && hasPermission('tenants.view');
 
   useEffect(() => {
-    if (!canViewSettings) return undefined;
+    if (!canViewCustomDomains) return undefined;
 
     let cancelled = false;
     const loadPendingCount = async () => {
@@ -133,7 +140,7 @@ const AdminLayout = () => {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [canViewSettings, location.pathname]);
+  }, [canViewCustomDomains, location.pathname]);
 
   const handleNavigateToSabito = () => {
     const token = localStorage.getItem('token');
@@ -164,13 +171,18 @@ const AdminLayout = () => {
           '/admin/automations': 'automations.view',
           '/admin/support-tickets': 'tickets.view',
           '/admin/sabito/overview': 'overview.view',
-          '/admin/online-store/domains': 'settings.view',
-          '/admin/online-store/heroes': 'settings.view',
           '/admin/tasks': 'settings.view',
           '/admin/settings': 'settings.view',
         };
         const requiredPermission = permissionMap[item.path];
-        if (requiredPermission && !permissionsLoading && !hasPermission(requiredPermission)) {
+        if (item.anyPermission?.length) {
+          if (
+            !permissionsLoading &&
+            !item.anyPermission.some((key) => hasPermission(key))
+          ) {
+            return null;
+          }
+        } else if (requiredPermission && !permissionsLoading && !hasPermission(requiredPermission)) {
           return null;
         }
         const badgeCount = item.badgeKey === 'pendingDomains' ? pendingDomainCount : 0;

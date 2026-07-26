@@ -145,6 +145,12 @@ function App() {
     return <CustomDomainPendingPage variant="unavailable" />;
   }
 
+  // API answered matched:false — domain is not connected (or tenant inactive).
+  // Still not Sabito marketplace chrome on a merchant-looking host.
+  if (customDomain.unmatched) {
+    return <CustomDomainPendingPage variant="unmatched" />;
+  }
+
   if (customDomain.isAbsOnlineStoreHost) {
     return (
       <BrowserRouter future={ROUTER_FUTURE}>

@@ -155,14 +155,12 @@ const isLanOrigin = (o) => {
 };
 
 /**
- * Check if an origin is allowed (exact match, vercel.app, Cloudflare Pages *.pages.dev,
- * or a connected merchant custom domain — pending or verified).
- * @param {string} origin - Request origin
- * @returns {boolean}
+ * Static / env allowlist checks (no custom-domain DB cache).
+ * @param {string} o - Normalized origin
+ * @returns {boolean|null} true/false when decided; null when caller should check custom domains
  */
-const isOriginAllowed = (origin) => {
-  if (!origin) return false;
-  const o = normalize(origin);
+const checkStaticOrigin = (o) => {
+  if (!o) return false;
   if (o.includes('vercel.app')) return true;
   if (o.includes('pages.dev')) return true;
   const notProduction = process.env.NODE_ENV !== 'production';
@@ -172,7 +170,47 @@ const isOriginAllowed = (origin) => {
     console.warn('[CORS] LAN origin rejected (NODE_ENV=%s). Set NODE_ENV=development for mobile testing: %s', process.env.NODE_ENV, o);
   }
   if (getAllowedOrigins().includes(o)) return true;
+  return null;
+};
+
+/**
+ * Sync check if an origin is allowed. Prefer isOriginAllowedAsync on request paths —
+ * this sync variant can false-negative while the custom-domain cache is still loading.
+ * @param {string} origin - Request origin
+ * @returns {boolean}
+ */
+const isOriginAllowed = (origin) => {
+  if (!origin) return false;
+  const o = normalize(origin);
+  const staticResult = checkStaticOrigin(o);
+  if (staticResult !== null) return staticResult;
   maybeRefreshVerifiedDomainOrigins();
+  return verifiedDomainOrigins.has(o);
+};
+
+/**
+ * Async CORS check: awaits custom-domain cache load on cold start / in-flight refresh
+ * before rejecting. Fixes browsers hitting merchant domains right after API restart
+ * (sync check returned false → "Not allowed by CORS" → storefront "unavailable").
+ * @param {string} origin - Request origin
+ * @returns {Promise<boolean>}
+ */
+const isOriginAllowedAsync = async (origin) => {
+  if (!origin) return false;
+  const o = normalize(origin);
+  const staticResult = checkStaticOrigin(o);
+  if (staticResult !== null) return staticResult;
+
+  if (verifiedDomainOrigins.has(o)) {
+    maybeRefreshVerifiedDomainOrigins();
+    return true;
+  }
+
+  const neverLoaded = verifiedOriginsLastRefresh === 0;
+  const stale = Date.now() - verifiedOriginsLastRefresh >= VERIFIED_ORIGINS_TTL_MS;
+  if (neverLoaded || stale || verifiedOriginsRefreshPromise) {
+    await refreshVerifiedDomainOrigins();
+  }
   return verifiedDomainOrigins.has(o);
 };
 
@@ -211,10 +249,30 @@ const setCorsHeaders = (res, origin) => {
   return allowed;
 };
 
+/**
+ * Async variant of setCorsHeaders — awaits custom-domain cache when needed.
+ * @param {object} res - Express response
+ * @param {string} origin - Request Origin header
+ * @returns {Promise<boolean>}
+ */
+const setCorsHeadersAsync = async (res, origin) => {
+  const allowed = !!(origin && (await isOriginAllowedAsync(origin)));
+  if (allowed) {
+    res.setHeader('Access-Control-Allow-Origin', normalize(origin));
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', ALLOWED_CORS_HEADERS.join(', '));
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  return allowed;
+};
+
 module.exports = {
   getAllowedOrigins,
   isOriginAllowed,
+  isOriginAllowedAsync,
   setCorsHeaders,
+  setCorsHeadersAsync,
   normalize,
   hostVariants,
   originsForHost,

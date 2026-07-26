@@ -60,11 +60,13 @@ const isKnownSharedStorefrontHost = (hostname) => {
  *
  * On lookup failure (CORS, network), `resolveFailed` is true so App does not fall through
  * to Sabito marketplace chrome for an unknown host that is clearly not a platform domain.
+ * On a successful `matched: false`, `unmatched` is true — show a not-connected page, not Sabito.
  *
  * @returns {{
  *   isLoading: boolean,
  *   matched: boolean,
  *   resolveFailed: boolean,
+ *   unmatched: boolean,
  *   slug: string|null,
  *   launched: boolean,
  *   displayName: string|null,
@@ -78,12 +80,15 @@ export const useCustomDomainStore = () => {
   const onAbsOnlineStoreHost = isAbsOnlineStoreHost(hostname) || ABS_ONLINE_STORE_HOSTS.has(hostname);
   const skip = isKnownSharedStorefrontHost(hostname);
 
-  const { data, isLoading, isError, isFetched, failureCount } = useQuery({
+  const { data, isLoading, isError, isFetched, isSuccess, failureCount } = useQuery({
     queryKey: ['custom-domain-resolve', hostname],
     queryFn: () => storeService.resolveDomain(hostname),
     enabled: !skip,
     staleTime: 5 * 60 * 1000,
-    retry: 2,
+    // Extra retries + short backoff: API CORS cache can be cold right after restart.
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 4000),
+    refetchOnWindowFocus: true,
   });
 
   if (skip) {
@@ -91,6 +96,7 @@ export const useCustomDomainStore = () => {
       isLoading: false,
       matched: false,
       resolveFailed: false,
+      unmatched: false,
       slug: null,
       launched: false,
       displayName: null,
@@ -104,11 +110,14 @@ export const useCustomDomainStore = () => {
   // After retries exhausted with no successful payload, treat as resolve failure —
   // never silently render Sabito marketplace on a merchant custom domain.
   const resolveFailed = Boolean(isError && isFetched && !matched && failureCount > 0);
+  // API answered but no store is connected to this host.
+  const unmatched = Boolean(isSuccess && isFetched && !matched && !resolveFailed);
 
   return {
     isLoading,
     matched,
     resolveFailed,
+    unmatched,
     slug: payload.slug || null,
     launched: Boolean(payload.launched),
     displayName: payload.displayName || null,

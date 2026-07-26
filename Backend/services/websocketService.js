@@ -1,7 +1,7 @@
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const config = require('../config/config');
-const { isOriginAllowed } = require('../utils/corsUtils');
+const { isOriginAllowedAsync } = require('../utils/corsUtils');
 
 let io = null;
 
@@ -18,8 +18,12 @@ const initializeWebSocket = (server) => {
       origin: (origin, callback) => {
         // Allow requests with no origin (mobile apps, Postman, etc.)
         if (!origin) return callback(null, true);
-        if (isOriginAllowed(origin)) return callback(null, origin);
-        callback(new Error('WebSocket CORS not allowed'));
+        isOriginAllowedAsync(origin)
+          .then((allowed) => {
+            if (allowed) callback(null, origin);
+            else callback(new Error('WebSocket CORS not allowed'));
+          })
+          .catch((err) => callback(err));
       },
       methods: ['GET', 'POST'],
       credentials: true

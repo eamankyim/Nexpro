@@ -419,8 +419,9 @@ function AppContent() {
             <Route path="sabito/disputes" element={<SabitoAdmin section="disputes" />} />
             <Route path="sabito/customers" element={<SabitoAdmin section="customers" />} />
             <Route path="sabito/settings" element={<SabitoAdmin section="settings" />} />
-            <Route path="online-store/heroes" element={<AdminOnlineStoreHeroes />} />
+            <Route path="online-store" element={<Navigate to="/admin/online-store/domains" replace />} />
             <Route path="online-store/domains" element={<AdminOnlineStoreDomains />} />
+            <Route path="online-store/heroes" element={<AdminOnlineStoreHeroes />} />
             <Route path="workspace" element={<AdminWorkspaceRedirect />} />
             <Route path="tasks" element={<HideForBootstrapSuperAdmin><Tasks /></HideForBootstrapSuperAdmin>} />
             <Route path="settings" element={<AdminSettings />} />

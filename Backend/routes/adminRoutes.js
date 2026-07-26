@@ -400,17 +400,17 @@ const {
 
 router.get(
   '/online-store/domains',
-  requirePlatformAdminPermission('settings.view'),
+  requirePlatformAdminPermission('tenants.view'),
   listCustomDomains
 );
 router.get(
   '/online-store/domains/pending-count',
-  requirePlatformAdminPermission('settings.view'),
+  requirePlatformAdminPermission('tenants.view'),
   getPendingCustomDomainCount
 );
 router.patch(
   '/online-store/domains/:id',
-  requirePlatformAdminPermission('settings.view'),
+  requirePlatformAdminPermission('tenants.view'),
   updateCustomDomainStatus
 );
 

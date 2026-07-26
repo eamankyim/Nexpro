@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { isOriginAllowed, ALLOWED_CORS_HEADERS } = require('../utils/corsUtils');
+const { isOriginAllowedAsync, ALLOWED_CORS_HEADERS } = require('../utils/corsUtils');
 
 module.exports = {
   port: process.env.PORT || 5000,
@@ -11,10 +11,16 @@ module.exports = {
   },
 
   cors: {
+    // Await custom-domain allowlist load on cold start so merchant hosts are not
+    // falsely rejected before refreshVerifiedDomainOrigins finishes.
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
-      if (isOriginAllowed(origin)) return callback(null, origin);
-      callback(new Error('Not allowed by CORS'));
+      isOriginAllowedAsync(origin)
+        .then((allowed) => {
+          if (allowed) callback(null, origin);
+          else callback(new Error('Not allowed by CORS'));
+        })
+        .catch((err) => callback(err));
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],

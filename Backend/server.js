@@ -39,7 +39,7 @@ const { sequelize, testConnection } = require('./config/database');
 const errorHandler = require('./middleware/errorHandler');
 const requestTiming = require('./middleware/requestTiming');
 const { generalLimiter, webhookLimiter } = require('./middleware/rateLimiter');
-const { isOriginAllowed, setCorsHeaders } = require('./utils/corsUtils');
+const { isOriginAllowed, setCorsHeadersAsync } = require('./utils/corsUtils');
 const { csrfProtection } = require('./middleware/csrfProtection');
 const { sanitizeInputs } = require('./middleware/sanitizer');
 const { checkRouteAccess } = require('./middleware/featureAccess');
@@ -146,10 +146,11 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
 
 // Explicit OPTIONS preflight for /api (runs before rate limit). CORS uses preflightContinue,
 // so we must respond to OPTIONS here and always send CORS headers.
-app.use('/api', (req, res, next) => {
+// Await custom-domain cache on cold start so merchant Origin is not missing Allow-Origin.
+app.use('/api', async (req, res, next) => {
   if (req.method !== 'OPTIONS') return next();
   const origin = req.get('Origin');
-  setCorsHeaders(res, origin);
+  await setCorsHeadersAsync(res, origin);
   return res.sendStatus(204);
 });
 
@@ -218,9 +219,8 @@ if (config.nodeEnv === 'development') {
 if (IS_VERCEL_SERVERLESS) {
   app.use('/socket.io', (req, res) => {
     if (req.method === 'OPTIONS') {
-      const { setCorsHeaders } = require('./utils/corsUtils');
-      setCorsHeaders(res, req.get('Origin'));
-      return res.sendStatus(204);
+      const { setCorsHeadersAsync } = require('./utils/corsUtils');
+      return setCorsHeadersAsync(res, req.get('Origin')).then(() => res.sendStatus(204));
     }
     res.status(503).json({ websocket: false, message: 'WebSocket not available on this deployment' });
   });

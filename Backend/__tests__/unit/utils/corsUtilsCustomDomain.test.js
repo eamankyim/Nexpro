@@ -13,6 +13,7 @@ const {
   originsForHost,
   refreshVerifiedDomainOrigins,
   isOriginAllowed,
+  isOriginAllowedAsync,
 } = require('../../../utils/corsUtils');
 
 describe('corsUtils — custom domain origins', () => {
@@ -58,5 +59,24 @@ describe('corsUtils — custom domain origins', () => {
     );
     expect(isOriginAllowed('https://www.gapconnects.com')).toBe(true);
     expect(isOriginAllowed('https://gapconnects.com')).toBe(true);
+  });
+
+  it('awaits cold-cache load before rejecting an unknown custom origin', async () => {
+    jest.resetModules();
+    jest.doMock('../../../models', () => ({
+      OnlineStoreSettings: { findAll: jest.fn() },
+    }));
+    // eslint-disable-next-line global-require
+    const { OnlineStoreSettings: FreshSettings } = require('../../../models');
+    FreshSettings.findAll.mockResolvedValueOnce([
+      { customDomain: 'www.gapconnects.com' },
+    ]);
+    // eslint-disable-next-line global-require
+    const cors = require('../../../utils/corsUtils');
+
+    // Sync check on empty cache would false-negative; async must succeed after DB load.
+    expect(cors.isOriginAllowed('https://www.gapconnects.com')).toBe(false);
+    await expect(cors.isOriginAllowedAsync('https://www.gapconnects.com')).resolves.toBe(true);
+    expect(FreshSettings.findAll).toHaveBeenCalled();
   });
 });

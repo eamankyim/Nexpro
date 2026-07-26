@@ -3,6 +3,7 @@ import { CheckCircle2, Globe, Loader2, RefreshCw, ShieldOff, XCircle } from 'luc
 import dayjs from 'dayjs';
 
 import adminService from '../../services/adminService';
+import OnlineStoreAdminChrome from '../../components/admin/OnlineStoreAdminChrome';
 import { useDebounce } from '../../hooks/useDebounce';
 import { useSmartSearch } from '../../context/SmartSearchContext';
 import { usePlatformAdminPermissions } from '../../context/PlatformAdminPermissionsContext';
@@ -57,7 +58,7 @@ const StatusBadge = ({ status }) => {
 const AdminOnlineStoreDomains = () => {
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const { hasPermission, loading: permissionsLoading } = usePlatformAdminPermissions();
-  const canManage = hasPermission('settings.view');
+  const canManage = hasPermission('tenants.view');
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
 
   const [rows, setRows] = useState([]);
@@ -132,45 +133,35 @@ const AdminOnlineStoreDomains = () => {
 
   if (!permissionsLoading && !canManage) {
     return (
-      <div className="space-y-2">
-        <h1 className="text-xl font-semibold">Custom domains</h1>
-        <p className="text-sm text-muted-foreground">You do not have permission to manage Online Store domains.</p>
-      </div>
+      <OnlineStoreAdminChrome section="domains">
+        <p className="text-sm text-muted-foreground">
+          You do not have permission to manage Online Store domains.
+        </p>
+      </OnlineStoreAdminChrome>
     );
   }
 
-  return (
-    <div className="space-y-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Custom domains</h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Merchants submit domains from Online Store → Connect Domain. Verify after DNS points at the
-            storefront CNAME target. Verified domains are added to API CORS automatically.
-          </p>
-          <p className="mt-2 max-w-2xl rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-            Vercel: you must still add each domain manually in the Vercel project (Domains) so TLS and
-            routing work. Marking Verified here does not provision the domain on Vercel.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[160px]">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="verified">Verified</SelectItem>
-              <SelectItem value="all">All with domain</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button type="button" variant="outline" onClick={load} disabled={loading}>
-            {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-            Refresh
-          </Button>
-        </div>
-      </div>
+  const toolbar = (
+    <div className="flex flex-wrap items-center gap-2">
+      <Select value={statusFilter} onValueChange={setStatusFilter}>
+        <SelectTrigger className="w-[160px]">
+          <SelectValue placeholder="Status" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="pending">Pending</SelectItem>
+          <SelectItem value="verified">Verified</SelectItem>
+          <SelectItem value="all">All with domain</SelectItem>
+        </SelectContent>
+      </Select>
+      <Button type="button" variant="outline" onClick={load} disabled={loading}>
+        {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+        Refresh
+      </Button>
+    </div>
+  );
 
+  return (
+    <OnlineStoreAdminChrome section="domains" actions={toolbar}>
       <div className="overflow-x-auto rounded-lg border border-border">
         <Table>
           <TableHeader>
@@ -294,7 +285,7 @@ const AdminOnlineStoreDomains = () => {
           </div>
         </div>
       ) : null}
-    </div>
+    </OnlineStoreAdminChrome>
   );
 };
 
