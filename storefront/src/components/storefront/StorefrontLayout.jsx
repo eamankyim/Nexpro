@@ -408,7 +408,7 @@ export const StoreLogo = ({ store: storeItem }) => {
       <img
         src={logoUrl}
         alt={storeItem.displayName}
-        className="h-full w-full object-contain p-2"
+        className="h-full w-full object-contain"
       />
     );
   }
@@ -900,7 +900,7 @@ export const StoreScopedFooter = ({
       <div className="mx-auto grid w-full max-w-[1440px] gap-8 px-4 py-12 md:grid-cols-2 lg:grid-cols-[1.35fr_repeat(4,1fr)]">
         <div>
           <Link to={storeBasePath} className="flex min-w-0 items-center gap-3">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/15 bg-white p-1">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/15 bg-white">
               <StoreLogo store={store} />
             </span>
             <span className="min-w-0">

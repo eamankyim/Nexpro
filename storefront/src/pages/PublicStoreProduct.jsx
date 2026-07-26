@@ -597,7 +597,7 @@ const PublicStoreProduct = () => {
           <Link to={storeBasePath} className="flex min-w-0 items-center gap-3 text-slate-900">
             <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-green-50">
               {resolveImageUrl(store.logoUrl) ? (
-                <img src={resolveImageUrl(store.logoUrl)} alt={store.displayName} className="h-full w-full object-contain p-1.5" />
+                <img src={resolveImageUrl(store.logoUrl)} alt={store.displayName} className="h-full w-full object-contain" />
               ) : (
                 <Store className="h-5 w-5 text-green-700" />
               )}
