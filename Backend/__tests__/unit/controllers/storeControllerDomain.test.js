@@ -114,7 +114,7 @@ describe('storeController — "Online Store" custom domain', () => {
         customDomain: null,
         customDomainStatus: 'none',
       });
-      expect(payload.cnameTarget).toBe('www.absghana.com');
+      expect(payload.cnameTarget).toBe('store.absghana.com');
     });
 
     it('does not use Sabito STOREFRONT_URL for cnameTarget', async () => {
@@ -132,7 +132,7 @@ describe('storeController — "Online Store" custom domain', () => {
 
       await storeController.getDomainSettings(req, res, jest.fn());
 
-      expect(res.json.mock.calls[0][0].data.cnameTarget).toBe('www.absghana.com');
+      expect(res.json.mock.calls[0][0].data.cnameTarget).toBe('store.absghana.com');
     });
 
     it('prefers STOREFRONT_CNAME_TARGET over defaults', async () => {

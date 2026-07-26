@@ -63,7 +63,7 @@ const OnlineStore = () => {
 
   const data = response?.data ?? response ?? {};
   const hasStoreSettings = Boolean(data.hasStoreSettings);
-  const cnameTarget = data.cnameTarget || 'www.absghana.com';
+  const cnameTarget = data.cnameTarget || 'store.absghana.com';
   const domainStatus = data.customDomainStatus || 'none';
 
   const { data: settingsResponse, isLoading: settingsLoading } = useQuery({

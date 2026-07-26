@@ -20,10 +20,34 @@ export const STOREFRONT_URL = normalizeOrigin(
   typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3002',
 );
 
+/** Hostname for ABS Online Store shared SPA (store.absghana.com) — not marketing www. */
+export const ABS_ONLINE_STORE_HOST = String(
+  import.meta.env.VITE_ONLINE_STORE_HOST
+  || (import.meta.env.VITE_ONLINE_STORE_URL
+    ? String(import.meta.env.VITE_ONLINE_STORE_URL).replace(/^https?:\/\//i, '').replace(/\/+$/g, '').split('/')[0]
+    : '')
+  || 'store.absghana.com',
+).trim().toLowerCase().replace(/^https?:\/\//i, '').replace(/\/+$/g, '') || 'store.absghana.com';
+
 /** Hostname for the public template gallery (templates.absghana.com). */
 export const TEMPLATES_GALLERY_HOST = String(
   import.meta.env.VITE_TEMPLATES_HOST || 'templates.absghana.com',
 ).trim().toLowerCase().replace(/^https?:\/\//i, '').replace(/\/+$/g, '') || 'templates.absghana.com';
+
+/**
+ * True when this host is the ABS Online Store shared storefront (not marketing, not Sabito).
+ * Path-based `/shop/:slug` mode applies; do not force marketplace chrome for Online Store routes.
+ * @param {string} [hostname]
+ */
+export const isAbsOnlineStoreHost = (hostname) => {
+  const host = String(hostname || (typeof window !== 'undefined' ? window.location.hostname : '')).toLowerCase();
+  if (!host) return false;
+  if (host === ABS_ONLINE_STORE_HOST) return true;
+  if (host === `www.${ABS_ONLINE_STORE_HOST}`) return true;
+  if (host === 'store.absghana.com' || host === 'www.store.absghana.com') return true;
+  if (host === 'store.africanbusinesssuite.com') return true;
+  return false;
+};
 
 /**
  * True when the current page should render the template gallery as the site home.

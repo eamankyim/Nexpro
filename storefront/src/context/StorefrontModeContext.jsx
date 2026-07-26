@@ -18,6 +18,7 @@ const StorefrontModeContext = createContext({
   isTemplatesMode: false,
   isMarketplaceMode: true,
   isCustomDomain: false,
+  isAbsOnlineStoreHost: false,
   storeSlug: null,
   /** @type {'shop' | 'stores' | null} */
   pathPrefix: null,
@@ -76,9 +77,12 @@ export const isStorefrontCommercePath = (pathname = '') => {
 
 /**
  * Marketplace discovery (or marketplace store pages) — clears Online Store session.
+ * On the ABS Online Store host (`store.absghana.com`), bare `/shop` is not a Sabito
+ * products alias, so it does not clear the Online Store session.
  * @param {string} pathname
+ * @param {{ isAbsOnlineStoreHost?: boolean }} [opts]
  */
-export const isMarketplaceDiscoveryPath = (pathname = '') => {
+export const isMarketplaceDiscoveryPath = (pathname = '', opts = {}) => {
   const path = String(pathname || '');
   if (path === '/' || path === '/marketplace') return true;
   if (path === '/stores' || path.startsWith('/stores/')) return true;
@@ -87,8 +91,8 @@ export const isMarketplaceDiscoveryPath = (pathname = '') => {
   if (path === '/studios' || path.startsWith('/studios/')) return true;
   if (path === '/deals' || path === '/new-arrivals' || path === '/foods') return true;
   if (path === '/about-contact' || path === '/about' || path === '/contact') return true;
-  // Bare /shop is a marketplace products alias (see App.jsx)
-  if (path === '/shop') return true;
+  // Bare /shop is a marketplace products alias on Sabito — not on ABS Online Store host
+  if (path === '/shop' && !opts.isAbsOnlineStoreHost) return true;
   return false;
 };
 
@@ -245,6 +249,7 @@ export const persistOnlineStoreBrand = (store, opts = {}) => {
  * @param {{
  *   isTemplatesHost?: boolean,
  *   isCustomDomain?: boolean,
+ *   isAbsOnlineStoreHost?: boolean,
  *   customDomainSlug?: string|null,
  *   pathname?: string,
  *   onlineStoreSession?: {slug: string, pathPrefix?: 'shop'|'stores'}|null,
@@ -254,6 +259,7 @@ export const persistOnlineStoreBrand = (store, opts = {}) => {
 export const resolveStorefrontMode = ({
   isTemplatesHost = false,
   isCustomDomain = false,
+  isAbsOnlineStoreHost = false,
   customDomainSlug = null,
   pathname = '',
   onlineStoreSession = null,
@@ -285,6 +291,11 @@ export const resolveStorefrontMode = ({
         pathPrefix: session.pathPrefix === 'stores' ? 'stores' : 'shop',
       };
     }
+    // On ABS Online Store host, prefer Online Store chrome over Sabito marketplace
+    // when a shopper hits commerce routes without a session yet.
+    if (isAbsOnlineStoreHost) {
+      return { mode: 'online-store', storeSlug: null, pathPrefix: 'shop' };
+    }
   }
 
   return { mode: 'marketplace', storeSlug: null, pathPrefix: null };
@@ -298,6 +309,7 @@ export const resolveStorefrontMode = ({
  *   children: import('react').ReactNode,
  *   isTemplatesHost?: boolean,
  *   isCustomDomain?: boolean,
+ *   isAbsOnlineStoreHost?: boolean,
  *   customDomainSlug?: string|null,
  *   forceMode?: StorefrontMode|null,
  * }} props
@@ -306,6 +318,7 @@ export function StorefrontModeProvider({
   children,
   isTemplatesHost = false,
   isCustomDomain = false,
+  isAbsOnlineStoreHost = false,
   customDomainSlug = null,
   forceMode = null,
 }) {
@@ -323,10 +336,10 @@ export function StorefrontModeProvider({
       return;
     }
 
-    if (isMarketplaceDiscoveryPath(path)) {
+    if (isMarketplaceDiscoveryPath(path, { isAbsOnlineStoreHost })) {
       writeOnlineStoreSession(null);
     }
-  }, [forceMode, isCustomDomain, isTemplatesHost, location.pathname]);
+  }, [forceMode, isAbsOnlineStoreHost, isCustomDomain, isTemplatesHost, location.pathname]);
 
   const value = useMemo(() => {
     const resolved = forceMode
@@ -340,6 +353,7 @@ export function StorefrontModeProvider({
       : resolveStorefrontMode({
         isTemplatesHost,
         isCustomDomain,
+        isAbsOnlineStoreHost,
         customDomainSlug,
         pathname: location.pathname,
       });
@@ -350,6 +364,7 @@ export function StorefrontModeProvider({
       storeSlug: resolved.storeSlug,
       pathPrefix: resolved.pathPrefix,
       isCustomDomain: Boolean(isCustomDomain),
+      isAbsOnlineStoreHost: Boolean(isAbsOnlineStoreHost),
       isSingleStoreMode: mode === 'online-store',
       isTemplatesMode: mode === 'templates',
       isMarketplaceMode: mode === 'marketplace',
@@ -357,6 +372,7 @@ export function StorefrontModeProvider({
   }, [
     customDomainSlug,
     forceMode,
+    isAbsOnlineStoreHost,
     isCustomDomain,
     isTemplatesHost,
     location.pathname,

@@ -2583,7 +2583,7 @@ exports.checkSlugAvailability = async (req, res, next) => {
  * Host merchants must CNAME their custom domain to (documented, not auto-provisioned).
  * Defaults to the ABS Online Store host — never Sabito's STOREFRONT_URL (marketplace).
  */
-const DEFAULT_ONLINE_STORE_CNAME_TARGET = 'www.absghana.com';
+const DEFAULT_ONLINE_STORE_CNAME_TARGET = 'store.absghana.com';
 
 const hostFromUrl = (value) => String(value || '')
   .trim()

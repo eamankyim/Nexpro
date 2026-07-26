@@ -1,7 +1,8 @@
 const LOCAL_STOREFRONT_ORIGIN = 'http://localhost:3002';
-const PRODUCTION_STOREFRONT_ORIGIN = 'https://www.absghana.com';
-/** ABS Online Store host (not Sabito marketplace). */
-const PRODUCTION_ONLINE_STORE_ORIGIN = 'https://www.absghana.com';
+/** Sabito marketplace host (not ABS Online Store). */
+const PRODUCTION_STOREFRONT_ORIGIN = 'https://sabitostore.com';
+/** ABS Online Store host (not Sabito marketplace, not marketing www). */
+const PRODUCTION_ONLINE_STORE_ORIGIN = 'https://store.absghana.com';
 const PRODUCTION_TEMPLATES_ORIGIN = 'https://templates.absghana.com';
 
 const getDefaultStorefrontOrigin = () => (
@@ -41,13 +42,13 @@ export const getStorefrontBaseUrl = () => {
 
 /**
  * ABS Online Store origin. Prefers VITE_ONLINE_STORE_URL so Sabito's
- * VITE_STOREFRONT_URL (e.g. sabitostore.com) does not leak into Online Store previews.
+ * VITE_STOREFRONT_URL (e.g. sabitostore.com) and marketing SITE_URL do not leak
+ * into Online Store previews / live shop links.
  */
 export const getOnlineStoreBaseUrl = () => {
   const defaultOrigin = getDefaultOnlineStoreOrigin();
   const configuredUrl = (
     import.meta.env.VITE_ONLINE_STORE_URL ||
-    import.meta.env.VITE_PUBLIC_SITE_URL ||
     (import.meta.env.PROD ? defaultOrigin : (import.meta.env.VITE_STOREFRONT_URL || defaultOrigin))
   );
   return normalizeOrigin(configuredUrl, defaultOrigin);
@@ -77,13 +78,13 @@ export const buildStorefrontStoreUrl = (slug) => {
 };
 
 /**
- * Live Online Store (merchant shop) URL: absghana.com/shop/:slug
+ * Live Online Store (merchant shop) URL: store.absghana.com/shop/:slug
  * @param {string} slug - Store slug
  * @param {{ preview?: boolean }} [opts] - When preview is true, append ?preview=1 so
  *   draft (not yet launched) stores can be opened from Store Setup.
  * @returns {string}
  * @example
- * buildOnlineStoreUrl('my-shop'); // https://www.absghana.com/shop/my-shop
+ * buildOnlineStoreUrl('my-shop'); // https://store.absghana.com/shop/my-shop
  * buildOnlineStoreUrl('my-shop', { preview: true }); // .../shop/my-shop?preview=1
  */
 export const buildOnlineStoreUrl = (slug, opts = {}) => {

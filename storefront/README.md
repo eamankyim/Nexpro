@@ -76,4 +76,16 @@ npm run preview
 
 If you see `404: NOT_FOUND` on refresh or direct URLs, confirm Root Directory is `storefront` and redeploy after `vercel.json` is present.
 
-Deploy this folder as its own Vite app, for example to `sabitostore.com` or `www.absghana.com`, and set `VITE_API_URL` to the production API origin plus `VITE_DASHBOARD_URL` to the merchant dashboard domain.
+### ABS Online Store host (store.absghana.com)
+
+**Do not point `www.absghana.com` at this Vite app while it also serves the marketing-site.** Today `www.absghana.com` is the Next.js marketing project; `/shop/:slug` is not a marketing route (that caused production 404s).
+
+Recommended setup:
+
+1. Keep marketing on `www.absghana.com` / `africanbusinesssuite.com`.
+2. Attach `store.absghana.com` to **this** storefront Vercel project (and `templates.absghana.com` for the gallery). DNS CNAME `store` → `cname.vercel-dns.com` (or Vercel’s instructed target).
+3. Marketing (`marketing-site`) redirects `/shop/*` and `/template/*` to that origin via `NEXT_PUBLIC_ONLINE_STORE_URL` (see `marketing-site/next.config.ts`; fallback is `https://store.absghana.com`).
+4. Set Frontend `VITE_ONLINE_STORE_URL` and Backend `ONLINE_STORE_URL` / `STOREFRONT_CNAME_TARGET` to `https://store.absghana.com` / `store.absghana.com` (not the marketing site). Sabito marketplace may keep `STOREFRONT_URL` / `VITE_STOREFRONT_URL` on sabitostore.com.
+5. Merchant custom-domain CNAMEs must target the **storefront** host (`store.absghana.com`), not the marketing site (`/login` and `/signup` on marketing already go to the ABS dashboard).
+
+Verify: `https://store.absghana.com/shop/<slug>` returns the SPA `index.html` (200), and after marketing redeploy `https://www.absghana.com/shop/<slug>` 307/308-redirects there.

@@ -1,10 +1,11 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 
 import ConnectionHealthBanner from './components/storefront/ConnectionHealthBanner';
 import GoogleSignInHost from './components/storefront/GoogleSignInHost';
 import RouteFallback from './components/storefront/RouteFallback';
 import ShopperAuthModal from './components/storefront/ShopperAuthModal';
+import { ABS_MARKETING_SITE_URL } from './constants';
 import { StorefrontModeProvider } from './context/StorefrontModeContext';
 import { useStorefrontBackgroundPrefetch } from './hooks/useStorefrontBackgroundPrefetch';
 import { useCustomDomainStore } from './hooks/useCustomDomainStore';
@@ -53,11 +54,26 @@ const NavigateTemplateToShop = () => {
   return <Navigate to={`${rest}${window.location.search}${window.location.hash}`} replace />;
 };
 
+/** Leave the storefront SPA for the ABS marketing site (external absolute URL). */
+const RedirectToMarketing = () => {
+  useEffect(() => {
+    window.location.replace(ABS_MARKETING_SITE_URL);
+  }, []);
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-white text-sm text-gray-600">
+      Redirecting…
+    </div>
+  );
+};
+
 /**
  * Shared-host Sabito marketplace + Online Store shop/gallery surfaces.
  * Marketplace discovery stays here; `/shop/:slug` and `/templates` use single-shop chrome via mode context.
+ * On ABS Online Store host (`store.absghana.com`), `/` goes to marketing and bare `/shop`
+ * is not forced into Sabito marketplace products.
+ * @param {{ isAbsOnlineStoreHost?: boolean }} props
  */
-function MarketplaceHostApp() {
+function MarketplaceHostApp({ isAbsOnlineStoreHost = false }) {
   useStorefrontBackgroundPrefetch();
 
   return (
@@ -65,7 +81,10 @@ function MarketplaceHostApp() {
       <ConnectionHealthBanner />
       <Suspense fallback={<RouteFallback />}>
         <Routes>
-          <Route path="/" element={<MarketplaceHome />} />
+          <Route
+            path="/"
+            element={isAbsOnlineStoreHost ? <RedirectToMarketing /> : <MarketplaceHome />}
+          />
           <Route path="/stores" element={<MarketplaceStoresPage />} />
           <Route path="/studios" element={<MarketplaceStudiosPage />} />
           <Route path="/services" element={<MarketplaceServicesPage />} />
@@ -74,8 +93,15 @@ function MarketplaceHostApp() {
           <Route path="/studios/:studioSlug/services/:serviceSlug" element={<PublicStudioService />} />
           {storePageRouteElements('stores')}
           <Route path="/products" element={<MarketplaceProductsPage mode="products" />} />
-          {/* Bare /shop stays a marketplace products alias; /shop/:slug is live Online Store */}
-          <Route path="/shop" element={<Navigate to="/products" replace />} />
+          {/* Bare /shop: Sabito products alias; on ABS Online Store host keep Online Store surface */}
+          <Route
+            path="/shop"
+            element={
+              isAbsOnlineStoreHost
+                ? <RedirectToMarketing />
+                : <Navigate to="/products" replace />
+            }
+          />
           {storePageRouteElements('shop')}
           <Route path="/deals" element={<MarketplaceProductsPage mode="deals" />} />
           <Route path="/new-arrivals" element={<MarketplaceProductsPage mode="arrivals" />} />
@@ -88,10 +114,16 @@ function MarketplaceHostApp() {
           <Route path="/store/:storeSlug" element={<NavigateToStore />} />
           <Route path="/store/:storeSlug/products/:productSlug" element={<NavigateToProduct />} />
           {/* Legacy ABS path — redirect to /shop/:slug */}
-          <Route path="/template" element={<Navigate to="/" replace />} />
+          <Route
+            path="/template"
+            element={isAbsOnlineStoreHost ? <RedirectToMarketing /> : <Navigate to="/" replace />}
+          />
           <Route path="/template/*" element={<NavigateTemplateToShop />} />
           {templatesGalleryRouteElements}
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route
+            path="*"
+            element={isAbsOnlineStoreHost ? <RedirectToMarketing /> : <Navigate to="/" replace />}
+          />
         </Routes>
       </Suspense>
       <ShopperAuthModal />
@@ -140,8 +172,8 @@ function App() {
 
   return (
     <BrowserRouter future={ROUTER_FUTURE}>
-      <StorefrontModeProvider>
-        <MarketplaceHostApp />
+      <StorefrontModeProvider isAbsOnlineStoreHost={customDomain.isAbsOnlineStoreHost}>
+        <MarketplaceHostApp isAbsOnlineStoreHost={customDomain.isAbsOnlineStoreHost} />
       </StorefrontModeProvider>
     </BrowserRouter>
   );

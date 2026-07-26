@@ -21,6 +21,9 @@ const DEFAULT_ORIGINS = [
   'https://www.africanbusinesssuite.com',
   'https://absghana.com',
   'https://www.absghana.com',
+  'https://store.absghana.com',
+  'https://www.store.absghana.com',
+  'https://templates.absghana.com',
 ];
 
 /**
