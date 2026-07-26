@@ -154,6 +154,16 @@ const NavigateTemplateToShop = () => {
 };
 
 /**
+ * Custom domain: strip Sabito `/stores/:slug` or shared `/shop/:slug` → root-relative paths.
+ * e.g. `/stores/aseda-store/products/foo` → `/products/foo`
+ */
+const RedirectPrefixedStoreToRoot = () => {
+  const location = useLocation();
+  const rewritten = location.pathname.replace(/^\/(?:stores|shop)\/[^/]+/, '') || '/';
+  return <Navigate to={`${rewritten}${location.search}${location.hash}`} replace />;
+};
+
+/**
  * Shared ABS Online Store host (`store.absghana.com`) — path-based `/shop/:slug` only.
  * Never mounts Sabito marketplace discovery (home, /stores directory, /products, …).
  */
@@ -201,7 +211,8 @@ export function AbsOnlineStoreHostApp() {
 }
 
 /**
- * Custom-domain Online Store: one merchant, store-scoped chrome only.
+ * Custom-domain Online Store: one merchant at owned-host root paths (`/`, `/products`, …).
+ * Never exposes Sabito marketplace `/stores/:slug` URLs. Slug comes from mode context.
  * @param {{ slug: string, launched: boolean, displayName?: string|null }} props
  */
 export function CustomDomainStoreApp({ slug, launched, displayName }) {
@@ -218,19 +229,23 @@ export function CustomDomainStoreApp({ slug, launched, displayName }) {
       <ConnectionHealthBanner />
       <Suspense fallback={<RouteFallback />}>
         <Routes>
-          <Route path="/" element={<Navigate to={`/stores/${slug}`} replace />} />
-          <Route path="/products" element={<Navigate to={`/stores/${slug}/products`} replace />} />
-          <Route path="/services" element={<Navigate to={`/stores/${slug}/services`} replace />} />
-          <Route path="/categories" element={<Navigate to={`/stores/${slug}/categories`} replace />} />
-          <Route path="/about-contact" element={<Navigate to={`/stores/${slug}/about`} replace />} />
-          <Route path="/about" element={<Navigate to={`/stores/${slug}/about`} replace />} />
-          <Route path="/contact" element={<Navigate to={`/stores/${slug}/about`} replace />} />
-          <Route path="/reviews" element={<Navigate to={`/stores/${slug}/reviews`} replace />} />
-          <Route path="/shop" element={<Navigate to={`/stores/${slug}`} replace />} />
-          <Route path="/shop/:storeSlug" element={<Navigate to={`/stores/${slug}`} replace />} />
-          <Route path="/template" element={<Navigate to={`/stores/${slug}`} replace />} />
-          <Route path="/template/:storeSlug" element={<Navigate to={`/stores/${slug}`} replace />} />
-          {storePageRouteElements('stores')}
+          <Route path="/" element={withRouteSuspense(<PublicStoreHome />)} />
+          <Route path="/products" element={withRouteSuspense(<PublicStoreHome />)} />
+          <Route path="/services" element={withRouteSuspense(<PublicStoreHome />)} />
+          <Route path="/categories" element={withRouteSuspense(<PublicStoreHome />)} />
+          <Route path="/about" element={withRouteSuspense(<PublicStoreHome />)} />
+          <Route path="/about-contact" element={<Navigate to="/about" replace />} />
+          <Route path="/contact" element={<Navigate to="/about" replace />} />
+          <Route path="/reviews" element={withRouteSuspense(<PublicStoreHome />)} />
+          <Route path="/products/:productSlug" element={withRouteSuspense(<PublicStoreProduct />)} />
+          <Route path="/services/:serviceSlug" element={withRouteSuspense(<PublicStudioService />)} />
+          {/* Legacy bookmarks / shared-host links → clean owned-domain paths */}
+          <Route path="/stores" element={<Navigate to="/" replace />} />
+          <Route path="/stores/*" element={<RedirectPrefixedStoreToRoot />} />
+          <Route path="/shop" element={<Navigate to="/" replace />} />
+          <Route path="/shop/*" element={<RedirectPrefixedStoreToRoot />} />
+          <Route path="/template" element={<Navigate to="/" replace />} />
+          <Route path="/template/*" element={<Navigate to="/" replace />} />
           {singleStoreCommerceRouteElements}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

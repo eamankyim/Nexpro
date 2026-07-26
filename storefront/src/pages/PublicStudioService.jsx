@@ -6,6 +6,7 @@ import { ArrowLeft, Loader2 } from 'lucide-react';
 import storeService from '../services/storeService';
 import { dashboardLink } from '../config';
 import { useStorefrontAuth } from '../context/StorefrontAuthContext';
+import { useStorefrontMode } from '../context/StorefrontModeContext';
 import {
   Breadcrumbs,
   BuyerLayoutFrame,
@@ -72,7 +73,14 @@ const buildContactHref = (studio, service) => {
 
 const PublicStudioService = () => {
   const { studioSlug: studioSlugParam, storeSlug, serviceSlug } = useParams();
-  const studioSlug = studioSlugParam || storeSlug;
+  const { storeSlug: modeSlug, isCustomDomain, isSingleStoreMode } = useStorefrontMode();
+  const studioSlug = studioSlugParam || storeSlug || modeSlug;
+  const studioHomePath = isCustomDomain
+    ? '/'
+    : (storeSlug
+      ? `/stores/${encodeURIComponent(storeSlug)}`
+      : `/studios/${encodeURIComponent(studioSlug || '')}`);
+  const showOwnedChrome = Boolean(isCustomDomain || isSingleStoreMode || storeSlug);
   const [searchParams, setSearchParams] = useSearchParams();
   const { customer, isAuthenticated, isLoading: authLoading, openShopperAuthModal } = useStorefrontAuth();
   const [requestForm, setRequestForm] = useState(emptyRequestForm);
@@ -251,7 +259,7 @@ const PublicStudioService = () => {
     return (
       <div className="min-h-screen bg-[#f4f7f2] p-8 text-center">
         <h1 className="text-2xl font-semibold">Service not found</h1>
-        <Button className="mt-4" asChild><Link to={`/studios/${studioSlug || ''}`}>Back to studio</Link></Button>
+        <Button className="mt-4" asChild><Link to={studioHomePath}>Back to studio</Link></Button>
       </div>
     );
   }
@@ -263,16 +271,21 @@ const PublicStudioService = () => {
 
   return (
     <BuyerLayoutFrame>
-      <StorefrontHeader activePath="/services" />
+      {!showOwnedChrome ? <StorefrontHeader activePath="/services" /> : null}
       <div className="mx-auto max-w-6xl px-4 py-6">
-        <Breadcrumbs items={[
-          { label: 'Studios', to: '/studios' },
-          { label: studio.displayName, to: `/studios/${encodeURIComponent(studioSlug || '')}` },
-          { label: service.title },
-        ]} />
+        <Breadcrumbs items={showOwnedChrome
+          ? [
+            { label: studio.displayName, to: studioHomePath },
+            { label: service.title },
+          ]
+          : [
+            { label: 'Studios', to: '/studios' },
+            { label: studio.displayName, to: studioHomePath },
+            { label: service.title },
+          ]} />
 
         <Button variant="outline" className="mb-6" asChild>
-          <Link to={`/studios/${encodeURIComponent(studioSlug || '')}`}>
+          <Link to={studioHomePath}>
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back to studio
           </Link>
@@ -434,7 +447,7 @@ const PublicStudioService = () => {
           </div>
         </div>
       </div>
-      {storeSlug ? (
+      {showOwnedChrome ? (
         <StoreScopedFooter store={studio} isServiceStore contactHref={contactHref} />
       ) : (
         <StorefrontFooter />

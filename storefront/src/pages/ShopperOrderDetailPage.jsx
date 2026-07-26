@@ -204,11 +204,11 @@ const ShopperOrderDetailPage = () => {
   const reviewStoreSlug = reviewActions.store?.storeSlug || modeSlug;
   const storeReviewPath = reviewStoreSlug
     ? (isSingleStoreMode
-      ? `${buildStoreHomePath(reviewStoreSlug, {
-        ...(isCustomDomain
-          ? { prefix: 'stores' }
-          : (pathPrefix ? { prefix: pathPrefix } : { prefix: 'shop' })),
-      })}/reviews`
+      ? (isCustomDomain
+        ? '/reviews'
+        : `${buildStoreHomePath(reviewStoreSlug, {
+          ...(pathPrefix ? { prefix: pathPrefix } : { prefix: 'shop' }),
+        })}/reviews`)
       : `/stores/${encodeURIComponent(reviewStoreSlug)}/reviews`)
     : null;
 

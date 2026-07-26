@@ -24,7 +24,10 @@ import { useStorefrontAuth } from '../context/StorefrontAuthContext';
 import { persistOnlineStoreBrand, useStorefrontMode } from '../context/StorefrontModeContext';
 import { useWishlist } from '../context/WishlistContext';
 import { buildProductsSearchPath } from '../utils/marketplaceSearch';
-import { buildStoreCatalogPath, buildStoreHomePath } from '../online-store/storePaths';
+import {
+  buildStoreCatalogPath,
+  resolveSingleStoreHomePath,
+} from '../online-store/storePaths';
 import { showSuccess } from '../utils/toast';
 import {
   ActionLink,
@@ -243,27 +246,53 @@ const getAvailability = (product) => {
 };
 
 const PublicStoreProduct = () => {
-  const { storeSlug, productSlug } = useParams();
+  const { storeSlug: routeStoreSlug, productSlug } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const { addItem } = useCart();
   const { isAuthenticated, openShopperAuthModal } = useStorefrontAuth();
-  const { mode, isSingleStoreMode, isMarketplaceMode, pathPrefix } = useStorefrontMode();
+  const {
+    mode,
+    isSingleStoreMode,
+    isMarketplaceMode,
+    pathPrefix,
+    isCustomDomain,
+    storeSlug: modeSlug,
+  } = useStorefrontMode();
   const { isWishlisted, pendingListingIds, toggleWishlist } = useWishlist();
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const reviewSaleId = searchParams.get('saleId') || '';
-  const storeBasePath = buildStoreHomePath(storeSlug, { pathname: location.pathname });
+  const storeSlug = routeStoreSlug || modeSlug;
+  const storeBasePath = resolveSingleStoreHomePath({
+    storeSlug,
+    pathPrefix,
+    isCustomDomain,
+    pathname: location.pathname,
+  });
   const isOwnedShop = isSingleStoreMode || !isMarketplaceMode;
   const storeSubtitle = mode === 'marketplace' ? 'Official Store' : '';
 
   const handleSearch = useCallback((search) => {
     if (isSingleStoreMode || !isMarketplaceMode) {
-      navigate(buildStoreCatalogPath(storeSlug, { search, pathname: location.pathname }));
+      navigate(buildStoreCatalogPath(storeSlug, {
+        search,
+        pathname: location.pathname,
+        ...(pathPrefix ? { prefix: pathPrefix } : {}),
+        isCustomDomain,
+      }));
       return;
     }
     navigate(buildProductsSearchPath({ search, storeSlug }));
-  }, [isMarketplaceMode, isSingleStoreMode, location.pathname, navigate, storeSlug]);
+  }, [
+    isCustomDomain,
+    isMarketplaceMode,
+    isSingleStoreMode,
+    location.pathname,
+    navigate,
+    pathPrefix,
+    storeSlug,
+  ]);
 
   const storeQuery = useQuery({
     queryKey: ['public-store', storeSlug],
@@ -513,7 +542,7 @@ const PublicStoreProduct = () => {
               <AlertDescription>This product is not available right now.</AlertDescription>
             </Alert>
             <Button className="mt-4 rounded-full bg-green-700 hover:bg-green-800" asChild>
-              <Link to={storeSlug ? buildStoreHomePath(storeSlug, { pathname: location.pathname }) : (isMarketplaceMode ? '/stores' : '/')}>
+              <Link to={storeSlug ? storeBasePath : (isMarketplaceMode ? '/stores' : '/')}>
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 Back to store
               </Link>
@@ -525,13 +554,15 @@ const PublicStoreProduct = () => {
   }
 
   const isServiceStore = store.storeMode === 'studio';
-  const catalogPath = isServiceStore ? `${storeBasePath}/services` : `${storeBasePath}/products`;
+  const catalogPath = isServiceStore
+    ? (storeBasePath === '/' ? '/services' : `${storeBasePath}/services`)
+    : (storeBasePath === '/' ? '/products' : `${storeBasePath}/products`);
   const ownedNavItems = isOwnedShop ? [
     { key: 'home', label: 'Home', to: storeBasePath },
     { key: 'catalog', label: isServiceStore ? 'All Services' : 'All Products', to: catalogPath },
-    { key: 'categories', label: 'Categories', to: `${storeBasePath}/categories` },
-    { key: 'about', label: 'About Us', to: `${storeBasePath}/about` },
-    { key: 'reviews', label: 'Reviews', to: `${storeBasePath}/reviews` },
+    { key: 'categories', label: 'Categories', to: storeBasePath === '/' ? '/categories' : `${storeBasePath}/categories` },
+    { key: 'about', label: 'About Us', to: storeBasePath === '/' ? '/about' : `${storeBasePath}/about` },
+    { key: 'reviews', label: 'Reviews', to: storeBasePath === '/' ? '/reviews' : `${storeBasePath}/reviews` },
   ] : null;
   const brandColors = resolveStoreBrandColors(store?.templateId, store || {});
   const theme = getTemplateTheme(store?.templateId);

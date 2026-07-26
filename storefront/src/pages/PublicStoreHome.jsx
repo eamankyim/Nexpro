@@ -31,9 +31,9 @@ import { getCategoryImageUrl } from '../utils/categoryImages';
 import { buildProductsSearchPath, buildServicesSearchPath } from '../utils/marketplaceSearch';
 import {
   buildStoreCatalogPath,
-  buildStoreHomePath,
   buildStoreProductPath,
   filterStoreListings,
+  resolveSingleStoreHomePath,
 } from '../online-store/storePaths';
 import {
   ActionLink,
@@ -105,10 +105,10 @@ const buildPublicContactDetails = (store) => {
   };
 };
 
-const getProductUrl = (storeSlug, product, pathname = '') => {
+const getProductUrl = (storeSlug, product, pathname = '', isCustomDomain = false) => {
   const productSlug = product?.slug || product?.id;
   if (!storeSlug || !productSlug) return '/products';
-  return buildStoreProductPath(storeSlug, productSlug, { pathname });
+  return buildStoreProductPath(storeSlug, productSlug, { pathname, isCustomDomain });
 };
 
 const uniqueById = (...lists) => {
@@ -375,7 +375,18 @@ const ProductSection = ({ storeName, title, description, products, emptyText, se
   </section>
 );
 
-const ServiceSection = ({ storeName, storeSlug, title, description, services, emptyText, sectionId = 'services', serviceBasePathname = '', accent }) => (
+const ServiceSection = ({
+  storeName,
+  storeSlug,
+  title,
+  description,
+  services,
+  emptyText,
+  sectionId = 'services',
+  serviceBasePathname = '',
+  isCustomDomain = false,
+  accent,
+}) => (
   <section id={sectionId} className="space-y-5">
     <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
       <div>
@@ -397,7 +408,10 @@ const ServiceSection = ({ storeName, storeSlug, title, description, services, em
           <ServiceCard
             key={service.id}
             service={service}
-            serviceUrl={getStoreServiceUrl(storeSlug, service, { pathname: serviceBasePathname })}
+            serviceUrl={getStoreServiceUrl(storeSlug, service, {
+              pathname: serviceBasePathname,
+              isCustomDomain,
+            })}
           />
         ))}
       </div>
@@ -419,9 +433,11 @@ const PublicStoreHome = ({
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { isAuthenticated, openShopperAuthModal } = useStorefrontAuth();
-  const { mode, isSingleStoreMode, isMarketplaceMode, pathPrefix } = useStorefrontMode();
+  const { mode, isSingleStoreMode, isMarketplaceMode, pathPrefix, isCustomDomain, storeSlug: modeSlug } = useStorefrontMode();
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
-  const storeSlug = previewMode && previewStore?.slug ? previewStore.slug : routeSlug;
+  const storeSlug = previewMode && previewStore?.slug
+    ? previewStore.slug
+    : (routeSlug || modeSlug);
   const storeSubtitle = STORE_SUBTITLE[mode] || '';
   const isOwnedShop = isSingleStoreMode || !isMarketplaceMode;
   const catalogSearch = searchParams.get('search') || '';
@@ -512,7 +528,17 @@ const PublicStoreHome = ({
   );
   const promo = data.promotionalBanner || store?.promo || null;
   const activePage = resolveStorePage(location.pathname);
-  const storeBasePath = buildStoreHomePath(storeSlug, { pathname: location.pathname });
+  const storeBasePath = resolveSingleStoreHomePath({
+    storeSlug,
+    pathPrefix,
+    isCustomDomain,
+    pathname: location.pathname,
+  });
+  const pathOpts = useMemo(() => ({
+    pathname: location.pathname,
+    ...(pathPrefix ? { prefix: pathPrefix } : {}),
+    isCustomDomain,
+  }), [isCustomDomain, location.pathname, pathPrefix]);
 
   const storeReviewsQuery = useQuery({
     queryKey: ['store-reviews', storeSlug],
@@ -555,7 +581,7 @@ const PublicStoreHome = ({
     if (isSingleStoreMode || !isMarketplaceMode) {
       navigate(buildStoreCatalogPath(storeSlug, {
         search,
-        pathname: location.pathname,
+        ...pathOpts,
         isServiceStore,
       }));
       return;
@@ -565,7 +591,7 @@ const PublicStoreHome = ({
       return;
     }
     navigate(buildProductsSearchPath({ search, storeSlug }));
-  }, [isMarketplaceMode, isServiceStore, isSingleStoreMode, location.pathname, navigate, storeSlug]);
+  }, [isMarketplaceMode, isServiceStore, isSingleStoreMode, navigate, pathOpts, storeSlug]);
 
   const handleFollowStore = useCallback(() => {
     showSuccess('Following stores is coming soon.');
@@ -633,13 +659,15 @@ const PublicStoreHome = ({
     );
   }
 
-  const catalogPath = isServiceStore ? `${storeBasePath}/services` : `${storeBasePath}/products`;
+  const catalogPath = isServiceStore
+    ? (storeBasePath === '/' ? '/services' : `${storeBasePath}/services`)
+    : (storeBasePath === '/' ? '/products' : `${storeBasePath}/products`);
   const navItems = [
     { key: 'home', label: isOwnedShop ? 'Home' : 'Store Home', to: storeBasePath },
     { key: 'catalog', label: isServiceStore ? 'All Services' : 'All Products', to: catalogPath },
-    { key: 'categories', label: 'Categories', to: `${storeBasePath}/categories` },
-    { key: 'about', label: 'About Us', to: `${storeBasePath}/about` },
-    { key: 'reviews', label: 'Reviews', to: `${storeBasePath}/reviews` },
+    { key: 'categories', label: 'Categories', to: storeBasePath === '/' ? '/categories' : `${storeBasePath}/categories` },
+    { key: 'about', label: 'About Us', to: storeBasePath === '/' ? '/about' : `${storeBasePath}/about` },
+    { key: 'reviews', label: 'Reviews', to: storeBasePath === '/' ? '/reviews' : `${storeBasePath}/reviews` },
   ];
   const storeCatalogRaw = isServiceStore ? allServices : allProducts;
   const storeCatalog = (isSingleStoreMode || catalogSearch || catalogCategory)
@@ -656,7 +684,7 @@ const PublicStoreHome = ({
     isSingleStoreMode || !isMarketplaceMode
       ? buildStoreCatalogPath(storeSlug, {
         category: category.name,
-        pathname: location.pathname,
+        ...pathOpts,
         isServiceStore,
       })
       : (isServiceStore
@@ -939,7 +967,7 @@ const PublicStoreHome = ({
       ))}
       {categories.length > 8 ? (
         <Link
-          to={`${storeBasePath}/categories`}
+          to={storeBasePath === '/' ? '/categories' : `${storeBasePath}/categories`}
           className="inline-flex items-center rounded-full border border-border px-3 py-1.5 text-sm font-medium hover:border-green-200 hover:bg-green-50"
           style={{ color: accent }}
         >
@@ -957,6 +985,7 @@ const PublicStoreHome = ({
         services={featuredServices}
         emptyText="No featured services yet."
         serviceBasePathname={location.pathname}
+        isCustomDomain={isCustomDomain}
         accent={accent}
       />
       {secondaryServices.length > 0 ? (
@@ -967,6 +996,7 @@ const PublicStoreHome = ({
           services={secondaryServices}
           emptyText="No additional services are available right now."
           serviceBasePathname={location.pathname}
+          isCustomDomain={isCustomDomain}
           accent={accent}
         />
       ) : null}
@@ -1022,7 +1052,7 @@ const PublicStoreHome = ({
               </div>
               {promo.product ? (
                 <Button className="w-full bg-white text-green-950 hover:bg-green-50 md:w-auto" asChild>
-                  <Link to={getProductUrl(storeSlug, promo.product, location.pathname)}>
+                  <Link to={getProductUrl(storeSlug, promo.product, location.pathname, isCustomDomain)}>
                     Shop offer
                   </Link>
                 </Button>
@@ -1068,7 +1098,7 @@ const PublicStoreHome = ({
                 </div>
                 {promo.product ? (
                   <Button className="w-full bg-white text-green-950 hover:bg-green-50 md:w-auto" asChild>
-                    <Link to={getProductUrl(storeSlug, promo.product, location.pathname)}>
+                    <Link to={getProductUrl(storeSlug, promo.product, location.pathname, isCustomDomain)}>
                       View deal
                     </Link>
                   </Button>
@@ -1087,6 +1117,7 @@ const PublicStoreHome = ({
                 services={featuredServices}
                 emptyText="This store has not published featured services yet."
                 serviceBasePathname={location.pathname}
+                isCustomDomain={isCustomDomain}
               />
               <ServiceSection
                 storeName={store.displayName}
@@ -1097,6 +1128,7 @@ const PublicStoreHome = ({
                 services={secondaryServices}
                 emptyText="No additional services are available right now."
                 serviceBasePathname={location.pathname}
+                isCustomDomain={isCustomDomain}
               />
             </>
           ) : productSections.length > 0 ? (
@@ -1196,6 +1228,7 @@ const PublicStoreHome = ({
         services={storeCatalog}
         emptyText={catalogSearch || catalogCategory ? 'No services match this search.' : (isOwnedShop ? 'No services yet.' : 'This store has not published services yet.')}
         serviceBasePathname={location.pathname}
+        isCustomDomain={isCustomDomain}
       />
     </section>
   ) : (

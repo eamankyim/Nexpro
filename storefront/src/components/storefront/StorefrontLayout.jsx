@@ -76,10 +76,13 @@ export const getPublishedTime = (product) => {
   return Number.isNaN(timestamp) ? 0 : timestamp;
 };
 
-export const getProductUrl = (product, { pathname = '', prefix } = {}) => {
+export const getProductUrl = (product, { pathname = '', prefix, isCustomDomain = false } = {}) => {
   const storeSlug = product?.store?.slug || product?.storeSlug;
   const productSlug = product?.slug || product?.id;
   if (!storeSlug || !productSlug) return '/products';
+  if (isCustomDomain) {
+    return buildStoreProductPath(storeSlug, productSlug, { isCustomDomain: true });
+  }
   const useShopPrefix = (
     prefix === 'shop'
     || prefix === 'template'
@@ -102,9 +105,12 @@ export const getServiceUrl = (service) => {
     : '/services';
 };
 
-export const getStoreServiceUrl = (storeSlug, service, { pathname = '' } = {}) => {
+export const getStoreServiceUrl = (storeSlug, service, { pathname = '', isCustomDomain = false } = {}) => {
   const serviceSlug = service?.slug || service?.id;
   if (!storeSlug || !serviceSlug) return getServiceUrl(service);
+  if (isCustomDomain) {
+    return `/services/${encodeURIComponent(serviceSlug)}`;
+  }
   const prefix = isOnlineStoreShopPrefix(pathname) ? 'shop' : 'stores';
   return `/${prefix}/${encodeURIComponent(storeSlug)}/services/${encodeURIComponent(serviceSlug)}`;
 };
@@ -842,10 +848,18 @@ export const StoreScopedFooter = ({
   /** Optional brand primary override (falls back to store.primaryColor / --store-accent). */
   accentColor,
 }) => {
+  const { isCustomDomain } = useStorefrontMode();
   const storeSlug = store?.slug || '';
   const storeBasePath = storeBasePathProp
-    || (storeSlug ? `/stores/${encodeURIComponent(storeSlug)}` : '/stores');
-  const catalogPath = isServiceStore ? `${storeBasePath}/services` : `${storeBasePath}/products`;
+    || (isCustomDomain
+      ? '/'
+      : (storeSlug ? `/stores/${encodeURIComponent(storeSlug)}` : '/stores'));
+  const catalogPath = isServiceStore
+    ? (storeBasePath === '/' ? '/services' : `${storeBasePath}/services`)
+    : (storeBasePath === '/' ? '/products' : `${storeBasePath}/products`);
+  const categoriesPath = storeBasePath === '/' ? '/categories' : `${storeBasePath}/categories`;
+  const aboutPath = storeBasePath === '/' ? '/about' : `${storeBasePath}/about`;
+  const reviewsPath = storeBasePath === '/' ? '/reviews' : `${storeBasePath}/reviews`;
   const listingCount = isServiceStore ? store?.stats?.serviceCount : store?.stats?.productCount;
   const year = new Date().getFullYear();
   const brandSubtitle = subtitle !== undefined
@@ -916,9 +930,9 @@ export const StoreScopedFooter = ({
           <div className={linkColClass}>
             <Link to={storeBasePath}>{singleStoreMode ? 'Home' : 'Store Home'}</Link>
             <Link to={catalogPath}>{isServiceStore ? 'All Services' : 'All Products'}</Link>
-            <Link to={`${storeBasePath}/categories`}>Categories</Link>
-            <Link to={`${storeBasePath}/about`}>About Us</Link>
-            <Link to={`${storeBasePath}/reviews`}>Reviews</Link>
+            <Link to={categoriesPath}>Categories</Link>
+            <Link to={aboutPath}>About Us</Link>
+            <Link to={reviewsPath}>Reviews</Link>
           </div>
         </div>
 
@@ -1118,8 +1132,14 @@ export const ProductCard = ({ product }) => {
   const params = useParams();
   const { addItem } = useCart();
   const { isWishlisted, pendingListingIds, toggleWishlist } = useWishlist();
-  const { isSingleStoreMode, isMarketplaceMode } = useStorefrontMode();
+  const {
+    isSingleStoreMode,
+    isMarketplaceMode,
+    isCustomDomain,
+    storeSlug: modeSlug,
+  } = useStorefrontMode();
   const isOwnedShop = isSingleStoreMode || !isMarketplaceMode;
+  const resolvedStoreSlug = params.storeSlug || modeSlug || product?.storeSlug || product?.store?.slug;
   const compareAt = Number.parseFloat(product?.compareAtPrice || 0);
   const price = Number.parseFloat(product?.publicPrice || 0);
   const discount = getDiscountPercent(product);
@@ -1128,14 +1148,17 @@ export const ProductCard = ({ product }) => {
     ? product
     : {
       ...product,
-      storeSlug: params.storeSlug || product?.storeSlug,
+      storeSlug: resolvedStoreSlug,
       store: {
         ...(product?.store || {}),
-        slug: params.storeSlug || product?.store?.slug,
+        slug: resolvedStoreSlug,
       },
     };
   const storeForActions = productWithStore?.store || {};
-  const productUrl = getProductUrl(productWithStore, { pathname: location.pathname });
+  const productUrl = getProductUrl(productWithStore, {
+    pathname: location.pathname,
+    isCustomDomain,
+  });
   const review = getReviewMeta(product, 'New');
   const availability = getProductAvailability(product);
   const listingId = product?.listingId || product?.id;

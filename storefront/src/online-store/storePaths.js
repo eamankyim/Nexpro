@@ -24,11 +24,17 @@ export const isTemplateStorePrefix = isOnlineStoreShopPrefix;
 
 /**
  * Base path for a single store home.
+ * Custom-domain owned hosts use `/` (no Sabito `/stores/:slug` or shared `/shop/:slug`).
  * @param {string} storeSlug
- * @param {{ pathname?: string, prefix?: 'stores' | 'shop' | 'template' }} [opts]
+ * @param {{ pathname?: string, prefix?: 'stores' | 'shop' | 'template' | 'root', isCustomDomain?: boolean }} [opts]
  * @returns {string}
  */
-export const buildStoreHomePath = (storeSlug, { pathname = '', prefix } = {}) => {
+export const buildStoreHomePath = (storeSlug, {
+  pathname = '',
+  prefix,
+  isCustomDomain = false,
+} = {}) => {
+  if (isCustomDomain || prefix === 'root') return '/';
   const useShop = (
     prefix === 'shop'
     || prefix === 'template'
@@ -40,7 +46,7 @@ export const buildStoreHomePath = (storeSlug, { pathname = '', prefix } = {}) =>
 };
 
 /**
- * Online Store home from mode context (custom domain → `/`, else `/shop|:stores/:slug`).
+ * Online Store home from mode context (custom domain → `/`, else `/shop|/stores/:slug`).
  * @param {{
  *   storeSlug?: string|null,
  *   pathPrefix?: 'shop'|'stores'|null,
@@ -66,7 +72,7 @@ export const resolveSingleStoreHomePath = ({
 /**
  * In-store product catalog path with optional search/category filters.
  * @param {string} storeSlug
- * @param {{ search?: string, category?: string, pathname?: string, prefix?: 'stores' | 'shop' | 'template', isServiceStore?: boolean }} [opts]
+ * @param {{ search?: string, category?: string, pathname?: string, prefix?: 'stores' | 'shop' | 'template' | 'root', isCustomDomain?: boolean, isServiceStore?: boolean }} [opts]
  * @returns {string}
  */
 export const buildStoreCatalogPath = (storeSlug, {
@@ -74,28 +80,36 @@ export const buildStoreCatalogPath = (storeSlug, {
   category = '',
   pathname = '',
   prefix,
+  isCustomDomain = false,
   isServiceStore = false,
 } = {}) => {
-  const home = buildStoreHomePath(storeSlug, { pathname, prefix });
+  const home = buildStoreHomePath(storeSlug, { pathname, prefix, isCustomDomain });
   const segment = isServiceStore ? 'services' : 'products';
   const params = new URLSearchParams();
   const trimmedSearch = String(search || '').trim();
   if (trimmedSearch) params.set('search', trimmedSearch);
   if (category && category !== 'all') params.set('category', category);
   const query = params.toString();
-  return query ? `${home}/${segment}?${query}` : `${home}/${segment}`;
+  // Custom domain home is `/` — avoid `//products`
+  const base = home === '/' ? `/${segment}` : `${home}/${segment}`;
+  return query ? `${base}?${query}` : base;
 };
 
 /**
  * Product detail path within the current Online Store / marketplace store prefix.
  * @param {string} storeSlug
  * @param {string} productSlug
- * @param {{ pathname?: string, prefix?: 'stores' | 'shop' | 'template' }} [opts]
+ * @param {{ pathname?: string, prefix?: 'stores' | 'shop' | 'template' | 'root', isCustomDomain?: boolean }} [opts]
  * @returns {string}
  */
-export const buildStoreProductPath = (storeSlug, productSlug, { pathname = '', prefix } = {}) => {
-  const home = buildStoreHomePath(storeSlug, { pathname, prefix });
+export const buildStoreProductPath = (storeSlug, productSlug, {
+  pathname = '',
+  prefix,
+  isCustomDomain = false,
+} = {}) => {
+  const home = buildStoreHomePath(storeSlug, { pathname, prefix, isCustomDomain });
   if (!productSlug) return home;
+  if (home === '/') return `/products/${encodeURIComponent(productSlug)}`;
   return `${home}/products/${encodeURIComponent(productSlug)}`;
 };
 

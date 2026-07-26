@@ -272,8 +272,9 @@ export const resolveStorefrontMode = ({
     return { mode: 'templates', storeSlug: null, pathPrefix: null };
   }
 
+  // Owned custom domain: root paths (`/`, `/products`, …) — never Sabito `/stores/:slug`.
   if (isCustomDomain && customDomainSlug) {
-    return { mode: 'online-store', storeSlug: customDomainSlug, pathPrefix: 'stores' };
+    return { mode: 'online-store', storeSlug: customDomainSlug, pathPrefix: null };
   }
 
   if (isOnlineStoreShopPath(path)) {
@@ -359,7 +360,7 @@ export function StorefrontModeProvider({
         mode: forceMode,
         storeSlug: customDomainSlug || (forceMode === 'online-store' ? readOnlineStoreSession()?.slug : null),
         pathPrefix: forceMode === 'online-store'
-          ? (isCustomDomain ? 'stores' : 'shop')
+          ? (isCustomDomain ? null : 'shop')
           : null,
       }
       : resolveStorefrontMode({
