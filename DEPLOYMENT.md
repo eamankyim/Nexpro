@@ -229,6 +229,24 @@ Ensure **Root Directory** is set correctly for each project in the Vercel dashbo
 | **Backend** | `Backend` | `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGIN`, `FRONTEND_URL` |
 | **Frontend** | `Frontend` | `VITE_API_URL` |
 | **Marketing Site** | `marketing-site` | `NEXT_PUBLIC_APP_URL` (optional) |
+| **sabito-store** (storefront) | `storefront` | See below — Vite `VITE_*` baked at **build time** |
+
+### sabito-store (Vite storefront)
+
+Serves **sabitostore.com** (Sabito marketplace) and **store.absghana.com** (ABS Online Store). Hostname decides mode at runtime; env must be set before rebuild.
+
+| Variable | Production value |
+|----------|------------------|
+| `VITE_API_URL` | `https://api.africanbusinesssuite.com` |
+| `VITE_STOREFRONT_URL` | `https://sabitostore.com` |
+| `VITE_DASHBOARD_URL` | `https://myapp.africanbusinesssuite.com` |
+| `VITE_ABS_APP_URL` | `https://myapp.africanbusinesssuite.com` |
+| `VITE_ONLINE_STORE_HOST` | `store.absghana.com` |
+| `VITE_ONLINE_STORE_URL` | `https://store.absghana.com` |
+| `VITE_TEMPLATES_HOST` | `templates.absghana.com` |
+| `VITE_GOOGLE_CLIENT_ID` | Google OAuth Web client ID |
+
+After changing any `VITE_*` var: **Redeploy** the sabito-store project (Vite inlines env at build). If `store.absghana.com` shows Sabito marketplace chrome, redeploy from `main` — code recognizes that host even when env is unset, but production must not be on a stale build.
 
 ---
 

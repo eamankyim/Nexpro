@@ -2,6 +2,7 @@ export { default as StoreTemplateShell } from '../templates/StoreTemplateShell';
 export { default as OnlineStorePageShell } from './OnlineStorePageShell';
 export { brandAccent } from './brandAccent';
 export {
+  AbsOnlineStoreHostApp,
   TemplatesHostApp,
   CustomDomainStoreApp,
   storePageRouteElements,

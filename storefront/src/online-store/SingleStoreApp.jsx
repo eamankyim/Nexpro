@@ -145,6 +145,61 @@ export function TemplatesHostApp() {
   );
 }
 
+const OnlineStoreHostLanding = lazy(() => import('../pages/OnlineStoreHostLanding'));
+
+/** Legacy `/template/:slug` → `/shop/:slug` (bookmarks / old emails). */
+const NavigateTemplateToShop = () => {
+  const rest = window.location.pathname.replace(/^\/template(?=\/|$)/, '/shop');
+  return <Navigate to={`${rest}${window.location.search}${window.location.hash}`} replace />;
+};
+
+/**
+ * Shared ABS Online Store host (`store.absghana.com`) — path-based `/shop/:slug` only.
+ * Never mounts Sabito marketplace discovery (home, /stores directory, /products, …).
+ */
+export function AbsOnlineStoreHostApp() {
+  useEffect(() => {
+    document.title = 'ABS Online Store';
+  }, []);
+
+  return (
+    <GoogleSignInHost>
+      <ConnectionHealthBanner />
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
+          <Route path="/" element={<OnlineStoreHostLanding />} />
+          <Route path="/shop" element={<OnlineStoreHostLanding />} />
+          {storePageRouteElements('shop')}
+          <Route path="/template" element={<Navigate to="/" replace />} />
+          <Route path="/template/*" element={<NavigateTemplateToShop />} />
+          {templatesGalleryRouteElements}
+          {singleStoreCommerceRouteElements}
+          {/* Marketplace discovery aliases — keep shoppers off Sabito chrome on this host */}
+          <Route path="/marketplace" element={<Navigate to="/" replace />} />
+          <Route path="/stores" element={<Navigate to="/" replace />} />
+          <Route path="/stores/*" element={<Navigate to="/" replace />} />
+          <Route path="/products" element={<Navigate to="/" replace />} />
+          <Route path="/products/*" element={<Navigate to="/" replace />} />
+          <Route path="/services" element={<Navigate to="/" replace />} />
+          <Route path="/services/*" element={<Navigate to="/" replace />} />
+          <Route path="/studios" element={<Navigate to="/" replace />} />
+          <Route path="/studios/*" element={<Navigate to="/" replace />} />
+          <Route path="/deals" element={<Navigate to="/" replace />} />
+          <Route path="/new-arrivals" element={<Navigate to="/" replace />} />
+          <Route path="/foods" element={<Navigate to="/" replace />} />
+          <Route path="/about-contact" element={<Navigate to="/" replace />} />
+          <Route path="/about" element={<Navigate to="/" replace />} />
+          <Route path="/contact" element={<Navigate to="/" replace />} />
+          <Route path="/store" element={<Navigate to="/" replace />} />
+          <Route path="/store/*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
+      <ShopperAuthModal />
+    </GoogleSignInHost>
+  );
+}
+
 /**
  * Custom-domain Online Store: one merchant, store-scoped chrome only.
  * @param {{ slug: string, launched: boolean, displayName?: string|null }} props

@@ -84,6 +84,8 @@ export const isStorefrontCommercePath = (pathname = '') => {
  */
 export const isMarketplaceDiscoveryPath = (pathname = '', opts = {}) => {
   const path = String(pathname || '');
+  // ABS Online Store host never runs Sabito marketplace discovery routes.
+  if (opts.isAbsOnlineStoreHost) return false;
   if (path === '/' || path === '/marketplace') return true;
   if (path === '/stores' || path.startsWith('/stores/')) return true;
   if (path === '/products' || path.startsWith('/products/')) return true;
@@ -91,8 +93,8 @@ export const isMarketplaceDiscoveryPath = (pathname = '', opts = {}) => {
   if (path === '/studios' || path.startsWith('/studios/')) return true;
   if (path === '/deals' || path === '/new-arrivals' || path === '/foods') return true;
   if (path === '/about-contact' || path === '/about' || path === '/contact') return true;
-  // Bare /shop is a marketplace products alias on Sabito — not on ABS Online Store host
-  if (path === '/shop' && !opts.isAbsOnlineStoreHost) return true;
+  // Bare /shop is a marketplace products alias on Sabito
+  if (path === '/shop') return true;
   return false;
 };
 
@@ -296,6 +298,16 @@ export const resolveStorefrontMode = ({
     if (isAbsOnlineStoreHost) {
       return { mode: 'online-store', storeSlug: null, pathPrefix: 'shop' };
     }
+  }
+
+  // Shared ABS Online Store host (`store.absghana.com`): never Sabito marketplace mode.
+  if (isAbsOnlineStoreHost) {
+    const session = onlineStoreSession || readOnlineStoreSession();
+    return {
+      mode: 'online-store',
+      storeSlug: session?.slug || null,
+      pathPrefix: 'shop',
+    };
   }
 
   return { mode: 'marketplace', storeSlug: null, pathPrefix: null };
