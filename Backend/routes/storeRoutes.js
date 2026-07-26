@@ -39,11 +39,13 @@ const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
 const { shopContext } = require('../middleware/shopContext');
 const { studioLocationContext } = require('../middleware/studioLocationContext');
-const { productImageUploader, checkStorageLimit } = require('../middleware/upload');
+const { productImageUploader, checkStorageLimit, imageOnlyMulter } = require('../middleware/upload');
 const { bulkOperationLimiter } = require('../middleware/rateLimiter');
 const { timeCrudAction } = require('../middleware/crudTiming');
+const { listHeroLibrary } = require('../controllers/onlineStoreHeroController');
 
 const router = express.Router();
+const merchantHeroUploader = imageOnlyMulter();
 
 router.use(protect);
 router.use(tenantContext);
@@ -56,6 +58,43 @@ router.route('/settings')
 
 router.get('/setup-status', getSetupStatus);
 router.get('/slug-availability', checkSlugAvailability);
+router.get('/heroes/library', listHeroLibrary);
+router.post(
+  '/heroes/upload',
+  authorize('admin', 'manager'),
+  checkStorageLimit,
+  merchantHeroUploader.array('files', 5),
+  async (req, res, next) => {
+    try {
+      const files = req.files || [];
+      if (!files.length) {
+        return res.status(400).json({ success: false, message: 'No files uploaded' });
+      }
+      const path = require('path');
+      const fs = require('fs');
+      const { baseUploadDir, ensureDirExists } = require('../middleware/upload');
+      const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+      const imageUrls = files.map((file) => {
+        if (isServerless) {
+          const mime = file.mimetype || 'image/jpeg';
+          return `data:${mime};base64,${file.buffer.toString('base64')}`;
+        }
+        const tenantId = req.tenantId;
+        const subDir = path.join('online-store-heroes', 'tenant-uploads', tenantId);
+        const uploadPath = path.join(baseUploadDir, subDir);
+        ensureDirExists(uploadPath);
+        const ext = path.extname(file.originalname) || '.jpg';
+        const sanitized = file.originalname.replace(/[^a-zA-Z0-9.\-_]/g, '_').replace(/\.[^.]+$/, '') || 'hero';
+        const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${sanitized}${ext}`;
+        fs.writeFileSync(path.join(uploadPath, filename), file.buffer);
+        return `/uploads/online-store-heroes/tenant-uploads/${tenantId}/${filename}`;
+      });
+      res.status(200).json({ success: true, data: { imageUrls } });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 // "Online Store" custom domain (customer-owned domain, independent of Sabito marketplace)
 router.route('/domain')

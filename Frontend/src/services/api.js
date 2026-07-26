@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 /** Local backend URL when VITE_API_DIRECT=true (macOS AirPlay often occupies :5000). */
-const LOCAL_API_URL = 'http://localhost:5001';
+const LOCAL_API_URL = 'http://localhost:5002';
 
 /** Production API URL when app is served from ABS Ghana / African Business Suite production domains */
 const ABS_API_URL = 'https://api.africanbusinesssuite.com';

@@ -145,10 +145,10 @@ const ShopperAddressesPage = () => {
         <section className="rounded-2xl border border-slate-200 bg-white p-6 sm:rounded-[2rem]">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <p className="text-sm font-bold uppercase tracking-[0.18em] text-green-700">Address book</p>
+              <p className="text-sm font-bold uppercase tracking-[0.18em] text-[color:var(--store-accent,#166534)]">Address book</p>
               <h2 className="mt-2 text-2xl font-black text-slate-950">Saved delivery addresses</h2>
             </div>
-            <Button type="button" className="rounded-full bg-green-700 hover:bg-green-800" onClick={handleOpenNewAddress}>
+            <Button type="button" className="rounded-full bg-[var(--store-accent,#166534)] text-white hover:bg-[var(--store-accent-hover,color-mix(in_srgb,var(--store-accent,#166534)_85%,black))]" onClick={handleOpenNewAddress}>
               <Plus className="mr-2 h-4 w-4" />
               New address
             </Button>
@@ -175,7 +175,7 @@ const ShopperAddressesPage = () => {
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
                         <h3 className="font-black text-slate-950">{address.label || 'Delivery address'}</h3>
-                        {address.isDefault ? <Badge className="border-0 bg-green-700 text-white hover:bg-green-700">Default</Badge> : null}
+                        {address.isDefault ? <Badge className="border-0 bg-[var(--store-accent,#166534)] text-white hover:bg-[var(--store-accent,#166534)]">Default</Badge> : null}
                       </div>
                       <p className="mt-2 text-sm font-semibold text-slate-700">{address.recipientName} - {address.phone}</p>
                       <p className="mt-1 text-sm leading-6 text-slate-500">
@@ -188,7 +188,7 @@ const ShopperAddressesPage = () => {
                         Edit
                       </Button>
                       {!address.isDefault ? (
-                        <Button type="button" variant="outline" className="rounded-full border-green-200 text-green-800 hover:bg-green-50" onClick={() => handleSetDefault(address.id)}>
+                        <Button type="button" variant="outline" className="rounded-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:bg-[var(--store-accent-soft,#16653422)]" onClick={() => handleSetDefault(address.id)}>
                           Make default
                         </Button>
                       ) : null}
@@ -207,7 +207,7 @@ const ShopperAddressesPage = () => {
 
       {isAddressModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 px-3 py-4 sm:items-center sm:px-6" role="dialog" aria-modal="true" aria-labelledby="delivery-address-modal-title">
-          <form onSubmit={handleSubmit} className="relative max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-green-200 bg-white p-5 sm:rounded-[2rem] sm:p-6">
+          <form onSubmit={handleSubmit} className="relative max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] bg-white p-5 sm:rounded-[2rem] sm:p-6">
             <button
               type="button"
               onClick={handleCloseAddressModal}
@@ -218,11 +218,11 @@ const ShopperAddressesPage = () => {
             </button>
 
             <div className="flex items-start gap-3 pr-12">
-              <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-green-50 text-green-800">
+              <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--store-accent-soft,#f0fdf4)] text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]">
                 <Plus className="h-5 w-5" />
               </span>
               <div>
-                <p className="text-sm font-bold uppercase tracking-[0.18em] text-green-700">{form.id ? 'Edit address' : 'New address'}</p>
+                <p className="text-sm font-bold uppercase tracking-[0.18em] text-[color:var(--store-accent,#166534)]">{form.id ? 'Edit address' : 'New address'}</p>
                 <h2 id="delivery-address-modal-title" className="mt-1 text-xl font-black text-slate-950">{form.id ? 'Update delivery details' : 'Add delivery details'}</h2>
               </div>
             </div>
@@ -243,7 +243,7 @@ const ShopperAddressesPage = () => {
                   id="deliveryNotes"
                   value={form.deliveryNotes}
                   onChange={(event) => setForm((current) => ({ ...current, deliveryNotes: event.target.value }))}
-                  className="min-h-24 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-green-400"
+                  className="min-h-24 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-[color:var(--store-accent,#166534)]"
                 />
               </div>
               <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
@@ -251,7 +251,7 @@ const ShopperAddressesPage = () => {
                   type="checkbox"
                   checked={form.isDefault}
                   onChange={(event) => setForm((current) => ({ ...current, isDefault: event.target.checked }))}
-                  className="h-4 w-4 rounded border-slate-300 text-green-700"
+                  className="h-4 w-4 rounded border-slate-300 text-[color:var(--store-accent,#166534)]"
                 />
                 Make this my default delivery address
               </label>
@@ -261,7 +261,7 @@ const ShopperAddressesPage = () => {
               <Button type="button" variant="outline" className="rounded-full border-slate-200 text-slate-700 hover:bg-slate-50" onClick={handleCloseAddressModal}>
                 Cancel
               </Button>
-              <Button type="submit" className="rounded-full bg-green-700 hover:bg-green-800" disabled={isSubmitting}>
+              <Button type="submit" className="rounded-full bg-[var(--store-accent,#166534)] text-white hover:bg-[var(--store-accent-hover,color-mix(in_srgb,var(--store-accent,#166534)_85%,black))]" disabled={isSubmitting}>
                 {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 {form.id ? 'Update address' : 'Save address'}
               </Button>
@@ -277,7 +277,7 @@ const RegionSelect = ({ value, onChange }) => (
   <div className="grid gap-2">
     <label className="text-sm font-semibold text-slate-700" htmlFor="address-region-optional">Region (optional)</label>
     <Select value={value || EMPTY_REGION_VALUE} onValueChange={(nextValue) => onChange(nextValue === EMPTY_REGION_VALUE ? '' : nextValue)}>
-      <SelectTrigger id="address-region-optional" className="min-h-10 rounded-2xl border-slate-200 bg-white focus:ring-green-700">
+      <SelectTrigger id="address-region-optional" className="min-h-10 rounded-2xl border-slate-200 bg-white focus:ring-[color:var(--store-accent,#166534)]">
         <SelectValue placeholder="Select region" />
       </SelectTrigger>
       <SelectContent>

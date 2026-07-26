@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState } from 'react';
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   CheckCircle2,
@@ -7,6 +7,7 @@ import {
   CreditCard,
   Loader2,
   Mail,
+  Menu,
   MessageCircle,
   Package,
   Phone,
@@ -19,13 +20,21 @@ import {
   Store,
   Truck,
   User,
+  X,
 } from 'lucide-react';
 
 import storeService from '../services/storeService';
 import { useCart } from '../context/CartContext';
 import { useStorefrontAuth } from '../context/StorefrontAuthContext';
+import { persistOnlineStoreBrand, useStorefrontMode } from '../context/StorefrontModeContext';
 import { getCategoryImageUrl } from '../utils/categoryImages';
 import { buildProductsSearchPath, buildServicesSearchPath } from '../utils/marketplaceSearch';
+import {
+  buildStoreCatalogPath,
+  buildStoreHomePath,
+  buildStoreProductPath,
+  filterStoreListings,
+} from '../online-store/storePaths';
 import {
   ActionLink,
   getStoreServiceUrl,
@@ -41,6 +50,13 @@ import {
   VerifiedReviewForm,
 } from '../components/storefront/VerifiedReviewSection';
 import { resolveStoreBannerImageUrl } from '../utils/fileUtils';
+import {
+  buildStoreWhatsAppHref,
+  normalizePhone,
+  whatsappContactMessage,
+} from '../utils/whatsapp';
+import StoreHeroCarousel from '../components/storefront/StoreHeroCarousel';
+import StoreTestimonialsSection from '../components/storefront/StoreTestimonialsSection';
 import { formatAmount, formatInteger } from '../utils/formatNumber';
 import { showError, showSuccess } from '../utils/toast';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -48,15 +64,20 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import TemplateThemeProvider, { getTemplateTheme, resolveStoreBrandColors } from '../templates/TemplateThemeProvider';
+import { SAMPLE_PRODUCTS } from '../templates/sampleCatalog';
 
-const normalizePhone = (value) => String(value || '').replace(/[^\d]/g, '');
+const STORE_SUBTITLE = {
+  marketplace: 'Official Store',
+  'online-store': '',
+  templates: '',
+};
+
 const cleanContactValue = (value) => String(value || '').trim();
 
 const buildContactHref = (store) => {
-  const phone = normalizePhone(store?.whatsappNumber || store?.contactPhone);
-  if (phone) {
-    return `https://wa.me/${phone}?text=${encodeURIComponent(`Hi, I would like to contact ${store?.displayName || 'your store'}.`)}`;
-  }
+  const whatsappHref = buildStoreWhatsAppHref(store, whatsappContactMessage(store?.displayName));
+  if (whatsappHref) return whatsappHref;
   const email = cleanContactValue(store?.contactEmail);
   if (email) return `mailto:${email}`;
   return '';
@@ -74,16 +95,20 @@ const buildPublicContactDetails = (store) => {
     whatsapp: whatsapp && whatsappDigits && whatsappDigits !== phoneDigits
       ? {
         label: whatsapp,
-        href: `https://wa.me/${whatsappDigits}?text=${encodeURIComponent(`Hi, I would like to contact ${store?.displayName || 'your store'}.`)}`,
+        href: buildStoreWhatsAppHref(
+          { whatsappNumber: whatsapp },
+          whatsappContactMessage(store?.displayName),
+        ),
       }
       : null,
     email: email ? { label: email, href: `mailto:${email}` } : null,
   };
 };
 
-const getProductUrl = (storeSlug, product) => {
+const getProductUrl = (storeSlug, product, pathname = '') => {
   const productSlug = product?.slug || product?.id;
-  return storeSlug && productSlug ? `/stores/${encodeURIComponent(storeSlug)}/products/${encodeURIComponent(productSlug)}` : '/products';
+  if (!storeSlug || !productSlug) return '/products';
+  return buildStoreProductPath(storeSlug, productSlug, { pathname });
 };
 
 const uniqueById = (...lists) => {
@@ -105,18 +130,32 @@ const resolveStorePage = (pathname = '') => {
   return 'home';
 };
 
-const StoreScopedHeader = ({ store, onSearch }) => {
+const StoreScopedHeader = ({
+  store,
+  onSearch,
+  theme,
+  accent,
+  previewMode = false,
+  subtitle = '',
+  homeTo: homeToProp,
+  navItems = null,
+  activePage = 'home',
+}) => {
   const [searchText, setSearchText] = useState('');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { cartSummary } = useCart();
   const { isAuthenticated, openShopperAuthModal } = useStorefrontAuth();
   const cartCount = cartSummary.itemCount ? String(cartSummary.itemCount) : null;
+  const showPageNav = Array.isArray(navItems) && navItems.length > 0;
 
   const handleSubmit = useCallback((event) => {
     event.preventDefault();
+    if (previewMode) return;
     onSearch(searchText.trim());
-  }, [onSearch, searchText]);
+  }, [onSearch, previewMode, searchText]);
 
   const handleSignIn = useCallback(() => {
+    if (previewMode) return;
     openShopperAuthModal({
       mode: 'login',
       intent: {
@@ -124,65 +163,206 @@ const StoreScopedHeader = ({ store, onSearch }) => {
         returnTo: `${window.location.pathname}${window.location.search || ''}`,
       },
     });
-  }, [openShopperAuthModal]);
+  }, [openShopperAuthModal, previewMode]);
+
+  const toggleMobileMenu = useCallback(() => {
+    setMobileMenuOpen((current) => !current);
+  }, []);
+
+  const closeMobileMenu = useCallback(() => {
+    setMobileMenuOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [mobileMenuOpen]);
+
+  const homeTo = previewMode ? '#' : (homeToProp || `/stores/${encodeURIComponent(store.slug)}`);
+
+  const desktopNavLinkClass = (key) => (
+    `whitespace-nowrap text-sm font-semibold transition-colors ${
+      activePage === key
+        ? ''
+        : 'opacity-70 hover:opacity-100'
+    }`
+  );
+
+  const mobileNavLinkClass = (key) => (
+    `flex min-h-11 items-center rounded-2xl border px-4 py-2.5 text-sm font-bold transition-colors ${
+      activePage === key
+        ? 'border-transparent text-white'
+        : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+    }`
+  );
 
   return (
-    <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/95 backdrop-blur">
-      <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-3 px-3 py-3 sm:px-4 lg:flex-row lg:items-center">
-        <Link to={`/stores/${encodeURIComponent(store.slug)}`} className="flex min-w-0 items-center gap-3">
-          <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white">
-            <StoreLogo store={store} />
-          </span>
-          <span className="min-w-0">
-            <span className="block truncate text-lg font-black text-slate-950 sm:text-xl">{store.displayName}</span>
-            <span className="block truncate text-xs font-semibold uppercase tracking-[0.16em] text-green-700">Official Store</span>
-          </span>
-        </Link>
+    <header className={`sticky top-0 z-50 ${theme.headerClass}`}>
+      <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-3 px-3 py-3 sm:px-4 lg:flex-row lg:items-center lg:gap-4">
+        <div className="flex min-w-0 items-center justify-between gap-3 lg:contents">
+          <Link to={homeTo} className="flex min-w-0 items-center gap-3" onClick={previewMode ? (e) => e.preventDefault() : undefined}>
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white">
+              <StoreLogo store={store} />
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-lg font-black sm:text-xl">{store.displayName}</span>
+              {subtitle ? (
+                <span className="block truncate text-xs font-semibold uppercase tracking-[0.16em]" style={{ color: accent }}>
+                  {subtitle}
+                </span>
+              ) : null}
+            </span>
+          </Link>
+          {showPageNav ? (
+            <button
+              type="button"
+              onClick={toggleMobileMenu}
+              className="inline-flex h-11 min-h-11 w-11 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-800 transition-colors hover:bg-slate-50 lg:hidden"
+              aria-label={mobileMenuOpen ? 'Close store menu' : 'Open store menu'}
+              aria-controls="store-scoped-mobile-menu"
+              aria-expanded={mobileMenuOpen}
+            >
+              {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
+          ) : null}
+        </div>
 
-        <form onSubmit={handleSubmit} className="flex min-w-0 flex-1 overflow-hidden rounded-full border border-slate-200 bg-slate-50 p-1">
+        <form onSubmit={handleSubmit} className="flex min-w-0 flex-1 overflow-hidden rounded-full border border-slate-200 bg-slate-50/80 p-1">
           <Input
             value={searchText}
             onChange={(event) => setSearchText(event.target.value)}
             placeholder={`Search ${store.displayName}`}
-            className="h-11 min-h-11 border-0 bg-transparent px-4 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+            readOnly={previewMode}
+            className="h-11 min-h-11 border-0 bg-transparent px-4 focus-visible:ring-0 focus-visible:ring-offset-0"
           />
-          <Button type="submit" size="icon" className="h-11 min-h-11 w-11 shrink-0 rounded-full bg-green-700 hover:bg-green-800" aria-label={`Search ${store.displayName}`}>
+          <Button
+            type="submit"
+            size="icon"
+            className="h-11 min-h-11 w-11 shrink-0 rounded-full hover:opacity-90"
+            style={{ backgroundColor: accent }}
+            aria-label={`Search ${store.displayName}`}
+          >
             <Search className="h-5 w-5" />
           </Button>
         </form>
 
+        {showPageNav ? (
+          <nav className="hidden shrink-0 items-center gap-4 xl:gap-5 lg:flex" aria-label="Store pages">
+            {navItems.map((item) => (
+              <Link
+                key={item.key}
+                to={previewMode ? '#' : item.to}
+                className={desktopNavLinkClass(item.key)}
+                style={activePage === item.key ? { color: accent } : undefined}
+                onClick={previewMode ? (e) => e.preventDefault() : undefined}
+              >
+                {item.label}
+              </Link>
+            ))}
+          </nav>
+        ) : null}
+
         <div className="flex shrink-0 gap-2">
-          <ActionLink to="/cart" icon={ShoppingCart} label="Cart" badge={cartCount} />
-          {isAuthenticated ? (
-            <Button className="rounded-full bg-green-700 hover:bg-green-800" asChild>
+          {previewMode ? (
+            <Button type="button" variant="outline" className="rounded-full">
+              <ShoppingCart className="mr-2 h-4 w-4" />
+              Cart
+            </Button>
+          ) : (
+            <ActionLink to="/cart" icon={ShoppingCart} label="Cart" badge={cartCount} />
+          )}
+          {previewMode ? (
+            <Button type="button" className="rounded-full hover:opacity-90" style={{ backgroundColor: accent }}>
+              <User className="mr-2 h-4 w-4" />
+              Sign in
+            </Button>
+          ) : isAuthenticated ? (
+            <Button className="rounded-full hover:opacity-90" style={{ backgroundColor: accent }} asChild>
               <Link to="/account">
                 <User className="mr-2 h-4 w-4" />
                 Account
               </Link>
             </Button>
           ) : (
-            <Button type="button" className="rounded-full bg-green-700 hover:bg-green-800" onClick={handleSignIn}>
+            <Button type="button" className="rounded-full hover:opacity-90" style={{ backgroundColor: accent }} onClick={handleSignIn}>
               <User className="mr-2 h-4 w-4" />
-              Sign in/Register
+              Sign in
             </Button>
           )}
         </div>
       </div>
+
+      {showPageNav && mobileMenuOpen ? (
+        <div className="fixed inset-0 z-[60] overflow-y-auto bg-white lg:hidden" id="store-scoped-mobile-menu">
+          <div className="sticky top-0 z-10 border-b border-slate-200 bg-white px-3 py-4 sm:px-4">
+            <div className="flex items-center justify-between gap-3">
+              <Link
+                to={homeTo}
+                className="flex min-w-0 items-center gap-3"
+                onClick={(event) => {
+                  if (previewMode) event.preventDefault();
+                  closeMobileMenu();
+                }}
+              >
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                  <StoreLogo store={store} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-lg font-black">{store.displayName}</span>
+                  <span className="block text-xs font-semibold uppercase tracking-[0.16em]" style={{ color: accent }}>
+                    Menu
+                  </span>
+                </span>
+              </Link>
+              <button
+                type="button"
+                onClick={closeMobileMenu}
+                className="inline-flex h-11 min-h-11 w-11 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-800 transition-colors hover:bg-slate-50"
+                aria-label="Close store menu"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+          <nav className="grid gap-2 px-3 py-4 sm:px-4" aria-label="Store pages">
+            {navItems.map((item) => (
+              <Link
+                key={item.key}
+                to={previewMode ? '#' : item.to}
+                className={mobileNavLinkClass(item.key)}
+                style={activePage === item.key ? { backgroundColor: accent, borderColor: accent } : undefined}
+                onClick={(event) => {
+                  if (previewMode) event.preventDefault();
+                  closeMobileMenu();
+                }}
+              >
+                {item.label}
+              </Link>
+            ))}
+          </nav>
+        </div>
+      ) : null}
     </header>
   );
 };
 
-const ProductSection = ({ storeName, title, description, products, emptyText, sectionId = 'products' }) => (
+const ProductSection = ({ storeName, title, description, products, emptyText, sectionId = 'products', theme, accent }) => (
   <section id={sectionId} className="space-y-5">
     <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <p className="text-sm font-semibold uppercase tracking-wide text-green-800">{storeName}</p>
-        <h2 className="mt-1 text-2xl font-semibold">{title}</h2>
-        {description ? <p className="mt-1 text-sm text-muted-foreground">{description}</p> : null}
+        {storeName ? (
+          <p className="text-sm font-semibold uppercase tracking-wide" style={{ color: accent }}>{storeName}</p>
+        ) : null}
+        <h2 className={`${storeName ? 'mt-1' : ''} font-semibold ${theme?.dense ? 'text-xl' : 'text-2xl'}`}>{title}</h2>
+        {description ? <p className="mt-1 text-sm opacity-70">{description}</p> : null}
       </div>
     </div>
     {products.length ? (
-      <div className="grid gap-4 sm:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]">
+      <div className={theme?.gridClass || 'grid gap-4 sm:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]'}>
         {products.map((product) => (
           <ProductCard key={product.id} product={product} />
         ))}
@@ -195,12 +375,19 @@ const ProductSection = ({ storeName, title, description, products, emptyText, se
   </section>
 );
 
-const ServiceSection = ({ storeName, storeSlug, title, description, services, emptyText, sectionId = 'services' }) => (
+const ServiceSection = ({ storeName, storeSlug, title, description, services, emptyText, sectionId = 'services', serviceBasePathname = '', accent }) => (
   <section id={sectionId} className="space-y-5">
     <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <p className="text-sm font-semibold uppercase tracking-wide text-green-800">{storeName}</p>
-        <h2 className="mt-1 text-2xl font-semibold">{title}</h2>
+        {storeName ? (
+          <p
+            className={`text-sm font-semibold uppercase tracking-wide ${accent ? '' : 'text-green-800'}`}
+            style={accent ? { color: accent } : undefined}
+          >
+            {storeName}
+          </p>
+        ) : null}
+        <h2 className={`${storeName ? 'mt-1' : ''} text-2xl font-semibold`}>{title}</h2>
         {description ? <p className="mt-1 text-sm text-muted-foreground">{description}</p> : null}
       </div>
     </div>
@@ -210,7 +397,7 @@ const ServiceSection = ({ storeName, storeSlug, title, description, services, em
           <ServiceCard
             key={service.id}
             service={service}
-            serviceUrl={getStoreServiceUrl(storeSlug, service)}
+            serviceUrl={getStoreServiceUrl(storeSlug, service, { pathname: serviceBasePathname })}
           />
         ))}
       </div>
@@ -222,28 +409,84 @@ const ServiceSection = ({ storeName, storeSlug, title, description, services, em
   </section>
 );
 
-const PublicStoreHome = () => {
-  const { storeSlug } = useParams();
+const PublicStoreHome = ({
+  previewStore = null,
+  previewProducts = null,
+  previewMode = false,
+} = {}) => {
+  const { storeSlug: routeSlug } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { isAuthenticated, openShopperAuthModal } = useStorefrontAuth();
+  const { mode, isSingleStoreMode, isMarketplaceMode, pathPrefix } = useStorefrontMode();
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const storeSlug = previewMode && previewStore?.slug ? previewStore.slug : routeSlug;
+  const storeSubtitle = STORE_SUBTITLE[mode] || '';
+  const isOwnedShop = isSingleStoreMode || !isMarketplaceMode;
+  const catalogSearch = searchParams.get('search') || '';
+  const catalogCategory = searchParams.get('category') || '';
+  const isPreviewRequest = searchParams.get('preview') === '1';
 
   const storeQuery = useQuery({
-    queryKey: ['marketplace-store-home', storeSlug],
-    queryFn: () => storeService.getMarketplaceStoreHome(storeSlug),
-    enabled: Boolean(storeSlug),
+    queryKey: ['marketplace-store-home', storeSlug, isPreviewRequest ? 'preview' : 'live'],
+    queryFn: () => storeService.getMarketplaceStoreHome(
+      storeSlug,
+      isPreviewRequest ? { preview: '1' } : {}
+    ),
+    enabled: Boolean(storeSlug) && !previewMode,
     retry: false,
   });
 
-  const data = useMemo(() => unwrapData(storeQuery.data) || {}, [storeQuery.data]);
+  const data = useMemo(() => {
+    if (previewMode && previewStore) {
+      const products = Array.isArray(previewProducts) && previewProducts.length
+        ? previewProducts
+        : SAMPLE_PRODUCTS;
+      return {
+        store: previewStore,
+        featuredProducts: products.slice(0, 4),
+        secondaryProducts: products.slice(4),
+        products,
+        categories: [],
+        serviceCategories: [],
+        featuredServices: [],
+        secondaryServices: [],
+        services: [],
+        reviews: [],
+        promotionalBanner: null,
+      };
+    }
+    return unwrapData(storeQuery.data) || {};
+  }, [previewMode, previewProducts, previewStore, storeQuery.data]);
   const store = data.store || null;
+
+  useEffect(() => {
+    if (previewMode || !isSingleStoreMode || !store?.slug) return;
+    persistOnlineStoreBrand(store, {
+      pathPrefix: pathPrefix === 'stores' ? 'stores' : 'shop',
+    });
+  }, [isSingleStoreMode, pathPrefix, previewMode, store]);
+
+  const theme = useMemo(() => getTemplateTheme(store?.templateId), [store?.templateId]);
+  const brandColors = useMemo(
+    () => resolveStoreBrandColors(store?.templateId, store || {}),
+    [store],
+  );
+  const accent = brandColors.primary || theme.accent;
+  const secondary = brandColors.secondary || theme.secondary || accent;
   const isServiceStore = store?.storeMode === 'studio';
   const productCategories = useMemo(() => (Array.isArray(data.categories) ? data.categories : []), [data.categories]);
   const serviceCategories = useMemo(() => (Array.isArray(data.serviceCategories) ? data.serviceCategories : []), [data.serviceCategories]);
   const categories = isServiceStore ? serviceCategories : productCategories;
   const featuredProducts = useMemo(() => Array.isArray(data.featuredProducts) ? data.featuredProducts : [], [data.featuredProducts]);
   const secondaryProducts = useMemo(() => Array.isArray(data.secondaryProducts) ? data.secondaryProducts : [], [data.secondaryProducts]);
+  const productSections = useMemo(() => {
+    if (!Array.isArray(data.productSections)) return [];
+    return data.productSections.filter((section) => (
+      section && Array.isArray(section.products) && section.products.length > 0
+    ));
+  }, [data.productSections]);
   const featuredServices = useMemo(() => Array.isArray(data.featuredServices) ? data.featuredServices : [], [data.featuredServices]);
   const secondaryServices = useMemo(() => Array.isArray(data.secondaryServices) ? data.secondaryServices : [], [data.secondaryServices]);
   const allProducts = useMemo(() => (
@@ -255,7 +498,13 @@ const PublicStoreHome = () => {
   const reviews = useMemo(() => Array.isArray(data.reviews) ? data.reviews : [], [data.reviews]);
   const stats = store?.stats || {};
   const currency = store?.currency;
-  const bannerUrl = resolveStoreBannerImageUrl(store);
+  // Marketplace store pages keep the discovery banner; Online Store single-shop does not.
+  const showBannerHero = isMarketplaceMode;
+  const bannerUrl = showBannerHero ? resolveStoreBannerImageUrl(store) : '';
+  const heroSlides = useMemo(
+    () => (isSingleStoreMode || !isMarketplaceMode) && Array.isArray(store?.heroSlides) ? store.heroSlides : [],
+    [isMarketplaceMode, isSingleStoreMode, store?.heroSlides]
+  );
   const contactHref = useMemo(() => buildContactHref(store), [store]);
   const publicContactDetails = useMemo(() => buildPublicContactDetails(store), [store]);
   const hasPublicContactDetails = Boolean(
@@ -263,18 +512,19 @@ const PublicStoreHome = () => {
   );
   const promo = data.promotionalBanner || store?.promo || null;
   const activePage = resolveStorePage(location.pathname);
+  const storeBasePath = buildStoreHomePath(storeSlug, { pathname: location.pathname });
 
   const storeReviewsQuery = useQuery({
     queryKey: ['store-reviews', storeSlug],
     queryFn: () => storeService.getStoreReviews(storeSlug),
-    enabled: Boolean(storeSlug && store),
+    enabled: Boolean(storeSlug && store) && !previewMode,
     retry: false,
   });
 
   const storeReviewEligibilityQuery = useQuery({
     queryKey: ['store-review-eligibility', storeSlug, isAuthenticated],
     queryFn: () => storeService.getStoreReviewEligibility(storeSlug),
-    enabled: Boolean(storeSlug && store && isAuthenticated),
+    enabled: Boolean(storeSlug && store && isAuthenticated) && !previewMode,
     retry: false,
   });
 
@@ -302,12 +552,20 @@ const PublicStoreHome = () => {
   ]), [stats.positiveReviewsPercent, store?.deliveryEnabled]);
 
   const handleSearch = useCallback((search) => {
+    if (isSingleStoreMode || !isMarketplaceMode) {
+      navigate(buildStoreCatalogPath(storeSlug, {
+        search,
+        pathname: location.pathname,
+        isServiceStore,
+      }));
+      return;
+    }
     if (isServiceStore) {
       navigate(buildServicesSearchPath({ search, studioSlug: storeSlug }));
       return;
     }
     navigate(buildProductsSearchPath({ search, storeSlug }));
-  }, [isServiceStore, navigate, storeSlug]);
+  }, [isMarketplaceMode, isServiceStore, isSingleStoreMode, location.pathname, navigate, storeSlug]);
 
   const handleFollowStore = useCallback(() => {
     showSuccess('Following stores is coming soon.');
@@ -318,10 +576,10 @@ const PublicStoreHome = () => {
       mode: 'login',
       intent: {
         action: 'review',
-        returnTo: `/stores/${encodeURIComponent(storeSlug)}`,
+        returnTo: storeBasePath,
       },
     });
-  }, [openShopperAuthModal, storeSlug]);
+  }, [openShopperAuthModal, storeBasePath]);
 
   const handleSubmitStoreReview = useCallback(async (payload) => {
     setReviewSubmitting(true);
@@ -340,7 +598,14 @@ const PublicStoreHome = () => {
     }
   }, [storeQuery, storeReviewEligibilityQuery, storeReviewsQuery, storeSlug]);
 
-  if (storeQuery.isLoading) {
+  /** Compact trust strip for owned Online Store — badge chips near footer, not post-hero. */
+  const ownedTrustItems = useMemo(() => ([
+    store?.deliveryEnabled ? { label: 'Delivery available', icon: Truck } : null,
+    { label: 'Secure payments', icon: ShieldCheck },
+    contactHref ? { label: 'Contact us', icon: MessageCircle, href: contactHref } : null,
+  ].filter(Boolean)), [store?.deliveryEnabled, contactHref]);
+
+  if (!previewMode && storeQuery.isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-white">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -357,25 +622,29 @@ const PublicStoreHome = () => {
               <Store className="h-4 w-4" />
               <AlertDescription>This store is not available right now.</AlertDescription>
             </Alert>
-            <Button className="mt-4 bg-green-700 hover:bg-green-800" asChild>
-              <Link to="/stores">Back to stores</Link>
-            </Button>
+            {!isSingleStoreMode ? (
+              <Button className="mt-4 bg-green-700 hover:bg-green-800" asChild>
+                <Link to="/stores">Back to stores</Link>
+              </Button>
+            ) : null}
           </div>
         </main>
       </div>
     );
   }
 
-  const storeBasePath = `/stores/${encodeURIComponent(storeSlug)}`;
   const catalogPath = isServiceStore ? `${storeBasePath}/services` : `${storeBasePath}/products`;
   const navItems = [
-    { key: 'home', label: 'Store Home', to: storeBasePath },
+    { key: 'home', label: isOwnedShop ? 'Home' : 'Store Home', to: storeBasePath },
     { key: 'catalog', label: isServiceStore ? 'All Services' : 'All Products', to: catalogPath },
     { key: 'categories', label: 'Categories', to: `${storeBasePath}/categories` },
     { key: 'about', label: 'About Us', to: `${storeBasePath}/about` },
     { key: 'reviews', label: 'Reviews', to: `${storeBasePath}/reviews` },
   ];
-  const storeCatalog = isServiceStore ? allServices : allProducts;
+  const storeCatalogRaw = isServiceStore ? allServices : allProducts;
+  const storeCatalog = (isSingleStoreMode || catalogSearch || catalogCategory)
+    ? filterStoreListings(storeCatalogRaw, { search: catalogSearch, category: catalogCategory })
+    : storeCatalogRaw;
   const navLinkClass = (key) => (
     `whitespace-nowrap border-b-2 px-1 py-2 transition-colors ${
       activePage === key
@@ -384,12 +653,18 @@ const PublicStoreHome = () => {
     }`
   );
   const categoryLinkFor = (category) => (
-    isServiceStore
-      ? buildServicesSearchPath({ category: category.name, studioSlug: storeSlug })
-      : buildProductsSearchPath({ category: category.name, storeSlug })
+    isSingleStoreMode || !isMarketplaceMode
+      ? buildStoreCatalogPath(storeSlug, {
+        category: category.name,
+        pathname: location.pathname,
+        isServiceStore,
+      })
+      : (isServiceStore
+        ? buildServicesSearchPath({ category: category.name, studioSlug: storeSlug })
+        : buildProductsSearchPath({ category: category.name, storeSlug }))
   );
 
-  const categoriesCard = (
+  const categoriesCard = (!isOwnedShop || categories.length > 0) ? (
     <Card id="categories" className="border border-border">
       <CardContent className="p-5">
         <h2 className="text-lg font-semibold">{isServiceStore ? 'Browse by Category' : 'Shop by Category'}</h2>
@@ -417,29 +692,37 @@ const PublicStoreHome = () => {
             );
           }) : (
             <p className="text-sm text-muted-foreground">
-              {isServiceStore
-                ? 'Categories appear when services are categorized.'
-                : 'Categories appear when products are categorized.'}
+              {isOwnedShop
+                ? (isServiceStore ? 'No categories yet.' : 'No categories yet.')
+                : (isServiceStore
+                  ? 'Categories appear when services are categorized.'
+                  : 'Categories appear when products are categorized.')}
             </p>
           )}
         </div>
       </CardContent>
     </Card>
-  );
+  ) : null;
 
   const aboutCard = (
     <Card id="about" className="border border-border">
       <CardContent className="p-5">
-        <h2 className="text-lg font-semibold">About Store</h2>
+        <h2 className="text-lg font-semibold">{isOwnedShop ? 'About us' : 'About Store'}</h2>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
           {store.description || (
-            isServiceStore
-              ? `${store.displayName} has launched a public service catalog.`
-              : `${store.displayName} has launched a public product catalog.`
+            isOwnedShop
+              ? (isServiceStore
+                ? `Welcome to ${store.displayName}. Browse our services.`
+                : `Welcome to ${store.displayName}. Browse our products.`)
+              : (isServiceStore
+                ? `${store.displayName} has launched a public service catalog.`
+                : `${store.displayName} has launched a public product catalog.`)
           )}
         </p>
         <div className="mt-4 grid gap-2 text-sm">
-          <span className="inline-flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-green-700" /> Published store</span>
+          {!isOwnedShop ? (
+            <span className="inline-flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-green-700" /> Published store</span>
+          ) : null}
           {isServiceStore ? (
             <span className="inline-flex items-center gap-2">
               <Scissors className="h-4 w-4 text-green-700" />
@@ -481,14 +764,22 @@ const PublicStoreHome = () => {
   );
 
   const deliveryCard = (store.freeDeliveryThreshold || store.deliveryEnabled) ? (
-    <Card className="border border-green-200 bg-green-50/60">
+    <Card
+      className="border"
+      style={{
+        borderColor: 'color-mix(in srgb, var(--store-accent, #166534) 28%, #e5e7eb)',
+        backgroundColor: 'var(--store-accent-soft, #f0fdf4)',
+      }}
+    >
       <CardContent className="p-5">
-        <Truck className="h-6 w-6 text-green-800" />
-        <h2 className="mt-3 text-lg font-semibold text-green-950">Delivery Options</h2>
-        <p className="mt-2 text-sm leading-6 text-green-950/70">
+        <Truck className="h-6 w-6 text-[color:var(--store-accent,#166534)]" />
+        <h2 className="mt-3 text-lg font-semibold text-slate-950">Delivery Options</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-600">
           {store.freeDeliveryThreshold
             ? `Free delivery from ${formatAmount(store.freeDeliveryThreshold, currency)}.`
-            : 'Delivery is available where the store can fulfill orders.'}
+            : (isOwnedShop
+              ? 'We deliver where we can fulfill your order.'
+              : 'Delivery is available where the store can fulfill orders.')}
         </p>
       </CardContent>
     </Card>
@@ -499,15 +790,15 @@ const PublicStoreHome = () => {
       <div className="grid w-full gap-3 px-3 py-6 sm:px-4 md:grid-cols-4">
         {[
           isServiceStore
-            ? { title: 'Professional Services', description: `Offered by ${store.displayName}`, icon: Scissors }
-            : { title: 'Genuine Products', description: `Published by ${store.displayName}`, icon: ShieldCheck },
+            ? { title: 'Professional Services', description: isOwnedShop ? 'Services we offer' : `Offered by ${store.displayName}`, icon: Scissors }
+            : { title: 'Genuine Products', description: isOwnedShop ? 'Quality products from us' : `Published by ${store.displayName}`, icon: ShieldCheck },
           isServiceStore
             ? { title: 'Request Quotes', description: 'Get pricing before you book', icon: MessageCircle }
-            : { title: 'Fast Delivery', description: store.deliveryEnabled ? 'Delivery available from this store' : 'Fulfillment managed by the store', icon: Truck },
+            : { title: 'Fast Delivery', description: store.deliveryEnabled ? (isOwnedShop ? 'Delivery available' : 'Delivery available from this store') : (isOwnedShop ? 'We handle fulfillment' : 'Fulfillment managed by the store'), icon: Truck },
           { title: 'Secure Payments', description: 'Protected checkout options', icon: CreditCard },
           isServiceStore
-            ? { title: 'Trusted Support', description: 'Store-managed service follow-up', icon: RotateCcw }
-            : { title: 'Easy Returns', description: 'Store-managed support', icon: RotateCcw },
+            ? { title: 'Trusted Support', description: isOwnedShop ? 'We’re here after you book' : 'Store-managed service follow-up', icon: RotateCcw }
+            : { title: 'Easy Returns', description: isOwnedShop ? 'We’re here to help' : 'Store-managed support', icon: RotateCcw },
         ].map((item) => {
           const Icon = item.icon;
           return (
@@ -522,54 +813,240 @@ const PublicStoreHome = () => {
     </section>
   );
 
-  const reviewsSection = (
-    <section id="reviews" className="w-full px-3 py-10 sm:px-4 sm:py-12">
-      <div className="grid gap-5 rounded-2xl border border-slate-200 bg-white p-5 sm:rounded-3xl md:p-8">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-wide text-green-800">Customer Reviews</p>
-            <h2 className="mt-1 text-2xl font-semibold">Verified store feedback</h2>
+  const ownedTrustStrip = ownedTrustItems.length > 0 ? (
+    <section
+      className="border-t bg-white"
+      aria-label="Store assurances"
+      style={{ borderColor: `color-mix(in srgb, ${accent} 18%, #e5e7eb)` }}
+    >
+      <div className="flex w-full flex-wrap items-center justify-center gap-2.5 px-3 py-5 sm:gap-3 sm:px-4">
+        {ownedTrustItems.map((item) => {
+          const Icon = item.icon;
+          const chipStyle = {
+            borderColor: `color-mix(in srgb, ${accent} 28%, #e5e7eb)`,
+            backgroundColor: 'var(--store-accent-soft, #f8fafc)',
+          };
+          const content = (
+            <>
+              <span
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border bg-white"
+                style={{ borderColor: `color-mix(in srgb, ${accent} 22%, #e5e7eb)` }}
+              >
+                <Icon className="h-4 w-4" style={{ color: accent }} aria-hidden />
+              </span>
+              <span className="whitespace-nowrap text-sm font-semibold tracking-tight text-slate-800">
+                {item.label}
+              </span>
+            </>
+          );
+          const chipClassName =
+            'inline-flex items-center gap-2.5 rounded-full border px-3.5 py-2 transition-opacity hover:opacity-90';
+          if (item.href) {
+            return (
+              <a
+                key={item.label}
+                href={item.href}
+                target="_blank"
+                rel="noreferrer"
+                className={chipClassName}
+                style={chipStyle}
+              >
+                {content}
+              </a>
+            );
+          }
+          return (
+            <span key={item.label} className={chipClassName} style={chipStyle}>
+              {content}
+            </span>
+          );
+        })}
+      </div>
+    </section>
+  ) : null;
+
+  const ownedAboutSection = (
+    <section id="about" className="w-full border-t border-border px-3 py-10 sm:px-4 sm:py-12">
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-start">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-wide" style={{ color: accent }}>About</p>
+          <h2 className="mt-1 text-2xl font-semibold">About us</h2>
+          <p className="mt-4 max-w-3xl text-base leading-7 opacity-80">
+            {store.description || (
+              isServiceStore
+                ? 'Browse our services and get in touch when you are ready.'
+                : 'Browse our products and get in touch when you are ready.'
+            )}
+          </p>
+          <div className="mt-6 grid gap-3 text-sm">
+            {publicContactDetails.phone ? (
+              <a className="inline-flex min-w-0 items-center gap-2 hover:opacity-80" href={publicContactDetails.phone.href || undefined} style={{ color: accent }}>
+                <Phone className="h-4 w-4 shrink-0" />
+                <span className="truncate">{publicContactDetails.phone.label}</span>
+              </a>
+            ) : null}
+            {publicContactDetails.whatsapp ? (
+              <a className="inline-flex min-w-0 items-center gap-2 hover:opacity-80" href={publicContactDetails.whatsapp.href} target="_blank" rel="noreferrer" style={{ color: accent }}>
+                <MessageCircle className="h-4 w-4 shrink-0" />
+                <span className="truncate">WhatsApp: {publicContactDetails.whatsapp.label}</span>
+              </a>
+            ) : null}
+            {publicContactDetails.email ? (
+              <a className="inline-flex min-w-0 items-center gap-2 hover:opacity-80" href={publicContactDetails.email.href} style={{ color: accent }}>
+                <Mail className="h-4 w-4 shrink-0" />
+                <span className="truncate">{publicContactDetails.email.label}</span>
+              </a>
+            ) : null}
           </div>
-          <ReviewSummaryLine summary={storeReviewSummary} />
         </div>
-        <VerifiedReviewForm
-          eligibility={storeReviewEligibility}
-          isAuthenticated={isAuthenticated}
-          isEligibilityLoading={storeReviewEligibilityQuery.isLoading}
-          isSubmitting={reviewSubmitting}
-          onRequireAuth={handleReviewAuth}
-          onSubmit={handleSubmitStoreReview}
-          targetLabel={store.displayName}
-        />
-        <ReviewList reviews={storeReviewList} emptyText="No verified store reviews yet." />
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-border bg-background p-5">
+            <p className="text-sm font-semibold">At a glance</p>
+            <div className="mt-3 space-y-2 text-sm text-muted-foreground">
+              {isServiceStore ? (
+                <span className="inline-flex items-center gap-2">
+                  <Scissors className="h-4 w-4" style={{ color: accent }} />
+                  {formatInteger(stats.serviceCount || 0)} services
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-2">
+                  <Package className="h-4 w-4" style={{ color: accent }} />
+                  {formatInteger(stats.productCount || 0)} products
+                </span>
+              )}
+              {store.category ? (
+                <p className="pt-1">{store.category}</p>
+              ) : null}
+            </div>
+          </div>
+          {deliveryCard}
+        </div>
       </div>
     </section>
   );
 
-  const catalogSection = isServiceStore ? (
-    <section className="w-full px-3 py-8 sm:px-4 sm:py-10">
+  const ownedCategoryStrip = categories.length > 0 ? (
+    <div className="flex flex-wrap gap-2">
+      {categories.slice(0, 8).map((category) => (
+        <Link
+          key={category.id || category.name}
+          to={categoryLinkFor(category)}
+          className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1.5 text-sm transition-colors hover:border-green-200 hover:bg-green-50"
+        >
+          <span className="truncate max-w-[10rem]">{category.name}</span>
+          <Badge variant="outline" className="shrink-0">{formatInteger(category.count || 0)}</Badge>
+        </Link>
+      ))}
+      {categories.length > 8 ? (
+        <Link
+          to={`${storeBasePath}/categories`}
+          className="inline-flex items-center rounded-full border border-border px-3 py-1.5 text-sm font-medium hover:border-green-200 hover:bg-green-50"
+          style={{ color: accent }}
+        >
+          All categories
+        </Link>
+      ) : null}
+    </div>
+  ) : null;
+
+  const ownedProductBlocks = isServiceStore ? (
+    <>
       <ServiceSection
-        storeName={store.displayName}
         storeSlug={storeSlug}
-        title="All Services"
-        description="Browse every published service from this store."
-        services={storeCatalog}
-        emptyText="This store has not published services yet."
+        title="Featured"
+        services={featuredServices}
+        emptyText="No featured services yet."
+        serviceBasePathname={location.pathname}
+        accent={accent}
       />
-    </section>
+      {secondaryServices.length > 0 ? (
+        <ServiceSection
+          storeSlug={storeSlug}
+          sectionId="more-services"
+          title="More Services"
+          services={secondaryServices}
+          emptyText="No additional services are available right now."
+          serviceBasePathname={location.pathname}
+          accent={accent}
+        />
+      ) : null}
+    </>
+  ) : productSections.length > 0 ? (
+    <>
+      {productSections.map((section) => (
+        <ProductSection
+          key={section.id || section.slug}
+          title={section.title}
+          description={section.description || undefined}
+          products={section.products}
+          emptyText=""
+          sectionId={`section-${section.slug || section.id}`}
+          theme={theme}
+          accent={accent}
+        />
+      ))}
+    </>
   ) : (
-    <section className="w-full px-3 py-8 sm:px-4 sm:py-10">
+    <>
       <ProductSection
-        storeName={store.displayName}
-        title="All Products"
-        description="Browse every published product from this store."
-        products={storeCatalog}
-        emptyText="This store has not published products yet."
+        title="Featured"
+        products={featuredProducts}
+        emptyText="No featured products yet."
+        theme={theme}
+        accent={accent}
       />
-    </section>
+      {secondaryProducts.length > 0 ? (
+        <ProductSection
+          title={data.secondaryProductsLabel || 'New Arrivals'}
+          products={secondaryProducts}
+          emptyText="No additional products are available right now."
+          theme={theme}
+          accent={accent}
+        />
+      ) : null}
+    </>
   );
 
-  const homeContent = (
+  const ownedHomeContent = (
+    <>
+      <section className="w-full space-y-10 px-3 py-8 sm:px-4 sm:py-10">
+        {promo ? (
+          <section className="rounded-2xl border border-green-200 bg-green-950 p-6 text-white sm:rounded-3xl md:p-8">
+            <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-wide text-green-100">Featured Promo</p>
+                <h2 className="mt-2 text-3xl font-semibold">{promo.title || 'Featured offer'}</h2>
+                {promo.description ? (
+                  <p className="mt-3 max-w-2xl text-green-50/80">{promo.description}</p>
+                ) : null}
+              </div>
+              {promo.product ? (
+                <Button className="w-full bg-white text-green-950 hover:bg-green-50 md:w-auto" asChild>
+                  <Link to={getProductUrl(storeSlug, promo.product, location.pathname)}>
+                    Shop offer
+                  </Link>
+                </Button>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
+
+        {ownedProductBlocks}
+
+        {ownedCategoryStrip}
+      </section>
+
+      <StoreTestimonialsSection
+        testimonials={store?.testimonials}
+        accent={accent}
+      />
+
+      {ownedAboutSection}
+      {ownedTrustStrip}
+    </>
+  );
+
+  const marketplaceHomeContent = (
     <>
       <section className="grid w-full gap-6 px-3 py-8 sm:px-4 sm:py-10 lg:grid-cols-[300px_minmax(0,1fr)]">
         <aside className="space-y-5">
@@ -585,11 +1062,15 @@ const PublicStoreHome = () => {
                 <div>
                   <p className="text-sm font-semibold uppercase tracking-wide text-green-100">Featured Promo</p>
                   <h2 className="mt-2 text-3xl font-semibold">{promo.title || 'Featured offer'}</h2>
-                  <p className="mt-3 max-w-2xl text-green-50/80">{promo.description || 'Explore current featured products from this store.'}</p>
+                  <p className="mt-3 max-w-2xl text-green-50/80">
+                    {promo.description || 'Explore current featured products from this store.'}
+                  </p>
                 </div>
                 {promo.product ? (
                   <Button className="w-full bg-white text-green-950 hover:bg-green-50 md:w-auto" asChild>
-                    <Link to={getProductUrl(storeSlug, promo.product)}>View deal</Link>
+                    <Link to={getProductUrl(storeSlug, promo.product, location.pathname)}>
+                      View deal
+                    </Link>
                   </Button>
                 ) : null}
               </div>
@@ -605,6 +1086,7 @@ const PublicStoreHome = () => {
                 description="Services published by this store and sorted by storefront priority."
                 services={featuredServices}
                 emptyText="This store has not published featured services yet."
+                serviceBasePathname={location.pathname}
               />
               <ServiceSection
                 storeName={store.displayName}
@@ -614,7 +1096,24 @@ const PublicStoreHome = () => {
                 description="Latest services published by this store."
                 services={secondaryServices}
                 emptyText="No additional services are available right now."
+                serviceBasePathname={location.pathname}
               />
+            </>
+          ) : productSections.length > 0 ? (
+            <>
+              {productSections.map((section) => (
+                <ProductSection
+                  key={section.id || section.slug}
+                  storeName={store.displayName}
+                  title={section.title}
+                  description={section.description || undefined}
+                  products={section.products}
+                  emptyText=""
+                  sectionId={`section-${section.slug || section.id}`}
+                  theme={theme}
+                  accent={accent}
+                />
+              ))}
             </>
           ) : (
             <>
@@ -624,13 +1123,21 @@ const PublicStoreHome = () => {
                 description="Products published by this store and sorted by storefront priority."
                 products={featuredProducts}
                 emptyText="This store has not published featured products yet."
+                theme={theme}
+                accent={accent}
               />
               <ProductSection
                 storeName={store.displayName}
                 title={data.secondaryProductsLabel || 'New Arrivals'}
-                description={data.secondaryProductsLabel === 'Best Selling Products' ? 'Ranked from recorded sales for this store.' : 'Latest products published by this store.'}
+                description={
+                  data.secondaryProductsLabel === 'Best Selling Products'
+                    ? 'Ranked from recorded sales for this store.'
+                    : 'Latest products published by this store.'
+                }
                 products={secondaryProducts}
                 emptyText="No additional products are available right now."
+                theme={theme}
+                accent={accent}
               />
             </>
           )}
@@ -640,13 +1147,86 @@ const PublicStoreHome = () => {
     </>
   );
 
+  const homeContent = isOwnedShop ? ownedHomeContent : marketplaceHomeContent;
+
+  const reviewsSection = (
+    <section id="reviews" className="w-full px-3 py-10 sm:px-4 sm:py-12">
+      <div className="grid gap-5 rounded-2xl border border-slate-200 bg-white p-5 sm:rounded-3xl md:p-8">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-wide text-[color:var(--store-accent,#166534)]">Customer Reviews</p>
+            <h2 className="mt-1 text-2xl font-semibold">
+              {isOwnedShop ? 'Reviews' : 'Verified store feedback'}
+            </h2>
+          </div>
+          <ReviewSummaryLine summary={storeReviewSummary} />
+        </div>
+        <VerifiedReviewForm
+          eligibility={storeReviewEligibility}
+          isAuthenticated={isAuthenticated}
+          isEligibilityLoading={storeReviewEligibilityQuery.isLoading}
+          isSubmitting={reviewSubmitting}
+          onRequireAuth={handleReviewAuth}
+          onSubmit={handleSubmitStoreReview}
+          targetLabel={store.displayName}
+        />
+        <ReviewList
+          reviews={storeReviewList}
+          emptyText={isOwnedShop ? 'No reviews yet.' : 'No verified store reviews yet.'}
+        />
+      </div>
+    </section>
+  );
+
+  const catalogSection = isServiceStore ? (
+    <section className="w-full px-3 py-8 sm:px-4 sm:py-10">
+      <ServiceSection
+        storeName={store.displayName}
+        storeSlug={storeSlug}
+        title={catalogSearch || catalogCategory ? 'Matching services' : 'All Services'}
+        description={
+          catalogSearch
+            ? `Results for “${catalogSearch}”.`
+            : (isOwnedShop
+              ? (isServiceStore ? 'Browse all our services.' : 'Browse all our products.')
+              : (isServiceStore
+                ? 'Browse every published service from this store.'
+                : 'Browse every published product from this store.'))
+        }
+        services={storeCatalog}
+        emptyText={catalogSearch || catalogCategory ? 'No services match this search.' : (isOwnedShop ? 'No services yet.' : 'This store has not published services yet.')}
+        serviceBasePathname={location.pathname}
+      />
+    </section>
+  ) : (
+    <section className="w-full px-3 py-8 sm:px-4 sm:py-10">
+      <ProductSection
+        storeName={store.displayName}
+        title={catalogSearch || catalogCategory ? 'Matching products' : 'All Products'}
+        description={
+          catalogSearch
+            ? `Results for “${catalogSearch}”.`
+            : (isOwnedShop
+              ? 'Browse all our products.'
+              : 'Browse every published product from this store.')
+        }
+        products={storeCatalog}
+        emptyText={catalogSearch || catalogCategory ? 'No products match this search.' : (isOwnedShop ? 'No products yet.' : 'This store has not published products yet.')}
+        theme={theme}
+        accent={accent}
+      />
+    </section>
+  );
+
   const categoriesPage = (
     <section className="w-full px-3 py-8 sm:px-4 sm:py-10">
       <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:rounded-3xl md:p-8">
         <p className="text-sm font-semibold uppercase tracking-wide text-green-800">{store.displayName}</p>
         <h2 className="mt-1 text-2xl font-semibold">Categories</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          {isServiceStore ? 'Browse service categories from this store.' : 'Browse product categories from this store.'}
+          {isOwnedShop
+            ? (isServiceStore ? 'Browse our service categories.' : 'Browse our product categories.')
+            : (isServiceStore ? 'Browse service categories from this store.' : 'Browse product categories from this store.')}
         </p>
         <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {categories.length ? categories.map((category) => {
@@ -703,35 +1283,57 @@ const PublicStoreHome = () => {
     : `${formatInteger(stats.productCount || 0)} products`;
 
   const fullHeroSection = (
-    <section className="relative z-0 border-b border-green-100 bg-gradient-to-br from-green-50 via-white to-amber-50">
+    <section className="relative z-0 border-b border-border">
+      {!showBannerHero && heroSlides.length > 0 ? (
+        <StoreHeroCarousel
+          slides={heroSlides}
+          storeName={store.displayName}
+          accent={accent}
+          animation={store?.heroAnimation}
+        />
+      ) : null}
+      {/* Owned Online Store: skip post-hero branding/tagline/trust — products follow immediately. */}
+      {isOwnedShop ? null : (
       <div className="w-full px-3 py-6 sm:px-4 sm:py-8">
-        <div className="rounded-2xl border border-border bg-background sm:rounded-3xl">
-          <div className="relative h-48 overflow-hidden border-b border-border sm:h-64 md:h-72">
-            {bannerUrl ? (
-              <img
-                src={bannerUrl}
-                alt={`${store.displayName} banner`}
-                className="absolute inset-0 h-full w-full object-cover"
-              />
-            ) : (
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,#22c55e33,transparent_35%),linear-gradient(135deg,#052e16,#166534)]" />
-            )}
-          </div>
+        <div className={`overflow-hidden ${theme.heroClass}`}>
+          {showBannerHero ? (
+            <div className="relative h-48 overflow-hidden border-b border-border/60 sm:h-64 md:h-72">
+              {bannerUrl ? (
+                <img
+                  src={bannerUrl}
+                  alt={`${store.displayName} banner`}
+                  className="absolute inset-0 h-full w-full object-cover"
+                />
+              ) : (
+                <div
+                  className="absolute inset-0"
+                  style={{ background: `linear-gradient(135deg, ${accent}, ${accent}99)` }}
+                />
+              )}
+              {theme.heroOverlay ? <div className="absolute inset-0 bg-slate-950/40" /> : null}
+            </div>
+          ) : null}
 
           <div className="grid gap-6 p-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:p-8">
             <div className="flex flex-col gap-5 sm:flex-row">
-              <div className="relative z-10 -mt-16 flex h-28 w-28 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white sm:rounded-3xl">
+              <div
+                className={`relative z-10 flex h-28 w-28 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white sm:rounded-3xl ${
+                  showBannerHero ? '-mt-16' : ''
+                }`}
+              >
                 <StoreLogo store={store} />
               </div>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="min-w-0 text-2xl font-bold tracking-tight text-green-950 sm:text-3xl md:text-4xl">{store.displayName}</h1>
-                  <Badge className="bg-green-700 text-white hover:bg-green-700">
+                  <h1 className={`min-w-0 font-bold tracking-tight sm:text-3xl md:text-4xl ${theme.id === 'bold' ? 'text-3xl' : 'text-2xl'}`}>
+                    {store.displayName}
+                  </h1>
+                  <Badge className="text-white hover:opacity-90" style={{ backgroundColor: accent }}>
                     <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
                     Verified Store
                   </Badge>
                 </div>
-                <p className="mt-3 max-w-3xl text-base leading-7 text-muted-foreground">
+                <p className={`mt-3 max-w-3xl text-base leading-7 ${theme.id === 'bold' ? 'text-white/80' : 'opacity-70'}`}>
                   {store.description || (
                     isServiceStore
                       ? `Browse published services from ${store.displayName}.`
@@ -742,7 +1344,7 @@ const PublicStoreHome = () => {
                   {trustBadges.map((badge) => {
                     const Icon = badge.icon;
                     return (
-                      <Badge key={badge.label} variant="outline" className="gap-1.5 rounded-full border-green-100 bg-green-50 px-3 py-1.5 text-sm font-semibold text-green-800">
+                      <Badge key={badge.label} variant="outline" className="gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold" style={{ color: secondary, borderColor: secondary }}>
                         <Icon className="h-3.5 w-3.5" />
                         {badge.label}
                       </Badge>
@@ -753,23 +1355,39 @@ const PublicStoreHome = () => {
             </div>
 
             <div className="grid gap-2 sm:flex sm:flex-row sm:flex-wrap lg:justify-end">
-              <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={handleFollowStore}>Follow Store</Button>
-              <Button type="button" className="w-full bg-green-700 hover:bg-green-800 sm:w-auto" disabled={!contactHref} asChild={Boolean(contactHref)}>
-                {contactHref ? (
+              <Button type="button" variant="outline" className="w-full sm:w-auto" style={{ borderColor: secondary, color: secondary }} onClick={handleFollowStore} disabled={previewMode}>Follow Store</Button>
+              <Button type="button" className="w-full hover:opacity-90 sm:w-auto" style={{ backgroundColor: accent }} disabled={!contactHref || previewMode} asChild={Boolean(contactHref) && !previewMode}>
+                {contactHref && !previewMode ? (
                   <a href={contactHref} target="_blank" rel="noreferrer">
                     <MessageCircle className="mr-2 h-4 w-4" />
                     Contact Store
                   </a>
                 ) : (
-                  <span>Contact Store</span>
+                  <span>
+                    <MessageCircle className="mr-2 inline h-4 w-4" />
+                    Contact Store
+                  </span>
                 )}
               </Button>
             </div>
           </div>
         </div>
       </div>
+      )}
     </section>
   );
+
+  /** Owned shop home: carousel only when slides exist; otherwise skip straight to products. */
+  const ownedHeroSection = heroSlides.length > 0 ? (
+    <section className="relative z-0 border-b border-border">
+      <StoreHeroCarousel
+        slides={heroSlides}
+        storeName={store.displayName}
+        accent={accent}
+        animation={store?.heroAnimation}
+      />
+    </section>
+  ) : null;
 
   const compactSummarySection = (
     <section className="border-b border-border bg-white">
@@ -780,28 +1398,32 @@ const PublicStoreHome = () => {
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="truncate text-lg font-bold text-green-950 sm:text-xl">{store.displayName}</h1>
-              <Badge className="bg-green-700 text-white hover:bg-green-700">
-                <CheckCircle2 className="mr-1 h-3 w-3" />
-                Verified
-              </Badge>
+              <h1 className="truncate text-lg font-bold sm:text-xl">{store.displayName}</h1>
+              {!isOwnedShop ? (
+                <Badge className="text-white hover:opacity-90" style={{ backgroundColor: accent }}>
+                  <CheckCircle2 className="mr-1 h-3 w-3" />
+                  Verified
+                </Badge>
+              ) : null}
             </div>
-            <p className="mt-1 line-clamp-1 text-sm text-muted-foreground">
+            <p className="mt-1 line-clamp-1 text-sm opacity-70">
               {store.category || listingLabel}
               {store.category ? ` · ${listingLabel}` : ''}
             </p>
           </div>
         </div>
         <div className="flex shrink-0 gap-2">
-          <Button type="button" variant="outline" size="sm" className="rounded-full" onClick={handleFollowStore}>Follow</Button>
-          <Button type="button" size="sm" className="rounded-full bg-green-700 hover:bg-green-800" disabled={!contactHref} asChild={Boolean(contactHref)}>
-            {contactHref ? (
+          {!isOwnedShop ? (
+            <Button type="button" variant="outline" size="sm" className="rounded-full" style={{ borderColor: secondary, color: secondary }} onClick={handleFollowStore} disabled={previewMode}>Follow</Button>
+          ) : null}
+          <Button type="button" size="sm" className="rounded-full hover:opacity-90" style={{ backgroundColor: accent }} disabled={!contactHref || previewMode} asChild={Boolean(contactHref) && !previewMode}>
+            {contactHref && !previewMode ? (
               <a href={contactHref} target="_blank" rel="noreferrer">
                 <MessageCircle className="mr-1.5 h-4 w-4" />
-                Contact
+                {isOwnedShop ? 'Contact us' : 'Contact'}
               </a>
             ) : (
-              <span>Contact</span>
+              <span>{isOwnedShop ? 'Contact us' : 'Contact'}</span>
             )}
           </Button>
         </div>
@@ -810,10 +1432,27 @@ const PublicStoreHome = () => {
   );
 
   return (
-    <div className="min-h-screen bg-[#f4f7f2] text-slate-900">
-      <StoreScopedHeader store={store} onSearch={handleSearch} />
+    <TemplateThemeProvider
+      templateId={store.templateId}
+      primaryColor={brandColors.primary}
+      secondaryColor={brandColors.secondary}
+      tertiaryColor={brandColors.tertiary}
+    >
+    <div className="min-h-screen">
+      <StoreScopedHeader
+        store={store}
+        onSearch={handleSearch}
+        theme={theme}
+        accent={accent}
+        previewMode={previewMode}
+        subtitle={storeSubtitle}
+        homeTo={storeBasePath}
+        navItems={isOwnedShop ? navItems : null}
+        activePage={activePage}
+      />
 
       <main>
+        {!previewMode && isMarketplaceMode ? (
         <div className="mx-auto w-full max-w-[1440px] px-3 pt-5 sm:px-4 sm:pt-6">
         <section className="bg-muted/20">
           <div className="flex w-full items-center justify-between gap-4 px-3 py-3 text-sm text-muted-foreground sm:px-4">
@@ -828,7 +1467,9 @@ const PublicStoreHome = () => {
           </div>
         </section>
         </div>
+        ) : null}
 
+        {!isOwnedShop ? (
         <nav className="sticky top-[73px] z-40 border-b border-border bg-background/95 backdrop-blur sm:top-[81px]">
           <div className="mx-auto flex w-full max-w-[1440px] items-center gap-3 overflow-x-auto px-6 py-3 text-sm font-medium sm:gap-5 sm:px-8">
             {navItems.map((item) => (
@@ -838,16 +1479,34 @@ const PublicStoreHome = () => {
             ))}
           </div>
         </nav>
+        ) : null}
 
-        <div className="mx-auto w-full max-w-[1440px] px-3 pb-5 sm:px-4 sm:pb-6">
-        {activePage === 'home' ? fullHeroSection : compactSummarySection}
+        <div className={`mx-auto w-full max-w-[1440px] px-3 pb-5 sm:px-4 sm:pb-6 ${
+          isOwnedShop && activePage === 'home' && heroSlides.length > 0
+            ? ''
+            : 'pt-5 sm:pt-6'
+        }`}>
+        {activePage === 'home'
+          ? (isOwnedShop ? ownedHeroSection : fullHeroSection)
+          : compactSummarySection}
 
         {pageContent}
 
         </div>
       </main>
-      <StoreScopedFooter store={store} isServiceStore={isServiceStore} contactHref={contactHref} />
+      <StoreScopedFooter
+        store={previewMode
+          ? { ...store, showAbsPromo: store?.showAbsPromo !== false }
+          : store}
+        isServiceStore={isServiceStore}
+        contactHref={contactHref}
+        singleStoreMode={previewMode || isSingleStoreMode || !isMarketplaceMode}
+        storeBasePath={storeBasePath}
+        subtitle={storeSubtitle}
+        accentColor={accent}
+      />
     </div>
+    </TemplateThemeProvider>
   );
 };
 

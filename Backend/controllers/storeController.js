@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { Op } = require('sequelize');
@@ -33,6 +34,20 @@ const {
 } = require('./studioStoreController');
 const { invalidateSaleListCache } = require('../middleware/cache');
 const { validateStorageLimit } = require('../utils/storageLimitHelper');
+const {
+  DEFAULT_TEMPLATE_ID,
+  STORE_TEMPLATES,
+  normalizeTemplateId,
+  getStoreTemplate,
+  getTemplateColorSlots,
+  getTemplateDefaultColors,
+  resolveStoreBrandColors,
+  normalizeHexColor,
+} = require('../config/storeTemplates');
+const {
+  resolveHeroSlidesForStore,
+  MAX_HERO_SLIDES,
+} = require('./onlineStoreHeroController');
 const {
   getTradeAssuranceSummary,
   listPayoutHistory,
@@ -72,7 +87,56 @@ const normalizePrimaryColor = (value, fallback = DEFAULT_PRIMARY_COLOR) => {
   return fallback;
 };
 
+/**
+ * Normalize an optional brand color; empty/invalid → null (template default).
+ * @param {string|null|undefined} value
+ * @returns {string|null}
+ */
+const normalizeOptionalBrandColor = (value) => {
+  if (value == null || String(value).trim() === '') return null;
+  return normalizeHexColor(value, null);
+};
+
+/**
+ * Attach resolved brand colors for the active template onto a store plain object.
+ * @param {object} plain
+ * @returns {object}
+ */
+const attachResolvedBrandColors = (plain = {}) => {
+  const templateId = normalizeTemplateId(plain.templateId);
+  const resolved = resolveStoreBrandColors(templateId, plain);
+  const slotKeys = new Set(getTemplateColorSlots(templateId).map((s) => s.key));
+  return {
+    ...plain,
+    templateId,
+    primaryColor: resolved.primary || normalizePrimaryColor(plain.primaryColor),
+    secondaryColor: slotKeys.has('secondary') ? (resolved.secondary || null) : (normalizeOptionalBrandColor(plain.secondaryColor)),
+    tertiaryColor: slotKeys.has('tertiary') ? (resolved.tertiary || null) : (normalizeOptionalBrandColor(plain.tertiaryColor)),
+    brandColors: resolved,
+  };
+};
+
 const DEFAULT_CURRENCY = 'GHS';
+const CURRENCY_CODE_PATTERN = /^[A-Za-z]{3}$/;
+
+/**
+ * Persist only ISO-like currency codes (fits online_store_settings.currency VARCHAR(8)).
+ * Rejects template ids, display names, and objects without a usable code.
+ * @param {unknown} value
+ * @param {string} [fallback]
+ * @returns {string}
+ */
+const normalizeStoreCurrency = (value, fallback = DEFAULT_CURRENCY) => {
+  let raw = value;
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    raw = raw.code ?? raw.currency ?? raw.value;
+  }
+  const code = String(raw ?? '').trim().toUpperCase();
+  if (CURRENCY_CODE_PATTERN.test(code)) return code;
+  const fb = String(fallback ?? DEFAULT_CURRENCY).trim().toUpperCase();
+  return CURRENCY_CODE_PATTERN.test(fb) ? fb : DEFAULT_CURRENCY;
+};
+
 const LISTING_STATUSES = new Set(['draft', 'published', 'hidden']);
 const INVENTORY_POLICIES = new Set(['track', 'continue', 'deny']);
 const ONLINE_STORE_SOURCE = 'online_store';
@@ -191,13 +255,47 @@ const parseShopTypeFilter = (value) => {
   return [...new Set(types)];
 };
 
+/** Canonical Tenant.plan aliases for public Online Store payloads (no billing secrets). */
+const PUBLIC_STORE_PLAN_ALIASES = {
+  free: 'trial',
+  standard: 'starter',
+  startup: 'starter',
+  launch: 'starter',
+  pro: 'professional',
+  scale: 'professional',
+};
+const ABS_PROMO_PLANS = new Set(['trial', 'starter']);
+
+/**
+ * Normalize Tenant.plan to a canonical slug for public store responses.
+ * @param {unknown} plan
+ * @returns {string}
+ */
+const normalizePublicStorePlan = (plan = '') => {
+  const raw = String(plan || '').trim().toLowerCase();
+  return PUBLIC_STORE_PLAN_ALIASES[raw] || raw || 'trial';
+};
+
+/**
+ * Server-computed promo gate: trial/starter (and aliases) only.
+ * @param {unknown} plan
+ * @returns {boolean}
+ */
+const shouldShowAbsPromo = (plan) => ABS_PROMO_PLANS.has(normalizePublicStorePlan(plan));
+
 const buildPublicStoreInclude = (shopTypes = []) => {
   const shopWhere = { isActive: true };
   if (shopTypes.length) {
     shopWhere.shopType = { [Op.in]: shopTypes };
   }
   return [
-    { model: Tenant, as: 'tenant', attributes: ['id', 'name', 'businessType', 'status'], required: true, where: { status: 'active' } },
+    {
+      model: Tenant,
+      as: 'tenant',
+      attributes: ['id', 'name', 'businessType', 'status', 'plan'],
+      required: true,
+      where: { status: 'active' },
+    },
     {
       model: Shop,
       as: 'shop',
@@ -305,9 +403,41 @@ const resolvePublicBannerImageUrl = (plain = {}) => {
     || null;
 };
 
+/** Product card primary CTAs (metadata.productCardActions). Max 1–2, ordered; last = primary. */
+const PRODUCT_CARD_ACTION_ALLOWLIST = new Set([
+  'view',
+  'add_to_cart',
+  'buy_now',
+  'contact_for_price',
+  'whatsapp',
+]);
+const DEFAULT_PRODUCT_CARD_ACTIONS = ['view', 'add_to_cart'];
+
+/**
+ * Sanitize merchant product card CTA list on OnlineStoreSettings.metadata.
+ * Unique allowlisted actions, length 1–2; defaults to View + Add to cart.
+ * @param {unknown} value
+ * @returns {Array<'view'|'add_to_cart'|'buy_now'|'contact_for_price'|'whatsapp'>}
+ */
+const sanitizeProductCardActions = (value) => {
+  const raw = Array.isArray(value) ? value : [];
+  const seen = new Set();
+  const actions = [];
+  raw.forEach((entry) => {
+    const key = String(entry || '').trim().toLowerCase();
+    if (!PRODUCT_CARD_ACTION_ALLOWLIST.has(key) || seen.has(key)) return;
+    seen.add(key);
+    actions.push(key);
+  });
+  if (!actions.length) return [...DEFAULT_PRODUCT_CARD_ACTIONS];
+  return actions.slice(0, 2);
+};
+
 const toPublicStoreCard = (store, { listingCount = 0, categoryCounts = new Map() } = {}) => {
   const plain = typeof store.get === 'function' ? store.get({ plain: true }) : store;
   const foodMeta = extractFoodMetadata(plain);
+  const branded = attachResolvedBrandColors(plain);
+  const metadata = plain.metadata && typeof plain.metadata === 'object' ? plain.metadata : {};
   return {
     id: plain.id,
     slug: plain.slug,
@@ -315,13 +445,20 @@ const toPublicStoreCard = (store, { listingCount = 0, categoryCounts = new Map()
     description: plain.description,
     logoUrl: plain.logoUrl || plain.shop?.logoUrl || null,
     bannerImageUrl: resolvePublicBannerImageUrl(plain),
-    primaryColor: normalizePrimaryColor(plain.primaryColor),
+    primaryColor: branded.primaryColor,
+    secondaryColor: branded.secondaryColor,
+    tertiaryColor: branded.tertiaryColor,
+    brandColors: branded.brandColors,
+    templateId: branded.templateId,
     currency: plain.currency || DEFAULT_CURRENCY,
     category: getStoreCategoryLabel(plain, categoryCounts),
     city: plain.shop?.city || null,
     country: plain.shop?.country || null,
     deliveryEnabled: plain.deliveryEnabled,
     pickupEnabled: plain.pickupEnabled,
+    contactPhone: plain.contactPhone || null,
+    whatsappNumber: plain.whatsappNumber || null,
+    productCardActions: sanitizeProductCardActions(metadata.productCardActions),
     productCount: listingCount,
     rating: plain.rating || plain.reviewSummary?.rating || null,
     reviewsCount: plain.reviewsCount || plain.reviewSummary?.reviewsCount || 0,
@@ -487,10 +624,44 @@ const toMarketplaceProduct = (listing, stores, variantsByProductId = new Map()) 
   });
 };
 
+/**
+ * Minimal store fields for products nested under a store-home response
+ * (full store profile already lives on data.store).
+ */
+const toSlimStoreRef = (store) => {
+  const plain = typeof store.get === 'function' ? store.get({ plain: true }) : store;
+  const metadata = plain.metadata && typeof plain.metadata === 'object' ? plain.metadata : {};
+  return {
+    slug: plain.slug,
+    displayName: plain.displayName,
+    currency: plain.currency || DEFAULT_CURRENCY,
+    deliveryEnabled: plain.deliveryEnabled === true,
+    pickupEnabled: plain.pickupEnabled !== false,
+    deliveryFee: plain.deliveryFee,
+    whatsappNumber: plain.whatsappNumber || null,
+    contactPhone: plain.contactPhone || null,
+    productCardActions: sanitizeProductCardActions(metadata.productCardActions),
+    templateId: normalizeTemplateId(plain.templateId),
+    primaryColor: plain.primaryColor || null,
+    secondaryColor: plain.secondaryColor || null,
+    tertiaryColor: plain.tertiaryColor || null,
+  };
+};
+
 const toPublicStoreProduct = (listing, store, variantsByProductId = new Map(), salesCount = 0) => ({
   ...toMarketplaceProduct(listing, [store], variantsByProductId),
   salesCount,
 });
+
+/** Store-home product card: reuses marketplace shape but embeds slim store ref. */
+const toStoreHomeProduct = (listing, store, variantsByProductId, salesCount, slimStore) => {
+  const product = toMarketplaceProduct(listing, [store], variantsByProductId);
+  return {
+    ...product,
+    store: slimStore,
+    salesCount,
+  };
+};
 
 const getPublicStoreReviewSummary = (store, limit = 20) => getPublicReviewSummary({
   reviewType: 'store',
@@ -542,6 +713,309 @@ const getStoreCategoriesFromListings = (listings) => {
   return [...categories.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 };
 
+const MAX_STORE_TESTIMONIALS = 8;
+const MAX_TESTIMONIAL_QUOTE_LEN = 1000;
+const MAX_TESTIMONIAL_NAME_LEN = 120;
+const MAX_TESTIMONIAL_ROLE_LEN = 120;
+const MAX_TESTIMONIAL_COMPANY_LEN = 120;
+const MAX_TESTIMONIAL_PHOTO_URL_LEN = 2048;
+
+const MAX_PRODUCT_SECTIONS = 12;
+const MAX_PRODUCT_SECTION_TITLE_LEN = 80;
+const MAX_PRODUCT_SECTION_DESC_LEN = 280;
+const DEFAULT_SECTION_MAX_ITEMS = 8;
+const MAX_SECTION_MAX_ITEMS = 24;
+const KNOWN_PRODUCT_SECTION_SLUGS = new Set(['featured', 'new-arrivals', 'weekend-sales', 'custom']);
+const DEFAULT_PRODUCT_SECTION_DEFS = [
+  {
+    id: 'a1000000-0000-4000-8000-000000000001',
+    slug: 'featured',
+    title: 'Featured products',
+    description: null,
+  },
+  {
+    id: 'a1000000-0000-4000-8000-000000000002',
+    slug: 'new-arrivals',
+    title: 'New arrivals',
+    description: null,
+  },
+  {
+    id: 'a1000000-0000-4000-8000-000000000003',
+    slug: 'weekend-sales',
+    title: 'Weekend sales',
+    description: null,
+  },
+];
+
+/** Allowed Online Store hero carousel transition styles (metadata.heroAnimation). */
+const HERO_ANIMATIONS = new Set(['fade', 'slide', 'zoom']);
+const DEFAULT_HERO_ANIMATION = 'fade';
+
+/**
+ * Sanitize merchant hero carousel animation preference.
+ * @param {unknown} value
+ * @returns {'fade'|'slide'|'zoom'}
+ */
+const sanitizeHeroAnimation = (value) => {
+  const key = String(value || '').trim().toLowerCase();
+  return HERO_ANIMATIONS.has(key) ? key : DEFAULT_HERO_ANIMATION;
+};
+
+/**
+ * Sanitize merchant-curated testimonials stored on OnlineStoreSettings.metadata.
+ * Distinct from shopper Verified reviews — quotes are merchant-authored.
+ * @param {unknown} value
+ * @returns {{ enabled: boolean, items: Array<{
+ *   id: string,
+ *   quote: string,
+ *   authorName: string,
+ *   role: string | null,
+ *   company: string | null,
+ *   photoUrl: string | null,
+ *   sortOrder: number,
+ *   enabled: boolean,
+ * }> }}
+ */
+const sanitizeTestimonials = (value) => {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const rawItems = Array.isArray(source.items) ? source.items : [];
+  const items = rawItems
+    .slice(0, MAX_STORE_TESTIMONIALS)
+    .map((item, index) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      const quote = String(item.quote || '').trim().slice(0, MAX_TESTIMONIAL_QUOTE_LEN);
+      const authorName = String(item.authorName || '').trim().slice(0, MAX_TESTIMONIAL_NAME_LEN);
+      if (!quote || !authorName) return null;
+
+      const idRaw = String(item.id || '').trim().slice(0, 64);
+      const role = String(item.role || '').trim().slice(0, MAX_TESTIMONIAL_ROLE_LEN) || null;
+      const company = String(item.company || '').trim().slice(0, MAX_TESTIMONIAL_COMPANY_LEN) || null;
+      const photoUrl = String(item.photoUrl || '').trim().slice(0, MAX_TESTIMONIAL_PHOTO_URL_LEN) || null;
+      const sortOrder = Number.isFinite(Number(item.sortOrder)) ? Number(item.sortOrder) : index;
+
+      return {
+        id: idRaw || crypto.randomUUID(),
+        quote,
+        authorName,
+        role,
+        company,
+        photoUrl,
+        sortOrder,
+        enabled: item.enabled === true,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.sortOrder - b.sortOrder || String(a.id).localeCompare(String(b.id)))
+    .map((item, index) => ({ ...item, sortOrder: index }));
+
+  return {
+    enabled: source.enabled === true,
+    items,
+  };
+};
+
+/**
+ * Public storefront testimonials payload — only when section + items are enabled.
+ * @param {object} metadata
+ * @returns {{ enabled: true, items: object[] } | null}
+ */
+const toPublicTestimonials = (metadata) => {
+  const sanitized = sanitizeTestimonials(metadata?.testimonials);
+  if (!sanitized.enabled) return null;
+  const items = sanitized.items
+    .filter((item) => item.enabled)
+    .map(({ id, quote, authorName, role, company, photoUrl, sortOrder }) => ({
+      id,
+      quote,
+      authorName,
+      role,
+      company,
+      photoUrl,
+      sortOrder,
+    }));
+  if (!items.length) return null;
+  return { enabled: true, items };
+};
+
+/**
+ * Build default home merchandising shelves (Featured / New arrivals / Weekend sales).
+ * @returns {{ enabled: true, items: object[] }}
+ */
+const buildDefaultProductSections = () => ({
+  enabled: true,
+  items: DEFAULT_PRODUCT_SECTION_DEFS.map((def, index) => ({
+    id: def.id,
+    slug: def.slug,
+    title: def.title,
+    description: def.description,
+    sortOrder: index,
+    enabled: true,
+    isDefault: true,
+    maxItems: DEFAULT_SECTION_MAX_ITEMS,
+  })),
+});
+
+/**
+ * Normalize listing metadata.sectionIds to unique non-empty strings.
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+const sanitizeListingSectionIds = (value) => {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  const ids = [];
+  value.forEach((raw) => {
+    const id = String(raw || '').trim().slice(0, 64);
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    ids.push(id);
+  });
+  return ids.slice(0, MAX_PRODUCT_SECTIONS);
+};
+
+/**
+ * Sanitize merchant home product sections on OnlineStoreSettings.metadata.
+ * Seeds Featured / New arrivals / Weekend sales when missing or empty.
+ * @param {unknown} value
+ * @returns {{ enabled: boolean, items: Array<{
+ *   id: string,
+ *   slug: string,
+ *   title: string,
+ *   description: string | null,
+ *   sortOrder: number,
+ *   enabled: boolean,
+ *   isDefault: boolean,
+ *   maxItems: number,
+ * }> }}
+ */
+const sanitizeProductSections = (value) => {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const rawItems = Array.isArray(source.items) ? source.items : [];
+  if (!rawItems.length) {
+    return buildDefaultProductSections();
+  }
+
+  const usedDefaultSlugs = new Set();
+  const items = rawItems
+    .slice(0, MAX_PRODUCT_SECTIONS)
+    .map((item, index) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      const title = String(item.title || '').trim().slice(0, MAX_PRODUCT_SECTION_TITLE_LEN);
+      if (!title) return null;
+
+      const idRaw = String(item.id || '').trim().slice(0, 64);
+      const slugRaw = String(item.slug || '').trim().toLowerCase().slice(0, 64);
+      const isDefault = item.isDefault === true
+        || DEFAULT_PRODUCT_SECTION_DEFS.some((def) => def.slug === slugRaw);
+      let slug = KNOWN_PRODUCT_SECTION_SLUGS.has(slugRaw) ? slugRaw : 'custom';
+      if (isDefault && DEFAULT_PRODUCT_SECTION_DEFS.some((def) => def.slug === slugRaw)) {
+        if (usedDefaultSlugs.has(slugRaw)) return null;
+        usedDefaultSlugs.add(slugRaw);
+        slug = slugRaw;
+      } else if (isDefault) {
+        slug = slugRaw && KNOWN_PRODUCT_SECTION_SLUGS.has(slugRaw) && slugRaw !== 'custom'
+          ? slugRaw
+          : 'custom';
+      } else {
+        slug = 'custom';
+      }
+
+      const descriptionRaw = String(item.description || '').trim().slice(0, MAX_PRODUCT_SECTION_DESC_LEN);
+      const maxItemsRaw = Number(item.maxItems);
+      const maxItems = Number.isFinite(maxItemsRaw)
+        ? Math.min(MAX_SECTION_MAX_ITEMS, Math.max(1, Math.trunc(maxItemsRaw)))
+        : DEFAULT_SECTION_MAX_ITEMS;
+      const sortOrder = Number.isFinite(Number(item.sortOrder)) ? Number(item.sortOrder) : index;
+
+      return {
+        id: idRaw || crypto.randomUUID(),
+        slug,
+        title,
+        description: descriptionRaw || null,
+        sortOrder,
+        enabled: item.enabled === true,
+        isDefault: isDefault === true,
+        maxItems,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.sortOrder - b.sortOrder || String(a.id).localeCompare(String(b.id)))
+    .map((item, index) => ({ ...item, sortOrder: index }));
+
+  // Ensure default shelves remain available for re-enable even if merchant removed them.
+  DEFAULT_PRODUCT_SECTION_DEFS.forEach((def) => {
+    if (items.some((item) => item.slug === def.slug && item.isDefault)) return;
+    items.push({
+      id: def.id,
+      slug: def.slug,
+      title: def.title,
+      description: def.description,
+      sortOrder: items.length,
+      enabled: false,
+      isDefault: true,
+      maxItems: DEFAULT_SECTION_MAX_ITEMS,
+    });
+  });
+
+  return {
+    enabled: source.enabled !== false,
+    items: items
+      .slice(0, MAX_PRODUCT_SECTIONS)
+      .sort((a, b) => a.sortOrder - b.sortOrder || String(a.id).localeCompare(String(b.id)))
+      .map((item, index) => ({ ...item, sortOrder: index })),
+  };
+};
+
+/**
+ * Build public home productSections from store config + published products.
+ * Falls back to first N products as Featured when nothing is assigned.
+ * @param {object} metadata
+ * @param {object[]} products - public product cards (must include _sectionIds / sortOrder / publishedAt)
+ * @returns {Array<{ id: string, slug: string, title: string, description: string | null, products: object[] }>}
+ */
+const buildPublicProductSections = (metadata, products) => {
+  const config = sanitizeProductSections(metadata?.productSections);
+  const list = Array.isArray(products) ? products : [];
+
+  if (config.enabled) {
+    const sections = config.items
+      .filter((section) => section.enabled)
+      .map((section) => {
+        const assigned = list
+          .filter((product) => Array.isArray(product._sectionIds) && product._sectionIds.includes(section.id))
+          .sort((a, b) => {
+            const sortDiff = Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
+            if (sortDiff !== 0) return sortDiff;
+            return new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0);
+          })
+          .slice(0, section.maxItems || DEFAULT_SECTION_MAX_ITEMS)
+          .map(({ _sectionIds, ...publicProduct }) => publicProduct);
+
+        return {
+          id: section.id,
+          slug: section.slug,
+          title: section.title,
+          description: section.description,
+          products: assigned,
+        };
+      })
+      .filter((section) => section.products.length > 0);
+
+    if (sections.length) return sections;
+  }
+
+  if (!list.length) return [];
+
+  // Sensible fallback so existing stores without assignments do not go blank.
+  return [{
+    id: 'fallback-featured',
+    slug: 'featured',
+    title: 'Featured',
+    description: null,
+    products: list.slice(0, DEFAULT_SECTION_MAX_ITEMS).map(({ _sectionIds, ...publicProduct }) => publicProduct),
+  }];
+};
+
 const toPublicStoreHomeProfile = (store, {
   productCount = 0,
   serviceCount = 0,
@@ -559,6 +1033,10 @@ const toPublicStoreHomeProfile = (store, {
 
   return {
     ...profile,
+    templateId: normalizeTemplateId(plain.templateId),
+    heroSlides: Array.isArray(plain.heroSlides) ? plain.heroSlides : [],
+    /** Hero carousel transition: fade | slide | zoom */
+    heroAnimation: sanitizeHeroAnimation(metadata.heroAnimation),
     businessType,
     storeMode,
     contactPhone: plain.contactPhone || null,
@@ -569,6 +1047,12 @@ const toPublicStoreHomeProfile = (store, {
     deliveryOptions: metadata.deliveryOptions || {},
     promo: metadata.promo || metadata.storePromo || null,
     freeDeliveryThreshold: metadata.freeDeliveryThreshold || null,
+    /** Ordered product card CTAs (1–2). Last = primary filled button. */
+    productCardActions: sanitizeProductCardActions(metadata.productCardActions),
+    /** Merchant-curated quotes — not Verified reviews. */
+    testimonials: toPublicTestimonials(metadata),
+    /** Server-gated ABS footer promo (trial/starter only). Clients must not invent this. */
+    showAbsPromo: shouldShowAbsPromo(plain.tenant?.plan),
     stats: {
       productCount,
       serviceCount,
@@ -620,6 +1104,8 @@ const toPublicStoreService = (listing, store) => {
       logoUrl: storePlain.logoUrl,
       bannerImageUrl: storePlain.bannerImageUrl,
       primaryColor: storePlain.primaryColor,
+      secondaryColor: storePlain.secondaryColor || null,
+      tertiaryColor: storePlain.tertiaryColor || null,
       currency: storePlain.currency,
     },
   };
@@ -1729,6 +2215,30 @@ const serializeStoreSettings = async (settings, req) => {
     payload.logoUrl = await resolveStoreLogoFallback(req);
   }
   payload.primaryColor = normalizePrimaryColor(payload.primaryColor);
+  payload.templateId = normalizeTemplateId(payload.templateId);
+  payload.secondaryColor = normalizeOptionalBrandColor(payload.secondaryColor);
+  payload.tertiaryColor = normalizeOptionalBrandColor(payload.tertiaryColor);
+  payload.brandColors = resolveStoreBrandColors(payload.templateId, payload);
+  payload.heroSlides = await resolveHeroSlidesForStore(
+    payload.heroSlides,
+    payload.primaryColor
+  );
+  if (payload.metadata && typeof payload.metadata === 'object' && !Array.isArray(payload.metadata)) {
+    payload.metadata = {
+      ...payload.metadata,
+      testimonials: sanitizeTestimonials(payload.metadata.testimonials),
+      productSections: sanitizeProductSections(payload.metadata.productSections),
+      heroAnimation: sanitizeHeroAnimation(payload.metadata.heroAnimation),
+      productCardActions: sanitizeProductCardActions(payload.metadata.productCardActions),
+    };
+  } else {
+    payload.metadata = {
+      testimonials: sanitizeTestimonials(null),
+      productSections: sanitizeProductSections(null),
+      heroAnimation: sanitizeHeroAnimation(null),
+      productCardActions: sanitizeProductCardActions(null),
+    };
+  }
 
   return payload;
 };
@@ -1830,6 +2340,13 @@ const listingPayloadFromBody = (body, product = null) => {
       : normalizeMoney(body.compareAtPrice, 0);
   const images = normalizeImages(body.images || (product?.imageUrl ? [product.imageUrl] : []));
   const inventoryPolicy = INVENTORY_POLICIES.has(body.inventoryPolicy) ? body.inventoryPolicy : 'track';
+  const rawMetadata = body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
+    ? body.metadata
+    : {};
+  const metadata = {
+    ...rawMetadata,
+    sectionIds: sanitizeListingSectionIds(rawMetadata.sectionIds),
+  };
 
   return {
     title,
@@ -1844,7 +2361,7 @@ const listingPayloadFromBody = (body, product = null) => {
     inventoryPolicy,
     sortOrder: Number.isInteger(Number(body.sortOrder)) ? Number(body.sortOrder) : 0,
     publishedAt: status === 'published' ? new Date() : null,
-    metadata: body.metadata && typeof body.metadata === 'object' ? body.metadata : {},
+    metadata,
   };
 };
 
@@ -1855,7 +2372,7 @@ const assertListingPublishable = (listing) => {
     throw error;
   }
   if (Number.parseFloat(listing.publicPrice) <= 0) {
-    const error = new Error('Public price must be greater than zero before publishing');
+    const error = new Error('Public selling price must be greater than zero before publishing');
     error.statusCode = 400;
     throw error;
   }
@@ -1870,6 +2387,22 @@ const assertListingPublishable = (listing) => {
 exports.getSettings = async (req, res, next) => {
   try {
     const settings = await getCurrentStoreSettings(req);
+    if (settings) {
+      const existingMetadata = settings.metadata && typeof settings.metadata === 'object'
+        ? settings.metadata
+        : {};
+      const hasSections = Array.isArray(existingMetadata.productSections?.items)
+        && existingMetadata.productSections.items.length > 0;
+      if (!hasSections) {
+        const productSections = sanitizeProductSections(null);
+        await settings.update({
+          metadata: {
+            ...existingMetadata,
+            productSections,
+          },
+        });
+      }
+    }
     res.status(200).json({ success: true, data: await serializeStoreSettings(settings, req) });
   } catch (error) {
     next(error);
@@ -1885,6 +2418,23 @@ exports.upsertSettings = async (req, res, next) => {
 
     const incomingMetadata = req.body.metadata && typeof req.body.metadata === 'object' ? req.body.metadata : {};
     const existingMetadata = existing?.metadata && typeof existing.metadata === 'object' ? existing.metadata : {};
+    const templateId = normalizeTemplateId(
+      req.body.templateId != null ? req.body.templateId : existing?.templateId
+    );
+    const templateDefaults = getTemplateDefaultColors(templateId);
+    const slotKeys = new Set(getTemplateColorSlots(templateId).map((s) => s.key));
+
+    const resolveIncomingColor = (key, field, bodyValue, existingValue) => {
+      if (!slotKeys.has(key)) {
+        // Keep prior value if merchant switches away from a template that used this slot
+        return normalizeOptionalBrandColor(existingValue);
+      }
+      if (bodyValue !== undefined) {
+        return normalizePrimaryColor(bodyValue, templateDefaults[key] || DEFAULT_PRIMARY_COLOR);
+      }
+      return normalizePrimaryColor(existingValue, templateDefaults[key] || DEFAULT_PRIMARY_COLOR);
+    };
+
     const payload = {
       tenantId: req.tenantId,
       enabled: req.body.enabled === true || req.body.enabled === 'true',
@@ -1892,25 +2442,86 @@ exports.upsertSettings = async (req, res, next) => {
       displayName,
       description: req.body.description || null,
       logoUrl: req.body.logoUrl || null,
-      bannerImageUrl: req.body.bannerImageUrl || null,
-      primaryColor: normalizePrimaryColor(
+      bannerImageUrl: Object.prototype.hasOwnProperty.call(req.body, 'bannerImageUrl')
+        ? (req.body.bannerImageUrl || null)
+        : (existing?.bannerImageUrl || null),
+      primaryColor: resolveIncomingColor(
+        'primary',
+        'primaryColor',
         req.body.primaryColor,
-        normalizePrimaryColor(existing?.primaryColor, DEFAULT_PRIMARY_COLOR),
+        existing?.primaryColor
       ),
+      secondaryColor: resolveIncomingColor(
+        'secondary',
+        'secondaryColor',
+        req.body.secondaryColor,
+        existing?.secondaryColor
+      ),
+      tertiaryColor: resolveIncomingColor(
+        'tertiary',
+        'tertiaryColor',
+        req.body.tertiaryColor,
+        existing?.tertiaryColor
+      ),
+      templateId,
+      heroSlides: Object.prototype.hasOwnProperty.call(req.body, 'heroSlides')
+        ? await resolveHeroSlidesForStore(
+            Array.isArray(req.body.heroSlides) ? req.body.heroSlides.slice(0, MAX_HERO_SLIDES) : [],
+            resolveIncomingColor(
+              'primary',
+              'primaryColor',
+              req.body.primaryColor,
+              existing?.primaryColor
+            )
+          )
+        : await resolveHeroSlidesForStore(
+            existing?.heroSlides,
+            resolveIncomingColor(
+              'primary',
+              'primaryColor',
+              req.body.primaryColor,
+              existing?.primaryColor
+            )
+          ),
       contactPhone: req.body.contactPhone || null,
       whatsappNumber: req.body.whatsappNumber || null,
       contactEmail: req.body.contactEmail || null,
       pickupEnabled: req.body.pickupEnabled !== false,
       deliveryEnabled: req.body.deliveryEnabled === true || req.body.deliveryEnabled === 'true',
       deliveryFee: normalizeMoney(req.body.deliveryFee, 0),
-      currency: req.body.currency || DEFAULT_CURRENCY,
+      currency: normalizeStoreCurrency(
+        req.body.currency,
+        existing?.currency || DEFAULT_CURRENCY
+      ),
       metadata: {
         ...existingMetadata,
         ...incomingMetadata,
-        bannerImageUrl: req.body.bannerImageUrl || incomingMetadata.bannerImageUrl || existingMetadata.bannerImageUrl || null,
+        bannerImageUrl: Object.prototype.hasOwnProperty.call(req.body, 'bannerImageUrl')
+          ? (req.body.bannerImageUrl || incomingMetadata.bannerImageUrl || null)
+          : (incomingMetadata.bannerImageUrl || existingMetadata.bannerImageUrl || null),
         paymentMethods: incomingMetadata.paymentMethods || existingMetadata.paymentMethods || {},
         deliveryOptions: incomingMetadata.deliveryOptions || existingMetadata.deliveryOptions || {},
         setupProgress: incomingMetadata.setupProgress || existingMetadata.setupProgress || {},
+        testimonials: sanitizeTestimonials(
+          Object.prototype.hasOwnProperty.call(incomingMetadata, 'testimonials')
+            ? incomingMetadata.testimonials
+            : existingMetadata.testimonials
+        ),
+        productSections: sanitizeProductSections(
+          Object.prototype.hasOwnProperty.call(incomingMetadata, 'productSections')
+            ? incomingMetadata.productSections
+            : existingMetadata.productSections
+        ),
+        heroAnimation: sanitizeHeroAnimation(
+          Object.prototype.hasOwnProperty.call(incomingMetadata, 'heroAnimation')
+            ? incomingMetadata.heroAnimation
+            : existingMetadata.heroAnimation
+        ),
+        productCardActions: sanitizeProductCardActions(
+          Object.prototype.hasOwnProperty.call(incomingMetadata, 'productCardActions')
+            ? incomingMetadata.productCardActions
+            : existingMetadata.productCardActions
+        ),
       },
     };
 
@@ -1928,7 +2539,10 @@ exports.upsertSettings = async (req, res, next) => {
       ? await existing.update(payload)
       : await OnlineStoreSettings.create(payload);
 
-    res.status(existing ? 200 : 201).json({ success: true, data: settings });
+    res.status(existing ? 200 : 201).json({
+      success: true,
+      data: await serializeStoreSettings(settings, req),
+    });
   } catch (error) {
     next(error);
   }
@@ -2029,15 +2643,25 @@ const ensureCustomDomainAvailable = async ({ host, tenantId, currentId = null })
   }
 };
 
-const serializeDomainSettings = (settings) => ({
-  slug: settings?.slug || null,
-  displayName: settings?.displayName || null,
-  hasStoreSettings: Boolean(settings?.id),
-  enabled: Boolean(settings?.enabled),
-  customDomain: settings?.customDomain || null,
-  customDomainStatus: settings?.customDomainStatus || 'none',
-  cnameTarget: getCustomDomainCnameTarget(),
-});
+const serializeDomainSettings = (settings) => {
+  const branded = attachResolvedBrandColors(settings || {});
+  return {
+    slug: settings?.slug || null,
+    displayName: settings?.displayName || null,
+    logoUrl: settings?.logoUrl || null,
+    primaryColor: branded.primaryColor || null,
+    secondaryColor: branded.secondaryColor || null,
+    tertiaryColor: branded.tertiaryColor || null,
+    brandColors: branded.brandColors || null,
+    templateId: branded.templateId || normalizeTemplateId(settings?.templateId),
+    templateChosen: Boolean(settings?.metadata?.templateChosen) || Boolean(settings?.id),
+    hasStoreSettings: Boolean(settings?.id),
+    enabled: Boolean(settings?.enabled),
+    customDomain: settings?.customDomain || null,
+    customDomainStatus: settings?.customDomainStatus || 'none',
+    cnameTarget: getCustomDomainCnameTarget(),
+  };
+};
 
 exports.getDomainSettings = async (req, res, next) => {
   try {
@@ -2275,14 +2899,26 @@ exports.createOrUpdateListingFromProduct = async (req, res, next) => {
         productVariantId: variantId,
       }),
     });
+    const existingMetadata = existing?.metadata && typeof existing.metadata === 'object'
+      ? existing.metadata
+      : {};
+    const incomingMetadata = req.body.metadata && typeof req.body.metadata === 'object'
+      ? req.body.metadata
+      : {};
+    const bodyPayload = listingPayloadFromBody(req.body, product);
     const payload = {
-      ...listingPayloadFromBody(req.body, product),
+      ...bodyPayload,
       tenantId: req.tenantId,
       productId: product.id,
       productVariantId: variantId,
       shopId: product.shopId || req.shopFilterId || null,
       metadata: {
-        ...(req.body.metadata || {}),
+        ...existingMetadata,
+        ...incomingMetadata,
+        ...bodyPayload.metadata,
+        sectionIds: Object.prototype.hasOwnProperty.call(incomingMetadata, 'sectionIds')
+          ? sanitizeListingSectionIds(incomingMetadata.sectionIds)
+          : sanitizeListingSectionIds(existingMetadata.sectionIds),
         source: 'product_publish_action',
       },
     };
@@ -2706,7 +3342,16 @@ exports.updateStoreOrderStatus = async (req, res, next) => {
 
     await transaction.commit();
     invalidateSaleListCache(req.tenantId);
-    await dispatchBuyerOrderStatusPush({ tenantId: req.tenantId, order, action });
+
+    const orderSnapshot = order;
+    const pushAction = action;
+    const pushTenantId = req.tenantId;
+    setImmediate(() => {
+      dispatchBuyerOrderStatusPush({ tenantId: pushTenantId, order: orderSnapshot, action: pushAction })
+        .catch((err) =>
+          console.error('[Store] dispatchBuyerOrderStatusPush failed:', err?.message || err)
+        );
+    });
 
     const updatedOrder = await Sale.findOne({
       where: { id: order.id, tenantId: req.tenantId },
@@ -3565,8 +4210,12 @@ exports.getMarketplaceFoodHome = async (req, res, next) => {
 exports.getMarketplaceStoreHome = async (req, res, next) => {
   const finishTiming = startHotPathTimer('marketplace.store_home', req);
   try {
+    const allowPreview = String(req.query.preview || '') === '1';
+    const slug = normalizeSlug(req.params.slug);
     const store = await OnlineStoreSettings.findOne({
-      where: publicStoreWhere({ slug: { [Op.iLike]: normalizeSlug(req.params.slug) } }),
+      where: allowPreview
+        ? { slug }
+        : publicStoreWhere({ slug }),
       attributes: [
         'id',
         'tenantId',
@@ -3577,6 +4226,10 @@ exports.getMarketplaceStoreHome = async (req, res, next) => {
         'logoUrl',
         'bannerImageUrl',
         'primaryColor',
+        'secondaryColor',
+        'tertiaryColor',
+        'templateId',
+        'heroSlides',
         'contactPhone',
         'whatsappNumber',
         'contactEmail',
@@ -3585,11 +4238,19 @@ exports.getMarketplaceStoreHome = async (req, res, next) => {
         'deliveryFee',
         'currency',
         'metadata',
+        'enabled',
       ],
       include: publicStoreInclude,
     });
 
     if (!store) {
+      return res.status(404).json({
+        success: false,
+        message: allowPreview ? 'Store not found' : 'Store not found or not launched',
+      });
+    }
+
+    if (!allowPreview && store.enabled !== true) {
       return res.status(404).json({ success: false, message: 'Store not found or not launched' });
     }
 
@@ -3613,6 +4274,7 @@ exports.getMarketplaceStoreHome = async (req, res, next) => {
           'inventoryPolicy',
           'sortOrder',
           'publishedAt',
+          'metadata',
         ],
         include: publicListingIncludes,
         order: [['sortOrder', 'ASC'], ['publishedAt', 'DESC']],
@@ -3658,47 +4320,77 @@ exports.getMarketplaceStoreHome = async (req, res, next) => {
     ]);
     const { variantsByProductId, listings: availableListings } = availableListingResult;
 
-    const products = await attachProductReviewSummaries(availableListings.map((listing) => (
-      toPublicStoreProduct(listing, store, variantsByProductId, salesCounts.get(listing.productId) || 0)
-    )));
+    const slimStore = toSlimStoreRef(store);
+    const products = await attachProductReviewSummaries(availableListings.map((listing) => {
+      const plain = typeof listing.get === 'function' ? listing.get({ plain: true }) : listing;
+      const listingMeta = plain.metadata && typeof plain.metadata === 'object' ? plain.metadata : {};
+      return {
+        ...toStoreHomeProduct(
+          listing,
+          store,
+          variantsByProductId,
+          salesCounts.get(listing.productId) || 0,
+          slimStore
+        ),
+        sortOrder: Number(plain.sortOrder || 0),
+        publishedAt: plain.publishedAt || null,
+        _sectionIds: sanitizeListingSectionIds(listingMeta.sectionIds),
+      };
+    }));
+    const publicProducts = products.map(({ _sectionIds, ...product }) => product);
     const services = await attachServiceReviewSummaries(
       serviceListings.map((listing) => toPublicStoreService(listing, store))
     );
     const categories = getStoreCategoriesFromListings(availableListings);
     const serviceCategories = getServiceCategoriesFromServices(services);
-    const productsBySales = [...products]
+    const productsBySales = [...publicProducts]
       .filter((product) => Number(product.salesCount || 0) > 0)
       .sort((a, b) => Number(b.salesCount || 0) - Number(a.salesCount || 0));
-    const newArrivals = [...products].sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0));
-    const discountedProduct = products.find((product) => (
+    const newArrivals = [...publicProducts].sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0));
+    const discountedProduct = publicProducts.find((product) => (
       Number.parseFloat(product.compareAtPrice || 0) > Number.parseFloat(product.publicPrice || 0)
     ));
     const metadata = store.metadata && typeof store.metadata === 'object' ? store.metadata : {};
+    const productSections = buildPublicProductSections(metadata, products);
+    const hasProductSections = productSections.length > 0;
+    const storePlain = typeof store.get === 'function' ? store.get({ plain: true }) : store;
+    const resolvedHeroSlides = await resolveHeroSlidesForStore(
+      storePlain.heroSlides,
+      storePlain.primaryColor
+    );
 
     finishTiming({
       slug: store.slug,
-      products: products.length,
+      products: publicProducts.length,
       services: services.length,
+      productSections: productSections.length,
     });
     res.status(200).json({
       success: true,
       data: {
-        store: toPublicStoreHomeProfile(store, {
-          productCount: products.length,
-          serviceCount: services.length,
-          categories: products.length ? categories : serviceCategories,
-          reviewSummary,
-        }),
+        store: {
+          ...toPublicStoreHomeProfile(store, {
+            productCount: publicProducts.length,
+            serviceCount: services.length,
+            categories: publicProducts.length ? categories : serviceCategories,
+            reviewSummary,
+          }),
+          heroSlides: resolvedHeroSlides,
+        },
         categories,
         serviceCategories,
-        products,
+        products: publicProducts,
         services,
-        featuredProducts: products.slice(0, 8),
+        productSections,
+        // When curated sections drive the home, skip overlapping featured/secondary dumps.
+        featuredProducts: hasProductSections ? [] : publicProducts.slice(0, 8),
         featuredServices: services.slice(0, 8),
         secondaryServices: [...services]
           .sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0))
           .slice(0, 8),
-        secondaryProducts: (productsBySales.length ? productsBySales : newArrivals).slice(0, 8),
+        secondaryProducts: hasProductSections
+          ? []
+          : (productsBySales.length ? productsBySales : newArrivals).slice(0, 8),
         secondaryProductsLabel: productsBySales.length ? 'Best Selling Products' : 'New Arrivals',
         promotionalBanner: metadata.promoBanner || metadata.promotionalBanner || (discountedProduct ? {
           title: 'Featured deal',
@@ -3716,16 +4408,76 @@ exports.getMarketplaceStoreHome = async (req, res, next) => {
 
 exports.getPublicStore = async (req, res, next) => {
   try {
+    const allowPreview = String(req.query.preview || '') === '1';
+    const slug = normalizeSlug(req.params.slug);
     const store = await OnlineStoreSettings.findOne({
-      where: { slug: { [Op.iLike]: normalizeSlug(req.params.slug) }, enabled: true },
+      where: allowPreview
+        ? { slug }
+        : { slug, enabled: true },
       attributes: {
-        exclude: ['tenantId', 'metadata', 'createdAt', 'updatedAt'],
+        exclude: ['tenantId', 'createdAt', 'updatedAt'],
       },
+      include: [
+        {
+          model: Tenant,
+          as: 'tenant',
+          attributes: ['plan'],
+          required: false,
+        },
+      ],
     });
     if (!store) {
-      return res.status(404).json({ success: false, message: 'Store not found or not launched' });
+      return res.status(404).json({
+        success: false,
+        message: allowPreview ? 'Store not found' : 'Store not found or not launched',
+      });
     }
-    res.status(200).json({ success: true, data: store });
+    const plain = typeof store.toJSON === 'function' ? store.toJSON() : { ...store };
+    const showAbsPromo = shouldShowAbsPromo(plain.tenant?.plan);
+    const metadata = plain.metadata && typeof plain.metadata === 'object' ? plain.metadata : {};
+    const productCardActions = sanitizeProductCardActions(metadata.productCardActions);
+    const { tenant: _tenant, metadata: _metadata, ...storeWithoutTenant } = plain;
+    const branded = attachResolvedBrandColors(storeWithoutTenant);
+    const heroSlides = await resolveHeroSlidesForStore(plain.heroSlides, plain.primaryColor);
+    res.status(200).json({
+      success: true,
+      data: { ...branded, heroSlides, showAbsPromo, productCardActions },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Public list of Online Store visual templates (gallery).
+ */
+exports.listPublicStoreTemplates = async (req, res, next) => {
+  try {
+    res.status(200).json({
+      success: true,
+      data: STORE_TEMPLATES.map((t) => ({
+        ...t,
+        isDefault: t.id === DEFAULT_TEMPLATE_ID,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Public template detail for gallery preview chrome.
+ */
+exports.getPublicStoreTemplate = async (req, res, next) => {
+  try {
+    const template = getStoreTemplate(req.params.templateId);
+    res.status(200).json({
+      success: true,
+      data: {
+        ...template,
+        isDefault: template.id === DEFAULT_TEMPLATE_ID,
+      },
+    });
   } catch (error) {
     next(error);
   }
@@ -3734,7 +4486,7 @@ exports.getPublicStore = async (req, res, next) => {
 exports.getPublicStoreProducts = async (req, res, next) => {
   try {
     const store = await OnlineStoreSettings.findOne({
-      where: publicStoreWhere({ slug: { [Op.iLike]: normalizeSlug(req.params.slug) } }),
+      where: publicStoreWhere({ slug: normalizeSlug(req.params.slug) }),
       attributes: ['tenantId', 'shopId', 'currency'],
       include: publicStoreInclude,
     });

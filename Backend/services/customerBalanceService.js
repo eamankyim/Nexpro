@@ -5,16 +5,22 @@ const { Op } = require('sequelize');
  * Recalculate and update a customer's balance based on all their invoices
  * @param {string} customerId - The customer ID
  * @param {object} transaction - Optional Sequelize transaction
+ * @param {string|null} [tenantId] - Optional tenant ID to scope invoice + customer updates
  * @returns {Promise<number>} The new balance
  */
-const updateCustomerBalance = async (customerId, transaction = null) => {
+const updateCustomerBalance = async (customerId, transaction = null, tenantId = null) => {
   try {
     // Get all invoices for this customer
+    const invoiceWhere = {
+      customerId,
+      status: { [Op.ne]: 'cancelled' },
+    };
+    if (tenantId) {
+      invoiceWhere.tenantId = tenantId;
+    }
+
     const invoices = await Invoice.findAll({
-      where: {
-        customerId,
-        status: { [Op.ne]: 'cancelled' },
-      },
+      where: invoiceWhere,
       attributes: ['balance', 'status'],
       transaction
     });
@@ -25,10 +31,15 @@ const updateCustomerBalance = async (customerId, transaction = null) => {
     }, 0);
 
     // Update customer balance
+    const customerWhere = { id: customerId };
+    if (tenantId) {
+      customerWhere.tenantId = tenantId;
+    }
+
     await Customer.update(
       { balance: totalBalance },
       { 
-        where: { id: customerId },
+        where: customerWhere,
         transaction
       }
     );

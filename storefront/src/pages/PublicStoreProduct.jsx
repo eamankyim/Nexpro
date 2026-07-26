@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   ArrowLeft,
@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Heart,
   Loader2,
+  Menu,
   MessageCircle,
   Package,
   Search,
@@ -14,13 +15,16 @@ import {
   ShoppingCart,
   Store,
   User,
+  X,
 } from 'lucide-react';
 
 import storeService from '../services/storeService';
 import { useCart } from '../context/CartContext';
 import { useStorefrontAuth } from '../context/StorefrontAuthContext';
+import { persistOnlineStoreBrand, useStorefrontMode } from '../context/StorefrontModeContext';
 import { useWishlist } from '../context/WishlistContext';
 import { buildProductsSearchPath } from '../utils/marketplaceSearch';
+import { buildStoreCatalogPath, buildStoreHomePath } from '../online-store/storePaths';
 import { showSuccess } from '../utils/toast';
 import {
   ActionLink,
@@ -37,27 +41,37 @@ import {
 import { resolveImageUrl } from '../utils/fileUtils';
 import { formatAmount } from '../utils/formatNumber';
 import { showError } from '../utils/toast';
+import {
+  buildStoreWhatsAppHref,
+  resolveStoreWhatsAppPhone,
+  whatsappPriceInquiryMessage,
+  whatsappProductInterestMessage,
+} from '../utils/whatsapp';
+import { resolveVisibleProductCardActions } from '../utils/productCardActions';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import TemplateThemeProvider, { getTemplateTheme, resolveStoreBrandColors } from '../templates/TemplateThemeProvider';
 
 const unwrapData = (response) => response?.data?.data || response?.data || response;
-const normalizePhone = (value) => String(value || '').replace(/[^\d]/g, '');
 
-const buildContactHref = (store, product) => {
-  const phone = normalizePhone(store?.whatsappNumber || store?.contactPhone);
-  const message = `Hi, I am interested in ${product?.title || 'a product'} from ${store?.displayName || 'your store'}.`;
-  if (phone) return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
-  if (store?.contactEmail) return `mailto:${store.contactEmail}`;
-  return '';
-};
-
-const StoreScopedHeader = ({ store, product, onSearch }) => {
+const StoreScopedHeader = ({
+  store,
+  product,
+  onSearch,
+  homeTo,
+  subtitle = '',
+  ownedShop = false,
+  navItems = null,
+  activePage = '',
+}) => {
   const [searchText, setSearchText] = useState('');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { cartSummary } = useCart();
   const { isAuthenticated, openShopperAuthModal } = useStorefrontAuth();
   const cartCount = cartSummary.itemCount ? String(cartSummary.itemCount) : null;
+  const showPageNav = ownedShop && Array.isArray(navItems) && navItems.length > 0;
 
   const handleSubmit = useCallback((event) => {
     event.preventDefault();
@@ -74,18 +88,53 @@ const StoreScopedHeader = ({ store, product, onSearch }) => {
     });
   }, [openShopperAuthModal]);
 
+  const toggleMobileMenu = useCallback(() => {
+    setMobileMenuOpen((current) => !current);
+  }, []);
+
+  const closeMobileMenu = useCallback(() => {
+    setMobileMenuOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [mobileMenuOpen]);
+
+  const storeHome = homeTo || `/stores/${encodeURIComponent(store.slug)}`;
+
   return (
     <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/95 backdrop-blur">
-      <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-3 px-3 py-3 sm:px-4 lg:flex-row lg:items-center">
-        <Link to={`/stores/${encodeURIComponent(store.slug)}`} className="flex min-w-0 items-center gap-3">
-          <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white">
-            <StoreLogo store={store} />
-          </span>
-          <span className="min-w-0">
-            <span className="block truncate text-lg font-black text-slate-950 sm:text-xl">{store.displayName}</span>
-            <span className="block truncate text-xs font-semibold uppercase tracking-[0.16em] text-green-700">Official Store</span>
-          </span>
-        </Link>
+      <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-3 px-3 py-3 sm:px-4 lg:flex-row lg:items-center lg:gap-4">
+        <div className="flex min-w-0 items-center justify-between gap-3 lg:contents">
+          <Link to={storeHome} className="flex min-w-0 items-center gap-3">
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white">
+              <StoreLogo store={store} />
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-lg font-black text-slate-950 sm:text-xl">{store.displayName}</span>
+              {subtitle ? (
+                <span className="block truncate text-xs font-semibold uppercase tracking-[0.16em] text-green-700">{subtitle}</span>
+              ) : null}
+            </span>
+          </Link>
+          {showPageNav ? (
+            <button
+              type="button"
+              onClick={toggleMobileMenu}
+              className="inline-flex h-11 min-h-11 w-11 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-800 transition-colors hover:bg-slate-50 lg:hidden"
+              aria-label={mobileMenuOpen ? 'Close store menu' : 'Open store menu'}
+              aria-controls="store-product-mobile-menu"
+              aria-expanded={mobileMenuOpen}
+            >
+              {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
+          ) : null}
+        </div>
 
         <form onSubmit={handleSubmit} className="flex min-w-0 flex-1 overflow-hidden rounded-full border border-slate-200 bg-slate-50 p-1">
           <Input
@@ -99,6 +148,22 @@ const StoreScopedHeader = ({ store, product, onSearch }) => {
           </Button>
         </form>
 
+        {showPageNav ? (
+          <nav className="hidden shrink-0 items-center gap-4 xl:gap-5 lg:flex" aria-label="Store pages">
+            {navItems.map((item) => (
+              <Link
+                key={item.key}
+                to={item.to}
+                className={`whitespace-nowrap text-sm font-semibold transition-colors ${
+                  activePage === item.key ? 'text-green-800' : 'text-slate-600 hover:text-green-800'
+                }`}
+              >
+                {item.label}
+              </Link>
+            ))}
+          </nav>
+        ) : null}
+
         <div className="flex shrink-0 gap-2">
           <ActionLink to="/cart" icon={ShoppingCart} label="Cart" badge={cartCount} />
           {isAuthenticated ? (
@@ -111,14 +176,58 @@ const StoreScopedHeader = ({ store, product, onSearch }) => {
           ) : (
             <Button type="button" className="rounded-full bg-green-700 hover:bg-green-800" onClick={handleSignIn}>
               <User className="mr-2 h-4 w-4" />
-              Sign in/Register
+              Sign in
             </Button>
           )}
-          <Button variant="outline" className="hidden rounded-full border-green-200 text-green-800 hover:bg-green-50 sm:inline-flex" asChild>
-            <Link to={`/stores/${encodeURIComponent(store.slug)}`}>Store Home</Link>
-          </Button>
+          {!showPageNav ? (
+            <Button variant="outline" className="hidden rounded-full border-green-200 text-green-800 hover:bg-green-50 sm:inline-flex" asChild>
+              <Link to={storeHome}>{ownedShop ? 'Home' : 'Store Home'}</Link>
+            </Button>
+          ) : null}
         </div>
       </div>
+
+      {showPageNav && mobileMenuOpen ? (
+        <div className="fixed inset-0 z-[60] overflow-y-auto bg-white lg:hidden" id="store-product-mobile-menu">
+          <div className="sticky top-0 z-10 border-b border-slate-200 bg-white px-3 py-4 sm:px-4">
+            <div className="flex items-center justify-between gap-3">
+              <Link to={storeHome} className="flex min-w-0 items-center gap-3" onClick={closeMobileMenu}>
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                  <StoreLogo store={store} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-lg font-black text-slate-950">{store.displayName}</span>
+                  <span className="block text-xs font-semibold uppercase tracking-[0.16em] text-green-700">Menu</span>
+                </span>
+              </Link>
+              <button
+                type="button"
+                onClick={closeMobileMenu}
+                className="inline-flex h-11 min-h-11 w-11 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-800 transition-colors hover:bg-slate-50"
+                aria-label="Close store menu"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+          <nav className="grid gap-2 px-3 py-4 sm:px-4" aria-label="Store pages">
+            {navItems.map((item) => (
+              <Link
+                key={item.key}
+                to={item.to}
+                onClick={closeMobileMenu}
+                className={`flex min-h-11 items-center rounded-2xl border px-4 py-2.5 text-sm font-bold transition-colors ${
+                  activePage === item.key
+                    ? 'border-green-700 bg-green-700 text-white'
+                    : 'border-slate-200 bg-white text-slate-700 hover:border-green-200 hover:bg-green-50 hover:text-green-800'
+                }`}
+              >
+                {item.label}
+              </Link>
+            ))}
+          </nav>
+        </div>
+      ) : null}
     </header>
   );
 };
@@ -136,16 +245,25 @@ const getAvailability = (product) => {
 const PublicStoreProduct = () => {
   const { storeSlug, productSlug } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const { addItem } = useCart();
   const { isAuthenticated, openShopperAuthModal } = useStorefrontAuth();
+  const { mode, isSingleStoreMode, isMarketplaceMode, pathPrefix } = useStorefrontMode();
   const { isWishlisted, pendingListingIds, toggleWishlist } = useWishlist();
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const reviewSaleId = searchParams.get('saleId') || '';
+  const storeBasePath = buildStoreHomePath(storeSlug, { pathname: location.pathname });
+  const isOwnedShop = isSingleStoreMode || !isMarketplaceMode;
+  const storeSubtitle = mode === 'marketplace' ? 'Official Store' : '';
 
   const handleSearch = useCallback((search) => {
+    if (isSingleStoreMode || !isMarketplaceMode) {
+      navigate(buildStoreCatalogPath(storeSlug, { search, pathname: location.pathname }));
+      return;
+    }
     navigate(buildProductsSearchPath({ search, storeSlug }));
-  }, [navigate, storeSlug]);
+  }, [isMarketplaceMode, isSingleStoreMode, location.pathname, navigate, storeSlug]);
 
   const storeQuery = useQuery({
     queryKey: ['public-store', storeSlug],
@@ -162,6 +280,14 @@ const PublicStoreProduct = () => {
   });
 
   const store = useMemo(() => unwrapData(storeQuery.data), [storeQuery.data]);
+
+  useEffect(() => {
+    if (!isSingleStoreMode || !store?.slug) return;
+    persistOnlineStoreBrand(store, {
+      pathPrefix: pathPrefix === 'stores' ? 'stores' : 'shop',
+    });
+  }, [isSingleStoreMode, pathPrefix, store]);
+
   const products = useMemo(() => {
     const response = productsQuery.data || {};
     return Array.isArray(response.data) ? response.data : [];
@@ -270,20 +396,22 @@ const PublicStoreProduct = () => {
         action: 'checkout',
         productId: product?.id,
         productSlug: product?.slug || productSlug,
-        returnTo: `/stores/${encodeURIComponent(storeSlug)}/products/${encodeURIComponent(productSlug)}`,
+        returnTo: `${storeBasePath}/products/${encodeURIComponent(productSlug)}`,
         storeSlug,
       },
     });
-  }, [addItem, openShopperAuthModal, product, productSlug, store, storeSlug]);
+  }, [addItem, openShopperAuthModal, product, productSlug, store, storeBasePath, storeSlug]);
 
   const handleAddToCart = useCallback(() => {
     const result = addItem({ product, store, storeSlug, quantity: 1 });
     if (result.ok) {
-      showSuccess(result.replacedStore
-        ? 'Cart updated for this seller. Previous seller items were removed.'
-        : 'Added to cart.');
+      if (result.replacedStore) {
+        showSuccess(isOwnedShop ? 'Cart updated.' : 'Cart updated for this seller. Previous seller items were removed.');
+      } else {
+        showSuccess('Added to cart.');
+      }
     }
-  }, [addItem, product, store, storeSlug]);
+  }, [addItem, isOwnedShop, product, store, storeSlug]);
 
   const handleWishlistClick = useCallback(() => {
     toggleWishlist(product);
@@ -294,10 +422,10 @@ const PublicStoreProduct = () => {
       mode: 'login',
       intent: {
         action: 'review',
-        returnTo: `/stores/${encodeURIComponent(storeSlug)}/products/${encodeURIComponent(productSlug)}`,
+        returnTo: `${storeBasePath}/products/${encodeURIComponent(productSlug)}`,
       },
     });
-  }, [openShopperAuthModal, productSlug, storeSlug]);
+  }, [openShopperAuthModal, productSlug, storeBasePath]);
 
   const handleSubmitReview = useCallback(async (payload) => {
     if (!product?.id) return;
@@ -342,12 +470,30 @@ const PublicStoreProduct = () => {
     }
   }, [addItem, navigate, product, store, storeSlug]);
 
+  const cardActions = useMemo(
+    () => resolveVisibleProductCardActions(
+      store?.productCardActions,
+      store,
+      { resolvePhone: resolveStoreWhatsAppPhone },
+    ).filter((action) => action !== 'view'),
+    [store],
+  );
+  const softenPrice = cardActions.includes('contact_for_price')
+    || (store?.productCardActions || []).includes('contact_for_price');
+
   const whatsappHref = useMemo(() => {
-    const phone = normalizePhone(store?.whatsappNumber || store?.contactPhone);
-    const interest = availability.available ? 'interested in' : 'asking about restocking';
-    const message = `Hi, I am ${interest} ${product?.title || 'this product'} from ${store?.displayName || 'your store'}.`;
-    return phone ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}` : `https://wa.me/?text=${encodeURIComponent(message)}`;
-  }, [availability.available, product?.title, store?.contactPhone, store?.displayName, store?.whatsappNumber]);
+    const message = whatsappProductInterestMessage(product, store?.displayName, {
+      available: availability.available,
+    });
+    return buildStoreWhatsAppHref(store, message);
+  }, [availability.available, product, store]);
+
+  const whatsappPriceHref = useMemo(() => (
+    buildStoreWhatsAppHref(
+      store,
+      whatsappPriceInquiryMessage(product, store?.displayName),
+    )
+  ), [product, store]);
 
   if (storeQuery.isLoading || productsQuery.isLoading) {
     return (
@@ -367,7 +513,7 @@ const PublicStoreProduct = () => {
               <AlertDescription>This product is not available right now.</AlertDescription>
             </Alert>
             <Button className="mt-4 rounded-full bg-green-700 hover:bg-green-800" asChild>
-              <Link to={storeSlug ? `/stores/${encodeURIComponent(storeSlug)}` : '/stores'}>
+              <Link to={storeSlug ? buildStoreHomePath(storeSlug, { pathname: location.pathname }) : (isMarketplaceMode ? '/stores' : '/')}>
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 Back to store
               </Link>
@@ -378,19 +524,46 @@ const PublicStoreProduct = () => {
     );
   }
 
+  const isServiceStore = store.storeMode === 'studio';
+  const catalogPath = isServiceStore ? `${storeBasePath}/services` : `${storeBasePath}/products`;
+  const ownedNavItems = isOwnedShop ? [
+    { key: 'home', label: 'Home', to: storeBasePath },
+    { key: 'catalog', label: isServiceStore ? 'All Services' : 'All Products', to: catalogPath },
+    { key: 'categories', label: 'Categories', to: `${storeBasePath}/categories` },
+    { key: 'about', label: 'About Us', to: `${storeBasePath}/about` },
+    { key: 'reviews', label: 'Reviews', to: `${storeBasePath}/reviews` },
+  ] : null;
+  const brandColors = resolveStoreBrandColors(store?.templateId, store || {});
+  const theme = getTemplateTheme(store?.templateId);
+  const accent = brandColors.primary || theme.accent;
+
   return (
+    <TemplateThemeProvider
+      templateId={store?.templateId}
+      primaryColor={brandColors.primary}
+      secondaryColor={brandColors.secondary}
+      tertiaryColor={brandColors.tertiary}
+    >
     <div className="min-h-screen bg-[#f4f7f2] text-slate-900">
-      <StoreScopedHeader store={store} product={product} onSearch={handleSearch} />
+      <StoreScopedHeader
+        store={store}
+        product={product}
+        onSearch={handleSearch}
+        homeTo={storeBasePath}
+        subtitle={storeSubtitle}
+        ownedShop={isOwnedShop}
+        navItems={ownedNavItems}
+      />
 
       <main className="mx-auto w-full max-w-[1440px] px-3 py-6 sm:px-4 sm:py-8">
         <div className="mb-6 flex flex-wrap items-center gap-2 text-sm text-slate-500">
-          <Link to={`/stores/${encodeURIComponent(storeSlug)}`} className="hover:text-green-800">{store.displayName}</Link>
+          <Link to={storeBasePath} className="hover:text-green-800">{store.displayName}</Link>
           <ChevronRight className="h-3.5 w-3.5" />
           <span className="font-semibold text-slate-800">{product.title}</span>
         </div>
 
         <div className="mb-6 flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between sm:rounded-[2rem]">
-          <Link to={`/stores/${encodeURIComponent(storeSlug)}`} className="flex min-w-0 items-center gap-3 text-slate-900">
+          <Link to={storeBasePath} className="flex min-w-0 items-center gap-3 text-slate-900">
             <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-green-50">
               {resolveImageUrl(store.logoUrl) ? (
                 <img src={resolveImageUrl(store.logoUrl)} alt={store.displayName} className="h-full w-full object-contain p-1.5" />
@@ -399,11 +572,15 @@ const PublicStoreProduct = () => {
               )}
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-500">Sold by</p>
+              {!isOwnedShop ? (
+                <p className="text-sm font-semibold text-slate-500">Sold by</p>
+              ) : null}
               <h1 className="truncate text-xl font-black text-slate-950">{store.displayName}</h1>
             </div>
           </Link>
-          <Badge variant="outline" className="border-green-200 bg-green-50 text-green-800">Published product</Badge>
+          {!isOwnedShop ? (
+            <Badge variant="outline" className="border-green-200 bg-green-50 text-green-800">Published product</Badge>
+          ) : null}
         </div>
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white sm:rounded-[2rem]">
@@ -491,10 +668,16 @@ const PublicStoreProduct = () => {
               </div>
 
               <div className="flex flex-wrap items-baseline gap-2">
-                <span className="text-2xl font-black text-green-800 sm:text-3xl">{formatAmount(product.publicPrice || 0, currency)}</span>
-                {Number(product.compareAtPrice || 0) > 0 ? (
-                  <span className="text-sm text-slate-400 line-through">{formatAmount(product.compareAtPrice, currency)}</span>
-                ) : null}
+                {softenPrice ? (
+                  <span className="text-2xl font-black text-slate-700 sm:text-3xl">Contact for price</span>
+                ) : (
+                  <>
+                    <span className="text-2xl font-black text-green-800 sm:text-3xl">{formatAmount(product.publicPrice || 0, currency)}</span>
+                    {Number(product.compareAtPrice || 0) > 0 ? (
+                      <span className="text-sm text-slate-400 line-through">{formatAmount(product.compareAtPrice, currency)}</span>
+                    ) : null}
+                  </>
+                )}
               </div>
 
               <p className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
@@ -505,52 +688,77 @@ const PublicStoreProduct = () => {
                 <Button
                   type="button"
                   variant="outline"
-                  className="w-full rounded-full border-green-200 text-green-800 hover:bg-green-50 sm:w-auto"
+                  className="w-full rounded-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] text-[color:var(--store-accent,#166534)] hover:border-[color:color-mix(in_srgb,var(--store-accent,#166534)_45%,white)] hover:bg-[var(--store-accent-soft,#16653422)] hover:text-[color:var(--store-accent,#166534)] sm:w-auto"
                   onClick={handleWishlistClick}
                   disabled={wishlistPending}
                 >
                   <Heart className={`mr-2 h-4 w-4 ${saved ? 'fill-current text-rose-600' : ''}`} />
                   {saved ? 'Saved to wishlist' : 'Save to wishlist'}
                 </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full rounded-full border-green-200 text-green-800 hover:bg-green-50 sm:w-auto"
-                  asChild
-                >
-                  <a href={whatsappHref} target="_blank" rel="noreferrer">
-                    <MessageCircle className="mr-2 h-4 w-4" />
-                    {availability.available ? 'Contact on WhatsApp' : 'Ask about restock on WhatsApp'}
-                  </a>
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full rounded-full border-green-200 text-green-800 hover:bg-green-50 sm:w-auto"
-                  disabled={!availability.available}
-                  onClick={handleAddToCart}
-                >
-                  <ShoppingCart className="mr-2 h-4 w-4" />
-                  Add to cart
-                </Button>
-                <Button
-                  type="button"
-                  className="w-full rounded-full bg-green-700 hover:bg-green-800 sm:w-auto"
-                  onClick={isAuthenticated ? handleCheckoutClick : handlePurchaseIntent}
-                  disabled={!availability.available}
-                >
-                  {isAuthenticated ? (
-                    <>
-                      <ShoppingBag className="mr-2 h-4 w-4" />
-                      Continue to checkout
-                    </>
-                  ) : (
-                    <>
-                      <ShoppingBag className="mr-2 h-4 w-4" />
-                      Buy Now
-                    </>
-                  )}
-                </Button>
+                {cardActions.map((actionId, index) => {
+                  const isPrimary = index === cardActions.length - 1;
+                  const outlineClass = 'w-full rounded-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] text-[color:var(--store-accent,#166534)] hover:border-[color:color-mix(in_srgb,var(--store-accent,#166534)_45%,white)] hover:bg-[var(--store-accent-soft,#16653422)] hover:text-[color:var(--store-accent,#166534)] sm:w-auto';
+                  // hover:bg-* (not opacity) so twMerge drops Button's hover:bg-primary/90 (Sabito green)
+                  const primaryClass = 'w-full rounded-full bg-[var(--store-accent,#166534)] text-white hover:bg-[color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] sm:w-auto';
+                  const className = isPrimary ? primaryClass : outlineClass;
+                  const variant = isPrimary ? 'default' : 'outline';
+
+                  if (actionId === 'add_to_cart') {
+                    return (
+                      <Button
+                        key={actionId}
+                        type="button"
+                        variant={variant}
+                        className={className}
+                        disabled={!availability.available}
+                        onClick={handleAddToCart}
+                      >
+                        <ShoppingCart className="mr-2 h-4 w-4" />
+                        Add to cart
+                      </Button>
+                    );
+                  }
+
+                  if (actionId === 'buy_now') {
+                    return (
+                      <Button
+                        key={actionId}
+                        type="button"
+                        variant={variant}
+                        className={className}
+                        onClick={isAuthenticated ? handleCheckoutClick : handlePurchaseIntent}
+                        disabled={!availability.available}
+                      >
+                        <ShoppingBag className="mr-2 h-4 w-4" />
+                        {isAuthenticated ? 'Continue to checkout' : 'Buy Now'}
+                      </Button>
+                    );
+                  }
+
+                  if (actionId === 'contact_for_price' && whatsappPriceHref) {
+                    return (
+                      <Button key={actionId} type="button" variant={variant} className={className} asChild>
+                        <a href={whatsappPriceHref} target="_blank" rel="noreferrer">
+                          <MessageCircle className="mr-2 h-4 w-4" />
+                          Contact for price
+                        </a>
+                      </Button>
+                    );
+                  }
+
+                  if (actionId === 'whatsapp' && whatsappHref) {
+                    return (
+                      <Button key={actionId} type="button" variant={variant} className={className} asChild>
+                        <a href={whatsappHref} target="_blank" rel="noreferrer">
+                          <MessageCircle className="mr-2 h-4 w-4" />
+                          {availability.available ? 'WhatsApp' : 'Ask about restock'}
+                        </a>
+                      </Button>
+                    );
+                  }
+
+                  return null;
+                })}
               </div>
 
               {product.description ? (
@@ -565,8 +773,10 @@ const PublicStoreProduct = () => {
         <section id="reviews" className="mt-8 grid gap-5 rounded-2xl border border-slate-200 bg-white p-5 sm:rounded-[2rem] md:p-8">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <p className="text-sm font-bold uppercase tracking-wide text-green-800">Product reviews</p>
-              <h2 className="mt-1 text-2xl font-black text-slate-950">Verified shopper feedback</h2>
+              <p className="text-sm font-bold uppercase tracking-wide text-[color:var(--store-accent,#166534)]">Product reviews</p>
+              <h2 className="mt-1 text-2xl font-black text-slate-950">
+                {isOwnedShop ? 'Reviews' : 'Verified shopper feedback'}
+              </h2>
             </div>
             <ReviewSummaryLine summary={reviewSummary} />
           </div>
@@ -579,11 +789,22 @@ const PublicStoreProduct = () => {
             onSubmit={handleSubmitReview}
             targetLabel={product.title}
           />
-          <ReviewList reviews={productReviews} emptyText="No verified product reviews yet." />
+          <ReviewList
+            reviews={productReviews}
+            emptyText={isOwnedShop ? 'No reviews yet.' : 'No verified product reviews yet.'}
+          />
         </section>
       </main>
-      <StoreScopedFooter store={store} contactHref={whatsappHref} />
+      <StoreScopedFooter
+        store={store}
+        contactHref={whatsappHref}
+        singleStoreMode={isSingleStoreMode || !isMarketplaceMode}
+        storeBasePath={storeBasePath}
+        subtitle={storeSubtitle}
+        accentColor={accent}
+      />
     </div>
+    </TemplateThemeProvider>
   );
 };
 

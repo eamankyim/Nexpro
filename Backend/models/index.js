@@ -90,6 +90,9 @@ const StudioLocation = require('./StudioLocation');
 const UserStudioLocation = require('./UserStudioLocation');
 const UserShop = require('./UserShop');
 const OnlineStoreSettings = require('./OnlineStoreSettings');
+const OnlineStoreHeroCategory = require('./OnlineStoreHeroCategory');
+const OnlineStoreHeroDesign = require('./OnlineStoreHeroDesign');
+const OnlineStoreHeroColorway = require('./OnlineStoreHeroColorway');
 const OnlineProductListing = require('./OnlineProductListing');
 const OnlineServiceListing = require('./OnlineServiceListing');
 const StorefrontCustomer = require('./StorefrontCustomer');
@@ -106,6 +109,12 @@ const DealerProductPrice = require('./DealerProductPrice');
 const SalesAgent = require('./SalesAgent');
 const SalesAgentCode = require('./SalesAgentCode');
 const SalesAgentCommission = require('./SalesAgentCommission');
+const PartnerProgramSettings = require('./PartnerProgramSettings');
+const PartnerProgramService = require('./PartnerProgramService');
+const Marketer = require('./Marketer');
+const PartnershipApplication = require('./PartnershipApplication');
+const Partnership = require('./Partnership');
+const PartnerCommission = require('./PartnerCommission');
 
 // Define relationships
 Tenant.hasMany(Customer, { foreignKey: 'tenantId', as: 'customers' });
@@ -569,6 +578,11 @@ OnlineStoreSettings.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
 StudioLocation.hasMany(OnlineStoreSettings, { foreignKey: 'studioLocationId', as: 'onlineStoreSettings' });
 OnlineStoreSettings.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
 
+OnlineStoreHeroCategory.hasMany(OnlineStoreHeroDesign, { foreignKey: 'categoryId', as: 'designs' });
+OnlineStoreHeroDesign.belongsTo(OnlineStoreHeroCategory, { foreignKey: 'categoryId', as: 'category' });
+OnlineStoreHeroDesign.hasMany(OnlineStoreHeroColorway, { foreignKey: 'designId', as: 'colorways' });
+OnlineStoreHeroColorway.belongsTo(OnlineStoreHeroDesign, { foreignKey: 'designId', as: 'design' });
+
 Tenant.hasMany(OnlineServiceListing, { foreignKey: 'tenantId', as: 'onlineServiceListings' });
 OnlineServiceListing.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 StudioLocation.hasMany(OnlineServiceListing, { foreignKey: 'studioLocationId', as: 'onlineServiceListings' });
@@ -883,6 +897,53 @@ SubscriptionPayment.hasMany(SalesAgentCommission, {
   as: 'salesAgentCommissions',
 });
 
+// Sabito Partner Program
+Tenant.hasOne(PartnerProgramSettings, { foreignKey: 'tenantId', as: 'partnerProgramSettings' });
+PartnerProgramSettings.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+PartnerProgramSettings.hasMany(PartnerProgramService, {
+  foreignKey: 'partnerProgramSettingsId',
+  as: 'services',
+});
+PartnerProgramService.belongsTo(PartnerProgramSettings, {
+  foreignKey: 'partnerProgramSettingsId',
+  as: 'settings',
+});
+PartnerProgramService.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
+PartnerProgramService.belongsTo(PricingTemplate, { foreignKey: 'pricingTemplateId', as: 'pricingTemplate' });
+PartnerProgramService.belongsTo(OnlineServiceListing, {
+  foreignKey: 'onlineServiceListingId',
+  as: 'onlineServiceListing',
+});
+
+Marketer.hasMany(PartnershipApplication, { foreignKey: 'marketerId', as: 'applications' });
+PartnershipApplication.belongsTo(Marketer, { foreignKey: 'marketerId', as: 'marketer' });
+Tenant.hasMany(PartnershipApplication, { foreignKey: 'tenantId', as: 'partnershipApplications' });
+PartnershipApplication.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+
+Marketer.hasMany(Partnership, { foreignKey: 'marketerId', as: 'partnerships' });
+Partnership.belongsTo(Marketer, { foreignKey: 'marketerId', as: 'marketer' });
+Tenant.hasMany(Partnership, { foreignKey: 'tenantId', as: 'partnerships' });
+Partnership.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Partnership.belongsTo(PartnershipApplication, { foreignKey: 'applicationId', as: 'application' });
+
+Partnership.hasMany(PartnerCommission, { foreignKey: 'partnershipId', as: 'commissions' });
+PartnerCommission.belongsTo(Partnership, { foreignKey: 'partnershipId', as: 'partnership' });
+Marketer.hasMany(PartnerCommission, { foreignKey: 'marketerId', as: 'commissions' });
+PartnerCommission.belongsTo(Marketer, { foreignKey: 'marketerId', as: 'marketer' });
+Tenant.hasMany(PartnerCommission, { foreignKey: 'tenantId', as: 'partnerCommissions' });
+PartnerCommission.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+PartnerCommission.belongsTo(Customer, { foreignKey: 'customerId', as: 'customer' });
+PartnerCommission.belongsTo(Sale, { foreignKey: 'saleId', as: 'sale' });
+PartnerCommission.belongsTo(Invoice, { foreignKey: 'invoiceId', as: 'invoice' });
+PartnerCommission.belongsTo(Payment, { foreignKey: 'paymentId', as: 'payment' });
+
+Customer.belongsTo(Marketer, { foreignKey: 'partnerMarketerId', as: 'partnerMarketer' });
+Customer.belongsTo(Partnership, { foreignKey: 'partnershipId', as: 'partnership' });
+Sale.belongsTo(Marketer, { foreignKey: 'partnerMarketerId', as: 'partnerMarketer' });
+Sale.belongsTo(Partnership, { foreignKey: 'partnershipId', as: 'partnership' });
+Job.belongsTo(Marketer, { foreignKey: 'partnerMarketerId', as: 'partnerMarketer' });
+Job.belongsTo(Partnership, { foreignKey: 'partnershipId', as: 'partnership' });
+
 module.exports = {
   User,
   Customer,
@@ -976,6 +1037,9 @@ module.exports = {
   UserStudioLocation,
   UserShop,
   OnlineStoreSettings,
+  OnlineStoreHeroCategory,
+  OnlineStoreHeroDesign,
+  OnlineStoreHeroColorway,
   OnlineProductListing,
   OnlineServiceListing,
   StorefrontCustomer,
@@ -992,6 +1056,12 @@ module.exports = {
   SalesAgent,
   SalesAgentCode,
   SalesAgentCommission,
+  PartnerProgramSettings,
+  PartnerProgramService,
+  Marketer,
+  PartnershipApplication,
+  Partnership,
+  PartnerCommission,
 };
 
 

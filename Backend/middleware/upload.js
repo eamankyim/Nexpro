@@ -182,6 +182,7 @@ module.exports = {
   upload,
   vendorPriceListUploader,
   productImageUploader,
+  imageOnlyMulter,
   importFileUploader,
   expenseReceiptUploader,
   baseUploadDir,

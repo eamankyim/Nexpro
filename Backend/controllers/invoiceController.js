@@ -42,6 +42,7 @@ const {
 } = require('../services/automationEngineService');
 const { updateCustomerBalance } = require('../services/customerBalanceService');
 const { ensureSaleFromPaidInvoice } = require('../services/invoiceSaleService');
+const { maybeCreateCommissionForPayment } = require('../services/partnerCommissionService');
 const sabitoWebhookService = require('../services/sabitoWebhookService');
 const mobileMoneyService = require('../services/mobileMoneyService');
 const { getResolvedMtnConfigForTenant } = require('../services/tenantMomoCollectionService');
@@ -1383,20 +1384,6 @@ exports.createInvoice = async (req, res, next) => {
       include: invoiceResponseIncludes()
     });
 
-    // Update customer balance
-    try {
-      await updateCustomerBalance(invoice.customerId);
-    } catch (error) {
-      console.error('Failed to update customer balance:', error);
-    }
-
-    // Revenue recognition (Dr AR Cr Revenue) for accounting
-    try {
-      await createInvoiceRevenueJournal(createdInvoice, req.user?.id);
-    } catch (journalError) {
-      console.error('Failed to create accounting revenue entry for invoice', journalError);
-    }
-
     // Send webhook to Sabito (async, don't block response)
     try {
       const customer = await Customer.findOne({
@@ -1452,9 +1439,26 @@ exports.createInvoice = async (req, res, next) => {
     }).catch((err) =>
       console.error('[Invoice] high_value_invoice automations failed:', err?.message || err)
     );
+
+    const responsePayload = await invoiceToResponsePayload(createdInvoice);
     res.status(201).json({
       success: true,
-      data: await invoiceToResponsePayload(createdInvoice)
+      data: responsePayload
+    });
+
+    const customerIdForBalance = invoice.customerId;
+    const actorUserId = req.user?.id || null;
+    setImmediate(async () => {
+      try {
+        await updateCustomerBalance(customerIdForBalance);
+      } catch (error) {
+        console.error('Failed to update customer balance:', error);
+      }
+      try {
+        await createInvoiceRevenueJournal(createdInvoice, actorUserId);
+      } catch (journalError) {
+        console.error('Failed to create accounting revenue entry for invoice', journalError);
+      }
     });
   } catch (error) {
     next(error);
@@ -1721,6 +1725,20 @@ exports.recordPayment = async (req, res, next) => {
       description: `invoice:${invoice.id}`,
       notes: paymentNotes || null
     });
+
+    try {
+      await maybeCreateCommissionForPayment({
+        tenantId: req.tenantId,
+        paymentAmount,
+        paymentId: payment.id,
+        saleId: invoice.saleId || null,
+        invoiceId: invoice.id,
+        customerId: invoice.customerId || null,
+        jobId: invoice.jobId || null,
+      });
+    } catch (partnerErr) {
+      console.error('[InvoiceRecordPayment] Partner commission failed:', partnerErr?.message || partnerErr);
+    }
 
     const updatedInvoice = await Invoice.findOne({
       where: applyTenantFilter(req.tenantId, { id: invoice.id }),

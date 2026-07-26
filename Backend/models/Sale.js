@@ -43,6 +43,16 @@ const Sale = sequelize.define('Sale', {
       key: 'id'
     }
   },
+  partnerMarketerId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: { model: 'marketers', key: 'id' },
+  },
+  partnershipId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: { model: 'partnerships', key: 'id' },
+  },
   saleChannel: {
     type: DataTypes.ENUM('retail', 'dealer'),
     allowNull: false,

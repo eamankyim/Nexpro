@@ -22,6 +22,7 @@ import {
   ShoppingBag,
   Workflow,
   BadgePercent,
+  GalleryHorizontal,
 } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -76,6 +77,7 @@ const menuItems = [
   { path: '/admin/automations', icon: Workflow, label: 'Automations' },
   { path: '/admin/support-tickets', icon: LifeBuoy, label: 'Support Tickets' },
   { path: '/admin/sabito/overview', icon: ShoppingBag, label: 'Sabito Admin', activePrefix: '/admin/sabito' },
+  { path: '/admin/online-store/heroes', icon: GalleryHorizontal, label: 'Hero library', activePrefix: '/admin/online-store' },
   { path: '/admin/tasks', icon: CheckSquare, label: 'Tasks' },
   { path: '/admin/settings', icon: Settings, label: 'Settings' },
 ];
@@ -133,6 +135,7 @@ const AdminLayout = () => {
           '/admin/automations': 'automations.view',
           '/admin/support-tickets': 'tickets.view',
           '/admin/sabito/overview': 'overview.view',
+          '/admin/online-store/heroes': 'settings.view',
           '/admin/tasks': 'settings.view',
           '/admin/settings': 'settings.view',
         };

@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { Loader2, MailCheck } from 'lucide-react';
 
 import { useStorefrontAuth } from '../../context/StorefrontAuthContext';
+import { brandAccent } from '../../online-store/brandAccent';
 import { showError, showSuccess } from '../../utils/toast';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -45,9 +46,13 @@ const EmailVerificationPrompt = () => {
   if (!customer || isVerified) return null;
 
   return (
-    <form onSubmit={handleVerify} className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:mb-6 sm:rounded-[2rem] sm:p-5">
-      <Alert className="border-amber-200 bg-white">
-        <MailCheck className="h-4 w-4" />
+    <form
+      onSubmit={handleVerify}
+      className={`mb-4 rounded-2xl border p-4 sm:mb-6 sm:rounded-[2rem] sm:p-5 ${brandAccent.softBorder}`}
+      style={brandAccent.softPanelStyle}
+    >
+      <Alert className="border-slate-200 bg-white">
+        <MailCheck className={`h-4 w-4 ${brandAccent.text}`} />
         <AlertDescription>
           Verify {email} to keep your shopper account trusted. You can continue using your account while verification is pending.
         </AlertDescription>
@@ -67,12 +72,13 @@ const EmailVerificationPrompt = () => {
             autoComplete="one-time-code"
             placeholder="123456"
             required
+            className={brandAccent.focusRing}
           />
         </div>
         <Button
           type="button"
           variant="outline"
-          className="w-full rounded-full border-amber-300 bg-white text-amber-900 hover:bg-amber-100 md:w-auto"
+          className={`w-full md:w-auto ${brandAccent.outlineBtn}`}
           disabled={isResending || !email}
           onClick={handleResend}
         >
@@ -81,7 +87,7 @@ const EmailVerificationPrompt = () => {
         </Button>
         <Button
           type="submit"
-          className="w-full rounded-full bg-green-700 hover:bg-green-800 md:w-auto"
+          className={`w-full md:w-auto ${brandAccent.primaryBtn}`}
           disabled={isVerifying || otp.length !== 6}
         >
           {isVerifying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}

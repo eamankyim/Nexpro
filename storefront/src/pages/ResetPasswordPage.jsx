@@ -4,6 +4,7 @@ import { Eye, EyeOff, Loader2, LockKeyhole } from 'lucide-react';
 
 import authService from '../services/authService';
 import { showError, showSuccess } from '../utils/toast';
+import { useStorefrontMode } from '../context/StorefrontModeContext';
 import { Breadcrumbs, PageShell } from '../components/storefront/StorefrontLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,6 +13,7 @@ const ResetPasswordPage = () => {
   const [searchParams] = useSearchParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const { isSingleStoreMode } = useStorefrontMode();
   const token = searchParams.get('token') || '';
   const [form, setForm] = useState({ password: '', confirmPassword: '' });
   const [showPassword, setShowPassword] = useState(false);
@@ -51,27 +53,29 @@ const ResetPasswordPage = () => {
   return (
     <PageShell activePath="/login">
       <Breadcrumbs items={[{ label: 'Reset password' }]} />
-      <section className="mx-auto max-w-xl rounded-2xl border border-green-200 bg-white p-6 sm:rounded-[2rem] md:p-8">
+      <section className="mx-auto max-w-xl rounded-2xl border border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] bg-white p-6 sm:rounded-[2rem] md:p-8">
         {!token ? (
           <div className="text-center">
             <h1 className="text-3xl font-black text-slate-950">Invalid reset link</h1>
             <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-slate-500">
               This password reset link is missing or invalid. Request a new one to continue.
             </p>
-            <Button asChild className="mt-6 rounded-full bg-green-700 hover:bg-green-800">
+            <Button asChild className="mt-6 rounded-full bg-[var(--store-accent,#166534)] text-white hover:bg-[var(--store-accent-hover,color-mix(in_srgb,var(--store-accent,#166534)_85%,black))]">
               <Link to={`/forgot-password?returnTo=${encodeURIComponent(returnTo)}`}>Request new link</Link>
             </Button>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-5">
-            <span className="flex h-14 w-14 items-center justify-center rounded-2xl border border-green-200 bg-green-50 text-green-800">
+            <span className="flex h-14 w-14 items-center justify-center rounded-2xl border border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] bg-[var(--store-accent-soft,#f0fdf4)] text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]">
               <LockKeyhole className="h-7 w-7" />
             </span>
             <div>
-              <p className="text-sm font-bold uppercase tracking-[0.18em] text-green-700">Secure reset</p>
+              <p className="text-sm font-bold uppercase tracking-[0.18em] text-[color:var(--store-accent,#166534)]">Secure reset</p>
               <h1 className="mt-2 text-3xl font-black text-slate-950">Set a new password</h1>
               <p className="mt-3 text-sm leading-6 text-slate-500">
-                Choose a new password for your Sabito Store shopper account.
+                {isSingleStoreMode
+                  ? 'Choose a new password for your shopper account.'
+                  : 'Choose a new password for your Sabito Store shopper account.'}
               </p>
             </div>
             <div className="grid gap-2">
@@ -109,10 +113,10 @@ const ResetPasswordPage = () => {
               />
             </div>
             <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
-              <Button asChild type="button" variant="outline" className="rounded-full border-green-200 text-green-800 hover:bg-green-50">
+              <Button asChild type="button" variant="outline" className="rounded-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:bg-[var(--store-accent-soft,#16653422)]">
                 <Link to={`/login?returnTo=${encodeURIComponent(returnTo)}`}>Back to login</Link>
               </Button>
-              <Button type="submit" className="rounded-full bg-green-700 hover:bg-green-800" disabled={isSubmitting}>
+              <Button type="submit" className="rounded-full bg-[var(--store-accent,#166534)] text-white hover:bg-[var(--store-accent-hover,color-mix(in_srgb,var(--store-accent,#166534)_85%,black))]" disabled={isSubmitting}>
                 {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Reset password
               </Button>

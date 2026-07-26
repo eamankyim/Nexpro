@@ -5,16 +5,24 @@ import { AlertCircle, ArrowLeft, CalendarDays, Loader2, MapPin, Package, Search,
 import { Breadcrumbs, PageShell, SectionHeader } from '../components/storefront/StorefrontLayout';
 import DeliveryProgressTimeline from '../components/storefront/DeliveryProgressTimeline';
 import { useStorefrontAuth } from '../context/StorefrontAuthContext';
+import { useStorefrontMode } from '../context/StorefrontModeContext';
+import { buildStoreHomePath, resolveSingleStoreHomePath } from '../online-store/storePaths';
 import storeService from '../services/storeService';
 import { formatAmount } from '../utils/formatNumber';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
-const helpHints = [
+const marketplaceHelpHints = [
   'Use the order reference from your Sabito Store checkout confirmation.',
   'Enter the same email or phone number used when the order was placed.',
   'For delivery changes or urgent questions, contact the seller from the store page.',
+];
+
+const onlineStoreHelpHints = [
+  'Use the order reference from your checkout confirmation.',
+  'Enter the same email or phone number used when the order was placed.',
+  'For delivery changes or urgent questions, contact the store.',
 ];
 
 const formatDateTime = (value) => {
@@ -39,17 +47,53 @@ const getDeliveryLocation = (summary = {}) => (
 
 const TrackOrderPage = () => {
   const { isAuthenticated } = useStorefrontAuth();
+  const {
+    isSingleStoreMode,
+    storeSlug: modeSlug,
+    pathPrefix,
+    isCustomDomain,
+  } = useStorefrontMode();
   const [orderReference, setOrderReference] = useState('');
   const [contact, setContact] = useState('');
   const [order, setOrder] = useState(null);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const helpHints = isSingleStoreMode ? onlineStoreHelpHints : marketplaceHelpHints;
 
   const normalizedReference = useMemo(() => orderReference.trim().toUpperCase(), [orderReference]);
   const canSubmit = normalizedReference && contact.trim() && !isLoading;
   const deliveryTracking = order?.deliveryTracking || {};
   const deliveryTimeline = deliveryTracking.timeline || order?.deliveryTimeline || [];
-  const storePath = order?.support?.storePath || (order?.storeSlug ? `/stores/${encodeURIComponent(order.storeSlug)}` : '/stores');
+  const shopHomePath = isSingleStoreMode
+    ? resolveSingleStoreHomePath({
+      storeSlug: order?.storeSlug || modeSlug,
+      pathPrefix,
+      isCustomDomain,
+    })
+    : '/';
+  const scopedStoreSlug = order?.storeSlug || modeSlug;
+  const storePath = isSingleStoreMode
+    ? resolveSingleStoreHomePath({
+      storeSlug: scopedStoreSlug,
+      pathPrefix,
+      isCustomDomain,
+    })
+    : (order?.support?.storePath
+      || (order?.storeSlug ? `/stores/${encodeURIComponent(order.storeSlug)}` : '/stores'));
+  const continueShoppingPath = isSingleStoreMode
+    ? (isCustomDomain
+      ? '/products'
+      : (scopedStoreSlug
+        ? `${buildStoreHomePath(scopedStoreSlug, { ...(pathPrefix ? { prefix: pathPrefix } : {}) })}/products`
+        : shopHomePath))
+    : '/products';
+  const supportPath = isSingleStoreMode
+    ? (isCustomDomain
+      ? '/about'
+      : (scopedStoreSlug
+        ? `${buildStoreHomePath(scopedStoreSlug, { ...(pathPrefix ? { prefix: pathPrefix } : {}) })}/about`
+        : shopHomePath))
+    : '/about-contact';
 
   const handleSubmit = useCallback(async (event) => {
     event.preventDefault();
@@ -87,8 +131,10 @@ const TrackOrderPage = () => {
         {!isAuthenticated ? (
           <SectionHeader
             eyebrow="Track Order"
-            title="Follow your marketplace order"
-            description="Enter your order reference and the email or phone used at checkout to see the latest seller and delivery updates."
+            title={isSingleStoreMode ? 'Track your order' : 'Follow your marketplace order'}
+            description={isSingleStoreMode
+              ? 'Enter your order reference and the email or phone used at checkout to see the latest delivery updates.'
+              : 'Enter your order reference and the email or phone used at checkout to see the latest seller and delivery updates.'}
           />
         ) : null}
 
@@ -126,7 +172,7 @@ const TrackOrderPage = () => {
             </div>
           ) : null}
           <div className="flex justify-end">
-            <Button type="submit" disabled={!canSubmit} className="h-12 w-full rounded-full bg-green-700 px-6 hover:bg-green-800 disabled:opacity-70 sm:w-auto">
+            <Button type="submit" disabled={!canSubmit} className="h-12 w-full rounded-full bg-[var(--store-accent,#166534)] px-6 hover:bg-[var(--store-accent-hover,color-mix(in_srgb,var(--store-accent,#166534)_85%,black))] disabled:opacity-70 sm:w-auto">
               {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
               {isLoading ? 'Tracking order...' : 'Track order'}
             </Button>
@@ -135,21 +181,21 @@ const TrackOrderPage = () => {
 
         {order ? (
           <div className="mt-6 grid gap-6">
-            <section className="rounded-2xl border border-green-200 bg-green-50 p-5 sm:rounded-[2rem]">
+            <section className="rounded-2xl border border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] bg-[var(--store-accent-soft,#f0fdf4)] p-5 sm:rounded-[2rem]">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
-                  <p className="text-sm font-bold uppercase tracking-[0.18em] text-green-700">{order.storeName}</p>
+                  <p className="text-sm font-bold uppercase tracking-[0.18em] text-[color:var(--store-accent,#166534)]">{order.storeName}</p>
                   <h2 className="mt-2 break-words text-2xl font-black text-slate-950 sm:text-3xl">{order.saleNumber}</h2>
                   <p className="mt-2 inline-flex items-center gap-2 text-sm text-slate-600">
                     <CalendarDays className="h-4 w-4" />
                     Placed {formatDateTime(order.createdAt)}
                   </p>
                 </div>
-                <Badge variant="outline" className="border-green-200 bg-white capitalize text-green-800">
+                <Badge variant="outline" className="border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] bg-white capitalize text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]">
                   {getStatusLabel(order)}
                 </Badge>
               </div>
-              <div className="mt-5 grid gap-3 rounded-2xl border border-green-100 bg-white p-4 sm:grid-cols-3 sm:rounded-3xl">
+              <div className="mt-5 grid gap-3 rounded-2xl border border-[color:color-mix(in_srgb,var(--store-accent,#166534)_18%,#e5e7eb)] bg-white p-4 sm:grid-cols-3 sm:rounded-3xl">
                 <TotalLine label="Items" value={`${order.itemCount || 0}`} />
                 <TotalLine label="Delivery" value={formatAmount(order.deliveryFee || 0, order.currency)} />
                 <TotalLine label="Total" value={formatAmount(order.total || 0, order.currency)} strong />
@@ -160,12 +206,12 @@ const TrackOrderPage = () => {
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <h3 className="inline-flex items-center gap-2 text-xl font-black text-slate-950">
-                    <Truck className="h-5 w-5 text-green-700" />
+                    <Truck className="h-5 w-5 text-[color:var(--store-accent,#166534)]" />
                     Delivery progress
                   </h3>
                   <p className="mt-2 text-sm text-slate-500">Seller updates appear here as the order moves forward.</p>
                 </div>
-                <Badge variant="outline" className="border-green-100 bg-green-50 capitalize text-green-800">
+                <Badge variant="outline" className="border-[color:color-mix(in_srgb,var(--store-accent,#166534)_18%,#e5e7eb)] bg-[var(--store-accent-soft,#f0fdf4)] capitalize text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]">
                   {deliveryTracking.currentLabel || getStatusLabel(order)}
                 </Badge>
               </div>
@@ -184,7 +230,7 @@ const TrackOrderPage = () => {
             <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
               <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:rounded-[2rem]">
                 <h3 className="inline-flex items-center gap-2 text-xl font-black text-slate-950">
-                  <ShoppingBag className="h-5 w-5 text-green-700" />
+                  <ShoppingBag className="h-5 w-5 text-[color:var(--store-accent,#166534)]" />
                   Items summary
                 </h3>
                 <div className="mt-4 grid gap-3">
@@ -194,7 +240,7 @@ const TrackOrderPage = () => {
                         <p className="break-words font-bold text-slate-950">{item.name}</p>
                         <p className="mt-1 text-sm text-slate-500">Qty {item.quantity}</p>
                       </div>
-                      <p className="shrink-0 font-black text-green-800">{formatAmount(item.total || 0, order.currency)}</p>
+                      <p className="shrink-0 font-black text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]">{formatAmount(item.total || 0, order.currency)}</p>
                     </div>
                   ))}
                 </div>
@@ -203,7 +249,7 @@ const TrackOrderPage = () => {
               <div className="grid gap-6">
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:rounded-[2rem]">
                   <h3 className="inline-flex items-center gap-2 text-xl font-black text-slate-950">
-                    <MapPin className="h-5 w-5 text-green-700" />
+                    <MapPin className="h-5 w-5 text-[color:var(--store-accent,#166534)]" />
                     Delivery summary
                   </h3>
                   {order.deliverySummary ? (
@@ -219,17 +265,20 @@ const TrackOrderPage = () => {
 
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:rounded-[2rem]">
                   <h3 className="inline-flex items-center gap-2 text-xl font-black text-slate-950">
-                    <Store className="h-5 w-5 text-green-700" />
+                    <Store className="h-5 w-5 text-[color:var(--store-accent,#166534)]" />
                     Need help?
                   </h3>
                   <p className="mt-3 text-sm leading-6 text-slate-600">
-                    {order.support?.message || 'Contact the seller for delivery changes or product questions.'}
+                    {isSingleStoreMode
+                      ? (order.support?.message?.replace(/\bseller\b/gi, 'store')
+                        || 'Contact the store for delivery changes or product questions.')
+                      : (order.support?.message || 'Contact the seller for delivery changes or product questions.')}
                   </p>
                   <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-                    <Button variant="outline" className="w-full rounded-full border-green-200 text-green-800 hover:bg-green-50 sm:w-auto" asChild>
-                      <Link to="/products">Continue shopping</Link>
+                    <Button variant="outline" className="w-full rounded-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:bg-[var(--store-accent-soft,#16653422)] sm:w-auto" asChild>
+                      <Link to={continueShoppingPath}>Continue shopping</Link>
                     </Button>
-                    <Button className="w-full rounded-full bg-green-700 hover:bg-green-800 sm:w-auto" asChild>
+                    <Button className="w-full rounded-full bg-[var(--store-accent,#166534)] text-white hover:bg-[var(--store-accent-hover,color-mix(in_srgb,var(--store-accent,#166534)_85%,black))] sm:w-auto" asChild>
                       <Link to={storePath}>Contact store</Link>
                     </Button>
                   </div>
@@ -238,15 +287,17 @@ const TrackOrderPage = () => {
             </section>
           </div>
         ) : (
-          <div className="mt-6 rounded-2xl border border-green-100 bg-green-50 p-5 sm:rounded-3xl">
+          <div className="mt-6 rounded-2xl border border-[color:color-mix(in_srgb,var(--store-accent,#166534)_18%,#e5e7eb)] bg-[var(--store-accent-soft,#f0fdf4)] p-5 sm:rounded-3xl">
             <div className="flex items-start gap-3">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-green-700">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-[color:var(--store-accent,#166534)]">
                 <Truck className="h-5 w-5" />
               </span>
               <div>
                 <h2 className="font-black text-slate-950">Live order tracking</h2>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
-                  Tracking is available for Sabito Store checkout orders. Your contact detail is required before we show order information.
+                  {isSingleStoreMode
+                    ? 'Tracking is available for checkout orders from this shop. Your contact detail is required before we show order information.'
+                    : 'Tracking is available for Sabito Store checkout orders. Your contact detail is required before we show order information.'}
                 </p>
               </div>
             </div>
@@ -256,23 +307,23 @@ const TrackOrderPage = () => {
         <div className="mt-6 grid gap-3">
           {helpHints.map((hint) => (
             <div key={hint} className="flex items-start gap-3 rounded-2xl border border-slate-200 px-4 py-3 text-sm leading-6 text-slate-600">
-              <Package className="mt-0.5 h-4 w-4 shrink-0 text-green-700" />
+              <Package className="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--store-accent,#166534)]" />
               {hint}
             </div>
           ))}
         </div>
 
         <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-          <Button variant="outline" className="rounded-full border-green-200 text-green-800 hover:bg-green-50" asChild>
-            <Link to="/">
+          <Button variant="outline" className="rounded-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:bg-[var(--store-accent-soft,#16653422)]" asChild>
+            <Link to={shopHomePath}>
               <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to marketplace
+              {isSingleStoreMode ? 'Back to shop' : 'Back to marketplace'}
             </Link>
           </Button>
-          <Button className="rounded-full bg-green-700 hover:bg-green-800" asChild>
-            <Link to="/about-contact">
+          <Button className="rounded-full bg-[var(--store-accent,#166534)] text-white hover:bg-[var(--store-accent-hover,color-mix(in_srgb,var(--store-accent,#166534)_85%,black))]" asChild>
+            <Link to={supportPath}>
               <Truck className="mr-2 h-4 w-4" />
-              Contact support
+              {isSingleStoreMode ? 'Contact store' : 'Contact support'}
             </Link>
           </Button>
         </div>

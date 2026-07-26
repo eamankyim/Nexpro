@@ -7,6 +7,15 @@ function decodeUrlEntities(url) {
     .replace(/&#47;/g, '/');
 }
 
+/**
+ * Resolve an image or file URL for display.
+ * Relative /uploads paths are prefixed with API_BASE_URL when set; in Vite proxy
+ * mode they stay host-relative so the storefront /uploads proxy can serve them.
+ * Cross-origin ABS previews should pass absolute URLs (or data: via postMessage).
+ *
+ * @param {string|object|null|undefined} url
+ * @returns {string}
+ */
 export function resolveImageUrl(url) {
   if (url == null) return '';
   if (typeof url === 'object') {

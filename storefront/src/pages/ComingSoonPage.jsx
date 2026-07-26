@@ -1,7 +1,9 @@
 import { useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Clock, CreditCard, Loader2, ShoppingBag, ShoppingCart } from 'lucide-react';
 
+import { useStorefrontMode } from '../context/StorefrontModeContext';
+import { resolveSingleStoreHomePath } from '../online-store/storePaths';
 import { Breadcrumbs, PageShell } from '../components/storefront/StorefrontLayout';
 import { useStorefrontAuth } from '../context/StorefrontAuthContext';
 import { Button } from '@/components/ui/button';
@@ -10,7 +12,7 @@ const pageCopy = {
   cart: {
     eyebrow: 'Shopping Cart',
     title: 'Your cart is almost ready',
-    description: 'Customers can browse live products today. Cart saving, quantity updates, and checkout handoff will launch with marketplace ordering.',
+    description: 'Customers can browse live products today. Cart saving, quantity updates, and checkout handoff will launch with ordering.',
     icon: ShoppingCart,
     primaryLabel: 'Shop products',
     primaryTo: '/products',
@@ -21,7 +23,7 @@ const pageCopy = {
   checkout: {
     eyebrow: 'Checkout',
     title: 'Account checkout is coming soon',
-    description: 'You are signed in. Sabito Store checkout will collect buyer payment into Sabito Trade Assurance, hold funds during delivery, and release seller payout after confirmation.',
+    description: 'You are signed in. Checkout will collect buyer payment securely, hold funds during delivery when required, and release seller payout after confirmation.',
     icon: CreditCard,
     primaryLabel: 'Shop products',
     primaryTo: '/products',
@@ -32,7 +34,7 @@ const pageCopy = {
   'checkout-auth-required': {
     eyebrow: 'No Guest Checkout',
     title: 'Create an account to buy',
-    description: 'Shoppers can browse freely, but purchases require a Sabito Store customer account for order tracking, trade assurance, and seller communication.',
+    description: 'Shoppers can browse freely, but purchases require a customer account for order tracking and communication with the store.',
     icon: CreditCard,
     primaryLabel: 'Create account and checkout',
     primaryTo: '/checkout',
@@ -43,7 +45,7 @@ const pageCopy = {
   'auth-loading': {
     eyebrow: 'Shopper account',
     title: 'Checking your shopper session',
-    description: 'Please wait while Sabito Store verifies your customer account before checkout.',
+    description: 'Please wait while we verify your customer account before checkout.',
     icon: Loader2,
     primaryLabel: 'Shop products',
     primaryTo: '/products',
@@ -56,9 +58,33 @@ const pageCopy = {
 const ComingSoonPage = ({ type = 'cart' }) => {
   const copy = pageCopy[type] || pageCopy.cart;
   const Icon = copy.icon;
+  const navigate = useNavigate();
   const { openShopperAuthModal } = useStorefrontAuth();
+  const { isSingleStoreMode, storeSlug, pathPrefix, isCustomDomain } = useStorefrontMode();
   const needsCheckoutAuth = type === 'checkout-auth-required';
+
+  const shopHomePath = isSingleStoreMode
+    ? resolveSingleStoreHomePath({ storeSlug, pathPrefix, isCustomDomain })
+    : null;
+
+  const primaryTo = shopHomePath && copy.primaryTo === '/products' ? shopHomePath : copy.primaryTo;
+  const secondaryTo = shopHomePath && (copy.secondaryTo === '/stores' || copy.secondaryTo === '/products')
+    ? shopHomePath
+    : copy.secondaryTo;
+  const secondaryLabel = shopHomePath && copy.secondaryTo === '/stores'
+    ? 'Back to shop'
+    : (shopHomePath && copy.secondaryTo === '/products' ? 'Back to shop' : copy.secondaryLabel);
+  const primaryLabel = shopHomePath && copy.primaryTo === '/products'
+    ? 'Back to shop'
+    : copy.primaryLabel;
+  const backTo = shopHomePath || '/';
+  const backLabel = shopHomePath ? 'Back to shop' : 'Back to marketplace';
+
   const handleOpenCheckoutAuth = useCallback(() => {
+    if (isSingleStoreMode) {
+      navigate('/signup?returnTo=%2Fcheckout');
+      return;
+    }
     openShopperAuthModal({
       mode: 'signup',
       intent: {
@@ -66,17 +92,17 @@ const ComingSoonPage = ({ type = 'cart' }) => {
         returnTo: '/checkout',
       },
     });
-  }, [openShopperAuthModal]);
+  }, [isSingleStoreMode, navigate, openShopperAuthModal]);
 
   return (
     <PageShell activePath={copy.activePath}>
       <Breadcrumbs items={[{ label: copy.eyebrow }]} />
 
-      <section className="mx-auto max-w-3xl rounded-2xl border border-green-200 bg-white p-8 text-center sm:rounded-[2rem] md:p-10">
-        <span className="mx-auto flex h-20 w-20 items-center justify-center rounded-2xl border border-green-100 bg-green-50 text-green-800 sm:rounded-3xl">
+      <section className="mx-auto max-w-3xl rounded-2xl border border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] bg-white p-8 text-center sm:rounded-[2rem] md:p-10">
+        <span className="mx-auto flex h-20 w-20 items-center justify-center rounded-2xl border border-[color:color-mix(in_srgb,var(--store-accent,#166534)_18%,#e5e7eb)] bg-[var(--store-accent-soft,#f0fdf4)] text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] sm:rounded-3xl">
           <Icon className={`h-10 w-10 ${type === 'auth-loading' ? 'animate-spin' : ''}`} />
         </span>
-        <p className="mt-6 text-sm font-bold uppercase tracking-[0.18em] text-green-700">{copy.eyebrow}</p>
+        <p className="mt-6 text-sm font-bold uppercase tracking-[0.18em] text-[color:var(--store-accent,#166534)]">{copy.eyebrow}</p>
         <h1 className="mt-3 text-3xl font-black text-slate-950 md:text-4xl">{copy.title}</h1>
         <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-500">{copy.description}</p>
 
@@ -89,24 +115,28 @@ const ComingSoonPage = ({ type = 'cart' }) => {
             {needsCheckoutAuth
               ? 'Your cart and checkout path are preserved. After authentication, you will return to the purchase flow.'
               : type === 'checkout'
-              ? 'Guest buying is disabled. Checkout and order placement will only continue for signed-in shopper accounts, with payment held by Sabito until delivery is confirmed.'
-              : 'You can still open product pages, contact sellers, and discover stores across the marketplace while checkout is being finished.'}
+              ? (isSingleStoreMode
+                ? 'Guest buying is disabled. Checkout and order placement will only continue for signed-in shopper accounts.'
+                : 'Guest buying is disabled. Checkout and order placement will only continue for signed-in shopper accounts, with payment held by Sabito until delivery is confirmed.')
+              : (isSingleStoreMode
+                ? 'You can still browse products and contact the store while checkout is being finished.'
+                : 'You can still open product pages, contact sellers, and discover stores across the marketplace while checkout is being finished.')}
           </p>
         </div>
 
         <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
-          <Button variant="outline" className="rounded-full border-green-200 text-green-800 hover:bg-green-50" asChild>
-            <Link to="/">
+          <Button variant="outline" className="rounded-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:bg-[var(--store-accent-soft,#16653422)]" asChild>
+            <Link to={backTo}>
               <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to marketplace
+              {backLabel}
             </Link>
           </Button>
-          <Button variant="outline" className="rounded-full border-green-200 text-green-800 hover:bg-green-50" asChild>
-            <Link to={copy.secondaryTo}>{copy.secondaryLabel}</Link>
+          <Button variant="outline" className="rounded-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:bg-[var(--store-accent-soft,#16653422)]" asChild>
+            <Link to={secondaryTo}>{secondaryLabel}</Link>
           </Button>
           <Button
             type="button"
-            className="rounded-full bg-green-700 hover:bg-green-800"
+            className="rounded-full bg-[var(--store-accent,#166534)] text-white hover:bg-[var(--store-accent-hover,color-mix(in_srgb,var(--store-accent,#166534)_85%,black))]"
             onClick={needsCheckoutAuth ? handleOpenCheckoutAuth : undefined}
             asChild={!needsCheckoutAuth}
           >
@@ -116,9 +146,9 @@ const ComingSoonPage = ({ type = 'cart' }) => {
                 {copy.primaryLabel}
               </>
             ) : (
-              <Link to={copy.primaryTo}>
+              <Link to={primaryTo}>
               <ShoppingBag className="mr-2 h-4 w-4" />
-              {copy.primaryLabel}
+              {primaryLabel}
               </Link>
             )}
           </Button>

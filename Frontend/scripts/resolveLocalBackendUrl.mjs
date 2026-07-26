@@ -4,8 +4,8 @@
  */
 import http from 'node:http';
 
-/** Prefer 5001/5002 before 5000 — macOS AirPlay Receiver often occupies :5000. */
-const PREFERRED_LOCAL_PORTS = [5001, 5002, 5000];
+/** Prefer 5002 before 5001 — on some Macs :5001 is occupied by unrelated Python apps. */
+const PREFERRED_LOCAL_PORTS = [5002, 5001, 5000];
 const PROBE_PORTS = [
   ...PREFERRED_LOCAL_PORTS,
   5003,
@@ -17,7 +17,7 @@ const PROBE_PORTS = [
   5009,
   5010,
 ];
-const FALLBACK_ORIGIN = 'http://127.0.0.1:5001';
+const FALLBACK_ORIGIN = 'http://127.0.0.1:5002';
 
 /**
  * @param {number} port

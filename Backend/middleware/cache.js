@@ -229,8 +229,14 @@ const attachCacheTimingContext = (req, { cacheKey, cacheLabel, cacheHit }) => {
  * Middleware to cache GET requests
  * @param {number} ttl - Time to live in seconds (default: 120)
  * @param {function} keyGenerator - Optional function to generate custom cache key
+ * @param {{ browserMaxAge?: number }} [options] - When browserMaxAge > 0, set public
+ *   Cache-Control / s-maxage for CDN/browser (public read-only routes). Default no-store
+ *   keeps authenticated ABS APIs uncached by intermediaries.
  */
-const cacheMiddleware = (ttl = 120, keyGenerator = null) => {
+const cacheMiddleware = (ttl = 120, keyGenerator = null, options = {}) => {
+  const browserMaxAge = Number(options?.browserMaxAge);
+  const allowBrowserCache = Number.isFinite(browserMaxAge) && browserMaxAge > 0;
+
   return async (req, res, next) => {
     const start = process.hrtime.bigint();
     // Only cache GET requests
@@ -246,8 +252,15 @@ const cacheMiddleware = (ttl = 120, keyGenerator = null) => {
     attachCacheTimingContext(req, { cacheKey, cacheLabel, cacheHit: false });
 
     // Avoid doing full controller work only for Express to return 304 afterward.
-    // API data is cached server-side; clients should receive the JSON payload.
-    res.set('Cache-Control', 'no-store');
+    // Authenticated ABS APIs stay no-store; public marketplace may allow short CDN/browser TTL.
+    if (allowBrowserCache) {
+      res.set(
+        'Cache-Control',
+        `public, max-age=${Math.floor(browserMaxAge)}, s-maxage=${Math.floor(browserMaxAge)}`
+      );
+    } else {
+      res.set('Cache-Control', 'no-store');
+    }
     delete req.headers['if-none-match'];
     delete req.headers['if-modified-since'];
 

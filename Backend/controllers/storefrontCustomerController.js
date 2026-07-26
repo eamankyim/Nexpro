@@ -481,27 +481,46 @@ const getWishlistVariantMap = async (listings) => {
 
 const storefrontKeyForListing = (listing) => `${listing?.tenantId || ''}:${listing?.shopId || ''}`;
 
+/**
+ * Match Online Store settings to a listing the same way public storefront does:
+ * tenant must match; a settings row with null shopId is tenant-wide and matches any listing shop.
+ * Prefer an exact shopId match when both exist.
+ * @param {{ tenantId?: string, shopId?: string|null }} store
+ * @param {{ tenantId?: string, shopId?: string|null }} listing
+ * @returns {boolean}
+ */
+const storeMatchesListingForWishlist = (store, listing) => {
+  if (!store?.tenantId || store.tenantId !== listing?.tenantId) return false;
+  return store.shopId ? store.shopId === listing.shopId : true;
+};
+
+/**
+ * Resolve public store cards for wishlist listings.
+ * Keyed by listing tenantId:shopId so callers can look up via storefrontKeyForListing(listing).
+ * @param {Array<object>} listings
+ * @returns {Promise<Map<string, object>>}
+ */
 const getWishlistStores = async (listings) => {
-  const pairs = listings.map((listing) => ({
-    tenantId: listing.tenantId,
-    shopId: listing.shopId || null,
-  }));
-  if (!pairs.length) return new Map();
+  const plainListings = listings
+    .map((listing) => (typeof listing?.get === 'function' ? listing.get({ plain: true }) : listing))
+    .filter((listing) => listing?.tenantId);
+  const tenantIds = [...new Set(plainListings.map((listing) => listing.tenantId))];
+  if (!tenantIds.length) return new Map();
 
   const stores = await OnlineStoreSettings.findAll({
-    where: {
-      [Op.or]: pairs,
-    },
+    where: { tenantId: { [Op.in]: tenantIds } },
     include: [
       { model: Tenant, as: 'tenant', attributes: ['id', 'name', 'businessType', 'status'], required: true },
       { model: Shop, as: 'shop', attributes: ['id', 'name', 'shopType', 'city', 'country', 'logoUrl', 'isActive'], required: false },
     ],
   });
 
-  return stores.reduce((map, store) => {
+  const storeCards = stores.map((store) => {
     const plain = store.get({ plain: true });
-    map.set(storefrontKeyForListing(plain), {
+    return {
       id: plain.id,
+      tenantId: plain.tenantId,
+      shopId: plain.shopId || null,
       slug: plain.slug,
       displayName: plain.displayName,
       logoUrl: plain.logoUrl || plain.shop?.logoUrl || null,
@@ -510,7 +529,18 @@ const getWishlistStores = async (listings) => {
       pickupEnabled: plain.pickupEnabled,
       deliveryFee: Number.parseFloat(plain.deliveryFee || 0) || 0,
       enabled: plain.enabled === true && plain.tenant?.status === 'active' && plain.shop?.isActive !== false,
-    });
+    };
+  });
+
+  return plainListings.reduce((map, listing) => {
+    const key = storefrontKeyForListing(listing);
+    if (map.has(key)) return map;
+
+    const candidates = storeCards.filter((store) => storeMatchesListingForWishlist(store, listing));
+    const exactShop = candidates.find((store) => store.shopId && store.shopId === listing.shopId);
+    const tenantWide = candidates.find((store) => !store.shopId);
+    const chosen = exactShop || tenantWide || candidates[0] || null;
+    if (chosen) map.set(key, chosen);
     return map;
   }, new Map());
 };
@@ -662,7 +692,16 @@ const getStoreLabelsForOrders = async (orders) => {
       slug: { [Op.in]: [...new Set(pairs.map((pair) => pair.slug))] },
       tenantId: { [Op.in]: [...new Set(pairs.map((pair) => pair.tenantId))] },
     },
-    attributes: ['tenantId', 'shopId', 'slug', 'displayName', 'currency', 'logoUrl'],
+    attributes: [
+      'tenantId',
+      'shopId',
+      'slug',
+      'displayName',
+      'currency',
+      'logoUrl',
+      'contactPhone',
+      'whatsappNumber',
+    ],
   });
 
   return stores.reduce((map, store) => {
@@ -696,6 +735,8 @@ const toOrderSummary = (order, storeLabels = new Map()) => {
     currency: store?.currency || metadata.currency || DEFAULT_CURRENCY,
     storeName: store?.displayName || plain.shop?.name || metadata.storeSlug || 'Sabito seller',
     storeSlug: metadata.storeSlug || null,
+    storeWhatsappNumber: store?.whatsappNumber || null,
+    storeContactPhone: store?.contactPhone || null,
     fulfillmentMethod,
     deliveryRequired: plain.deliveryRequired === true,
     deliveryAddress: metadata.deliveryAddress || null,
@@ -830,7 +871,9 @@ const toPublicTrackingOrder = (order, storeLabels = new Map()) => {
     deliveryTracking: summary.deliveryTracking,
     deliveryTimeline: summary.deliveryTimeline,
     support: {
-      message: 'For changes or delivery questions, contact the seller from the store page or your shopper account.',
+      message: 'For changes or delivery questions, contact the store from the store page or your shopper account.',
+      // Clients should prefer storeSlug + their surface prefix (/shop vs /stores).
+      // storePath remains the marketplace default for backwards compatibility.
       storePath: summary.storeSlug ? `/stores/${encodeURIComponent(summary.storeSlug)}` : null,
     },
   };
@@ -2187,6 +2230,10 @@ const toInitializedOrderPayload = (sale, store, totals) => ({
   total: totals.total,
   currency: store.currency || DEFAULT_CURRENCY,
   paymentStatus: 'awaiting_payment',
+  storeSlug: store?.slug || null,
+  storeName: store?.displayName || null,
+  storeWhatsappNumber: store?.whatsappNumber || null,
+  storeContactPhone: store?.contactPhone || null,
 });
 
 exports.createStorefrontOrder = async (req, res, next) => {
@@ -2462,6 +2509,10 @@ exports.verifyStorefrontOrderPaystack = async (req, res, next) => {
             total: Number(sale.total || 0),
             currency: store?.currency || DEFAULT_CURRENCY,
             paymentStatus: 'paid_held',
+            storeSlug: store?.slug || txMetadata.storeSlug || getSaleMetadata(sale).storeSlug || null,
+            storeName: store?.displayName || null,
+            storeWhatsappNumber: store?.whatsappNumber || null,
+            storeContactPhone: store?.contactPhone || null,
           },
         },
       });
@@ -2518,6 +2569,10 @@ exports.verifyStorefrontOrderPaystack = async (req, res, next) => {
           total: Number(sale.total || 0),
           currency: store?.currency || DEFAULT_CURRENCY,
           paymentStatus: 'paid_held',
+          storeSlug: store?.slug || txMetadata.storeSlug || getSaleMetadata(sale).storeSlug || null,
+          storeName: store?.displayName || null,
+          storeWhatsappNumber: store?.whatsappNumber || null,
+          storeContactPhone: store?.contactPhone || null,
         },
       },
     });

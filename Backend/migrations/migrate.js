@@ -402,6 +402,14 @@ const migrate = async () => {
     // "Online Store" custom domain product (customer-owned domain -> single-store template)
     await addCustomDomainToOnlineStoreSettings();
 
+    // Online Store selectable visual templates (classic / minimal / bold / …)
+    const addTemplateIdToOnlineStoreSettings = require('./add-templateId-to-online-store-settings');
+    await addTemplateIdToOnlineStoreSettings({ closeConnection: false });
+
+    // Template-driven secondary / tertiary brand colors
+    const addSecondaryTertiaryColorsToOnlineStoreSettings = require('./add-secondary-tertiary-colors-to-online-store-settings');
+    await addSecondaryTertiaryColorsToOnlineStoreSettings({ closeConnection: false });
+
     // Sale soft-delete audit trail (manager/staff soft-delete paid sales with a reason)
     await addSoftDeleteFieldsToSales();
 
@@ -414,6 +422,14 @@ const migrate = async () => {
 
     // Sales agent growth: agents, codes, tenant attribution, commission ledger
     await createSalesAgentTables({ closeConnection: false });
+
+    // Sabito Partner Program (marketers, partnerships, commissions)
+    const createPartnerProgramTables = require('./create-partner-program-tables');
+    await createPartnerProgramTables({ closeConnection: false });
+
+    // Online Store hero library (categories / designs / colorways + heroSlides)
+    const createOnlineStoreHeroLibraryTables = require('./create-online-store-hero-library-tables');
+    await createOnlineStoreHeroLibraryTables({ closeConnection: false });
 
     // Quote file attachments (proposal / requirements / agreement docs)
     await addAttachmentsToQuotes();

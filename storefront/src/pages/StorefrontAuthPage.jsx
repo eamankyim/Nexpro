@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
 import { Loader2, LockKeyhole, MailCheck, ShieldCheck, ShoppingBag } from 'lucide-react';
 
 import { useStorefrontAuth } from '../context/StorefrontAuthContext';
+import { useStorefrontMode } from '../context/StorefrontModeContext';
 import { dashboardLink } from '../config';
 import { showError, showSuccess } from '../utils/toast';
 import { Breadcrumbs, PageShell } from '../components/storefront/StorefrontLayout';
@@ -29,6 +30,7 @@ const StorefrontAuthPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { login, register, resendVerification, sendLoginOtp, verifyEmail, verifyLoginOtp } = useStorefrontAuth();
+  const { isSingleStoreMode } = useStorefrontMode();
   const [mode, setMode] = useState(
     searchParams.get('mode') === 'verify' || location.pathname === '/verify-email'
       ? 'verify'
@@ -203,17 +205,25 @@ const StorefrontAuthPage = () => {
     <PageShell activePath="/login">
       <Breadcrumbs items={[{ label: isVerification ? 'Verify email' : isSignup ? 'Create shopper account' : 'Shopper login' }]} />
 
-      <section className="mx-auto grid max-w-5xl gap-6 rounded-2xl border border-green-200 bg-white p-5 sm:rounded-[2rem] md:grid-cols-[0.9fr_1.1fr] md:p-8">
-        <div className="rounded-2xl border border-green-100 bg-green-50 p-6 sm:rounded-[1.5rem]">
-          <span className="flex h-14 w-14 items-center justify-center rounded-2xl border border-green-200 bg-white text-green-800">
+      <section className="mx-auto grid max-w-5xl gap-6 rounded-2xl border border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] bg-white p-5 sm:rounded-[2rem] md:grid-cols-[0.9fr_1.1fr] md:p-8">
+        <div className="rounded-2xl border border-[color:color-mix(in_srgb,var(--store-accent,#166534)_18%,#e5e7eb)] bg-[var(--store-accent-soft,#f0fdf4)] p-6 sm:rounded-[1.5rem]">
+          <span className="flex h-14 w-14 items-center justify-center rounded-2xl border border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] bg-white text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]">
             <LockKeyhole className="h-7 w-7" />
           </span>
-          <p className="mt-6 text-sm font-bold uppercase tracking-[0.18em] text-green-700">No Guest Checkout</p>
-          <h1 className="mt-3 text-3xl font-black text-green-950">
-            {isVerification ? 'Verify your shopper email' : isSignup ? 'Create your shopper account' : isCheckoutReturn ? 'Sign in to continue checkout' : 'Sign in to shop Sabito Store'}
+          <p className="mt-6 text-sm font-bold uppercase tracking-[0.18em] text-[color:var(--store-accent,#166534)]">No Guest Checkout</p>
+          <h1 className="mt-3 text-3xl font-black text-[color:color-mix(in_srgb,var(--store-accent,#166534)_55%,#020617)]">
+            {isVerification
+              ? 'Verify your shopper email'
+              : isSignup
+                ? 'Create your shopper account'
+                : isCheckoutReturn
+                  ? 'Sign in to continue checkout'
+                  : (isSingleStoreMode ? 'Sign in to shop' : 'Sign in to shop Sabito Store')}
           </h1>
-          <p className="mt-3 text-sm leading-6 text-green-950/70">
-            Shoppers can browse freely, but purchases require a Sabito Store customer account for order tracking, trade assurance, and seller communication.
+          <p className="mt-3 text-sm leading-6 text-[color:color-mix(in_srgb,var(--store-accent,#166534)_55%,#020617)]/70">
+            {isSingleStoreMode
+              ? 'Shoppers can browse freely, but purchases require a customer account for order tracking and communication with the store.'
+              : 'Shoppers can browse freely, but purchases require a Sabito Store customer account for order tracking, trade assurance, and seller communication.'}
           </p>
           {isCheckoutReturn ? (
             <Alert className="mt-6 border-amber-200 bg-amber-50">
@@ -227,7 +237,7 @@ const StorefrontAuthPage = () => {
 
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
           <div>
-            <p className="text-sm font-bold uppercase tracking-[0.18em] text-green-700">
+            <p className="text-sm font-bold uppercase tracking-[0.18em] text-[color:var(--store-accent,#166534)]">
               {isVerification ? 'Email activation' : isSignup ? 'New customer' : isOtpLogin ? 'Email code login' : 'Returning customer'}
             </p>
             <h2 className="mt-2 text-2xl font-black text-slate-950">
@@ -236,7 +246,7 @@ const StorefrontAuthPage = () => {
           </div>
 
           {isVerification ? (
-            <Alert className="border-green-200 bg-green-50">
+            <Alert className="border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] bg-[var(--store-accent-soft,#f0fdf4)]">
               <MailCheck className="h-4 w-4" />
               <AlertDescription>
                 We sent a verification code to {form.email || 'your email'}. You can verify here or from inside your shopper account.
@@ -254,7 +264,7 @@ const StorefrontAuthPage = () => {
           ) : null}
 
           {isOtpLogin ? (
-            <Alert className="border-green-200 bg-green-50">
+            <Alert className="border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] bg-[var(--store-accent-soft,#f0fdf4)]">
               <ShieldCheck className="h-4 w-4" />
               <AlertDescription>
                 Enter your email, request a code, then use the 6-digit code to sign in without your password.
@@ -356,7 +366,7 @@ const StorefrontAuthPage = () => {
             <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
               <button
                 type="button"
-                className="font-semibold text-green-800 hover:underline"
+                className="font-semibold text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:underline"
                 onClick={() => {
                   setLoginMethod(isOtpLogin ? 'password' : 'otp');
                   updateField('otp', '');
@@ -369,7 +379,7 @@ const StorefrontAuthPage = () => {
                   <Button
                     type="button"
                     variant="outline"
-                    className="rounded-full border-green-200 text-green-800 hover:bg-green-50"
+                    className="rounded-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:bg-[var(--store-accent-soft,#16653422)]"
                     disabled={isSendingLoginOtp || !form.email}
                     aria-describedby={!form.email ? 'send-code-helper' : undefined}
                     onClick={handleSendLoginOtp}
@@ -384,7 +394,7 @@ const StorefrontAuthPage = () => {
                   ) : null}
                 </>
               ) : (
-                <Link className="font-semibold text-green-800 hover:underline" to={`/forgot-password?returnTo=${encodeURIComponent(returnTo)}`}>
+                <Link className="font-semibold text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:underline" to={`/forgot-password?returnTo=${encodeURIComponent(returnTo)}`}>
                   Forgot password?
                 </Link>
               )}
@@ -401,7 +411,7 @@ const StorefrontAuthPage = () => {
             <p className="text-center text-sm text-slate-600">
               <button
                 type="button"
-                className="font-semibold text-green-800 hover:underline"
+                className="font-semibold text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:underline"
                 onClick={() => setMode('login')}
               >
                 Back to sign in
@@ -409,7 +419,7 @@ const StorefrontAuthPage = () => {
             </p>
           ) : null}
 
-          <Button type="submit" className="w-full rounded-full bg-green-700 hover:bg-green-800" disabled={isSubmitting}>
+          <Button type="submit" className="w-full rounded-full bg-[var(--store-accent,#166534)] text-white hover:bg-[var(--store-accent-hover,color-mix(in_srgb,var(--store-accent,#166534)_85%,black))]" disabled={isSubmitting}>
             {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             {isVerification ? 'Verify and continue' : isSignup ? 'Create account and continue' : isOtpLogin ? 'Verify code and continue' : 'Sign in'}
           </Button>
@@ -418,7 +428,7 @@ const StorefrontAuthPage = () => {
             <p className="text-center text-sm text-slate-600">
               <button
                 type="button"
-                className="font-semibold text-green-800 hover:underline disabled:cursor-not-allowed disabled:opacity-60"
+                className="font-semibold text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:underline disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={isResending || !form.email}
                 onClick={handleResend}
               >
@@ -434,7 +444,7 @@ const StorefrontAuthPage = () => {
                   Already have an account?{' '}
                   <button
                     type="button"
-                    className="font-semibold text-green-800 hover:underline"
+                    className="font-semibold text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:underline"
                     onClick={() => setMode('login')}
                   >
                     Sign in
@@ -445,7 +455,7 @@ const StorefrontAuthPage = () => {
                   Don&apos;t have an account?{' '}
                   <button
                     type="button"
-                    className="font-semibold text-green-800 hover:underline"
+                    className="font-semibold text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:underline"
                     onClick={() => setMode('signup')}
                   >
                     Sign up
@@ -456,7 +466,7 @@ const StorefrontAuthPage = () => {
           ) : null}
 
           <p className="text-center text-xs text-slate-500">
-            Looking for seller access? <a className="font-semibold text-green-800" href={dashboardLink('/login')}>Use the ABS Dashboard</a>.
+            Looking for seller access? <a className="font-semibold text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]" href={dashboardLink('/login')}>Use the ABS Dashboard</a>.
           </p>
         </form>
       </section>

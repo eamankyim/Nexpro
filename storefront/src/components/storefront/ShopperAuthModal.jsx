@@ -4,6 +4,8 @@ import { Loader2, LockKeyhole, MailCheck, ShieldCheck, ShoppingBag, X } from 'lu
 
 import { dashboardLink } from '../../config';
 import { useStorefrontAuth } from '../../context/StorefrontAuthContext';
+import { useStorefrontMode } from '../../context/StorefrontModeContext';
+import { resolveSingleStoreHomePath } from '../../online-store/storePaths';
 import GoogleSignInButton from './GoogleSignInButton';
 import { useGoogleSignIn } from './GoogleSignInHost';
 import { showError, showSuccess } from '../../utils/toast';
@@ -62,6 +64,7 @@ const ShopperAuthModal = () => {
     resendVerification,
     verifyEmail,
   } = useStorefrontAuth();
+  const { isSingleStoreMode, storeSlug: modeSlug, pathPrefix, isCustomDomain } = useStorefrontMode();
   const [mode, setMode] = useState('signup');
   const [form, setForm] = useState(initialForm);
   const [signupStep, setSignupStep] = useState('details');
@@ -70,6 +73,9 @@ const ShopperAuthModal = () => {
   const [isResending, setIsResending] = useState(false);
   const googleSignIn = useGoogleSignIn();
   const scriptLoadedSuccessfully = googleSignIn?.scriptLoadedSuccessfully ?? false;
+  const homePath = isSingleStoreMode
+    ? resolveSingleStoreHomePath({ storeSlug: modeSlug, pathPrefix, isCustomDomain })
+    : '/';
 
   const isOpen = Boolean(authModal?.isOpen);
   const isSignup = mode === 'signup';
@@ -93,8 +99,24 @@ const ShopperAuthModal = () => {
     }));
   }, [authModal?.mode, isOpen]);
 
+  // Online Store: prefer full /login|/signup under OnlineStorePageShell (store footer).
+  // Sabito marketplace keeps this modal unchanged.
   useEffect(() => {
-    if (!isOpen) return undefined;
+    if (!isOpen || !isSingleStoreMode) return;
+    const authPath = authModal?.mode === 'login'
+      ? '/login'
+      : authModal?.mode === 'verify'
+        ? '/verify-email'
+        : '/signup';
+    const params = new URLSearchParams();
+    if (returnTo && returnTo !== '/') params.set('returnTo', returnTo);
+    const query = params.toString();
+    closeShopperAuthModal();
+    navigate(query ? `${authPath}?${query}` : authPath);
+  }, [authModal?.mode, closeShopperAuthModal, isOpen, isSingleStoreMode, navigate, returnTo]);
+
+  useEffect(() => {
+    if (!isOpen || isSingleStoreMode) return undefined;
 
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') closeShopperAuthModal();
@@ -106,7 +128,7 @@ const ShopperAuthModal = () => {
       document.body.style.overflow = '';
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [closeShopperAuthModal, isOpen]);
+  }, [closeShopperAuthModal, isOpen, isSingleStoreMode]);
 
   const updateField = useCallback((field, value) => {
     setForm((current) => ({ ...current, [field]: value }));
@@ -245,7 +267,8 @@ const ShopperAuthModal = () => {
     });
   }, [googleSignIn, handleGoogleSuccess, handleGoogleError]);
 
-  if (!isOpen) return null;
+  // Marketplace Sabito modal only — Online Store redirects to full auth pages above.
+  if (!isOpen || isSingleStoreMode) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-stretch justify-center bg-slate-950/60 p-0 sm:items-center sm:px-6 sm:py-4" role="dialog" aria-modal="true" aria-labelledby="shopper-auth-title">
@@ -261,7 +284,9 @@ const ShopperAuthModal = () => {
 
         <div className="min-w-0 bg-green-50 p-4 pt-14 sm:p-5 sm:pt-14 md:p-8">
           <div className="flex items-center gap-2 text-sm font-semibold text-green-800">
-            <Link to="/" onClick={closeShopperAuthModal} className="hover:text-green-950">Home</Link>
+            <Link to={homePath} onClick={closeShopperAuthModal} className="hover:text-green-950">
+              {isSingleStoreMode ? 'Shop' : 'Home'}
+            </Link>
             <span>/</span>
             <span>Create shopper account</span>
           </div>
@@ -274,7 +299,9 @@ const ShopperAuthModal = () => {
             Create an account to buy
           </h1>
           <p className="mt-4 text-sm leading-6 text-green-950/70">
-            Shoppers can browse freely, but purchases require a Sabito Store customer account for order tracking, trade assurance, and seller communication.
+            {isSingleStoreMode
+              ? 'Shoppers can browse freely, but purchases require a customer account for order tracking and communication with the store.'
+              : 'Shoppers can browse freely, but purchases require a Sabito Store customer account for order tracking, trade assurance, and seller communication.'}
           </p>
           {isCheckoutReturn ? (
             <Alert className="mt-6 border-amber-200 bg-amber-50">

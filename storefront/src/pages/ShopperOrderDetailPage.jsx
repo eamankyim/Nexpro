@@ -1,16 +1,19 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { AlertCircle, Loader2, Mail, MapPin, PackageCheck, ShieldCheck, ShoppingBag, Star, Truck, X } from 'lucide-react';
+import { AlertCircle, Loader2, Mail, MapPin, MessageCircle, PackageCheck, ShieldCheck, ShoppingBag, Star, Truck, X } from 'lucide-react';
 
 import AccountLayout from '../components/storefront/AccountLayout';
 import ConfirmReceivedModal from '../components/storefront/ConfirmReceivedModal';
 import DeliveryProgressTimeline from '../components/storefront/DeliveryProgressTimeline';
 import { VerifiedReviewForm } from '../components/storefront/VerifiedReviewSection';
 import { EmptyState } from '../components/storefront/StorefrontLayout';
+import { useStorefrontMode } from '../context/StorefrontModeContext';
+import { buildStoreHomePath } from '../online-store/storePaths';
 import storeService from '../services/storeService';
 import { showError, showSuccess } from '../utils/toast';
 import { resolveImageUrl } from '../utils/fileUtils';
 import { formatAmount } from '../utils/formatNumber';
+import { buildStoreWhatsAppHref, whatsappOrderMessage } from '../utils/whatsapp';
 import { getOrderStatusLabel } from './ShopperOrdersPage';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -23,13 +26,19 @@ const formatDateTime = (value) => {
   return date.toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 };
 
-const getTradeAssuranceCopy = (order) => {
+const getTradeAssuranceCopy = (order, { isSingleStoreMode = false } = {}) => {
   const status = order?.tradeAssurance?.paymentStatus;
   if (status === 'released') return 'Payment has been released to the seller after delivery confirmation.';
   if (status === 'refunded' || order?.status === 'refunded') return 'A refund has been recorded for this order.';
-  if (status === 'disputed') return 'Sabito is holding payment while the issue is reviewed.';
+  if (status === 'disputed') {
+    return isSingleStoreMode
+      ? 'Payment is held while the issue is reviewed.'
+      : 'Sabito is holding payment while the issue is reviewed.';
+  }
   if (order?.status === 'cancelled' || order?.orderStatus === 'cancelled') return 'This order was cancelled before payment could be released to the seller.';
-  return 'Sabito holds your payment and releases it to the seller after you confirm receipt or the delivery confirmation window ends.';
+  return isSingleStoreMode
+    ? 'Payment is held and released to the seller after you confirm receipt or the delivery confirmation window ends.'
+    : 'Sabito holds your payment and releases it to the seller after you confirm receipt or the delivery confirmation window ends.';
 };
 
 const getDeliveryTracking = (order) => order?.deliveryTracking || {
@@ -48,6 +57,12 @@ const formatDeliveryAddressLines = (address = {}) => (
 
 const ShopperOrderDetailPage = () => {
   const { id } = useParams();
+  const {
+    isSingleStoreMode,
+    storeSlug: modeSlug,
+    pathPrefix,
+    isCustomDomain,
+  } = useStorefrontMode();
   const [order, setOrder] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState('');
@@ -186,9 +201,29 @@ const ShopperOrderDetailPage = () => {
   const deliveryTracking = getDeliveryTracking(order);
   const canConfirm = order && deliveryTracking.canConfirmReceived === true;
   const reviewActions = order?.reviewActions || {};
-  const storeReviewPath = reviewActions.store?.storeSlug
-    ? `/stores/${encodeURIComponent(reviewActions.store.storeSlug)}#reviews`
+  const reviewStoreSlug = reviewActions.store?.storeSlug || modeSlug;
+  const storeReviewPath = reviewStoreSlug
+    ? (isSingleStoreMode
+      ? `${buildStoreHomePath(reviewStoreSlug, {
+        ...(isCustomDomain
+          ? { prefix: 'stores' }
+          : (pathPrefix ? { prefix: pathPrefix } : { prefix: 'shop' })),
+      })}/reviews`
+      : `/stores/${encodeURIComponent(reviewStoreSlug)}/reviews`)
     : null;
+
+  const whatsappHref = useMemo(() => {
+    if (!isSingleStoreMode || !order) return '';
+    const store = {
+      displayName: order.storeName,
+      whatsappNumber: order.storeWhatsappNumber,
+      contactPhone: order.storeContactPhone,
+    };
+    return buildStoreWhatsAppHref(
+      store,
+      whatsappOrderMessage(order.saleNumber, store.displayName),
+    );
+  }, [isSingleStoreMode, order]);
 
   return (
     <AccountLayout
@@ -205,18 +240,18 @@ const ShopperOrderDetailPage = () => {
           icon={ShoppingBag}
           title="Order not found"
           description="This order may not exist or may not belong to your shopper account."
-          action={<Button asChild className="rounded-full bg-green-700 hover:bg-green-800"><Link to="/account/orders">Back to orders</Link></Button>}
+          action={<Button asChild className="rounded-full bg-[var(--store-accent,#166534)] text-white hover:bg-[var(--store-accent-hover,color-mix(in_srgb,var(--store-accent,#166534)_85%,black))]"><Link to="/account/orders">Back to orders</Link></Button>}
         />
       ) : (
         <div className="grid gap-4 sm:gap-6">
           <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:rounded-[2rem] sm:p-6">
             <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:gap-4">
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-bold uppercase tracking-[0.18em] text-green-700">{order.storeName}</p>
+                <p className="text-sm font-bold uppercase tracking-[0.18em] text-[color:var(--store-accent,#166534)]">{order.storeName}</p>
                 <h2 className="mt-2 break-words text-2xl font-black text-slate-950 sm:text-3xl">{order.saleNumber}</h2>
                 <p className="mt-2 text-sm text-slate-500">Placed {formatDateTime(order.createdAt)}</p>
               </div>
-              <Badge variant="outline" className="max-w-full border-green-100 bg-green-50 capitalize text-green-800">
+              <Badge variant="outline" className="max-w-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_18%,#e5e7eb)] bg-[var(--store-accent-soft,#f0fdf4)] capitalize text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]">
                 {getOrderStatusLabel(order)}
               </Badge>
             </div>
@@ -225,13 +260,15 @@ const ShopperOrderDetailPage = () => {
               <TotalLine label="Delivery" value={formatAmount(order.deliveryFee, order.currency)} />
               <TotalLine label="Total" value={formatAmount(order.total, order.currency)} strong />
             </div>
-            <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-green-100 bg-green-50 p-4 text-green-900 min-[420px]:flex-row sm:rounded-3xl">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-green-800">
+            <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-[color:color-mix(in_srgb,var(--store-accent,#166534)_18%,#e5e7eb)] bg-[var(--store-accent-soft,#f0fdf4)] p-4 text-[color:color-mix(in_srgb,var(--store-accent,#166534)_72%,#0f172a)] min-[420px]:flex-row sm:rounded-3xl">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]">
                 <ShieldCheck className="h-5 w-5" />
               </span>
               <div className="min-w-0">
-                <p className="text-sm font-bold uppercase tracking-[0.18em] text-green-700">Sabito Trade Assurance</p>
-                <p className="mt-2 text-sm leading-6">{getTradeAssuranceCopy(order)}</p>
+                <p className="text-sm font-bold uppercase tracking-[0.18em] text-[color:var(--store-accent,#166534)]">
+                  {isSingleStoreMode ? 'Payment protection' : 'Sabito Trade Assurance'}
+                </p>
+                <p className="mt-2 text-sm leading-6">{getTradeAssuranceCopy(order, { isSingleStoreMode })}</p>
               </div>
             </div>
           </section>
@@ -240,19 +277,19 @@ const ShopperOrderDetailPage = () => {
             <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:gap-4">
               <div className="min-w-0 flex-1">
                 <h3 className="inline-flex items-center gap-2 text-xl font-black text-slate-950">
-                  <Truck className="h-5 w-5 text-green-700" />
+                  <Truck className="h-5 w-5 text-[color:var(--store-accent,#166534)]" />
                   Delivery progress
                 </h3>
                 <p className="mt-2 text-sm text-slate-500">Seller updates in ABS appear here when you refresh this order.</p>
               </div>
-              <Badge variant="outline" className="max-w-full border-green-100 bg-green-50 capitalize text-green-800">
+              <Badge variant="outline" className="max-w-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_18%,#e5e7eb)] bg-[var(--store-accent-soft,#f0fdf4)] capitalize text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]">
                 {deliveryTracking.currentLabel}
               </Badge>
             </div>
             <Button
               type="button"
               variant="outline"
-              className="mt-5 w-full rounded-full border-green-200 text-green-800 hover:bg-green-50 sm:w-auto"
+              className="mt-5 w-full rounded-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:bg-[var(--store-accent-soft,#16653422)] sm:w-auto"
               onClick={() => setShowDeliveryTimeline((current) => !current)}
             >
               {showDeliveryTimeline ? 'Hide timeline' : 'View delivery timeline'}
@@ -292,13 +329,13 @@ const ShopperOrderDetailPage = () => {
                             <p className="font-bold text-slate-950">{item.name}</p>
                             <p className="mt-1 text-sm text-slate-500">Qty {item.quantity} {item.sku ? `- SKU ${item.sku}` : ''}</p>
                           </div>
-                          <p className="shrink-0 font-black text-green-800 sm:text-right">{formatAmount(item.total, order.currency)}</p>
+                          <p className="shrink-0 font-black text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] sm:text-right">{formatAmount(item.total, order.currency)}</p>
                         </div>
                         {(() => {
                           const action = (reviewActions.products || []).find((candidate) => candidate.saleItemId === item.id);
                           if (!action) return null;
                           if (action.reviewed) {
-                            return <p className="mt-3 inline-flex items-center rounded-full border border-green-200 bg-green-50 px-3 py-1 text-xs font-bold text-green-800"><Star className="mr-1 h-3.5 w-3.5 fill-current" /> Product reviewed</p>;
+                            return <p className="mt-3 inline-flex items-center rounded-full border border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] bg-[var(--store-accent-soft,#f0fdf4)] px-3 py-1 text-xs font-bold text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]"><Star className="mr-1 h-3.5 w-3.5 fill-current" /> Product reviewed</p>;
                           }
                           if (!action.canReview || !action.listingId || !order.storeSlug) return null;
                           const isReviewOpen = activeProductReview?.saleItemId === action.saleItemId;
@@ -308,7 +345,7 @@ const ShopperOrderDetailPage = () => {
                                 type="button"
                                 variant="outline"
                                 size="sm"
-                                className="w-full rounded-full border-green-200 text-green-800 hover:bg-green-50 min-[420px]:w-fit"
+                                className="w-full rounded-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:bg-[var(--store-accent-soft,#16653422)] min-[420px]:w-fit"
                                 onClick={() => {
                                   const nextReview = {
                                     ...action,
@@ -361,7 +398,7 @@ const ShopperOrderDetailPage = () => {
             <div className="grid gap-6">
               <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:rounded-[2rem] sm:p-6">
                 <h3 className="inline-flex items-center gap-2 text-xl font-black text-slate-950">
-                  <MapPin className="h-5 w-5 text-green-700" />
+                  <MapPin className="h-5 w-5 text-[color:var(--store-accent,#166534)]" />
                   Delivery information
                 </h3>
                 {order.deliveryAddress ? (
@@ -380,7 +417,7 @@ const ShopperOrderDetailPage = () => {
               <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:rounded-[2rem] sm:p-6">
                 <h3 className="text-xl font-black text-slate-950">Order actions</h3>
                 {!order.confirmedReceivedAt && deliveryTracking.currentStatus === 'delivered' ? (
-                  <div className="mt-4 rounded-2xl border border-green-200 bg-green-50 p-4 text-sm leading-6 text-green-900 sm:rounded-3xl">
+                  <div className="mt-4 rounded-2xl border border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] bg-[var(--store-accent-soft,#f0fdf4)] p-4 text-sm leading-6 text-[color:color-mix(in_srgb,var(--store-accent,#166534)_72%,#0f172a)] sm:rounded-3xl">
                     Your seller marked this order delivered. Confirm receipt to make the held payout eligible for release.
                   </div>
                 ) : null}
@@ -390,12 +427,12 @@ const ShopperOrderDetailPage = () => {
                 <div className="mt-4 grid gap-3">
                   {storeReviewPath ? (
                     reviewActions.store?.reviewed ? (
-                      <p className="inline-flex items-center rounded-full border border-green-200 bg-green-50 px-3 py-2 text-sm font-bold text-green-800">
+                      <p className="inline-flex items-center rounded-full border border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] bg-[var(--store-accent-soft,#f0fdf4)] px-3 py-2 text-sm font-bold text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]">
                         <Star className="mr-2 h-4 w-4 fill-current" />
                         Store reviewed
                       </p>
                     ) : reviewActions.store?.canReview ? (
-                      <Button asChild variant="outline" className="w-full rounded-full border-green-200 text-green-800 hover:bg-green-50">
+                      <Button asChild variant="outline" className="w-full rounded-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:bg-[var(--store-accent-soft,#16653422)]">
                         <Link to={storeReviewPath}>
                           <Star className="mr-2 h-4 w-4" />
                           Review store
@@ -408,7 +445,7 @@ const ShopperOrderDetailPage = () => {
                   ) : null}
                   <Button
                     type="button"
-                    className="w-full rounded-full bg-green-700 hover:bg-green-800"
+                    className="w-full rounded-full bg-[var(--store-accent,#166534)] text-white hover:bg-[var(--store-accent-hover,color-mix(in_srgb,var(--store-accent,#166534)_85%,black))]"
                     disabled={!canConfirm || actionLoading === 'confirm' || Boolean(order.confirmedReceivedAt)}
                     onClick={() => setIsConfirmModalOpen(true)}
                   >
@@ -416,7 +453,7 @@ const ShopperOrderDetailPage = () => {
                     {order.confirmedReceivedAt ? 'Received confirmed' : 'Confirm received'}
                   </Button>
                   {order.confirmedReceivedAt ? (
-                    <p className="text-xs text-green-700">Confirmed {formatDateTime(order.confirmedReceivedAt)}</p>
+                    <p className="text-xs text-[color:var(--store-accent,#166534)]">Confirmed {formatDateTime(order.confirmedReceivedAt)}</p>
                   ) : null}
                   <div className="grid gap-2 border-t border-slate-200 pt-3 min-[480px]:grid-cols-2">
                     <Button
@@ -432,13 +469,21 @@ const ShopperOrderDetailPage = () => {
                     <Button
                       type="button"
                       variant="outline"
-                      className="w-full rounded-full border-green-200 text-green-800 hover:bg-green-50"
+                      className="w-full rounded-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:bg-[var(--store-accent-soft,#16653422)]"
                       onClick={() => setIsContactModalOpen(true)}
                     >
                       <Mail className="mr-2 h-4 w-4" />
                       Contact seller
                     </Button>
                   </div>
+                  {whatsappHref ? (
+                    <Button asChild variant="outline" className="w-full rounded-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:bg-[var(--store-accent-soft,#16653422)]">
+                      <a href={whatsappHref} target="_blank" rel="noreferrer">
+                        <MessageCircle className="mr-2 h-4 w-4" />
+                        Chat on WhatsApp
+                      </a>
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -477,7 +522,7 @@ const ShopperOrderDetailPage = () => {
                 value={issue.message}
                 onChange={(event) => setIssue((current) => ({ ...current, message: event.target.value }))}
                 placeholder="Describe what happened"
-                className="min-h-32 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-green-400"
+                className="min-h-32 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-[color:var(--store-accent,#166534)]"
                 required
               />
             </div>
@@ -505,7 +550,7 @@ const ShopperOrderDetailPage = () => {
 
       {isContactModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 px-3 py-4 sm:items-center sm:px-6" role="dialog" aria-modal="true" aria-labelledby="contact-seller-modal-title">
-          <form onSubmit={handleContactSeller} className="relative max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-green-200 bg-white p-5 sm:rounded-[2rem] sm:p-6">
+          <form onSubmit={handleContactSeller} className="relative max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] bg-white p-5 sm:rounded-[2rem] sm:p-6">
             <button
               type="button"
               onClick={() => setIsContactModalOpen(false)}
@@ -515,11 +560,11 @@ const ShopperOrderDetailPage = () => {
               <X className="h-5 w-5" />
             </button>
             <div className="flex items-start gap-3 pr-12">
-              <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-green-50 text-green-800">
+              <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--store-accent-soft,#f0fdf4)] text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]">
                 <Mail className="h-5 w-5" />
               </span>
               <div>
-                <p className="text-sm font-bold uppercase tracking-[0.18em] text-green-700">Contact seller</p>
+                <p className="text-sm font-bold uppercase tracking-[0.18em] text-[color:var(--store-accent,#166534)]">Contact seller</p>
                 <h2 id="contact-seller-modal-title" className="mt-1 text-xl font-black text-slate-950">Send a support request</h2>
               </div>
             </div>
@@ -527,13 +572,13 @@ const ShopperOrderDetailPage = () => {
               value={supportMessage}
               onChange={(event) => setSupportMessage(event.target.value)}
               placeholder="Ask the seller about delivery, pickup, or product details"
-              className="mt-5 min-h-32 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-green-400"
+              className="mt-5 min-h-32 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-[color:var(--store-accent,#166534)]"
             />
             <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-end">
               <Button type="button" variant="outline" className="w-full rounded-full border-slate-200 text-slate-700 hover:bg-slate-50 sm:w-auto" onClick={() => setIsContactModalOpen(false)}>
                 Cancel
               </Button>
-              <Button type="submit" className="w-full rounded-full bg-green-700 hover:bg-green-800 sm:w-auto" disabled={actionLoading === 'contact'}>
+              <Button type="submit" className="w-full rounded-full bg-[var(--store-accent,#166534)] text-white hover:bg-[var(--store-accent-hover,color-mix(in_srgb,var(--store-accent,#166534)_85%,black))] sm:w-auto" disabled={actionLoading === 'contact'}>
                 {actionLoading === 'contact' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Send request
               </Button>

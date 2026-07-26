@@ -42,6 +42,30 @@ describe('cache middleware hot-path behavior', () => {
     expect(next).toHaveBeenCalled();
   });
 
+  it('sets short public Cache-Control when browserMaxAge is provided', async () => {
+    const { cacheMiddleware } = cacheModule;
+    const req = {
+      method: 'GET',
+      path: '/marketplace/stores/demo',
+      query: {},
+      headers: {},
+    };
+    const res = {
+      set: jest.fn(),
+      json: jest.fn(),
+      once: jest.fn(),
+      statusCode: 200,
+    };
+    const next = jest.fn();
+
+    await cacheMiddleware(45, () => 'public-marketplace:/marketplace/stores/demo', {
+      browserMaxAge: 45,
+    })(req, res, next);
+
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'public, max-age=45, s-maxage=45');
+    expect(next).toHaveBeenCalled();
+  });
+
   it('logs a lightweight timing entry for route-level cache hits', async () => {
     const { cacheMiddleware, setCacheValue } = cacheModule;
     const cacheKey = 'settings:tenant-1:/organization';

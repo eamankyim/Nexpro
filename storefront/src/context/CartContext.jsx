@@ -37,15 +37,22 @@ const normalizeCartItem = ({ product, store, storeSlug, quantity }) => {
     quantity: clampQuantity(quantity),
     sku: product?.sku || product?.variant?.sku || null,
     storeSlug: resolvedStoreSlug,
-    storeName: store?.displayName || product?.store?.displayName || resolvedStoreSlug || 'Sabito seller',
+    storeName: store?.displayName || product?.store?.displayName || resolvedStoreSlug || 'Seller',
     storeCurrency: store?.currency || product?.store?.currency || 'GHS',
     store: {
       slug: resolvedStoreSlug,
-      displayName: store?.displayName || product?.store?.displayName || resolvedStoreSlug || 'Sabito seller',
+      displayName: store?.displayName || product?.store?.displayName || resolvedStoreSlug || 'Seller',
       currency: store?.currency || product?.store?.currency || 'GHS',
       deliveryEnabled: store?.deliveryEnabled === true || product?.store?.deliveryEnabled === true,
       pickupEnabled: store?.pickupEnabled !== false && product?.store?.pickupEnabled !== false,
       deliveryFee: Number.parseFloat(store?.deliveryFee ?? product?.store?.deliveryFee ?? 0) || 0,
+      whatsappNumber: store?.whatsappNumber || product?.store?.whatsappNumber || null,
+      contactPhone: store?.contactPhone || product?.store?.contactPhone || null,
+      // Brand cache for Online Store account/cart shell first paint
+      templateId: store?.templateId || product?.store?.templateId || null,
+      primaryColor: store?.primaryColor || product?.store?.primaryColor || null,
+      secondaryColor: store?.secondaryColor || product?.store?.secondaryColor || null,
+      tertiaryColor: store?.tertiaryColor || product?.store?.tertiaryColor || null,
     },
   };
 };

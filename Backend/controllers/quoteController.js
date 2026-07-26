@@ -392,16 +392,43 @@ exports.createQuote = async (req, res, next) => {
     const quoteLink = `${frontendUrl}/view-quote/${viewToken}`;
     const shouldSendToCustomer = autoSendToCustomer !== false && autoSendToCustomer !== 'false';
 
-    const delivery = {};
+    await QuoteActivity.create({
+      quoteId: quote.id,
+      tenantId: req.tenantId,
+      type: 'note',
+      subject: 'Quote Created',
+      notes: shouldSendToCustomer
+        ? `Quote ${quoteNumber} created. Sending notifications to customer…`
+        : `Quote ${quoteNumber} created.`,
+      createdBy: req.user?.id || null,
+      metadata: {
+        action: 'created',
+        ...(shouldSendToCustomer && { deliveryQueued: true })
+      }
+    });
 
-    let quoteSentViaAnyChannel = false;
+    res.status(201).json({
+      success: true,
+      data: formatQuoteResponse(fullQuote),
+      ...(shouldSendToCustomer && { delivery: { queued: true } })
+    });
 
-    if (shouldSendToCustomer) {
-      // Send WhatsApp notification if enabled and customer has phone
+    if (!shouldSendToCustomer) {
+      return;
+    }
+
+    const tenantId = req.tenantId;
+    const actorUserId = req.user?.id || null;
+    const customSendMessage = sendMessage;
+
+    setImmediate(async () => {
+      const delivery = {};
+      let quoteSentViaAnyChannel = false;
+
       try {
         const whatsappService = require('../services/whatsappService');
         const whatsappTemplates = require('../services/whatsappTemplates');
-        const config = await whatsappService.getConfig(req.tenantId);
+        const config = await whatsappService.getConfig(tenantId);
 
         if (config && fullQuote.customer && fullQuote.customer.phone) {
           const phoneNumber = whatsappService.validatePhoneNumber(fullQuote.customer.phone);
@@ -413,7 +440,7 @@ exports.createQuote = async (req, res, next) => {
             );
 
             const whatsappResult = await whatsappService.sendMessage(
-              req.tenantId,
+              tenantId,
               phoneNumber,
               'quote_delivery',
               parameters
@@ -438,16 +465,15 @@ exports.createQuote = async (req, res, next) => {
         delivery.whatsappError = error?.message || 'WhatsApp integration error';
       }
 
-      // Send SMS notification if enabled and customer has phone (use tenant template)
       try {
         const smsService = require('../services/smsService');
         const smsTemplateService = require('../services/smsTemplateService');
-        const smsConfig = await smsService.getResolvedConfig(req.tenantId);
+        const smsConfig = await smsService.getResolvedConfig(tenantId);
         if (smsConfig && fullQuote.customer && fullQuote.customer.phone) {
           const smsPhone = smsService.validatePhoneNumber(fullQuote.customer.phone);
           if (smsPhone) {
             const organization = await resolveDocumentOrganization({
-              tenantId: req.tenantId,
+              tenantId,
               shop: fullQuote.shop || null,
               studioLocation: fullQuote.studioLocation || null,
             });
@@ -461,7 +487,7 @@ exports.createQuote = async (req, res, next) => {
               paymentLink: quoteLink,
             };
             const smsMessage = await smsTemplateService.renderForTenant(
-              req.tenantId,
+              tenantId,
               'quote_sent',
               variables
             );
@@ -469,7 +495,7 @@ exports.createQuote = async (req, res, next) => {
               delivery.smsSent = false;
               delivery.smsError = 'SMS template render failed';
             } else {
-              const smsResult = await smsService.sendMessage(req.tenantId, smsPhone, smsMessage).catch(error => {
+              const smsResult = await smsService.sendMessage(tenantId, smsPhone, smsMessage).catch(error => {
                 console.error('[Quote] SMS send failed:', error);
                 return { success: false, error: error?.message || 'SMS send failed' };
               });
@@ -491,13 +517,12 @@ exports.createQuote = async (req, res, next) => {
         delivery.smsError = error?.message || 'SMS integration error';
       }
 
-      // Send email if tenant has email configured and customer has email
       let quoteSentViaEmail = false;
       let quoteEmailReason = '';
       try {
         const emailService = require('../services/emailService');
         const emailTemplates = require('../services/emailTemplates');
-        const emailConfig = await emailService.getConfig(req.tenantId);
+        const emailConfig = await emailService.getConfig(tenantId);
         const customerEmail = fullQuote.customer?.email?.trim();
         if (!emailConfig) {
           quoteEmailReason = 'tenant email not configured';
@@ -509,13 +534,13 @@ exports.createQuote = async (req, res, next) => {
           delivery.emailError = 'Customer has no email address. Add email in Customers to send the quote by email.';
         } else {
           const organization = await resolveDocumentOrganization({
-            tenantId: req.tenantId,
+            tenantId,
             shop: fullQuote.shop || null,
             studioLocation: fullQuote.studioLocation || null,
           });
           const company = organizationToEmailCompany(organization);
-          const customMessage = (typeof sendMessage === 'string' && sendMessage.trim())
-            ? sendMessage.trim()
+          const customMessage = (typeof customSendMessage === 'string' && customSendMessage.trim())
+            ? customSendMessage.trim()
             : DEFAULT_QUOTE_SEND_MESSAGE;
           const quoteForEmail = {
             quoteNumber: fullQuote.quoteNumber,
@@ -536,7 +561,7 @@ exports.createQuote = async (req, res, next) => {
             company,
             customMessage
           );
-          const result = await emailService.sendMessage(req.tenantId, customerEmail, subject, html, text);
+          const result = await emailService.sendMessage(tenantId, customerEmail, subject, html, text);
           if (result.success) {
             quoteSentViaEmail = true;
             quoteSentViaAnyChannel = true;
@@ -553,49 +578,51 @@ exports.createQuote = async (req, res, next) => {
         delivery.emailSent = false;
         delivery.emailError = error.message || 'Email send failed';
       }
-      // Single line so logs clearly show whether email was sent (easy to grep: "Email delivery")
       console.log('[Quote] Email delivery quoteNumber=%s result=%s', fullQuote.quoteNumber, quoteSentViaEmail ? 'sent' : `failed: ${quoteEmailReason}`);
 
+      const sentChannels = [];
+      if (delivery.emailSent) sentChannels.push('Email');
+      if (delivery.whatsappSent) sentChannels.push('WhatsApp');
+      if (delivery.smsSent) sentChannels.push('SMS');
+
       if (quoteSentViaAnyChannel) {
-        await Quote.update({ status: 'sent' }, { where: applyTenantFilter(req.tenantId, { id: quote.id }) });
-        fullQuote.status = 'sent';
-        runQuoteSentAutomations({
-          tenantId: req.tenantId,
-          quote: fullQuote,
-          customer: fullQuote.customer || null,
-          quoteLink,
-          actorUserId: req.user?.id || null,
-        }).catch((error) =>
-          console.error('[Quote] quote_sent automations failed:', error?.message || error)
-        );
+        try {
+          await Quote.update({ status: 'sent' }, { where: applyTenantFilter(tenantId, { id: quote.id }) });
+          fullQuote.status = 'sent';
+          runQuoteSentAutomations({
+            tenantId,
+            quote: fullQuote,
+            customer: fullQuote.customer || null,
+            quoteLink,
+            actorUserId,
+          }).catch((error) =>
+            console.error('[Quote] quote_sent automations failed:', error?.message || error)
+          );
+        } catch (statusErr) {
+          console.error('[Quote] Failed to mark quote as sent:', statusErr?.message || statusErr);
+        }
       }
-    }
 
-    // Create activity for quote creation (after auto-send so we can note if sent to customer)
-    const sentChannels = [];
-    if (delivery.emailSent) sentChannels.push('Email');
-    if (delivery.whatsappSent) sentChannels.push('WhatsApp');
-    if (delivery.smsSent) sentChannels.push('SMS');
-    const sentNote = sentChannels.length > 0
-      ? ` Quote sent to customer via ${sentChannels.join(', ')}.`
-      : '';
-    await QuoteActivity.create({
-      quoteId: quote.id,
-      tenantId: req.tenantId,
-      type: 'note',
-      subject: 'Quote Created',
-      notes: `Quote ${quoteNumber} created.${sentNote}`.trim(),
-      createdBy: req.user?.id || null,
-      metadata: {
-        action: 'created',
-        ...(sentChannels.length > 0 && { sentToCustomerVia: sentChannels })
+      try {
+        const sentNote = sentChannels.length > 0
+          ? ` Quote sent to customer via ${sentChannels.join(', ')}.`
+          : ' Customer notification delivery completed with no successful channels.';
+        await QuoteActivity.create({
+          quoteId: quote.id,
+          tenantId,
+          type: 'note',
+          subject: 'Quote Delivery',
+          notes: `Quote ${quoteNumber}.${sentNote}`.trim(),
+          createdBy: actorUserId,
+          metadata: {
+            action: 'delivery',
+            delivery,
+            ...(sentChannels.length > 0 && { sentToCustomerVia: sentChannels })
+          }
+        });
+      } catch (activityErr) {
+        console.error('[Quote] Delivery activity failed:', activityErr?.message || activityErr);
       }
-    });
-
-    res.status(201).json({
-      success: true,
-      data: formatQuoteResponse(fullQuote),
-      ...(Object.keys(delivery).length > 0 && { delivery })
     });
   } catch (error) {
     console.error('Error creating quote:', error);
@@ -714,38 +741,40 @@ exports.respondToQuoteByToken = async (req, res, next) => {
       ]
     });
 
-    // Notify tenant by email when quote is accepted (use business/org email; don't fail response if send fails)
-    try {
-      const {
-        shouldUseAutomationInsteadOfBuiltIn,
-        TEMPLATE_KEYS,
-      } = require('../services/customerNotificationBridgeService');
-      const useAutomation = await shouldUseAutomationInsteadOfBuiltIn(
-        tenantId,
-        TEMPLATE_KEYS.QUOTE_ACCEPTED_STAFF
-      );
-      if (!useAutomation) {
-        const organization = await resolveDocumentOrganization({
+    // Notify tenant by email when quote is accepted (don't block customer response)
+    setImmediate(async () => {
+      try {
+        const {
+          shouldUseAutomationInsteadOfBuiltIn,
+          TEMPLATE_KEYS,
+        } = require('../services/customerNotificationBridgeService');
+        const useAutomation = await shouldUseAutomationInsteadOfBuiltIn(
           tenantId,
-          shop: updatedQuote.shop || null,
-          studioLocation: updatedQuote.studioLocation || null,
-        });
-        const tenantEmail = organization.email || null;
-        if (tenantEmail && typeof tenantEmail === 'string' && tenantEmail.includes('@')) {
-          const emailService = require('../services/emailService');
-          const emailTemplates = require('../services/emailTemplates');
-          const frontendUrl = process.env.FRONTEND_URL || '';
-          const { subject, html, text } = emailTemplates.quoteAcceptedNotifyTenant(
-            updatedQuote,
-            organizationToEmailCompany(organization),
-            frontendUrl
-          );
-          await emailService.sendMessage(tenantId, tenantEmail, subject, html, text);
+          TEMPLATE_KEYS.QUOTE_ACCEPTED_STAFF
+        );
+        if (!useAutomation) {
+          const organization = await resolveDocumentOrganization({
+            tenantId,
+            shop: updatedQuote.shop || null,
+            studioLocation: updatedQuote.studioLocation || null,
+          });
+          const tenantEmail = organization.email || null;
+          if (tenantEmail && typeof tenantEmail === 'string' && tenantEmail.includes('@')) {
+            const emailService = require('../services/emailService');
+            const emailTemplates = require('../services/emailTemplates');
+            const frontendUrl = process.env.FRONTEND_URL || '';
+            const { subject, html, text } = emailTemplates.quoteAcceptedNotifyTenant(
+              updatedQuote,
+              organizationToEmailCompany(organization),
+              frontendUrl
+            );
+            await emailService.sendMessage(tenantId, tenantEmail, subject, html, text);
+          }
         }
+      } catch (emailErr) {
+        console.error('[Quote] respondToQuoteByToken notify-tenant email failed:', emailErr?.message);
       }
-    } catch (emailErr) {
-      console.error('[Quote] respondToQuoteByToken notify-tenant email failed:', emailErr?.message);
-    }
+    });
 
     setImmediate(async () => {
       try {
@@ -948,9 +977,15 @@ async function runQuoteAcceptWorkflow(tenantId, quote, actorUserId) {
       const invoice = await createInvoiceFromQuoteInternal(tenantId, quote.id, actorUserId || quote.createdBy || null);
       if (invoice) {
         invoiceId = invoice.id;
-        await sendInvoiceToCustomer(tenantId, invoice, {
-          userId: actorUserId || quote.createdBy || null,
-          deliverySource: 'quote_accept_shop_workflow'
+        setImmediate(async () => {
+          try {
+            await sendInvoiceToCustomer(tenantId, invoice, {
+              userId: actorUserId || quote.createdBy || null,
+              deliverySource: 'quote_accept_shop_workflow'
+            });
+          } catch (sendErr) {
+            console.error('[Quote] Background sendInvoiceToCustomer (shop accept) failed:', sendErr?.message || sendErr);
+          }
         });
       }
     } else {
@@ -960,9 +995,15 @@ async function runQuoteAcceptWorkflow(tenantId, quote, actorUserId) {
         const invoice = await createInvoiceFromJobInternal(tenantId, jobResult.job.id, actorUserId || quote.createdBy || null);
         if (invoice) {
           invoiceId = invoice.id;
-          await sendInvoiceToCustomer(tenantId, invoice, {
-            userId: actorUserId || quote.createdBy || null,
-            deliverySource: 'quote_accept_job_workflow'
+          setImmediate(async () => {
+            try {
+              await sendInvoiceToCustomer(tenantId, invoice, {
+                userId: actorUserId || quote.createdBy || null,
+                deliverySource: 'quote_accept_job_workflow'
+              });
+            } catch (sendErr) {
+              console.error('[Quote] Background sendInvoiceToCustomer (job accept) failed:', sendErr?.message || sendErr);
+            }
           });
         }
       }

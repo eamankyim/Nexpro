@@ -1,13 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertCircle, Loader2, MapPin, ShieldCheck, ShoppingBag, Truck } from 'lucide-react';
+import { AlertCircle, Loader2, MapPin, MessageCircle, ShieldCheck, ShoppingBag, Truck } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useCart } from '../context/CartContext';
+import { useStorefrontMode } from '../context/StorefrontModeContext';
+import { buildStoreHomePath } from '../online-store/storePaths';
 import storeService from '../services/storeService';
 import { DEFAULT_DELIVERY_COUNTRY, GHANA_REGIONS } from '../constants';
 import { showError } from '../utils/toast';
 import { formatAmount } from '../utils/formatNumber';
+import {
+  buildStoreWhatsAppHref,
+  resolveStoreWhatsAppPhone,
+  whatsappCheckoutMessage,
+} from '../utils/whatsapp';
 import AccountLayout from '../components/storefront/AccountLayout';
 import { EmptyState } from '../components/storefront/StorefrontLayout';
 import { InlineErrorState, SkeletonBlock } from '../components/storefront/StateBlocks';
@@ -19,6 +26,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+
+const unwrapData = (response) => response?.data?.data || response?.data || response;
 
 const emptyAddress = {
   label: '',
@@ -79,6 +88,7 @@ const formatDeliveryAddress = (address = {}) => (
 const CheckoutPage = () => {
   const queryClient = useQueryClient();
   const { cartSummary, items } = useCart();
+  const { isSingleStoreMode, storeSlug: modeSlug, pathPrefix, isCustomDomain } = useStorefrontMode();
   const [selectedAddressId, setSelectedAddressId] = useState('new');
   const [addressForm, setAddressForm] = useState(emptyAddress);
   const [saveAddressForLater, setSaveAddressForLater] = useState(false);
@@ -92,8 +102,49 @@ const CheckoutPage = () => {
 
   const store = cartSummary.store;
   const currency = cartSummary.currency;
+  const shopSlug = store?.slug || modeSlug;
+  const shopHomePath = isSingleStoreMode
+    ? (isCustomDomain
+      ? '/'
+      : (shopSlug
+        ? buildStoreHomePath(shopSlug, {
+          pathname: typeof window !== 'undefined' ? window.location.pathname : '',
+          ...(pathPrefix ? { prefix: pathPrefix } : {}),
+        })
+        : '/'))
+    : '/products';
+  const emptyCartActionLabel = isSingleStoreMode ? 'Back to shop' : 'Browse products';
   const deliveryAvailable = store?.deliveryEnabled === true;
   const pickupAvailable = store?.pickupEnabled !== false;
+
+  const needsPublicStoreFetch = isSingleStoreMode && Boolean(shopSlug) && items.length > 0;
+
+  const publicStoreQuery = useQuery({
+    queryKey: ['public-store', shopSlug],
+    queryFn: () => storeService.getPublicStore(shopSlug),
+    enabled: needsPublicStoreFetch,
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+
+  const publicStore = useMemo(() => {
+    const payload = unwrapData(publicStoreQuery.data);
+    return payload?.store || payload || null;
+  }, [publicStoreQuery.data]);
+
+  // Brand chrome comes from OnlineStorePageShell (session-seeded); do not nest a
+  // second TemplateThemeProvider that would flash classic green before fetch.
+
+  const whatsappHref = useMemo(() => {
+    if (!isSingleStoreMode || items.length === 0) return '';
+    const contactStore = {
+      displayName: store?.displayName || publicStore?.displayName,
+      whatsappNumber: store?.whatsappNumber || publicStore?.whatsappNumber,
+      contactPhone: store?.contactPhone || publicStore?.contactPhone,
+    };
+    if (!resolveStoreWhatsAppPhone(contactStore)) return '';
+    return buildStoreWhatsAppHref(contactStore, whatsappCheckoutMessage(contactStore.displayName));
+  }, [isSingleStoreMode, items.length, publicStore, store]);
 
   const addressesQuery = useQuery({
     queryKey: SHOPPER_QUERY_KEYS.addresses,
@@ -280,14 +331,20 @@ const CheckoutPage = () => {
       <AccountLayout
         activePath="/checkout"
         title="Checkout"
-        description="Complete your buyer details and place orders with Sabito Trade Assurance."
+        description={isSingleStoreMode
+          ? 'Complete your details and place your order.'
+          : 'Complete your buyer details and place orders with Sabito Trade Assurance.'}
         breadcrumbItems={[{ label: 'Checkout' }]}
       >
         <EmptyState
           icon={ShoppingBag}
           title="Your cart is empty"
           description="Add products to your cart before checkout."
-          action={<Button asChild className="rounded-full bg-green-700 hover:bg-green-800"><Link to="/products">Browse products</Link></Button>}
+          action={(
+            <Button asChild className="rounded-full bg-[var(--store-accent,#166534)] text-white hover:bg-[color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]">
+              <Link to={shopHomePath}>{emptyCartActionLabel}</Link>
+            </Button>
+          )}
         />
       </AccountLayout>
     );
@@ -297,22 +354,26 @@ const CheckoutPage = () => {
     <AccountLayout
       activePath="/checkout"
       title="Checkout"
-      description="Choose delivery, confirm your saved address, and place your Sabito Store order."
+      description={isSingleStoreMode
+        ? 'Choose delivery, confirm your address, and place your order.'
+        : 'Choose delivery, confirm your saved address, and place your Sabito Store order.'}
       breadcrumbItems={[{ label: 'Cart', to: '/cart' }, { label: 'Checkout' }]}
     >
       <form onSubmit={placeOrder} className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]" noValidate>
         <section className="grid gap-6">
           <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:rounded-[2rem] sm:p-5 md:p-6">
-            <p className="text-sm font-bold uppercase tracking-[0.18em] text-green-700">Checkout</p>
+            <p className="text-sm font-bold uppercase tracking-[0.18em] text-[color:var(--store-accent,#166534)]">Checkout</p>
             <h1 className="mt-2 text-3xl font-black text-slate-950">Complete your order</h1>
             <p className="mt-2 text-sm leading-6 text-slate-500">
-              You are ordering from {store?.displayName}. Sabito holds payment until delivery is confirmed.
+              {isSingleStoreMode
+                ? `You are ordering from ${store?.displayName}.`
+                : `You are ordering from ${store?.displayName}. Sabito holds payment until delivery is confirmed.`}
             </p>
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:rounded-[2rem] sm:p-5 md:p-6">
             <h2 className="inline-flex items-center gap-2 text-xl font-black text-slate-950">
-              <Truck className="h-5 w-5 text-green-700" />
+              <Truck className="h-5 w-5 text-[color:var(--store-accent,#166534)]" />
               Delivery method
             </h2>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -338,7 +399,7 @@ const CheckoutPage = () => {
           {fulfillmentMethod === 'delivery' ? (
             <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:rounded-[2rem] sm:p-5 md:p-6">
               <h2 className="inline-flex items-center gap-2 text-xl font-black text-slate-950">
-                <MapPin className="h-5 w-5 text-green-700" />
+                <MapPin className="h-5 w-5 text-[color:var(--store-accent,#166534)]" />
                 Delivery address
               </h2>
               {isLoadingAddresses ? (
@@ -357,13 +418,16 @@ const CheckoutPage = () => {
                   {addresses.length ? (
                     <div className="grid gap-3">
                       {addresses.map((address) => (
-                        <label key={address.id} className="flex cursor-pointer gap-3 rounded-2xl border border-slate-200 p-4 hover:border-green-300 sm:rounded-3xl">
+                        <label
+                          key={address.id}
+                          className="flex cursor-pointer gap-3 rounded-2xl border border-slate-200 p-4 hover:border-[color:color-mix(in_srgb,var(--store-accent,#166534)_40%,#e2e8f0)] sm:rounded-3xl"
+                        >
                           <input
                             type="radio"
                             name="deliveryAddress"
                             checked={selectedAddressId === address.id}
                             onChange={() => setSelectedAddressId(address.id)}
-                            className="mt-1 h-4 w-4 text-green-700"
+                            className="mt-1 h-4 w-4 accent-[var(--store-accent,#166534)]"
                           />
                           <span>
                             <span className="font-black text-slate-950">{address.label || 'Delivery address'}</span>
@@ -374,13 +438,13 @@ const CheckoutPage = () => {
                           </span>
                         </label>
                       ))}
-                      <label className="flex cursor-pointer gap-3 rounded-2xl border border-slate-200 p-4 hover:border-green-300 sm:rounded-3xl">
+                      <label className="flex cursor-pointer gap-3 rounded-2xl border border-slate-200 p-4 hover:border-[color:color-mix(in_srgb,var(--store-accent,#166534)_40%,#e2e8f0)] sm:rounded-3xl">
                         <input
                           type="radio"
                           name="deliveryAddress"
                           checked={selectedAddressId === 'new'}
                           onChange={() => setSelectedAddressId('new')}
-                          className="mt-1 h-4 w-4 text-green-700"
+                          className="mt-1 h-4 w-4 accent-[var(--store-accent,#166534)]"
                         />
                         <span className="font-black text-slate-950">Use a different address</span>
                       </label>
@@ -411,7 +475,7 @@ const CheckoutPage = () => {
               value={notes}
               onChange={(event) => setNotes(event.target.value)}
               placeholder="Delivery instructions, preferred time, or seller notes"
-              className="mt-2 min-h-28 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-green-400"
+              className="mt-2 min-h-28 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-[color:var(--store-accent,#166534)]"
             />
           </div>
         </section>
@@ -425,7 +489,7 @@ const CheckoutPage = () => {
                   <p className="break-words font-bold text-slate-950">{item.title}</p>
                   <p className="mt-1 text-slate-500">Qty {item.quantity}</p>
                 </div>
-                <p className="shrink-0 font-black text-green-800">{formatAmount(item.subtotal ?? item.unitPrice * item.quantity, checkoutPreview?.currency || currency)}</p>
+                <p className="shrink-0 font-black text-[color:var(--store-accent,#166534)]">{formatAmount(item.subtotal ?? item.unitPrice * item.quantity, checkoutPreview?.currency || currency)}</p>
               </div>
             ))}
           </div>
@@ -438,7 +502,13 @@ const CheckoutPage = () => {
             <SummaryLine label="Total" value={formatAmount(total, checkoutPreview?.currency || currency)} strong />
           </div>
           {checkoutPreview?.freeDeliveryThreshold ? (
-            <p className="mt-3 rounded-2xl border border-green-100 bg-green-50 px-4 py-3 text-sm font-semibold text-green-800">
+            <p
+              className="mt-3 rounded-2xl border px-4 py-3 text-sm font-semibold text-[color:var(--store-accent,#166534)]"
+              style={{
+                borderColor: 'color-mix(in srgb, var(--store-accent, #166534) 22%, #e5e7eb)',
+                backgroundColor: 'var(--store-accent-soft, #f0fdf4)',
+              }}
+            >
               Free delivery on orders over {formatAmount(checkoutPreview.freeDeliveryThreshold, checkoutPreview?.currency || currency)}.
             </p>
           ) : null}
@@ -459,16 +529,38 @@ const CheckoutPage = () => {
               <SkeletonBlock className="h-5 w-3/4" />
             </div>
           ) : null}
-          <div className="mt-5 rounded-2xl border border-green-100 bg-green-50 p-4 text-sm leading-6 text-green-900 sm:rounded-3xl">
-            <span className="inline-flex items-center gap-2 font-black text-green-800">
+          <div
+            className="mt-5 rounded-2xl border p-4 text-sm leading-6 text-slate-800 sm:rounded-3xl"
+            style={{
+              borderColor: 'color-mix(in srgb, var(--store-accent, #166534) 22%, #e5e7eb)',
+              backgroundColor: 'var(--store-accent-soft, #f0fdf4)',
+            }}
+          >
+            <span className="inline-flex items-center gap-2 font-black text-[color:var(--store-accent,#166534)]">
               <ShieldCheck className="h-4 w-4" />
-              Trade Assurance
+              {isSingleStoreMode ? 'Secure payment' : 'Trade Assurance'}
             </span>
-            <p className="mt-2">Payment is held by Sabito until you confirm delivery. Seller payout is released after confirmation.</p>
+            <p className="mt-2">
+              {isSingleStoreMode
+                ? 'You will be redirected to Paystack to pay securely. Your order is placed after payment is confirmed.'
+                : 'Payment is held by Sabito until you confirm delivery. Seller payout is released after confirmation.'}
+            </p>
           </div>
+          {whatsappHref ? (
+            <Button
+              asChild
+              variant="outline"
+              className="mt-5 w-full rounded-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] text-[color:var(--store-accent,#166534)] hover:bg-[var(--store-accent-soft,#16653422)]"
+            >
+              <a href={whatsappHref} target="_blank" rel="noreferrer">
+                <MessageCircle className="mr-2 h-4 w-4" />
+                Ask on WhatsApp
+              </a>
+            </Button>
+          ) : null}
           <Button
             type="submit"
-            className="mt-5 w-full rounded-full bg-green-700 hover:bg-green-800"
+            className={`${whatsappHref ? 'mt-3' : 'mt-5'} w-full rounded-full bg-[var(--store-accent,#166534)] text-white hover:bg-[color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]`}
             disabled={isPlacingOrder || isLoadingAddresses || isLoadingPreview || Boolean(checkoutPreviewError) || (addressesQuery.isError && fulfillmentMethod === 'delivery')}
             aria-describedby={checkoutPreviewError ? 'checkout-preview-error' : submitBlockedReason ? 'checkout-submit-helper' : undefined}
           >
@@ -489,9 +581,16 @@ const CheckoutPage = () => {
   );
 };
 
+
 const MethodCard = ({ checked, label, description, onChange }) => (
-  <label className={`flex min-h-24 cursor-pointer gap-3 rounded-2xl border p-4 sm:rounded-3xl ${checked ? 'border-green-300 bg-green-50' : 'border-slate-200 bg-white'}`}>
-    <input type="radio" checked={checked} onChange={onChange} className="mt-1 h-4 w-4 text-green-700" />
+  <label
+    className={`flex min-h-24 cursor-pointer gap-3 rounded-2xl border p-4 sm:rounded-3xl ${
+      checked
+        ? 'border-[color:color-mix(in_srgb,var(--store-accent,#166534)_40%,#e2e8f0)] bg-[var(--store-accent-soft,#f0fdf4)]'
+        : 'border-slate-200 bg-white'
+    }`}
+  >
+    <input type="radio" checked={checked} onChange={onChange} className="mt-1 h-4 w-4 accent-[var(--store-accent,#166534)]" />
     <span>
       <span className="font-black text-slate-950">{label}</span>
       <span className="mt-1 block text-sm leading-6 text-slate-500">{description}</span>
@@ -525,7 +624,7 @@ const AddressForm = ({
           type="checkbox"
           checked={saveAddressForLater}
           onChange={(event) => onSaveAddressForLaterChange(event.target.checked)}
-          className="mt-1 h-4 w-4 rounded border-slate-300 text-green-700"
+          className="mt-1 h-4 w-4 rounded border-slate-300 accent-[var(--store-accent,#166534)]"
         />
         <span>
           <span className="block text-slate-950">Save this address for later</span>
@@ -566,7 +665,7 @@ const RegionSelect = ({ value, onChange }) => (
   <div className="grid gap-2">
     <label className="text-sm font-semibold text-slate-700" htmlFor="region-optional">Region (optional)</label>
     <Select value={value || EMPTY_REGION_VALUE} onValueChange={(nextValue) => onChange(nextValue === EMPTY_REGION_VALUE ? '' : nextValue)}>
-      <SelectTrigger id="region-optional" className="min-h-10 rounded-2xl border-slate-200 bg-white focus:ring-green-700">
+      <SelectTrigger id="region-optional" className="min-h-10 rounded-2xl border-slate-200 bg-white focus:ring-[var(--store-accent,#166534)]">
         <SelectValue placeholder="Select region" />
       </SelectTrigger>
       <SelectContent>

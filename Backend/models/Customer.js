@@ -116,6 +116,16 @@ const Customer = sequelize.define('Customer', {
     allowNull: true,
     field: 'sabito_business_id'
   },
+  partnerMarketerId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: { model: 'marketers', key: 'id' },
+  },
+  partnershipId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: { model: 'partnerships', key: 'id' },
+  },
   balance: {
     type: DataTypes.DECIMAL(10, 2),
     defaultValue: 0

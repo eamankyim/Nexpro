@@ -7,11 +7,11 @@
  */
 
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, useQuery } from '@tanstack/react-query';
 import {
   Package,
   Plus,
@@ -42,7 +42,7 @@ import {
   Download,
   ArrowRightLeft,
   MoreVertical,
-  Store,
+  Globe,
   ChevronRight,
 } from 'lucide-react';
 import dayjs from 'dayjs';
@@ -64,6 +64,7 @@ import WelcomeSection from '../components/WelcomeSection';
 import FeatureNotAvailable from '../components/FeatureNotAvailable';
 import productService from '../services/productService';
 import storeService from '../services/storeService';
+import PublishToOnlineStoreDialog from '../components/store/PublishToOnlineStoreDialog';
 import vendorService from '../services/vendorService';
 import PhoneNumberInput from '../components/PhoneNumberInput';
 import { cn } from '@/lib/utils';
@@ -78,7 +79,6 @@ import { useShopOptional } from '../context/ShopContext';
 import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import { getErrorMessage, showSuccess, showError } from '../utils/toast';
-import { isSabitoStoreEnabled } from '../utils/sabitoStoreFeature';
 import { QUERY_STALE, refreshAfterInventoryChange } from '../utils/queryInvalidation';
 import { queryKeys } from '../utils/queryKeys';
 import { EMPTY_STATES, FEATURE_NOT_AVAILABLE } from '../constants/microcopy';
@@ -248,107 +248,6 @@ const resolveProductImageUrl = (url) => {
   return resolveImageUrl(url) || '';
 };
 
-const parseListingImages = (value) => String(value || '')
-  .split('\n')
-  .map((line) => line.trim())
-  .filter(Boolean)
-  .slice(0, 5);
-
-const formatListingImages = (images = []) => images
-  .map((image) => String(image || '').trim())
-  .filter(Boolean)
-  .slice(0, 5)
-  .join('\n');
-
-const ListingImagesField = ({
-  images,
-  field,
-  uploading,
-  onUpload,
-  onAddClick,
-  onRemove,
-  onMakeCover,
-}) => (
-  <FormItem>
-    <input type="hidden" {...field} />
-    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-      <div>
-        <FormLabel>Listing images</FormLabel>
-        <p className="text-sm text-muted-foreground">Add 1 to 5 images. The first image is used as the cover.</p>
-      </div>
-      <div>
-        <input
-          id="store-listing-images"
-          type="file"
-          accept="image/png,image/jpg,image/jpeg,image/webp"
-          multiple
-          className="hidden"
-          onChange={onUpload}
-        />
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={uploading || images.length >= 5}
-          onClick={onAddClick}
-        >
-          {uploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-2 h-4 w-4" />}
-          Upload images
-        </Button>
-      </div>
-    </div>
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-      {images.map((image, index) => (
-        <div key={`${image}-${index}`} className="rounded-xl border border-border p-2">
-          <div className="relative aspect-square overflow-hidden rounded-lg border border-border bg-muted">
-            <img
-              src={resolveProductImageUrl(image)}
-              alt={`Listing image ${index + 1}`}
-              className="h-full w-full object-cover"
-            />
-            <Badge className="absolute left-2 top-2 bg-green-700 text-white hover:bg-green-700">
-              {index === 0 ? 'Cover' : index + 1}
-            </Badge>
-          </div>
-          <div className="mt-2 grid gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={index === 0}
-              onClick={() => onMakeCover(index)}
-            >
-              Make cover
-            </Button>
-            <Button type="button" variant="outline" size="sm" onClick={() => onRemove(index)}>
-              Remove
-            </Button>
-          </div>
-        </div>
-      ))}
-      {images.length < 5 && (
-        <button
-          type="button"
-          className="flex min-h-40 flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/30 p-4 text-center text-sm transition-colors hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={uploading}
-          onClick={onAddClick}
-        >
-          {uploading ? (
-            <Loader2 className="mb-2 h-7 w-7 animate-spin text-muted-foreground" />
-          ) : (
-            <ImagePlus className="mb-2 h-7 w-7 text-muted-foreground" />
-          )}
-          <span className="font-medium">Add image</span>
-          <span className="mt-1 text-xs text-muted-foreground">
-            {images.length === 0 ? 'Required to publish' : `${5 - images.length} remaining`}
-          </span>
-        </button>
-      )}
-    </div>
-    <FormMessage />
-  </FormItem>
-);
-
 /** Shown in product form image uploader — `stageProgress` is 0–100 within the current phase. */
 const formatProductImageProgressLabel = (phase, stageProgress) => {
   const p = Math.round(Number(stageProgress) || 0);
@@ -505,25 +404,6 @@ const productSchema = z.object({
   path: ['alternateBarcode'],
 });
 
-const storeListingSchema = z.object({
-  title: z.string().min(1, 'Listing title is required'),
-  shortDescription: z.string().trim().min(1, 'Short description is required').max(280, 'Keep the short description under 280 characters'),
-  description: z.string().optional(),
-  publicPrice: z.coerce.number().min(0.01, 'Public price must be greater than zero'),
-  compareAtPrice: z.preprocess(
-    (value) => (value === '' || value === null ? '' : value),
-    z.union([z.coerce.number().min(0), z.literal('')]).optional(),
-  ),
-  imagesText: z.string().optional(),
-  publishNow: z.boolean().default(false),
-}).refine((data) => {
-  const count = parseListingImages(data.imagesText).length;
-  return !data.publishNow || (count >= 1 && count <= 5);
-}, {
-  path: ['imagesText'],
-  message: 'Add 1 to 5 image URLs before publishing',
-});
-
 const stockAdjustSchema = z.object({
   adjustmentMode: z.enum(['set', 'delta']),
   newQuantity: z.union([z.number().min(0), z.literal('')]).transform((v) => (v === '' ? undefined : v)).optional(),
@@ -661,8 +541,18 @@ const Products = () => {
   const { isMobile } = useResponsive();
   const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
   const [searchParams, setSearchParams] = useSearchParams();
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
+
+  const { data: storeSettingsResponse } = useQuery({
+    queryKey: ['store', 'settings'],
+    queryFn: () => storeService.getSettings(),
+    staleTime: QUERY_STALE.LIST,
+  });
+  const storeHomeSections = useMemo(() => {
+    const settings = storeSettingsResponse?.data ?? storeSettingsResponse ?? null;
+    const items = settings?.metadata?.productSections?.items;
+    return Array.isArray(items) ? items : [];
+  }, [storeSettingsResponse]);
 
   const shopType = useActiveShopType();
   const shopTypeFields = SHOP_TYPE_FIELDS[shopType] || [];
@@ -753,8 +643,6 @@ const Products = () => {
   const [addingVendor, setAddingVendor] = useState(false);
   const [storeListingOpen, setStoreListingOpen] = useState(false);
   const [storeListingProduct, setStoreListingProduct] = useState(null);
-  const [storeListingUploading, setStoreListingUploading] = useState(false);
-  const [storeListingExitPromptOpen, setStoreListingExitPromptOpen] = useState(false);
 
   // Bulk import state
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -940,25 +828,6 @@ const Products = () => {
       batteryRequired: false,
     },
   });
-
-  const storeListingForm = useForm({
-    resolver: zodResolver(storeListingSchema),
-    defaultValues: {
-      title: '',
-      shortDescription: '',
-      description: '',
-      publicPrice: 0,
-      compareAtPrice: '',
-      imagesText: '',
-      publishNow: false,
-    },
-  });
-  const storeListingDirty = storeListingForm.formState.isDirty;
-  const storeListingImagesText = storeListingForm.watch('imagesText');
-  const storeListingImages = useMemo(
-    () => parseListingImages(storeListingImagesText),
-    [storeListingImagesText],
-  );
 
   const adjustForm = useForm({
     resolver: zodResolver(stockAdjustSchema),
@@ -1210,19 +1079,6 @@ const Products = () => {
     }
   }, [searchParams, setSearchParams, form]);
 
-  useEffect(() => {
-    if (!storeListingOpen || !storeListingDirty || submitting) return undefined;
-
-    const handleBeforeUnload = (event) => {
-      event.preventDefault();
-      event.returnValue = '';
-      return '';
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [storeListingDirty, storeListingOpen, submitting]);
-
   // =============================================
   // HANDLERS
   // =============================================
@@ -1309,133 +1165,9 @@ const Products = () => {
 
   const handleOpenStoreListing = useCallback((product) => {
     if (!product?.id) return;
-    navigate(`/store/listings/${product.id}/edit`);
-  }, [navigate]);
-
-  const handleStoreListingImagesUpload = useCallback(async (event) => {
-    const current = parseListingImages(storeListingForm.getValues('imagesText'));
-    const files = Array.from(event.target.files || []).slice(0, 5 - current.length);
-    event.target.value = '';
-    if (!files.length) return;
-    setStoreListingUploading(true);
-    try {
-      const response = await storeService.uploadListingImages(files);
-      const uploaded = response?.imageUrls || response?.data?.imageUrls || [];
-      const nextImages = [...current, ...uploaded].slice(0, 5);
-      storeListingForm.setValue('imagesText', formatListingImages(nextImages), { shouldDirty: true, shouldValidate: true });
-      showSuccess('Store listing images uploaded');
-    } catch (error) {
-      showError(getErrorMessage(error, 'Failed to upload listing images'));
-    } finally {
-      setStoreListingUploading(false);
-    }
-  }, [storeListingForm]);
-
-  const handleStoreListingAddImagesClick = useCallback(() => {
-    document.getElementById('store-listing-images')?.click();
+    setStoreListingProduct(product);
+    setStoreListingOpen(true);
   }, []);
-
-  const handleStoreListingRemoveImage = useCallback((index) => {
-    const current = parseListingImages(storeListingForm.getValues('imagesText'));
-    const nextImages = current.filter((_, imageIndex) => imageIndex !== index);
-    storeListingForm.setValue('imagesText', formatListingImages(nextImages), { shouldDirty: true, shouldValidate: true });
-  }, [storeListingForm]);
-
-  const handleStoreListingMakeCover = useCallback((index) => {
-    const current = parseListingImages(storeListingForm.getValues('imagesText'));
-    if (index <= 0 || index >= current.length) return;
-    const nextImages = [...current];
-    const [cover] = nextImages.splice(index, 1);
-    storeListingForm.setValue('imagesText', formatListingImages([cover, ...nextImages]), { shouldDirty: true, shouldValidate: true });
-  }, [storeListingForm]);
-
-  const buildStoreListingPayload = useCallback((values, status) => {
-    const publicPrice = Number.parseFloat(values.publicPrice);
-    const compareAtPrice = Number.parseFloat(values.compareAtPrice);
-
-    return {
-      title: String(values.title || storeListingProduct?.name || '').trim(),
-      shortDescription: values.shortDescription || null,
-      description: values.description || null,
-      publicPrice: Number.isFinite(publicPrice) ? publicPrice : undefined,
-      compareAtPrice: values.compareAtPrice === '' || !Number.isFinite(compareAtPrice) ? null : compareAtPrice,
-      images: parseListingImages(values.imagesText),
-      status,
-    };
-  }, [storeListingProduct?.name]);
-
-  const handleStoreListingSubmit = useCallback(async (values) => {
-    if (!storeListingProduct?.id) return;
-    setSubmitting(true);
-    try {
-      const payload = buildStoreListingPayload(values, values.publishNow ? 'published' : 'draft');
-      const response = await storeService.createOrUpdateProductListing(storeListingProduct.id, payload);
-      const savedListing = response?.data?.data || response?.data || response;
-      showSuccess(values.publishNow ? 'Product published to store' : 'Store listing saved as draft');
-      storeListingForm.reset(values);
-      setStoreListingOpen(false);
-      setStoreListingExitPromptOpen(false);
-      if (values.publishNow) {
-        navigate(`/store/listings/${storeListingProduct.id}/published`, {
-          state: { listing: savedListing, product: storeListingProduct },
-        });
-      }
-    } catch (error) {
-      showError(getErrorMessage(error, 'Failed to save store listing'));
-    } finally {
-      setSubmitting(false);
-    }
-  }, [buildStoreListingPayload, navigate, storeListingForm, storeListingProduct]);
-
-  const handleStoreListingCloseRequest = useCallback((open) => {
-    if (open) {
-      setStoreListingOpen(true);
-      return;
-    }
-
-    if (submitting || storeListingUploading) return;
-
-    if (storeListingDirty) {
-      setStoreListingExitPromptOpen(true);
-      return;
-    }
-
-    setStoreListingOpen(false);
-  }, [storeListingDirty, storeListingUploading, submitting]);
-
-  const handleDiscardStoreListingDraft = useCallback(() => {
-    storeListingForm.reset(storeListingForm.getValues());
-    setStoreListingExitPromptOpen(false);
-    setStoreListingOpen(false);
-  }, [storeListingForm]);
-
-  const handleSaveStoreListingDraftAndClose = useCallback(async () => {
-    if (!storeListingProduct?.id) return;
-    setSubmitting(true);
-    try {
-      const values = storeListingForm.getValues();
-      const payload = buildStoreListingPayload(values, 'draft');
-      await storeService.createOrUpdateProductListing(storeListingProduct.id, payload);
-      showSuccess('Store listing saved as draft');
-      storeListingForm.reset({ ...values, publishNow: false });
-      setStoreListingExitPromptOpen(false);
-      setStoreListingOpen(false);
-    } catch (error) {
-      showError(getErrorMessage(error, 'Failed to save store listing draft'));
-    } finally {
-      setSubmitting(false);
-    }
-  }, [buildStoreListingPayload, storeListingForm, storeListingProduct?.id]);
-
-  const handleOpenFullStoreListingEditor = useCallback(() => {
-    if (!storeListingProduct?.id) return;
-    if (storeListingDirty) {
-      setStoreListingExitPromptOpen(true);
-      return;
-    }
-    setStoreListingOpen(false);
-    navigate(`/store/listings/${storeListingProduct.id}/edit`);
-  }, [navigate, storeListingDirty, storeListingProduct?.id]);
 
   const handleCreateProduct = () => {
     setEditingProduct(null);
@@ -2946,171 +2678,15 @@ const Products = () => {
         </div>
       </ResponsiveSheet>
 
-      <Sheet open={storeListingOpen} onOpenChange={handleStoreListingCloseRequest}>
-        <SheetContent side="right" className="flex w-full min-w-0 flex-col overflow-hidden sm:max-w-xl">
-          <SheetHeader className="pr-8">
-            <SheetTitle>Publish to store</SheetTitle>
-            <SheetDescription>
-              Quickly create or update the public listing for {storeListingProduct?.name || 'this product'}.
-            </SheetDescription>
-          </SheetHeader>
-          <Form {...storeListingForm}>
-            <form onSubmit={storeListingForm.handleSubmit(handleStoreListingSubmit)} className="flex min-h-0 flex-1 flex-col">
-              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto py-5 pr-1">
-                <div className="rounded-xl border border-border bg-muted/30 p-4">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Inventory product</p>
-                  <div className="mt-3 flex gap-3">
-                    <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-background">
-                      {storeListingProduct?.imageUrl ? (
-                        <img src={resolveProductImageUrl(storeListingProduct.imageUrl)} alt="" className="h-full w-full object-cover" />
-                      ) : (
-                        <Package className="h-5 w-5 text-muted-foreground" />
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="truncate font-medium">{storeListingProduct?.name || 'Product'}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {storeListingProduct?.sku || 'No SKU'} • {formatAmount(storeListingProduct?.sellingPrice || 0)}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <FormField
-                  control={storeListingForm.control}
-                  name="title"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Listing title</FormLabel>
-                      <FormControl><Input {...field} /></FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={storeListingForm.control}
-                  name="shortDescription"
-                  render={({ field }) => (
-                    <FormItem>
-                        <FormLabel>Short description</FormLabel>
-                      <FormControl><Input maxLength={280} {...field} /></FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={storeListingForm.control}
-                  name="description"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Description (optional)</FormLabel>
-                      <FormControl><Textarea rows={4} {...field} /></FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <div className="grid gap-4 md:grid-cols-2">
-                  <FormField
-                    control={storeListingForm.control}
-                    name="publicPrice"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Public price</FormLabel>
-                        <FormControl><Input type="number" min="0" step="0.01" {...field} /></FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={storeListingForm.control}
-                    name="compareAtPrice"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Compare-at price (optional)</FormLabel>
-                        <FormControl><Input type="number" min="0" step="0.01" {...field} /></FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-                <FormField
-                  control={storeListingForm.control}
-                  name="imagesText"
-                  render={({ field }) => (
-                    <ListingImagesField
-                      images={storeListingImages}
-                      field={field}
-                      uploading={storeListingUploading}
-                      onUpload={handleStoreListingImagesUpload}
-                      onAddClick={handleStoreListingAddImagesClick}
-                      onRemove={handleStoreListingRemoveImage}
-                      onMakeCover={handleStoreListingMakeCover}
-                    />
-                  )}
-                />
-                <FormField
-                  control={storeListingForm.control}
-                  name="publishNow"
-                  render={({ field }) => (
-                    <FormItem className="flex items-center justify-between rounded-lg border border-border p-4">
-                      <div>
-                        <FormLabel>Publish now</FormLabel>
-                        <p className="text-sm text-muted-foreground">Publishing requires at least one listing image.</p>
-                      </div>
-                      <FormControl><Switch checked={field.value} onCheckedChange={field.onChange} /></FormControl>
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <SheetFooter className="gap-2">
-                <Button type="button" variant="outline" onClick={() => handleStoreListingCloseRequest(false)} disabled={submitting || storeListingUploading}>
-                  Cancel
-                </Button>
-                <Button type="button" variant="outline" onClick={handleOpenFullStoreListingEditor} disabled={submitting || !storeListingProduct?.id}>
-                  Open full editor
-                </Button>
-                <Button type="submit" disabled={submitting}>
-                  {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Store className="mr-2 h-4 w-4" />}
-                  Save listing
-                </Button>
-              </SheetFooter>
-            </form>
-          </Form>
-        </SheetContent>
-      </Sheet>
-
-      <AlertDialog open={storeListingExitPromptOpen} onOpenChange={setStoreListingExitPromptOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Save this product listing?</AlertDialogTitle>
-            <AlertDialogDescription>
-              You have changes that have not been saved. Save them as a draft, discard them, or continue editing before you publish.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={submitting}>
-              Continue editing
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(event) => {
-                event.preventDefault();
-                handleSaveStoreListingDraftAndClose();
-              }}
-              loading={submitting}
-              disabled={!storeListingProduct?.id}
-            >
-              Save as draft
-            </AlertDialogAction>
-            <AlertDialogAction
-              onClick={handleDiscardStoreListingDraft}
-              disabled={submitting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Discard
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <PublishToOnlineStoreDialog
+        open={storeListingOpen}
+        onOpenChange={(open) => {
+          setStoreListingOpen(open);
+          if (!open) setStoreListingProduct(null);
+        }}
+        product={storeListingProduct}
+        homeSections={storeHomeSections}
+      />
 
       {/* Product Form Dialog */}
       <MobileFormDialog
@@ -4074,15 +3650,13 @@ const Products = () => {
                     <QrCode className="h-4 w-4 mr-2" />
                     Generate QR
                   </DropdownMenuItem>
-                  {isSabitoStoreEnabled() ? (
-                    <DropdownMenuItem onSelect={() => handleOpenStoreListing(selectedProduct)}>
-                      <Store className="h-4 w-4 mr-2" />
-                      Publish to store
-                    </DropdownMenuItem>
-                  ) : null}
                   <DropdownMenuItem onSelect={() => handleOpenVariantForm()}>
                     <Plus className="h-4 w-4 mr-2" />
                     Add Variant
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => handleOpenStoreListing(selectedProduct)}>
+                    <Globe className="h-4 w-4 mr-2" />
+                    Publish to online store
                   </DropdownMenuItem>
                   {canDeleteProduct && (
                     <>

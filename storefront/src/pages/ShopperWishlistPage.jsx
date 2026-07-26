@@ -5,7 +5,9 @@ import AccountLayout from '../components/storefront/AccountLayout';
 import { EmptyState, getProductUrl } from '../components/storefront/StorefrontLayout';
 import { InlineErrorState, WishlistSkeleton } from '../components/storefront/StateBlocks';
 import { useCart } from '../context/CartContext';
+import { useStorefrontMode } from '../context/StorefrontModeContext';
 import { useWishlist } from '../context/WishlistContext';
+import { resolveSingleStoreHomePath } from '../online-store/storePaths';
 import { resolveImageUrl } from '../utils/fileUtils';
 import { formatAmount } from '../utils/formatNumber';
 import { showError, showSuccess } from '../utils/toast';
@@ -15,6 +17,12 @@ import { Button } from '@/components/ui/button';
 const ShopperWishlistPage = () => {
   const { addItem } = useCart();
   const {
+    isSingleStoreMode,
+    storeSlug: modeSlug,
+    pathPrefix,
+    isCustomDomain,
+  } = useStorefrontMode();
+  const {
     isWishlistLoading,
     wishlistError,
     refetchWishlist,
@@ -23,6 +31,13 @@ const ShopperWishlistPage = () => {
     removeWishlistItem,
   } = useWishlist();
 
+  const shopHomePath = isSingleStoreMode
+    ? resolveSingleStoreHomePath({ storeSlug: modeSlug, pathPrefix, isCustomDomain })
+    : '/';
+  const browsePath = isSingleStoreMode
+    ? (isCustomDomain || shopHomePath === '/' ? '/products' : `${shopHomePath}/products`)
+    : '/products';
+
   const handleAddToCart = (product) => {
     const result = addItem({ product, quantity: 1 });
     if (!result.ok) {
@@ -30,26 +45,28 @@ const ShopperWishlistPage = () => {
       return;
     }
     showSuccess(result.replacedStore
-      ? 'Cart updated for this seller. Previous seller items were removed.'
+      ? (isSingleStoreMode ? 'Cart updated.' : 'Cart updated for this seller. Previous seller items were removed.')
       : 'Added to cart.');
   };
 
   return (
     <AccountLayout
       title="Wishlist"
-      description="Saved products from Sabito storefronts appear here with their latest price and stock status."
+      description={isSingleStoreMode
+        ? 'Saved products from this shop appear here with their latest price and stock status.'
+        : 'Saved products from Sabito storefronts appear here with their latest price and stock status.'}
     >
       <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:rounded-[2rem] sm:p-5 md:p-6">
         <div className="flex flex-col items-start justify-between gap-3 sm:flex-row">
           <div>
-            <p className="text-sm font-bold uppercase tracking-[0.18em] text-green-700">Saved products</p>
+            <p className="text-sm font-bold uppercase tracking-[0.18em] text-[color:var(--store-accent,#166534)]">Saved products</p>
             <h1 className="mt-2 text-3xl font-black text-slate-950">Your wishlist</h1>
             <p className="mt-2 text-sm text-slate-500">
               {items.length ? `${items.length} saved product${items.length === 1 ? '' : 's'}` : 'Products you save will show here.'}
             </p>
           </div>
-          <Button asChild variant="outline" className="w-full rounded-full border-green-200 text-green-800 hover:bg-green-50 sm:w-auto">
-            <Link to="/products">Browse products</Link>
+          <Button asChild variant="outline" className="w-full rounded-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:bg-[var(--store-accent-soft,#16653422)] sm:w-auto">
+            <Link to={browsePath}>{isSingleStoreMode ? 'Back to shop' : 'Browse products'}</Link>
           </Button>
         </div>
 
@@ -67,7 +84,7 @@ const ShopperWishlistPage = () => {
               icon={Heart}
               title="No saved products yet"
               description="Tap the heart on a product to save it here for later."
-              action={<Button asChild className="rounded-full bg-green-700 hover:bg-green-800"><Link to="/products">Start shopping</Link></Button>}
+              action={<Button asChild className="rounded-full bg-[var(--store-accent,#166534)] text-white hover:bg-[var(--store-accent-hover,color-mix(in_srgb,var(--store-accent,#166534)_85%,black))]"><Link to={browsePath}>{isSingleStoreMode ? 'Back to shop' : 'Start shopping'}</Link></Button>}
             />
           </div>
         ) : (
@@ -77,6 +94,8 @@ const ShopperWishlistPage = () => {
                 key={item.id}
                 item={item}
                 isPending={pendingListingIds.includes(item.listingId)}
+                sellerFallback={isSingleStoreMode ? 'Seller' : 'Sabito seller'}
+                productUrlPrefix={isSingleStoreMode ? (pathPrefix || 'shop') : undefined}
                 onAddToCart={handleAddToCart}
                 onRemove={removeWishlistItem}
               />
@@ -88,13 +107,20 @@ const ShopperWishlistPage = () => {
   );
 };
 
-const WishlistItem = ({ item, isPending, onAddToCart, onRemove }) => {
+const WishlistItem = ({
+  item,
+  isPending,
+  sellerFallback = 'Seller',
+  productUrlPrefix,
+  onAddToCart,
+  onRemove,
+}) => {
   const product = item.product || {};
   const availability = product.availability || {};
   const store = product.store || {};
   const available = product.available === true;
   const imageUrl = resolveImageUrl(product.images?.[0]);
-  const productUrl = getProductUrl(product);
+  const productUrl = getProductUrl(product, productUrlPrefix ? { prefix: productUrlPrefix } : {});
 
   return (
     <article className="grid gap-4 rounded-2xl border border-slate-200 p-4 sm:grid-cols-[112px_minmax(0,1fr)_auto] sm:rounded-3xl">
@@ -109,15 +135,15 @@ const WishlistItem = ({ item, isPending, onAddToCart, onRemove }) => {
       </Link>
 
       <div className="min-w-0">
-        <p className="text-xs font-bold uppercase tracking-wide text-green-700">{store.displayName || 'Sabito seller'}</p>
-        <Link to={productUrl} className="mt-1 block break-words text-lg font-black text-slate-950 hover:text-green-800">
+        <p className="text-xs font-bold uppercase tracking-wide text-[color:var(--store-accent,#166534)]">{store.displayName || sellerFallback}</p>
+        <Link to={productUrl} className="mt-1 block break-words text-lg font-black text-slate-950 hover:text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]">
           {product.title}
         </Link>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <Badge
             variant={available ? 'outline' : 'default'}
             className={available
-              ? 'border-green-100 bg-green-50 text-green-800'
+              ? 'border-[color:color-mix(in_srgb,var(--store-accent,#166534)_18%,#e5e7eb)] bg-[var(--store-accent-soft,#f0fdf4)] text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]'
               : 'border-0 bg-slate-700 text-white hover:bg-slate-700'}
           >
             {availability.label || (available ? 'Available' : 'Out of stock')}
@@ -128,7 +154,7 @@ const WishlistItem = ({ item, isPending, onAddToCart, onRemove }) => {
             </Badge>
           ) : null}
         </div>
-        <p className="mt-3 text-lg font-black text-green-800">
+        <p className="mt-3 text-lg font-black text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]">
           {formatAmount(product.publicPrice || 0, store.currency)}
         </p>
         {!available ? (
@@ -149,7 +175,7 @@ const WishlistItem = ({ item, isPending, onAddToCart, onRemove }) => {
         </Button>
         <Button
           type="button"
-          className="w-full rounded-full bg-green-700 hover:bg-green-800 sm:w-auto"
+          className="w-full rounded-full bg-[var(--store-accent,#166534)] text-white hover:bg-[var(--store-accent-hover,color-mix(in_srgb,var(--store-accent,#166534)_85%,black))] sm:w-auto"
           disabled={!available}
           onClick={() => onAddToCart(product)}
         >

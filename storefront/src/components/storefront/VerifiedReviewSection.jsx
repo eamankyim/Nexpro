@@ -11,6 +11,14 @@ const clampRating = (value) => {
   return Math.min(Math.max(parsed, 1), 5);
 };
 
+const accentText = 'text-[color:var(--store-accent,#166534)]';
+const accentSoftBg = 'bg-[var(--store-accent-soft,#f0fdf4)]';
+const accentBorder = 'border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,#e5e7eb)]';
+const accentBorderSoft = 'border-[color:color-mix(in_srgb,var(--store-accent,#166534)_18%,#e5e7eb)]';
+const accentFocus = 'focus:border-[color:var(--store-accent,#166534)]';
+const accentButton =
+  'rounded-full bg-[var(--store-accent,#166534)] text-white hover:bg-[color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]';
+
 export const StarRatingPicker = ({
   value = 0,
   onChange,
@@ -84,7 +92,7 @@ export const ReviewList = ({ reviews = [], emptyText = 'No verified reviews yet.
         <article key={review.id} className="rounded-2xl border border-slate-200 bg-white p-5 sm:rounded-3xl">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <RatingStars rating={review.rating} />
-            <Badge variant="outline" className="border-green-200 bg-green-50 text-green-800">
+            <Badge variant="outline" className={`${accentBorder} ${accentSoftBg} ${accentText}`}>
               <ShieldCheck className="mr-1 h-3.5 w-3.5" />
               Verified purchase
             </Badge>
@@ -142,21 +150,24 @@ export const VerifiedReviewForm = ({
   };
 
   return (
-    <div className="rounded-2xl border border-green-100 bg-green-50/70 p-5 sm:rounded-3xl">
+    <div
+      className={`rounded-2xl border ${accentBorderSoft} p-5 sm:rounded-3xl`}
+      style={{ backgroundColor: 'color-mix(in srgb, var(--store-accent, #166534) 8%, white)' }}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-bold uppercase tracking-wide text-green-800">Verified purchase review</p>
-          <p className="mt-1 text-sm leading-6 text-green-950/75">{helperText}</p>
+          <p className={`text-sm font-bold uppercase tracking-wide ${accentText}`}>Verified purchase review</p>
+          <p className="mt-1 text-sm leading-6 text-slate-600">{helperText}</p>
         </div>
         {!isAuthenticated ? (
-          <Button type="button" className="rounded-full bg-green-700 hover:bg-green-800" onClick={onRequireAuth}>
+          <Button type="button" className={accentButton} onClick={onRequireAuth}>
             Sign in to review
           </Button>
         ) : null}
       </div>
 
       {isAuthenticated && isEligibilityLoading ? (
-        <div className="mt-4 inline-flex items-center rounded-full border border-green-200 bg-white px-4 py-2 text-sm font-semibold text-green-800">
+        <div className={`mt-4 inline-flex items-center rounded-full border ${accentBorder} bg-white px-4 py-2 text-sm font-semibold ${accentText}`}>
           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
           Checking eligibility
         </div>
@@ -164,7 +175,7 @@ export const VerifiedReviewForm = ({
 
       {isAuthenticated && canSubmit ? (
         <form onSubmit={handleSubmit} className="mt-5 grid gap-3">
-          <div className="rounded-2xl border border-green-200 bg-white p-3">
+          <div className={`rounded-2xl border ${accentBorder} bg-white p-3`}>
             <StarRatingPicker
               value={form.rating}
               onChange={(rating) => setForm((current) => ({ ...current, rating: clampRating(rating) }))}
@@ -172,25 +183,25 @@ export const VerifiedReviewForm = ({
               disabled={isSubmitting}
             />
           </div>
-          <label className="text-sm font-bold text-green-950">
+          <label className="text-sm font-bold text-slate-950">
             Title (optional)
             <input
               value={form.title}
               onChange={(event) => setForm((current) => ({ ...current, title: event.target.value.slice(0, 120) }))}
-              className="mt-1 h-11 w-full rounded-2xl border border-green-200 bg-white px-3 text-sm outline-none focus:border-green-500"
+              className={`mt-1 h-11 w-full rounded-2xl border ${accentBorder} bg-white px-3 text-sm outline-none ${accentFocus}`}
               placeholder="Short review title"
             />
           </label>
-          <label className="text-sm font-bold text-green-950">
+          <label className="text-sm font-bold text-slate-950">
             Review (optional)
             <textarea
               value={form.comment}
               onChange={(event) => setForm((current) => ({ ...current, comment: event.target.value.slice(0, 1000) }))}
-              className="mt-1 min-h-28 w-full rounded-2xl border border-green-200 bg-white px-3 py-3 text-sm outline-none focus:border-green-500"
+              className={`mt-1 min-h-28 w-full rounded-2xl border ${accentBorder} bg-white px-3 py-3 text-sm outline-none ${accentFocus}`}
               placeholder="What should other shoppers know?"
             />
           </label>
-          <Button type="submit" className="rounded-full bg-green-700 hover:bg-green-800" disabled={isSubmitting}>
+          <Button type="submit" className={accentButton} disabled={isSubmitting}>
             {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             {existingReview ? 'Update review' : 'Publish review'}
           </Button>

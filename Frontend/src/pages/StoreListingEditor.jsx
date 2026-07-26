@@ -48,6 +48,7 @@ import {
 } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import StoreListingHomeSectionsField from '../components/store/StoreListingHomeSectionsField';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 const INVENTORY_POLICIES = [
@@ -67,7 +68,7 @@ const listingSchema = z.object({
   shortDescription: z.string().trim().min(1, 'Short description is required').max(280, 'Keep the short description under 280 characters'),
   description: z.string().optional(),
   salesCopy: z.string().optional(),
-  publicPrice: z.coerce.number().min(0.01, 'Public price must be greater than zero'),
+  publicPrice: z.coerce.number().min(0.01, 'Public selling price must be greater than zero'),
   compareAtPrice: z.preprocess(
     (value) => (value === '' || value === null ? '' : value),
     z.union([z.coerce.number().min(0), z.literal('')]).optional(),
@@ -79,6 +80,7 @@ const listingSchema = z.object({
     .regex(/^[a-z0-9-]+$/, 'Use lowercase letters, numbers, and dashes only'),
   seoTitle: z.string().max(70, 'Keep SEO title under 70 characters').optional(),
   seoDescription: z.string().max(160, 'Keep SEO description under 160 characters').optional(),
+  sectionIds: z.array(z.string()).default([]),
   status: z.enum(['draft', 'published', 'hidden']),
   images: z.array(z.string()).max(5, 'Use up to 5 images'),
 }).refine((data) => data.status !== 'published' || data.images.length >= 1, {
@@ -106,6 +108,7 @@ const getDefaultValues = (product, listing) => ({
   slug: listing?.slug || normalizeSlug(product?.name || 'product'),
   seoTitle: listing?.metadata?.seoTitle || '',
   seoDescription: listing?.metadata?.seoDescription || '',
+  sectionIds: Array.isArray(listing?.metadata?.sectionIds) ? listing.metadata.sectionIds : [],
   status: listing?.status || 'draft',
   images: Array.isArray(listing?.images)
     ? listing.images.slice(0, 5)
@@ -445,8 +448,19 @@ const StoreListingEditor = () => {
     enabled: Boolean(productId),
   });
 
+  const settingsQuery = useQuery({
+    queryKey: ['store', 'settings'],
+    queryFn: () => storeService.getSettings(),
+  });
+
   const product = useMemo(() => unwrapData(productQuery.data), [productQuery.data]);
   const listing = useMemo(() => unwrapData(listingQuery.data), [listingQuery.data]);
+  const storeSettings = useMemo(() => unwrapData(settingsQuery.data), [settingsQuery.data]);
+  const homeSections = useMemo(() => {
+    const sections = storeSettings?.metadata?.productSections;
+    const items = Array.isArray(sections?.items) ? sections.items : [];
+    return items;
+  }, [storeSettings?.metadata?.productSections]);
 
   const form = useForm({
     resolver: zodResolver(listingSchema),
@@ -516,6 +530,7 @@ const StoreListingEditor = () => {
       ...(listing?.metadata || {}),
       seoTitle: data.seoTitle || null,
       seoDescription: data.seoDescription || null,
+      sectionIds: Array.isArray(data.sectionIds) ? data.sectionIds : [],
     },
   }), [listing?.metadata]);
 
@@ -745,7 +760,7 @@ const StoreListingEditor = () => {
                     name="publicPrice"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Public price</FormLabel>
+                        <FormLabel>Public selling price</FormLabel>
                         <FormControl><Input type="number" min="0" step="0.01" {...field} /></FormControl>
                         <FormDescription>Can differ from the inventory price.</FormDescription>
                         <FormMessage />
@@ -788,6 +803,34 @@ const StoreListingEditor = () => {
                         <FormDescription>
                           {INVENTORY_POLICIES.find((policy) => policy.value === field.value)?.description}
                         </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </CardContent>
+              </Card>
+
+              <Card className="border border-border">
+                <CardHeader>
+                  <CardTitle className="text-base">Home sections (optional)</CardTitle>
+                  <p className="text-sm text-muted-foreground">
+                    Show this product on selected Online Store home shelves.
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  <FormField
+                    control={form.control}
+                    name="sectionIds"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormControl>
+                          <StoreListingHomeSectionsField
+                            sections={homeSections}
+                            value={field.value || []}
+                            onChange={field.onChange}
+                            idPrefix="listing-section"
+                          />
+                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}

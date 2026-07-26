@@ -3,6 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Camera, Loader2, LogOut, Trash2, Upload } from 'lucide-react';
 
 import { useStorefrontAuth } from '../context/StorefrontAuthContext';
+import { useStorefrontMode } from '../context/StorefrontModeContext';
+import { resolveSingleStoreHomePath } from '../online-store/storePaths';
 import { showError, showSuccess } from '../utils/toast';
 import { getCustomerAvatarUrl, getCustomerInitials } from '../utils/avatarUtils';
 import AccountLayout from '../components/storefront/AccountLayout';
@@ -14,7 +16,19 @@ const AVATAR_ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', '
 
 const ShopperProfilePage = () => {
   const navigate = useNavigate();
+  const {
+    isSingleStoreMode,
+    storeSlug: modeSlug,
+    pathPrefix,
+    isCustomDomain,
+  } = useStorefrontMode();
   const { customer, logout, removeAvatar, updateProfile, uploadAvatar } = useStorefrontAuth();
+  const shopHomePath = isSingleStoreMode
+    ? resolveSingleStoreHomePath({ storeSlug: modeSlug, pathPrefix, isCustomDomain })
+    : '/';
+  const shopBrowsePath = isSingleStoreMode
+    ? (isCustomDomain || shopHomePath === '/' ? '/products' : `${shopHomePath}/products`)
+    : '/products';
   const [form, setForm] = useState({ name: '', phone: '' });
   const [avatarFile, setAvatarFile] = useState(null);
   const [avatarPreview, setAvatarPreview] = useState('');
@@ -100,15 +114,15 @@ const ShopperProfilePage = () => {
       description="Manage the safe profile details sellers use for checkout and order communication."
     >
       <section className="grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
-        <aside className="rounded-2xl border border-green-200 bg-white p-6 sm:rounded-[2rem]">
+        <aside className="rounded-2xl border border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] bg-white p-6 sm:rounded-[2rem]">
           <div className="flex items-center gap-4">
-            <span className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-2xl border border-green-200 bg-green-50 text-xl font-black text-green-800 sm:rounded-3xl">
+            <span className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-2xl border border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] bg-[var(--store-accent-soft,#f0fdf4)] text-xl font-black text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] sm:rounded-3xl">
               {avatarUrl ? (
                 <img src={avatarUrl} alt={`${customer?.name || 'Shopper'} avatar`} className="h-full w-full object-cover" />
               ) : initials}
             </span>
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.18em] text-green-700">Avatar</p>
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-[color:var(--store-accent,#166534)]">Avatar</p>
               <p className="mt-1 text-xs leading-5 text-slate-500">JPG, PNG, WebP, or GIF up to {AVATAR_MAX_SIZE_MB}MB.</p>
             </div>
           </div>
@@ -124,7 +138,7 @@ const ShopperProfilePage = () => {
                 Add a phone number so sellers can contact you about deliveries.
               </p>
             ) : null}
-            <p className="mt-2 text-xs font-semibold text-green-800">
+            <p className="mt-2 text-xs font-semibold text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]">
               {customer?.isEmailVerified ? 'Email verified' : 'Email verification pending'}
             </p>
           </div>
@@ -132,14 +146,14 @@ const ShopperProfilePage = () => {
 
         <form onSubmit={handleSubmit} className="rounded-2xl border border-slate-200 bg-white p-6 sm:rounded-[2rem] md:p-8">
           <div>
-            <p className="text-sm font-bold uppercase tracking-[0.18em] text-green-700">Account details</p>
+            <p className="text-sm font-bold uppercase tracking-[0.18em] text-[color:var(--store-accent,#166534)]">Account details</p>
             <h2 className="mt-2 text-2xl font-black text-slate-950">Edit profile</h2>
           </div>
           <div className="mt-6 grid gap-4">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:rounded-3xl">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-4">
-                  <span className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl border border-green-200 bg-white text-lg font-black text-green-800">
+                  <span className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl border border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] bg-white text-lg font-black text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)]">
                     {avatarUrl ? (
                       <img src={avatarUrl} alt="Avatar preview" className="h-full w-full object-cover" />
                     ) : initials}
@@ -152,7 +166,7 @@ const ShopperProfilePage = () => {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button asChild type="button" variant="outline" className="rounded-full border-green-200 text-green-800 hover:bg-green-50">
+                  <Button asChild type="button" variant="outline" className="rounded-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:bg-[var(--store-accent-soft,#16653422)]">
                     <label htmlFor="avatar">
                       <Upload className="mr-2 h-4 w-4" />
                       {avatarUrl ? 'Change' : 'Upload'}
@@ -179,7 +193,7 @@ const ShopperProfilePage = () => {
                 </div>
               </div>
               <p className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-slate-500">
-                <Camera className="h-4 w-4 text-green-700" />
+                <Camera className="h-4 w-4 text-[color:var(--store-accent,#166534)]" />
                 Save profile to apply avatar changes.
               </p>
             </div>
@@ -221,10 +235,10 @@ const ShopperProfilePage = () => {
               Sign out
             </Button>
             <div className="flex flex-col gap-3 sm:flex-row">
-              <Button asChild type="button" variant="outline" className="rounded-full border-green-200 text-green-800 hover:bg-green-50">
-                <Link to="/products">Continue shopping</Link>
+              <Button asChild type="button" variant="outline" className="rounded-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] text-[color:color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] hover:bg-[var(--store-accent-soft,#16653422)]">
+                <Link to={shopBrowsePath}>{isSingleStoreMode ? 'Back to shop' : 'Continue shopping'}</Link>
               </Button>
-              <Button type="submit" className="rounded-full bg-green-700 hover:bg-green-800" disabled={isSubmitting}>
+              <Button type="submit" className="rounded-full bg-[var(--store-accent,#166534)] text-white hover:bg-[var(--store-accent-hover,color-mix(in_srgb,var(--store-accent,#166534)_85%,black))]" disabled={isSubmitting}>
                 {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Save profile
               </Button>

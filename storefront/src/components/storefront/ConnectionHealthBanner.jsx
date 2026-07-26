@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useIsFetching, useIsMutating } from '@tanstack/react-query';
 import { Loader2, WifiOff } from 'lucide-react';
 
+import { useStorefrontMode } from '../../context/StorefrontModeContext';
 import { cn } from '@/lib/utils';
 
 const SLOW_REQUEST_DELAY_MS = 7000;
@@ -29,6 +30,7 @@ function useOnlineStatus() {
 
 export default function ConnectionHealthBanner() {
   const isOnline = useOnlineStatus();
+  const { isSingleStoreMode } = useStorefrontMode();
   const fetchingCount = useIsFetching();
   const mutatingCount = useIsMutating();
   const hasNetworkActivity = fetchingCount + mutatingCount > 0;
@@ -65,12 +67,14 @@ export default function ConnectionHealthBanner() {
         iconClassName: 'animate-spin',
         className: 'border-amber-200 bg-amber-50 text-amber-900',
         title: 'Still loading',
-        message: 'The marketplace is taking longer than usual. Keep this page open while we finish.',
+        message: isSingleStoreMode
+          ? 'The shop is taking longer than usual. Keep this page open while we finish.'
+          : 'The marketplace is taking longer than usual. Keep this page open while we finish.',
       };
     }
 
     return null;
-  }, [isOnline, showSlowRequest]);
+  }, [isOnline, isSingleStoreMode, showSlowRequest]);
 
   if (!config) return null;
 

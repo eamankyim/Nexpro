@@ -66,7 +66,7 @@ const CheckoutPaystackCallbackPage = () => {
             <p className="mt-6 text-sm font-bold uppercase tracking-[0.18em] text-green-700">Confirming payment</p>
             <h1 className="mt-2 text-3xl font-black text-slate-950">Verifying Paystack payment</h1>
             <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-slate-500">
-              Please wait while Sabito confirms your payment and places your order.
+              Please wait while we confirm your payment and place your order.
             </p>
           </>
         ) : (

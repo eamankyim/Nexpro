@@ -1,7 +1,26 @@
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
-const { Job, Customer, User, Payment, Expense, JobItem, Invoice, Quote, JobStatusHistory, MaterialMovement, Lead, Setting, StudioLocation } = require('../models');
+const {
+  Job,
+  Customer,
+  User,
+  Payment,
+  Expense,
+  ExpenseActivity,
+  JobItem,
+  Invoice,
+  Quote,
+  JobStatusHistory,
+  MaterialMovement,
+  MaterialItem,
+  Lead,
+  Setting,
+  StudioLocation,
+  Sale,
+  PartnerCommission,
+  StorefrontReview,
+} = require('../models');
 const { Op } = require('sequelize');
 const { sequelize } = require('../config/database');
 const { getPagination } = require('../utils/paginationUtils');
@@ -92,6 +111,127 @@ const hasBillableJobChange = ({ currentJob, updatePayload, incomingItems }) => {
   };
 
   return getBillableJobSignature(currentJob) !== getBillableJobSignature(proposedJob);
+};
+
+/**
+ * Normalize job item fields used for equality checks during update sync.
+ * @param {object} item
+ * @returns {object}
+ */
+const normalizeJobItemForCompare = (item = {}) => ({
+  category: String(item.category || ''),
+  description: String(item.description || ''),
+  paperSize: String(item.paperSize || ''),
+  quantity: toMoneyNumber(item.quantity),
+  unitPrice: roundMoney(item.unitPrice),
+  totalPrice: roundMoney(
+    item.totalPrice != null ? item.totalPrice : calculateJobItemTotalPrice(item)
+  ),
+  quoteItemId: item.quoteItemId || null,
+  specifications: JSON.stringify(item.specifications || {}),
+});
+
+/**
+ * True when existing rows match incoming payload (same ids + comparable fields).
+ * @param {object[]} existingItems
+ * @param {object[]} preparedIncoming
+ * @returns {boolean}
+ */
+const jobItemsUnchanged = (existingItems, preparedIncoming) => {
+  const existing = Array.isArray(existingItems) ? existingItems : [];
+  if (existing.length !== preparedIncoming.length) return false;
+
+  const byId = new Map(existing.map((row) => [row.id, row]));
+  const usedIds = new Set();
+
+  for (const item of preparedIncoming) {
+    if (!item.id || !byId.has(item.id)) return false;
+    usedIds.add(item.id);
+    const existingRow = byId.get(item.id);
+    if (
+      JSON.stringify(normalizeJobItemForCompare(existingRow)) !==
+      JSON.stringify(normalizeJobItemForCompare(item))
+    ) {
+      return false;
+    }
+  }
+
+  return usedIds.size === byId.size;
+};
+
+/**
+ * Diff/upsert job items instead of destroy-all + bulkCreate.
+ * @param {{ jobId: string, tenantId: string, existingItems: object[], incomingItems: object[], transaction: import('sequelize').Transaction }} args
+ * @returns {Promise<boolean>} whether any item row was written
+ */
+const syncJobItemsForUpdate = async ({
+  jobId,
+  tenantId,
+  existingItems,
+  incomingItems,
+  transaction,
+}) => {
+  const existing = Array.isArray(existingItems) ? existingItems : [];
+  const prepared = (Array.isArray(incomingItems) ? incomingItems : []).map((item) => {
+    const sanitized = sanitizePayload(item);
+    delete sanitized.createdAt;
+    delete sanitized.updatedAt;
+    delete sanitized.jobId;
+    delete sanitized.tenantId;
+    return {
+      ...sanitized,
+      jobId,
+      tenantId,
+      totalPrice: calculateJobItemTotalPrice(item),
+    };
+  });
+
+  if (jobItemsUnchanged(existing, prepared)) {
+    return false;
+  }
+
+  const existingById = new Map(existing.map((row) => [row.id, row]));
+  const keepIds = new Set();
+  const toCreate = [];
+  const toUpdate = [];
+
+  for (const item of prepared) {
+    if (item.id && existingById.has(item.id)) {
+      keepIds.add(item.id);
+      const existingRow = existingById.get(item.id);
+      if (
+        JSON.stringify(normalizeJobItemForCompare(existingRow)) !==
+        JSON.stringify(normalizeJobItemForCompare(item))
+      ) {
+        toUpdate.push(item);
+      }
+    } else {
+      const { id: _unusedId, ...rest } = item;
+      toCreate.push(rest);
+    }
+  }
+
+  const deleteIds = existing.map((row) => row.id).filter((id) => !keepIds.has(id));
+  if (deleteIds.length > 0) {
+    await JobItem.destroy({
+      where: { id: { [Op.in]: deleteIds }, jobId, tenantId },
+      transaction,
+    });
+  }
+
+  for (const item of toUpdate) {
+    const { id, jobId: _jobId, tenantId: _tenantId, createdAt, updatedAt, ...fields } = item;
+    await JobItem.update(fields, {
+      where: { id, jobId, tenantId },
+      transaction,
+    });
+  }
+
+  if (toCreate.length > 0) {
+    await JobItem.bulkCreate(toCreate, { transaction });
+  }
+
+  return true;
 };
 
 const isInvoicePaymentLocked = (invoice) =>
@@ -1087,23 +1227,6 @@ exports.createJob = async (req, res, next) => {
         });
       }
 
-      await sendJobLifecycleWhatsApp({
-        tenantId: req.tenantId,
-        job: jobWithDetails,
-        eventType: 'created'
-      });
-
-      try {
-        const { maybeSendJobTrackingNotificationsOnJobCreated } = require('../services/jobCustomerTrackingService');
-        await maybeSendJobTrackingNotificationsOnJobCreated({
-          tenantId: req.tenantId,
-          jobId: jobWithDetails.id,
-          triggeredByUserId: req.user?.id || null
-        });
-      } catch (trackNotifyErr) {
-        console.error('[CreateJob] Job tracking notification failed:', trackNotifyErr?.message);
-      }
-
       const response = {
         success: true,
         data: jobWithDetails,
@@ -1115,8 +1238,29 @@ exports.createJob = async (req, res, next) => {
 
       res.status(201).json(response);
 
-      // Auto-create/send invoice after response so job creation never waits on payment/integration work.
+      // Messaging + invoice after response so job creation never waits on integrations.
       setImmediate(async () => {
+        try {
+          await sendJobLifecycleWhatsApp({
+            tenantId: req.tenantId,
+            job: jobWithDetails,
+            eventType: 'created'
+          });
+        } catch (whatsAppErr) {
+          console.error('[CreateJob] Lifecycle WhatsApp failed:', whatsAppErr?.message || whatsAppErr);
+        }
+
+        try {
+          const { maybeSendJobTrackingNotificationsOnJobCreated } = require('../services/jobCustomerTrackingService');
+          await maybeSendJobTrackingNotificationsOnJobCreated({
+            tenantId: req.tenantId,
+            jobId: jobWithDetails.id,
+            triggeredByUserId: req.user?.id || null
+          });
+        } catch (trackNotifyErr) {
+          console.error('[CreateJob] Job tracking notification failed:', trackNotifyErr?.message);
+        }
+
         try {
           console.log(`[CreateJob] Background invoice processing started for job ${job.id}`);
           const autoGeneratedInvoice = await autoCreateInvoice(job.id, req.tenantId);
@@ -1274,22 +1418,19 @@ exports.updateJob = async (req, res, next) => {
 
     const syncedInvoiceCustomerIds = new Set();
     let syncedInvoices = [];
+    const statusChanged = Boolean(newStatus && newStatus !== oldStatus);
     const transaction = await sequelize.transaction();
     try {
+      await job.update(updatePayload, { transaction });
+
       if (items !== undefined && Array.isArray(items)) {
-        await job.update(updatePayload, { transaction });
-        await JobItem.destroy({ where: { jobId: job.id, tenantId: req.tenantId }, transaction });
-        if (items.length > 0) {
-          const jobItems = items.map((item) => ({
-            ...sanitizePayload(item),
-            jobId: job.id,
-            tenantId: req.tenantId,
-            totalPrice: calculateJobItemTotalPrice(item)
-          }));
-          await JobItem.bulkCreate(jobItems, { transaction });
-        }
-      } else {
-        await job.update(updatePayload, { transaction });
+        await syncJobItemsForUpdate({
+          jobId: job.id,
+          tenantId: req.tenantId,
+          existingItems: job.items || [],
+          incomingItems: items,
+          transaction,
+        });
       }
 
       if (billableChanged && linkedInvoices.length > 0) {
@@ -1313,14 +1454,16 @@ exports.updateJob = async (req, res, next) => {
         if (jobForInvoiceSync?.customerId) syncedInvoiceCustomerIds.add(jobForInvoiceSync.customerId);
       }
 
-      const statusChanged = newStatus && newStatus !== oldStatus;
-      await JobStatusHistory.create({
-        jobId: job.id,
-        tenantId: req.tenantId,
-        status: statusChanged ? newStatus : job.status,
-        comment: statusComment || (statusChanged ? null : 'Details updated'),
-        changedBy: req.user?.id || null
-      }, { transaction });
+      // Only audit status changes (or an explicit status comment). Skip no-op "Details updated".
+      if (statusChanged || statusComment) {
+        await JobStatusHistory.create({
+          jobId: job.id,
+          tenantId: req.tenantId,
+          status: statusChanged ? newStatus : job.status,
+          comment: statusComment || null,
+          changedBy: req.user?.id || null
+        }, { transaction });
+      }
 
       await transaction.commit();
     } catch (err) {
@@ -1330,7 +1473,7 @@ exports.updateJob = async (req, res, next) => {
 
     if (syncedInvoices.length > 0) {
       await Promise.all([...syncedInvoiceCustomerIds].map((customerId) =>
-        updateCustomerBalance(customerId).catch((balanceError) => {
+        updateCustomerBalance(customerId, null, req.tenantId).catch((balanceError) => {
           console.error('[Job] Failed to update customer balance after invoice sync:', balanceError?.message);
         })
       ));
@@ -1338,15 +1481,25 @@ exports.updateJob = async (req, res, next) => {
       invalidateInvoiceListCache(req.tenantId);
     }
 
-    // Auto-create invoice when the job still has none — not tied to "completed" status.
-    // autoCreateInvoice returns null if an invoice already exists or the job cannot be billed.
-    let autoGeneratedInvoice = null;
+    // Auto-create invoice in the background (mirrors createJob). Skip when we already know one exists.
     const resultingStatus = updatePayload.status !== undefined ? updatePayload.status : oldStatus;
-    if (resultingStatus !== 'cancelled') {
-      autoGeneratedInvoice = await autoCreateInvoice(job.id, req.tenantId);
+    const knownHasInvoice = billableChanged && linkedInvoices.length > 0;
+    const shouldQueueAutoInvoice = resultingStatus !== 'cancelled' && !knownHasInvoice;
+    if (shouldQueueAutoInvoice) {
+      setImmediate(async () => {
+        try {
+          console.log(`[UpdateJob] Background invoice processing started for job ${job.id}`);
+          const autoGeneratedInvoice = await autoCreateInvoice(job.id, req.tenantId);
+          if (autoGeneratedInvoice) {
+            console.log(`[UpdateJob] ✅ Background invoice auto-created: ${autoGeneratedInvoice.invoiceNumber}`);
+          } else {
+            console.log(`[UpdateJob] ℹ️ Background invoice: no invoice created for job ${job.id}`);
+          }
+        } catch (invoiceError) {
+          console.error('[UpdateJob] ❌ Background invoice processing failed:', invoiceError?.message || invoiceError);
+        }
+      });
     }
-
-    const statusChanged = newStatus && newStatus !== oldStatus;
 
     const updatedJob = await Job.findOne({
       where: applyTenantFilter(req.tenantId, { id: job.id }),
@@ -1355,15 +1508,8 @@ exports.updateJob = async (req, res, next) => {
         { model: User, as: 'assignedUser', attributes: ['id', 'name', 'email'] },
         { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
         { model: Quote, as: 'quote', attributes: ['id', 'quoteNumber', 'status', 'title'] },
-        {
-          model: JobStatusHistory,
-          as: 'statusHistory',
-          include: [{ model: User, as: 'changedByUser', attributes: ['id', 'name', 'email'] }],
-          order: [['createdAt', 'ASC']]
-        },
         { model: JobItem, as: 'items' }
-      ],
-      order: [[{ model: JobStatusHistory, as: 'statusHistory' }, 'createdAt', 'ASC']]
+      ]
     });
 
     if (!Array.isArray(updatedJob.attachments)) {
@@ -1416,12 +1562,16 @@ exports.updateJob = async (req, res, next) => {
 
       // Customer messaging policy: only notify on creation and completion.
       if (newStatus === 'completed' && oldStatus !== 'completed') {
-        await sendJobLifecycleWhatsApp({
-          tenantId: req.tenantId,
-          job: updatedJob,
-          eventType: 'completed'
-        });
         setImmediate(async () => {
+          try {
+            await sendJobLifecycleWhatsApp({
+              tenantId: req.tenantId,
+              job: updatedJob,
+              eventType: 'completed'
+            });
+          } catch (whatsappErr) {
+            console.error('[Job] WhatsApp completed notification failed:', whatsappErr?.message || whatsappErr);
+          }
           try {
             await runJobCompletedAutomations({
               tenantId: req.tenantId,
@@ -1463,12 +1613,10 @@ exports.updateJob = async (req, res, next) => {
       data: updatedJob
     };
 
-    // Include invoice info if it was auto-generated
-    if (autoGeneratedInvoice) {
+    if (shouldQueueAutoInvoice) {
       response.invoice = {
-        id: autoGeneratedInvoice.id,
-        invoiceNumber: autoGeneratedInvoice.invoiceNumber,
-        message: 'Invoice automatically generated'
+        queued: true,
+        message: 'Invoice generation is processing in the background'
       };
     } else if (syncedInvoices.length > 0) {
       response.invoice = {
@@ -1487,7 +1635,139 @@ exports.updateJob = async (req, res, next) => {
   }
 };
 
-// @desc    Delete job
+/**
+ * Cascade-delete job-linked financial and operational records (admin delete).
+ * Restores material stock for usage movements; unlinks leads (does not delete lead CRM rows).
+ * @param {{ tenantId: string, jobId: string, transaction: import('sequelize').Transaction }} args
+ * @returns {Promise<{ invoiceIds: string[], customerIds: string[], deleted: object }>}
+ */
+async function cascadeDeleteJobRelatedRecords({ tenantId, jobId, transaction }) {
+  const tenantJobWhere = applyTenantFilter(tenantId, { jobId });
+  const deleted = {
+    invoices: 0,
+    payments: 0,
+    expenses: 0,
+    expenseActivities: 0,
+    materialMovements: 0,
+    partnerCommissions: 0,
+    storefrontReviews: 0,
+    leadsUnlinked: 0,
+    salesUnlinked: 0,
+  };
+
+  const invoices = await Invoice.findAll({
+    where: tenantJobWhere,
+    attributes: ['id', 'customerId'],
+    transaction,
+  });
+  const invoiceIds = invoices.map((row) => row.id);
+  const customerIds = [...new Set(
+    invoices.map((row) => row.customerId).filter(Boolean)
+  )];
+
+  const payments = await Payment.findAll({
+    where: tenantJobWhere,
+    attributes: ['id'],
+    transaction,
+  });
+  const paymentIds = payments.map((row) => row.id);
+
+  const expenses = await Expense.findAll({
+    where: tenantJobWhere,
+    attributes: ['id'],
+    transaction,
+  });
+  const expenseIds = expenses.map((row) => row.id);
+
+  if (invoiceIds.length || paymentIds.length) {
+    const commissionWhere = {
+      tenantId,
+      [Op.or]: [
+        ...(invoiceIds.length ? [{ invoiceId: { [Op.in]: invoiceIds } }] : []),
+        ...(paymentIds.length ? [{ paymentId: { [Op.in]: paymentIds } }] : []),
+      ],
+    };
+    deleted.partnerCommissions = await PartnerCommission.destroy({
+      where: commissionWhere,
+      transaction,
+    });
+  }
+
+  if (invoiceIds.length) {
+    const [salesUnlinked] = await Sale.update(
+      { invoiceId: null },
+      {
+        where: applyTenantFilter(tenantId, { invoiceId: { [Op.in]: invoiceIds } }),
+        transaction,
+      }
+    );
+    deleted.salesUnlinked = salesUnlinked;
+  }
+
+  if (expenseIds.length) {
+    deleted.expenseActivities = await ExpenseActivity.destroy({
+      where: { expenseId: { [Op.in]: expenseIds } },
+      transaction,
+    });
+  }
+
+  deleted.expenses = await Expense.destroy({
+    where: tenantJobWhere,
+    transaction,
+  });
+
+  deleted.payments = await Payment.destroy({
+    where: tenantJobWhere,
+    transaction,
+  });
+
+  const materialMovements = await MaterialMovement.findAll({
+    where: tenantJobWhere,
+    transaction,
+  });
+  for (const movement of materialMovements) {
+    const delta = parseFloat(movement.quantityDelta);
+    if (Number.isFinite(delta) && delta !== 0 && movement.itemId) {
+      const item = await MaterialItem.findOne({
+        where: applyTenantFilter(tenantId, { id: movement.itemId }),
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (item) {
+        const current = parseFloat(item.quantityOnHand) || 0;
+        item.quantityOnHand = current - delta;
+        await item.save({ transaction });
+      }
+    }
+  }
+  deleted.materialMovements = await MaterialMovement.destroy({
+    where: tenantJobWhere,
+    transaction,
+  });
+
+  deleted.storefrontReviews = await StorefrontReview.destroy({
+    where: applyTenantFilter(tenantId, { jobId }),
+    transaction,
+  });
+
+  const [leadsUnlinked] = await Lead.update(
+    { convertedJobId: null },
+    {
+      where: applyTenantFilter(tenantId, { convertedJobId: jobId }),
+      transaction,
+    }
+  );
+  deleted.leadsUnlinked = leadsUnlinked;
+
+  deleted.invoices = await Invoice.destroy({
+    where: tenantJobWhere,
+    transaction,
+  });
+
+  return { invoiceIds, customerIds, deleted };
+}
+
+// @desc    Delete job (admin). Cascades linked invoices, payments, expenses, material movements; unlinks leads.
 // @route   DELETE /api/jobs/:id
 // @access  Private (Admin only)
 exports.deleteJob = async (req, res, next) => {
@@ -1507,33 +1787,15 @@ exports.deleteJob = async (req, res, next) => {
       });
     }
 
-    const [
-      linkedInvoices,
-      linkedPayments,
-      linkedExpenses,
-      linkedMaterialMovements,
-      linkedLeads
-    ] = await Promise.all([
-      Invoice.count({ where: applyTenantFilter(req.tenantId, { jobId: job.id }), transaction }),
-      Payment.count({ where: applyTenantFilter(req.tenantId, { jobId: job.id }), transaction }),
-      Expense.count({ where: applyTenantFilter(req.tenantId, { jobId: job.id }), transaction }),
-      MaterialMovement.count({ where: applyTenantFilter(req.tenantId, { jobId: job.id }), transaction }),
-      Lead.count({ where: applyTenantFilter(req.tenantId, { convertedJobId: job.id }), transaction })
-    ]);
+    const customerIds = new Set();
+    if (job.customerId) customerIds.add(job.customerId);
 
-    if (
-      linkedInvoices > 0 ||
-      linkedPayments > 0 ||
-      linkedExpenses > 0 ||
-      linkedMaterialMovements > 0 ||
-      linkedLeads > 0
-    ) {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot delete job with linked invoices, payments, expenses, material movements, or leads'
-      });
-    }
+    const cascade = await cascadeDeleteJobRelatedRecords({
+      tenantId: req.tenantId,
+      jobId: job.id,
+      transaction,
+    });
+    cascade.customerIds.forEach((id) => customerIds.add(id));
 
     await JobStatusHistory.destroy({
       where: applyTenantFilter(req.tenantId, { jobId: job.id }),
@@ -1546,9 +1808,21 @@ exports.deleteJob = async (req, res, next) => {
     await job.destroy({ transaction });
     await transaction.commit();
 
+    for (const customerId of customerIds) {
+      try {
+        await updateCustomerBalance(customerId, null, req.tenantId);
+      } catch (balanceError) {
+        console.error('[deleteJob] Failed to refresh customer balance:', balanceError?.message || balanceError);
+      }
+    }
+
+    invalidateAfterMutation(req.tenantId);
+    invalidateInvoiceListCache(req.tenantId);
+
     res.status(200).json({
       success: true,
-      data: {}
+      data: {},
+      cascade: cascade.deleted,
     });
   } catch (error) {
     if (!transaction.finished) {

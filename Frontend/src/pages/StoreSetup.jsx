@@ -9,20 +9,20 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
-  Copy,
   CreditCard,
   ExternalLink,
+  Eye,
   Globe2,
   ImageIcon,
+  GalleryHorizontal,
+  Link2,
+  Link2Off,
   Loader2,
   Menu,
   MapPin,
-  Monitor,
-  Package,
   PackageCheck,
   Paintbrush,
   Pencil,
-  ShoppingBag,
   Sparkles,
   Smartphone,
   Store,
@@ -31,7 +31,6 @@ import {
   WalletCards,
 } from 'lucide-react';
 
-import OnlineStoreWelcome from '../components/store/OnlineStoreWelcome';
 import storeService from '../services/storeService';
 import settingsService from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
@@ -39,14 +38,35 @@ import { STUDIO_LIKE_TYPES } from '../constants/studioLikeTypes';
 import { useDebounce } from '../hooks/useDebounce';
 import { usePaymentSettings, isPaymentConfigured } from '../hooks/usePaymentSettings';
 import { CURRENCY } from '../constants';
+import {
+  DEFAULT_TEMPLATE_ID,
+  getStoreTemplate,
+  getTemplateColorSlots,
+  getTemplateColorSlotFlags,
+  deriveTemplateCompanionColors,
+  mergeColorsForTemplate,
+  normalizeTemplateId,
+  COLOR_KEY_TO_FIELD,
+} from '../constants/storeTemplates';
+import { resolveStoreCurrencyCode } from '../utils/storeCurrency';
+import {
+  buildOnlineStoreDefaultsFromTenant,
+  compactString,
+  firstFilled,
+  normalizeStoreSlug,
+  resolveSavedStoreCategory,
+  resolveStoreLogoUrl,
+  savedOrDefault,
+} from '../utils/onlineStoreDefaults';
 import { showError, showSuccess, getErrorMessage } from '../utils/toast';
 import { resolveImageUrl } from '../utils/fileUtils';
 import { isValidPrimaryColor, normalizePrimaryColor } from '../utils/brandingColors';
 import {
-  buildStorefrontStoreUrl,
-  getStorefrontDisplayBaseUrl,
-  getStorefrontDisplayStoreUrl,
+  buildOnlineStoreUrl,
+  getOnlineStoreBaseUrl,
 } from '../utils/storefrontUrl';
+import StoreHeroSetupPanel from '../components/store/StoreHeroSetupPanel';
+import StoreSetupComplete from '../components/store/StoreSetupComplete';
 import { cn } from '@/lib/utils';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -72,7 +92,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
@@ -89,6 +108,7 @@ const STEPS = [
   { id: 'branding', label: 'Branding', icon: Paintbrush },
   { id: 'payments', label: 'Payments', icon: WalletCards },
   { id: 'delivery', label: 'Delivery', icon: Truck },
+  { id: 'hero', label: 'Hero', icon: GalleryHorizontal },
   { id: 'launch', label: 'Launch', icon: PackageCheck },
 ];
 
@@ -102,7 +122,20 @@ const THEME_PRESETS = [
   { label: 'Forest Green', value: '#14532d' },
   { label: 'Emerald', value: '#047857' },
   { label: 'Dark Green', value: '#064e3b' },
+  { label: 'Sky', value: '#0369a1' },
+  { label: 'Amber', value: '#b45309' },
+  { label: 'Violet', value: '#7c3aed' },
+  { label: 'Slate', value: '#0f172a' },
 ];
+
+const optionalColorFieldSchema = z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Choose a valid brand color').or(z.literal('')).optional();
+
+/**
+ * Color field name for a template slot key.
+ * @param {string} key
+ * @returns {string}
+ */
+const colorFieldNameForSlot = (key) => COLOR_KEY_TO_FIELD[key] || `${key}Color`;
 
 const CATEGORY_OPTIONS = [
   'Fashion and apparel',
@@ -116,53 +149,7 @@ const CATEGORY_OPTIONS = [
   'Other',
 ];
 
-const CATEGORY_BY_BUSINESS_TYPE = {
-  shop: 'Other',
-  studio: 'Printing and creative services',
-  printing_press: 'Printing and creative services',
-  pharmacy: 'Health and pharmacy',
-  barber: 'Beauty and salon',
-  salon: 'Beauty and salon',
-};
-
-const CATEGORY_BY_SHOP_TYPE = {
-  restaurant: 'Food and restaurants',
-  bakery: 'Food and restaurants',
-  supermarket: 'Groceries and provisions',
-  groceries: 'Groceries and provisions',
-  grocery: 'Groceries and provisions',
-  convenience: 'Groceries and provisions',
-  electronics: 'Electronics',
-  clothing: 'Fashion and apparel',
-  fashion: 'Fashion and apparel',
-  beauty: 'Beauty and salon',
-  furniture: 'Home and office',
-};
-
-const getTenantShopType = (activeTenant, tenantMetadata = {}) => compactString(
-  activeTenant?.shopType ||
-  tenantMetadata.shopType ||
-  tenantMetadata.businessSubType ||
-  tenantMetadata.shopTypeKey ||
-  tenantMetadata.businessSubtype,
-);
-
-const resolveBusinessCategory = (activeTenant, tenantMetadata = {}) => {
-  const shopType = getTenantShopType(activeTenant, tenantMetadata);
-  return CATEGORY_BY_SHOP_TYPE[shopType] ||
-    CATEGORY_BY_BUSINESS_TYPE[activeTenant?.businessType] ||
-    'Other';
-};
-
-const resolveSavedCategory = (savedCategory, fallbackCategory) => {
-  const saved = compactString(savedCategory);
-  if (!saved) return fallbackCategory;
-  if (saved === 'Other' && fallbackCategory && fallbackCategory !== 'Other') return fallbackCategory;
-  return saved;
-};
-
 const STORE_SETUP_PAYMENTS_RETURN = '/store/setup?step=payments';
-const BANNER_PROMPT_MAX_LENGTH = 500;
 
 const PAYMENT_OPTIONS = [
   {
@@ -282,9 +269,13 @@ const setupSchema = z.object({
   contactPhone: z.string().optional(),
   contactEmail: z.string().email('Enter a valid email').or(z.literal('')).optional(),
   primaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Choose a valid brand color'),
+  secondaryColor: optionalColorFieldSchema,
+  tertiaryColor: optionalColorFieldSchema,
   logoUrl: z.string().optional(),
-  bannerImageUrl: z.string().optional(),
-  currency: z.string().trim().default(CURRENCY.CODE),
+  currency: z.preprocess(
+    (value) => resolveStoreCurrencyCode(value),
+    z.string().default(CURRENCY.CODE),
+  ),
   paymentMethods: z.object({
     mobileMoney: paymentMethodSchema,
     card: paymentMethodSchema,
@@ -303,12 +294,7 @@ const setupSchema = z.object({
   pickupInstructions: z.string().optional(),
 });
 
-const normalizeSlug = (value) => String(value || '')
-  .trim()
-  .toLowerCase()
-  .replace(/[^a-z0-9]+/g, '-')
-  .replace(/^-+|-+$/g, '')
-  .slice(0, 80);
+const normalizeSlug = normalizeStoreSlug;
 
 const STORE_SETUP_DRAFT_VERSION = 1;
 const STORE_SETUP_DRAFT_PREFIX = 'abs:store-setup-draft';
@@ -346,25 +332,39 @@ const omitFileLikeValues = (value) => {
   }, {});
 };
 
-const sanitizeStoreSetupDraftValues = (values = {}) => omitFileLikeValues({
-  displayName: firstFilled(values.displayName, values.storeName, values.name),
-  slug: normalizeSlug(firstFilled(values.slug, values.storeUrl, values.publicUrl)),
-  description: values.description || '',
-  category: firstFilled(values.category, values.businessCategory),
-  whatsappNumber: values.whatsappNumber || '',
-  contactPhone: values.contactPhone || '',
-  contactEmail: values.contactEmail || '',
-  primaryColor: normalizePrimaryColor(values.primaryColor),
-  logoUrl: values.logoUrl || '',
-  bannerImageUrl: resolveStoreBannerImageUrl(values),
-  currency: resolveStoreCurrency(values.currency),
-  paymentMethods: values.paymentMethods || defaultPaymentMethods,
-  deliveryOptions: values.deliveryOptions || defaultDeliveryOptions,
-  deliveryFee: Number(values.deliveryFee || 0),
-  localDeliveryAreas: values.localDeliveryAreas || '',
-  nationwideRegions: values.nationwideRegions || '',
-  pickupInstructions: values.pickupInstructions || '',
-});
+const sanitizeStoreSetupDraftValues = (values = {}) => {
+  /**
+   * Avoid blowing localStorage quota with organization data: logos (often 100KB+).
+   * On reload, logo is re-seeded from organization / store settings.
+   */
+  const sanitizeDraftAssetUrl = (url) => {
+    const value = compactString(url);
+    if (!value) return '';
+    if (value.startsWith('data:') && value.length > 80_000) return '';
+    return value;
+  };
+
+  return omitFileLikeValues({
+    displayName: firstFilled(values.displayName, values.storeName, values.name),
+    slug: normalizeSlug(firstFilled(values.slug, values.storeUrl, values.publicUrl)),
+    description: values.description || '',
+    category: firstFilled(values.category, values.businessCategory),
+    whatsappNumber: values.whatsappNumber || '',
+    contactPhone: values.contactPhone || '',
+    contactEmail: values.contactEmail || '',
+    primaryColor: normalizePrimaryColor(values.primaryColor),
+    secondaryColor: values.secondaryColor ? normalizePrimaryColor(values.secondaryColor) : '',
+    tertiaryColor: values.tertiaryColor ? normalizePrimaryColor(values.tertiaryColor) : '',
+    logoUrl: sanitizeDraftAssetUrl(values.logoUrl),
+    currency: resolveStoreCurrency(values.currency),
+    paymentMethods: values.paymentMethods || defaultPaymentMethods,
+    deliveryOptions: values.deliveryOptions || defaultDeliveryOptions,
+    deliveryFee: Number(values.deliveryFee || 0),
+    localDeliveryAreas: values.localDeliveryAreas || '',
+    nationwideRegions: values.nationwideRegions || '',
+    pickupInstructions: values.pickupInstructions || '',
+  });
+};
 
 const readStoreSetupDraft = (storageKey) => {
   if (typeof window === 'undefined' || !storageKey) return null;
@@ -422,144 +422,26 @@ const clearStoreSetupDraft = (storageKey) => {
   }
 };
 
-const buildPublicStoreUrl = (slug) => {
+const buildPublicStoreUrl = (slug, { preview = false } = {}) => {
   const normalizedSlug = normalizeSlug(slug) || 'store-url';
-  return buildStorefrontStoreUrl(normalizedSlug);
+  return buildOnlineStoreUrl(normalizedSlug, { preview });
 };
 
 const getPublicStoreDisplayUrl = (slug) => {
   const normalizedSlug = normalizeSlug(slug) || 'store-url';
-  return getStorefrontDisplayStoreUrl(normalizedSlug);
+  return buildOnlineStoreUrl(normalizedSlug).replace(/^https?:\/\//i, '');
 };
+
+/** Display prefix for the store URL field (e.g. localhost:3002/shop). */
+const getOnlineStoreDisplayBaseUrl = () => (
+  `${getOnlineStoreBaseUrl().replace(/^https?:\/\//i, '')}/shop`
+);
 
 const isLikelyGeneratedSlug = (slug) => /^[a-z0-9]+(?:-[a-z0-9]+)*-[a-z0-9]{6}$/.test(slug);
 
 const getResponseData = (response) => response?.data?.data || response?.data || response;
 
 const getSettledData = (result) => (result?.status === 'fulfilled' ? getResponseData(result.value) : null);
-
-const compactString = (value) => (typeof value === 'string' ? value.trim() : '');
-
-const firstFilled = (...values) => values.map(compactString).find(Boolean) || '';
-
-const buildDefaultBannerPrompt = (values = {}) => {
-  const storeName = compactString(values.displayName) || 'my online store';
-  const category = compactString(values.category) || 'retail';
-  const description = compactString(values.description);
-  return [
-    `A clean, premium storefront banner for ${storeName}`,
-    `selling ${category.toLowerCase()}`,
-    description ? `with a warm visual feel inspired by: ${description}` : 'with welcoming product-inspired shapes',
-  ].join(', ').slice(0, BANNER_PROMPT_MAX_LENGTH);
-};
-
-const getPlainObject = (value) => (
-  value && typeof value === 'object' && !Array.isArray(value) ? value : {}
-);
-
-const formatAddress = (address = {}) => [
-  address.line1,
-  address.line2,
-  [address.city, address.state].map(compactString).filter(Boolean).join(', '),
-  address.postalCode,
-  address.country,
-].map(compactString).filter(Boolean).join(', ');
-
-const buildStoreSetupDefaults = ({ activeTenant, user, organization, profile }) => {
-  const tenantMetadata = getPlainObject(activeTenant?.metadata);
-  const organizationAddress = getPlainObject(organization?.address || tenantMetadata.address);
-  const addressText = formatAddress(organizationAddress);
-  const localArea = [organizationAddress.city, organizationAddress.state]
-    .map(compactString)
-    .filter(Boolean)
-    .join(', ');
-  const displayName = firstFilled(
-    organization?.name,
-    organization?.legalName,
-    activeTenant?.name,
-    tenantMetadata.businessName,
-    tenantMetadata.companyName,
-  );
-  const contactPhone = firstFilled(
-    organization?.phone,
-    tenantMetadata.businessPhone,
-    tenantMetadata.companyPhone,
-    tenantMetadata.phone,
-    activeTenant?.phone,
-    profile?.phone,
-    profile?.phoneNumber,
-    user?.phone,
-    user?.phoneNumber,
-  );
-  const contactEmail = firstFilled(
-    organization?.email,
-    organization?.supportEmail,
-    tenantMetadata.businessEmail,
-    tenantMetadata.companyEmail,
-    tenantMetadata.email,
-    activeTenant?.email,
-    profile?.email,
-    user?.email,
-  );
-  const primaryColor = normalizePrimaryColor(firstFilled(
-    organization?.primaryColor,
-    tenantMetadata.primaryColor,
-    tenantMetadata.brandColor,
-  ));
-
-  return {
-    displayName,
-    slug: normalizeSlug(displayName),
-    description: firstFilled(
-      tenantMetadata.storeDescription,
-      tenantMetadata.businessDescription,
-      tenantMetadata.description,
-      activeTenant?.description,
-    ),
-    category: resolveSavedCategory(
-      firstFilled(tenantMetadata.storeCategory, tenantMetadata.businessCategory),
-      resolveBusinessCategory(activeTenant, tenantMetadata),
-    ),
-    whatsappNumber: firstFilled(
-      tenantMetadata.whatsappNumber,
-      tenantMetadata.whatsapp,
-      contactPhone,
-    ),
-    contactPhone,
-    contactEmail,
-    primaryColor,
-    logoUrl: resolveStoreLogoUrl(organization, tenantMetadata, activeTenant),
-    bannerImageUrl: resolveStoreBannerImageUrl(tenantMetadata),
-    currency: CURRENCY.CODE,
-    paymentMethods: defaultPaymentMethods,
-    deliveryOptions: defaultDeliveryOptions,
-    deliveryFee: 0,
-    localDeliveryAreas: localArea,
-    nationwideRegions: '',
-    pickupInstructions: addressText ? `Pickup from ${addressText}` : '',
-  };
-};
-
-const savedOrDefault = (saved, fallback) => firstFilled(saved, fallback);
-
-const clampStepIndex = (step) => {
-  const numericStep = Number(step);
-  if (!Number.isFinite(numericStep)) return 0;
-  return Math.min(Math.max(Math.trunc(numericStep), 0), STEPS.length - 1);
-};
-
-const getStepIndexFromParam = (value) => (
-  Object.prototype.hasOwnProperty.call(STEP_INDEX_BY_ID, value)
-    ? STEP_INDEX_BY_ID[value]
-    : 0
-);
-
-const getReachedStepFromCompletion = (completedSteps = []) => {
-  if (!Array.isArray(completedSteps)) return 0;
-  return completedSteps.reduce((highest, completed, index) => (
-    completed ? Math.max(highest, clampStepIndex(index + 1)) : highest
-  ), 0);
-};
 
 const defaultPaymentMethods = {
   mobileMoney: { enabled: true, configured: false },
@@ -568,32 +450,8 @@ const defaultPaymentMethods = {
   payOnDelivery: { enabled: false, configured: false },
 };
 
-const resolveStoreCurrency = (...values) => {
-  const saved = values.map(compactString).find(Boolean);
-  return saved || CURRENCY.CODE;
-};
-
-const resolveStoreBannerImageUrl = (...sources) => firstFilled(
-  ...sources.flatMap((source) => [
-    source?.bannerImageUrl,
-    source?.bannerUrl,
-    source?.heroImageUrl,
-    source?.coverImageUrl,
-  ]),
-);
-
-const resolveStoreLogoUrl = (...sources) => firstFilled(
-  ...sources.flatMap((source) => [
-    source?.logoUrl,
-    source?.logo,
-    source?.companyLogoUrl,
-    source?.companyLogo,
-    source?.businessLogoUrl,
-    source?.businessLogo,
-    source?.tenantLogoUrl,
-    source?.tenantLogo,
-  ]),
-);
+/** @see resolveStoreCurrencyCode — ISO codes only; never template ids / display names */
+const resolveStoreCurrency = (...values) => resolveStoreCurrencyCode(...values);
 
 const resolvePaymentMethods = (savedMethods = {}, paymentCollection = null) => {
   const merged = mergeOptions(defaultPaymentMethods, savedMethods);
@@ -647,6 +505,25 @@ const mergeOptions = (defaults, saved = {}) => Object.keys(defaults).reduce((acc
   return acc;
 }, {});
 
+const clampStepIndex = (step) => {
+  const numericStep = Number(step);
+  if (!Number.isFinite(numericStep)) return 0;
+  return Math.min(Math.max(Math.trunc(numericStep), 0), STEPS.length - 1);
+};
+
+const getStepIndexFromParam = (value) => (
+  Object.prototype.hasOwnProperty.call(STEP_INDEX_BY_ID, value)
+    ? STEP_INDEX_BY_ID[value]
+    : 0
+);
+
+const getReachedStepFromCompletion = (completedSteps = []) => {
+  if (!Array.isArray(completedSteps)) return 0;
+  return completedSteps.reduce((highest, completed, index) => (
+    completed ? Math.max(highest, clampStepIndex(index + 1)) : highest
+  ), 0);
+};
+
 const mergeStoreSetupDraftValues = (baseValues = {}, draftValues = {}) => {
   const sanitizedDraft = sanitizeStoreSetupDraftValues(draftValues);
 
@@ -655,13 +532,14 @@ const mergeStoreSetupDraftValues = (baseValues = {}, draftValues = {}) => {
     displayName: firstFilled(sanitizedDraft.displayName, baseValues.displayName),
     slug: firstFilled(sanitizedDraft.slug, baseValues.slug),
     description: firstFilled(sanitizedDraft.description, baseValues.description),
-    category: resolveSavedCategory(sanitizedDraft.category, baseValues.category),
+    category: resolveSavedStoreCategory(sanitizedDraft.category, baseValues.category),
     whatsappNumber: firstFilled(sanitizedDraft.whatsappNumber, baseValues.whatsappNumber),
     contactPhone: firstFilled(sanitizedDraft.contactPhone, baseValues.contactPhone),
     contactEmail: firstFilled(sanitizedDraft.contactEmail, baseValues.contactEmail),
     primaryColor: normalizePrimaryColor(firstFilled(sanitizedDraft.primaryColor, baseValues.primaryColor)),
+    secondaryColor: firstFilled(sanitizedDraft.secondaryColor, baseValues.secondaryColor) || '',
+    tertiaryColor: firstFilled(sanitizedDraft.tertiaryColor, baseValues.tertiaryColor) || '',
     logoUrl: firstFilled(sanitizedDraft.logoUrl, baseValues.logoUrl),
-    bannerImageUrl: resolveStoreBannerImageUrl(sanitizedDraft, baseValues),
     currency: resolveStoreCurrency(sanitizedDraft.currency, baseValues.currency),
     paymentMethods: mergeOptions(baseValues.paymentMethods, sanitizedDraft.paymentMethods),
     deliveryOptions: mergeOptions(baseValues.deliveryOptions, sanitizedDraft.deliveryOptions),
@@ -676,7 +554,7 @@ const mergeStoreSetupDraftValues = (baseValues = {}, draftValues = {}) => {
 
 const getStepFields = (step) => {
   if (step === 0) return ['displayName', 'slug', 'description', 'category', 'whatsappNumber', 'contactPhone', 'contactEmail'];
-  if (step === 1) return ['primaryColor', 'logoUrl', 'bannerImageUrl'];
+  if (step === 1) return ['primaryColor', 'secondaryColor', 'tertiaryColor', 'logoUrl'];
   if (step === 2) return ['currency', 'paymentMethods'];
   if (step === 3) return ['deliveryOptions', 'deliveryFee', 'localDeliveryAreas', 'nationwideRegions', 'pickupInstructions'];
   return undefined;
@@ -697,7 +575,7 @@ const OptionStatus = ({ enabled, configured, unavailable }) => {
 
 const Stepper = ({ currentStep, completion, highestStepReached, onStepClick }) => (
   <div className="rounded-2xl border border-border bg-background px-2 py-4 sm:p-4">
-    <div className="grid grid-cols-5 items-start">
+    <div className="grid grid-cols-6 items-start">
       {STEPS.map((step, index) => {
         const Icon = step.icon;
         const isActive = index === currentStep;
@@ -805,191 +683,6 @@ const UploadField = ({
   );
 };
 
-const StorePreview = ({
-  values,
-  previewSlug,
-  previewMode,
-  onPreviewModeChange,
-  enabledPaymentMethods,
-  enabledDeliveryOptions,
-  className,
-  sticky = false,
-}) => {
-  const whatsapp = values.whatsappNumber || values.contactPhone;
-  const previewCurrencyCode = values.currency || CURRENCY.CODE;
-  const previewCurrencySymbol = previewCurrencyCode === CURRENCY.CODE ? CURRENCY.SYMBOL : previewCurrencyCode;
-  const containerClass = previewMode === 'mobile' ? 'mx-auto max-w-[320px]' : 'w-full';
-  const logoSrc = resolveImageUrl(values.logoUrl);
-  const bannerSrc = resolveImageUrl(values.bannerImageUrl);
-
-  return (
-    <Card className={cn('border border-border', sticky && 'sticky top-4', className)}>
-      <CardHeader className="space-y-2">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle>Live preview</CardTitle>
-          <Tabs value={previewMode} onValueChange={onPreviewModeChange}>
-            <TabsList>
-              <TabsTrigger value="desktop"><Monitor className="mr-2 h-4 w-4" />Desktop</TabsTrigger>
-              <TabsTrigger value="mobile"><Smartphone className="mr-2 h-4 w-4" />Mobile</TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </div>
-        <p className="text-sm text-muted-foreground">Updates as you complete each setup step.</p>
-      </CardHeader>
-      <CardContent>
-        <div className={containerClass}>
-          <div className="overflow-hidden rounded-2xl border border-border bg-background">
-            <div
-              className="relative h-28 overflow-hidden bg-muted"
-              style={{ backgroundColor: bannerSrc ? undefined : values.primaryColor }}
-            >
-              {bannerSrc && <img src={bannerSrc} alt="" className="h-full w-full object-cover" />}
-            </div>
-            <div className="p-5">
-              <div className="mb-4 flex items-center gap-3">
-                <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl border border-border bg-muted">
-                  {logoSrc ? (
-                    <img src={logoSrc} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <Store className="h-6 w-6 text-muted-foreground" />
-                  )}
-                </div>
-                <div className="min-w-0">
-                  <h3 className="truncate font-semibold">{values.displayName || 'Your store'}</h3>
-                  <a
-                    href={buildPublicStoreUrl(previewSlug)}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="block truncate text-xs text-muted-foreground hover:text-green-700"
-                  >
-                    {getPublicStoreDisplayUrl(previewSlug)}
-                  </a>
-                </div>
-              </div>
-              <p className="min-h-12 text-sm text-muted-foreground">
-                {values.description || 'Describe what shoppers can buy from your store.'}
-              </p>
-              <div className="mt-5 rounded-xl border border-border p-3">
-                <div className="h-24 rounded-lg bg-muted" />
-                <p className="mt-3 text-sm font-medium">Sample listing</p>
-                <p className="mt-1 text-xs text-muted-foreground">Product cards will show photos, public prices, and order actions.</p>
-                <Button className="mt-3 w-full" style={{ backgroundColor: values.primaryColor || undefined }}>
-                  Order now
-                </Button>
-              </div>
-              <div className="mt-4 grid gap-2 text-xs text-muted-foreground">
-                <p>Payments: {enabledPaymentMethods.length ? enabledPaymentMethods.join(', ') : 'Not configured'}</p>
-                <p>Currency: {previewCurrencyCode}</p>
-                <p>Fulfillment: {enabledDeliveryOptions.length ? enabledDeliveryOptions.join(', ') : 'Not configured'}</p>
-                {whatsapp && <p>WhatsApp: wa.me/{String(whatsapp).replace(/\D/g, '')}</p>}
-              </div>
-            </div>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-};
-
-const BannerGeneratorDialog = ({
-  open,
-  onOpenChange,
-  prompt,
-  onPromptChange,
-  styleHint,
-  onStyleHintChange,
-  generatedBanner,
-  generating,
-  saving,
-  onGenerate,
-  onUseBanner,
-}) => {
-  const previewSrc = resolveImageUrl(generatedBanner?.imageUrl || generatedBanner?.bannerImageUrl);
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[min(90dvh,760px)] flex-col gap-0 p-0 sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Generate banner with AI</DialogTitle>
-          <DialogDescription>
-            Describe the storefront mood you want. The generated banner can replace or supplement a manual upload.
-          </DialogDescription>
-        </DialogHeader>
-        <DialogBody className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="banner-generator-prompt">Banner prompt</Label>
-            <Textarea
-              id="banner-generator-prompt"
-              value={prompt}
-              onChange={(event) => onPromptChange(event.target.value.slice(0, BANNER_PROMPT_MAX_LENGTH))}
-              rows={5}
-              className="rounded-xl"
-              placeholder="A bright banner with product shapes, friendly shopping energy, and a clean green brand accent."
-              disabled={generating}
-            />
-            <div className="text-right text-xs text-muted-foreground">{String(prompt || '').length}/{BANNER_PROMPT_MAX_LENGTH}</div>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="banner-generator-style-hint">Style or color hints (optional)</Label>
-            <Input
-              id="banner-generator-style-hint"
-              value={styleHint}
-              onChange={(event) => onStyleHintChange(event.target.value)}
-              className="h-11 rounded-xl"
-              placeholder="Modern, minimal, Ghana-inspired, use #166534 accents"
-              disabled={generating}
-            />
-          </div>
-          {previewSrc ? (
-            <div className="rounded-xl border border-border bg-muted/20 p-3">
-              <p className="mb-2 text-sm font-medium">Generated preview</p>
-              <div className="overflow-hidden rounded-xl border border-border bg-background">
-                <img src={previewSrc} alt="Generated store banner preview" className="h-40 w-full object-cover sm:h-52" />
-              </div>
-              <p className="mt-2 text-xs text-muted-foreground">
-                Generated as SVG vector artwork using your AI provider. Review before applying it to your public store.
-              </p>
-            </div>
-          ) : (
-            <div className="flex min-h-36 items-center justify-center rounded-xl border border-dashed border-border bg-muted/20 text-sm text-muted-foreground">
-              {generating ? (
-                <span className="inline-flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Creating banner...
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-2">
-                  <ImageIcon className="h-4 w-4" />
-                  Your generated banner preview will appear here
-                </span>
-              )}
-            </div>
-          )}
-        </DialogBody>
-        <DialogFooter>
-          <Button type="button" variant="outline" className="rounded-xl" onClick={() => onOpenChange(false)} disabled={generating}>
-            Cancel
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="rounded-xl"
-            onClick={onGenerate}
-            disabled={generating || String(prompt || '').trim().length < 8}
-          >
-            {generating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-            {generatedBanner ? 'Regenerate' : 'Generate'}
-          </Button>
-          <Button type="button" className="rounded-xl" onClick={onUseBanner} disabled={generating || saving || !previewSrc}>
-            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-            {saving ? 'Saving banner...' : 'Use this banner'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-};
-
 const DeliveryAreasEditorDialog = ({
   open,
   optionKey,
@@ -1073,7 +766,7 @@ const MobileStoreTopBar = ({ onBack }) => (
         <ChevronLeft className="mr-1 h-4 w-4" />
         Back
       </Button>
-      <p className="text-center text-base font-semibold">Sabito Store Setup</p>
+      <p className="text-center text-base font-semibold">Online Store Setup</p>
       <Button type="button" variant="ghost" size="icon" className="-mr-2 h-10 w-10" aria-label="Open menu">
         <Menu className="h-5 w-5" />
       </Button>
@@ -1086,23 +779,38 @@ const StoreSetup = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { activeTenant, user } = useAuth();
   const isStudioStore = STUDIO_LIKE_TYPES.includes(activeTenant?.businessType);
+
+  // Optional deep-link: testimonials / product sections are edited on the Online Store hub.
+  useEffect(() => {
+    const step = searchParams.get('step');
+    if (step === 'testimonials') {
+      navigate('/online-store?step=testimonials', { replace: true });
+      return;
+    }
+    if (step === 'product-sections') {
+      navigate('/online-store?step=product-sections', { replace: true });
+    }
+  }, [navigate, searchParams]);
+
   const initialStep = getStepIndexFromParam(searchParams.get('step'));
   const [currentStep, setCurrentStep] = useState(initialStep);
   const [highestStepReached, setHighestStepReached] = useState(initialStep);
+  const [heroSlides, setHeroSlides] = useState([]);
+  const [heroAnimation, setHeroAnimation] = useState('fade');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [settings, setSettings] = useState(null);
   const [checklist, setChecklist] = useState(null);
   const [slugStatus, setSlugStatus] = useState({ state: 'idle', message: '' });
   const [uploadingField, setUploadingField] = useState(null);
-  const [previewMode, setPreviewMode] = useState('desktop');
   const [introDismissed, setIntroDismissed] = useState(false);
   const [activeDeliveryEditor, setActiveDeliveryEditor] = useState(null);
-  const [bannerGeneratorOpen, setBannerGeneratorOpen] = useState(false);
-  const [bannerPrompt, setBannerPrompt] = useState('');
-  const [bannerStyleHint, setBannerStyleHint] = useState('');
-  const [generatedBanner, setGeneratedBanner] = useState(null);
-  const [generatingBanner, setGeneratingBanner] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState(() => (
+    normalizeTemplateId(searchParams.get('template') || DEFAULT_TEMPLATE_ID)
+  ));
+  /** When true, secondary/tertiary auto-follow primary via template harmony. */
+  const [colorsLinked, setColorsLinked] = useState(true);
+  const [showProfilePrefillHint, setShowProfilePrefillHint] = useState(false);
   const slugEditedRef = useRef(false);
   const draftInitializedRef = useRef(false);
   const {
@@ -1126,8 +834,9 @@ const StoreSetup = () => {
       contactPhone: '',
       contactEmail: '',
       primaryColor: '#166534',
+      secondaryColor: '',
+      tertiaryColor: '',
       logoUrl: '',
-      bannerImageUrl: '',
       currency: CURRENCY.CODE,
       paymentMethods: defaultPaymentMethods,
       deliveryOptions: defaultDeliveryOptions,
@@ -1141,6 +850,50 @@ const StoreSetup = () => {
   const values = form.watch();
   const hasUnsavedChanges = form.formState.isDirty;
   const storeSetupDraftKey = useMemo(() => getStoreSetupDraftKey({ activeTenant, user }), [activeTenant, user]);
+  const previousTemplateIdRef = useRef(selectedTemplateId);
+
+  // When the merchant switches templates, keep colors for slots that still apply
+  // and fill any new slots from primary via the template's harmony strategy.
+  useEffect(() => {
+    if (previousTemplateIdRef.current === selectedTemplateId) return;
+    previousTemplateIdRef.current = selectedTemplateId;
+    const merged = mergeColorsForTemplate(selectedTemplateId, {
+      primaryColor: form.getValues('primaryColor'),
+      secondaryColor: form.getValues('secondaryColor') || null,
+      tertiaryColor: form.getValues('tertiaryColor') || null,
+    });
+    form.setValue('primaryColor', merged.primaryColor, { shouldDirty: true, shouldValidate: true });
+    form.setValue('secondaryColor', merged.secondaryColor || '', { shouldDirty: true, shouldValidate: true });
+    form.setValue('tertiaryColor', merged.tertiaryColor || '', { shouldDirty: true, shouldValidate: true });
+    setColorsLinked(true);
+  }, [form, selectedTemplateId]);
+
+  /**
+   * Apply a primary color and, when companions are linked, re-derive secondary/tertiary.
+   */
+  const applyPrimaryColor = useCallback((nextPrimary, { linkCompanions = colorsLinked } = {}) => {
+    const primary = normalizePrimaryColor(nextPrimary);
+    form.setValue('primaryColor', primary, { shouldDirty: true, shouldValidate: true });
+    if (!linkCompanions) return;
+    const companions = deriveTemplateCompanionColors(selectedTemplateId, primary);
+    const flags = getTemplateColorSlotFlags(selectedTemplateId);
+    if (flags.hasSecondary) {
+      form.setValue('secondaryColor', companions.secondaryColor || '', { shouldDirty: true, shouldValidate: true });
+    } else {
+      form.setValue('secondaryColor', '', { shouldDirty: true, shouldValidate: true });
+    }
+    if (flags.hasTertiary) {
+      form.setValue('tertiaryColor', companions.tertiaryColor || '', { shouldDirty: true, shouldValidate: true });
+    } else {
+      form.setValue('tertiaryColor', '', { shouldDirty: true, shouldValidate: true });
+    }
+  }, [colorsLinked, form, selectedTemplateId]);
+
+  const handleMatchPrimary = useCallback(() => {
+    applyPrimaryColor(form.getValues('primaryColor'), { linkCompanions: true });
+    setColorsLinked(true);
+  }, [applyPrimaryColor, form]);
+
   const debouncedSlug = useDebounce(values.slug, 500);
   const slugSuggestion = useMemo(() => normalizeSlug(values.displayName), [values.displayName]);
   const previewSlug = useMemo(() => {
@@ -1162,20 +915,17 @@ const StoreSetup = () => {
   const publicStoreUrl = useMemo(() => (
     resolvedStoreSlug ? buildPublicStoreUrl(resolvedStoreSlug) : ''
   ), [resolvedStoreSlug]);
-  const publicApiPreviewPath = resolvedStoreSlug ? `/api/public/store/${resolvedStoreSlug}` : '';
-  const checklistItems = useMemo(() => ([
-    ['Store information', checklist?.hasBasics],
-    ['Branding', checklist?.brandingReady],
-    ['Contact details', checklist?.hasContact],
-    ['Fulfillment', checklist?.hasFulfillment],
-    ['Published listing', checklist?.hasPublishedListing],
-  ]), [
-    checklist?.brandingReady,
-    checklist?.hasBasics,
-    checklist?.hasContact,
-    checklist?.hasFulfillment,
-    checklist?.hasPublishedListing,
-  ]);
+  const isStoreLive = settings?.enabled === true;
+  const liveStepParam = searchParams.get('step');
+  const isLiveConfigStep = Boolean(
+    liveStepParam
+    && liveStepParam !== 'launch'
+    && Object.prototype.hasOwnProperty.call(STEP_INDEX_BY_ID, liveStepParam),
+  );
+  const isEditingLiveSetup = isStoreLive && (
+    searchParams.get('edit') === '1' || isLiveConfigStep
+  );
+  const showLiveComplete = isStoreLive && !isEditingLiveSetup;
   const storeInfoSummary = useMemo(() => {
     const storeName = compactString(values.displayName);
     const category = compactString(values.category);
@@ -1222,6 +972,7 @@ const StoreSetup = () => {
     const deliveryReady = DELIVERY_OPTIONS.some((option) => (
       option.available && values.deliveryOptions?.[option.key]?.enabled
     ));
+    const heroReady = true;
     const launchReady = storeInfoReady && paymentReady && deliveryReady && slugStatus.state !== 'taken';
 
     return {
@@ -1229,6 +980,7 @@ const StoreSetup = () => {
       brandingReady,
       paymentReady,
       deliveryReady,
+      heroReady,
       launchReady,
       publishedListingReady: checklist?.hasPublishedListing === true,
     };
@@ -1239,6 +991,7 @@ const StoreSetup = () => {
     readiness.brandingReady,
     readiness.paymentReady,
     readiness.deliveryReady,
+    readiness.heroReady,
     settings?.enabled === true,
   ], [readiness, settings?.enabled]);
 
@@ -1251,13 +1004,29 @@ const StoreSetup = () => {
     return Math.round((highestStepReached / (STEPS.length - 1)) * 100);
   }, [highestStepReached]);
 
-  const showWelcomeIntro = useMemo(() => (
+  /**
+   * First-run welcome lives only on /online-store. Send merchants there instead of
+   * showing a second welcome on the setup wizard.
+   */
+  const needsOnlineStoreWelcome = useMemo(() => (
     !introDismissed &&
     !searchParams.has('step') &&
+    !searchParams.has('template') &&
     !loading &&
     !settings?.id &&
     checklist?.hasSettings !== true
   ), [checklist?.hasSettings, introDismissed, loading, searchParams, settings?.id]);
+
+  useEffect(() => {
+    if (!needsOnlineStoreWelcome) return;
+    navigate('/online-store', { replace: true });
+  }, [navigate, needsOnlineStoreWelcome]);
+
+  // Template chosen in ABS gallery (or public deep-link) → skip intro and enter wizard
+  useEffect(() => {
+    if (!searchParams.has('template') || introDismissed) return;
+    setIntroDismissed(true);
+  }, [introDismissed, searchParams]);
 
   const persistDraft = useCallback((overrides = {}) => {
     if (!draftInitializedRef.current || loading || settings?.id) return;
@@ -1302,11 +1071,6 @@ const StoreSetup = () => {
     }
   }, [highestStepReached, introDismissed, persistDraft, setSearchParams]);
 
-  const handleStartSetup = useCallback(() => {
-    setIntroDismissed(true);
-    moveToStep(0, { introDismissed: true, replace: true });
-  }, [moveToStep]);
-
   const loadStore = useCallback(async ({ force = false } = {}) => {
     const preserveInProgressValues = !force && draftInitializedRef.current;
     setLoading(true);
@@ -1325,12 +1089,12 @@ const StoreSetup = () => {
       const organization = getSettledData(organizationResponse);
       const profile = getSettledData(profileResponse);
       const metadata = nextSettings?.metadata || {};
-      const inferredDefaults = buildStoreSetupDefaults({
-        activeTenant,
-        user,
-        organization,
-        profile,
-      });
+      const inferredDefaults = {
+        ...buildOnlineStoreDefaultsFromTenant(activeTenant, user, { organization, profile }),
+        paymentMethods: defaultPaymentMethods,
+        deliveryOptions: defaultDeliveryOptions,
+        deliveryFee: 0,
+      };
       const savedPaymentMethods = resolvePaymentMethods(metadata.paymentMethods, paymentCollectionRef.current);
       const savedDeliveryOptions = mergeOptions(defaultDeliveryOptions, {
         ...metadata.deliveryOptions,
@@ -1346,6 +1110,11 @@ const StoreSetup = () => {
 
       setSettings(nextSettings || null);
       setChecklist(statusData?.checklist || null);
+      if (nextSettings?.templateId || new URLSearchParams(window.location.search).get('template')) {
+        setSelectedTemplateId(normalizeTemplateId(
+          new URLSearchParams(window.location.search).get('template') || nextSettings?.templateId
+        ));
+      }
       const resolvedDisplayName = savedOrDefault(nextSettings?.displayName, inferredDefaults.displayName);
       const savedSlug = normalizeSlug(nextSettings?.slug);
       const tenantSlug = normalizeSlug(activeTenant?.slug);
@@ -1365,11 +1134,17 @@ const StoreSetup = () => {
         displayName: resolvedDisplayName,
         slug: resolvedSlug,
         description: savedOrDefault(nextSettings?.description, inferredDefaults.description),
-        category: resolveSavedCategory(metadata.category, inferredDefaults.category),
+        category: resolveSavedStoreCategory(metadata.category, inferredDefaults.category),
         whatsappNumber: savedOrDefault(nextSettings?.whatsappNumber, inferredDefaults.whatsappNumber),
         contactPhone: savedOrDefault(nextSettings?.contactPhone, inferredDefaults.contactPhone),
         contactEmail: savedOrDefault(nextSettings?.contactEmail, inferredDefaults.contactEmail),
         primaryColor: normalizePrimaryColor(savedOrDefault(nextSettings?.primaryColor, inferredDefaults.primaryColor)),
+        secondaryColor: nextSettings?.secondaryColor
+          ? normalizePrimaryColor(nextSettings.secondaryColor)
+          : (inferredDefaults.secondaryColor || ''),
+        tertiaryColor: nextSettings?.tertiaryColor
+          ? normalizePrimaryColor(nextSettings.tertiaryColor)
+          : (inferredDefaults.tertiaryColor || ''),
         logoUrl: resolveStoreLogoUrl(
           nextSettings,
           statusData?.settings,
@@ -1379,7 +1154,6 @@ const StoreSetup = () => {
           activeTenant,
           inferredDefaults,
         ),
-        bannerImageUrl: resolveStoreBannerImageUrl(nextSettings, metadata, inferredDefaults),
         currency: resolveStoreCurrency(nextSettings?.currency, inferredDefaults.currency),
         paymentMethods: nextSettings?.id
           ? savedPaymentMethods
@@ -1420,7 +1194,42 @@ const StoreSetup = () => {
         paymentMethods: resolvePaymentMethods(restoredValues.paymentMethods, paymentCollectionRef.current),
       };
 
+      const activeTemplateId = normalizeTemplateId(
+        new URLSearchParams(window.location.search).get('template')
+        || nextSettings?.templateId
+        || selectedTemplateId
+      );
+      const mergedBrandColors = mergeColorsForTemplate(activeTemplateId, {
+        primaryColor: restoredValues.primaryColor,
+        secondaryColor: restoredValues.secondaryColor || null,
+        tertiaryColor: restoredValues.tertiaryColor || null,
+      });
+      restoredValues = {
+        ...restoredValues,
+        primaryColor: mergedBrandColors.primaryColor,
+        secondaryColor: mergedBrandColors.secondaryColor || '',
+        tertiaryColor: mergedBrandColors.tertiaryColor || '',
+      };
+      previousTemplateIdRef.current = activeTemplateId;
+
+      const seededFromProfile = Boolean(
+        !nextSettings?.id &&
+        (
+          inferredDefaults.displayName ||
+          inferredDefaults.logoUrl ||
+          inferredDefaults.contactPhone ||
+          inferredDefaults.contactEmail ||
+          inferredDefaults.whatsappNumber
+        )
+      );
+      setShowProfilePrefillHint(seededFromProfile);
+
       form.reset(restoredValues);
+      setHeroSlides(Array.isArray(nextSettings?.heroSlides) ? nextSettings.heroSlides : []);
+      {
+        const anim = String(metadata.heroAnimation || '').trim().toLowerCase();
+        setHeroAnimation(['fade', 'slide', 'zoom'].includes(anim) ? anim : 'fade');
+      }
 
       if (preserveInProgressValues) {
         draftInitializedRef.current = true;
@@ -1487,21 +1296,25 @@ const StoreSetup = () => {
 
   useEffect(() => {
     if (!introDismissed) return;
+    // Live complete view stays clean — do not force ?step= into the URL.
+    if (showLiveComplete) return;
     if (searchParams.has('step')) return;
     setSearchParams((previousParams) => {
       const nextParams = new URLSearchParams(previousParams);
       nextParams.set('step', STEPS[currentStep].id);
+      if (isEditingLiveSetup) nextParams.set('edit', '1');
       return nextParams;
     }, { replace: true });
-  }, [currentStep, introDismissed, searchParams, setSearchParams]);
+  }, [currentStep, introDismissed, isEditingLiveSetup, searchParams, setSearchParams, showLiveComplete]);
 
   useEffect(() => {
+    if (showLiveComplete) return;
     if (!searchParams.has('step')) return;
     const stepFromUrl = getStepIndexFromParam(searchParams.get('step'));
     if (stepFromUrl === currentStep) return;
     setCurrentStep(stepFromUrl);
     setHighestStepReached((reached) => Math.max(reached, stepFromUrl));
-  }, [currentStep, searchParams]);
+  }, [currentStep, searchParams, showLiveComplete]);
 
   useEffect(() => {
     if (loading || !slugSuggestion || values.slug === slugSuggestion) return;
@@ -1550,19 +1363,26 @@ const StoreSetup = () => {
     moveToStep(step);
   }, [highestStepReached, moveToStep]);
 
-  const handleCopyApiPreview = useCallback(async () => {
-    if (!publicApiPreviewPath) {
-      showError('Set up your store URL before copying the public API path.');
-      return;
-    }
+  const handleEditLiveStep = useCallback((stepId) => {
+    const stepIndex = getStepIndexFromParam(stepId);
+    setCurrentStep(stepIndex);
+    setHighestStepReached((reached) => Math.max(reached, stepIndex, STEPS.length - 1));
+    setSearchParams((previousParams) => {
+      const nextParams = new URLSearchParams(previousParams);
+      nextParams.set('step', STEPS[stepIndex].id);
+      nextParams.set('edit', '1');
+      return nextParams;
+    }, { replace: true });
+  }, [setSearchParams]);
 
-    try {
-      await navigator.clipboard.writeText(publicApiPreviewPath);
-      showSuccess('Public API path copied');
-    } catch (error) {
-      showError('Could not copy the public API path');
-    }
-  }, [publicApiPreviewPath]);
+  const handleExitLiveEdit = useCallback(() => {
+    setSearchParams((previousParams) => {
+      const nextParams = new URLSearchParams(previousParams);
+      nextParams.delete('edit');
+      nextParams.delete('step');
+      return nextParams;
+    }, { replace: true });
+  }, [setSearchParams]);
 
   const handleNext = useCallback(async () => {
     const valid = await form.trigger(getStepFields(currentStep));
@@ -1624,50 +1444,6 @@ const StoreSetup = () => {
     }
   }, [form]);
 
-  const handleOpenBannerGenerator = useCallback(() => {
-    setBannerPrompt(buildDefaultBannerPrompt(form.getValues()));
-    setBannerStyleHint(`Use ${form.getValues('primaryColor') || '#166534'} as the main brand accent.`);
-    setGeneratedBanner(null);
-    setBannerGeneratorOpen(true);
-  }, [form]);
-
-  const handleGenerateBanner = useCallback(async () => {
-    const prompt = compactString(bannerPrompt);
-    if (prompt.length < 8 || generatingBanner) return;
-
-    setGeneratingBanner(true);
-    try {
-      const formValues = form.getValues();
-      const response = await storeService.generateBanner({
-        prompt,
-        styleHint: bannerStyleHint,
-        storeName: formValues.displayName,
-        category: formValues.category,
-        description: formValues.description,
-        primaryColor: normalizePrimaryColor(formValues.primaryColor),
-      });
-      const data = getResponseData(response);
-      const imageUrl = data?.imageUrl || data?.bannerImageUrl;
-      if (!imageUrl) throw new Error('AI did not return a banner image');
-      setGeneratedBanner({ ...data, imageUrl });
-      const nextValues = { ...form.getValues(), bannerImageUrl: imageUrl };
-      form.setValue('bannerImageUrl', imageUrl, { shouldDirty: true, shouldValidate: true });
-      writeStoreSetupValuesDraft({
-        storageKey: storeSetupDraftKey,
-        values: nextValues,
-        currentStep,
-        highestStepReached,
-        introDismissed,
-        slugManuallyEdited: slugEditedRef.current,
-      });
-      showSuccess('AI banner generated');
-    } catch (error) {
-      showError(getErrorMessage(error, 'Failed to generate banner'));
-    } finally {
-      setGeneratingBanner(false);
-    }
-  }, [bannerPrompt, bannerStyleHint, currentStep, form, generatingBanner, highestStepReached, introDismissed, storeSetupDraftKey]);
-
   const buildPayload = useCallback((launch = false) => {
     const formValues = form.getValues();
     const resolvedSlug = slugEditedRef.current
@@ -1682,8 +1458,15 @@ const StoreSetup = () => {
       slug: resolvedSlug,
       description: formValues.description || null,
       logoUrl: formValues.logoUrl || null,
-      bannerImageUrl: formValues.bannerImageUrl || null,
       primaryColor: normalizePrimaryColor(formValues.primaryColor),
+      secondaryColor: formValues.secondaryColor
+        ? normalizePrimaryColor(formValues.secondaryColor)
+        : null,
+      tertiaryColor: formValues.tertiaryColor
+        ? normalizePrimaryColor(formValues.tertiaryColor)
+        : null,
+      templateId: normalizeTemplateId(selectedTemplateId || settings?.templateId),
+      heroSlides: Array.isArray(heroSlides) ? heroSlides : [],
       contactPhone: formValues.contactPhone || null,
       whatsappNumber: formValues.whatsappNumber || null,
       contactEmail: formValues.contactEmail || null,
@@ -1696,13 +1479,16 @@ const StoreSetup = () => {
       metadata: {
         ...(settings?.metadata || {}),
         category: formValues.category || null,
-        bannerImageUrl: formValues.bannerImageUrl || null,
         slugManuallyEdited: slugEditedRef.current,
         paymentMethods: formValues.paymentMethods,
         deliveryOptions: formValues.deliveryOptions,
         localDeliveryAreas: formValues.localDeliveryAreas || null,
         nationwideRegions: formValues.nationwideRegions || null,
         pickupInstructions: formValues.pickupInstructions || null,
+        heroAnimation: ['fade', 'slide', 'zoom'].includes(String(heroAnimation || '').trim().toLowerCase())
+          ? String(heroAnimation).trim().toLowerCase()
+          : 'fade',
+        templateChosen: true,
         setupProgress: {
           currentStep,
           completedSteps: stepCompletion,
@@ -1711,46 +1497,7 @@ const StoreSetup = () => {
         },
       },
     };
-  }, [currentStep, form, settings, setupProgress, stepCompletion]);
-
-  const handleUseGeneratedBanner = useCallback(async () => {
-    const imageUrl = generatedBanner?.imageUrl || generatedBanner?.bannerImageUrl;
-    if (!imageUrl || saving) return;
-    const nextValues = { ...form.getValues(), bannerImageUrl: imageUrl };
-    form.setValue('bannerImageUrl', imageUrl, { shouldDirty: true, shouldValidate: true });
-    writeStoreSetupValuesDraft({
-      storageKey: storeSetupDraftKey,
-      values: nextValues,
-      currentStep,
-      highestStepReached,
-      introDismissed,
-      slugManuallyEdited: slugEditedRef.current,
-    });
-    setSaving(true);
-    try {
-      const response = await storeService.updateSettings(buildPayload(false));
-      const savedSettings = getResponseData(response);
-      clearStoreSetupDraft(storeSetupDraftKey);
-      setSettings(savedSettings);
-      setBannerGeneratorOpen(false);
-      showSuccess('AI banner saved');
-      await loadStore({ force: true });
-    } catch (error) {
-      showError(getErrorMessage(error, 'Failed to save AI banner'));
-    } finally {
-      setSaving(false);
-    }
-  }, [
-    buildPayload,
-    currentStep,
-    form,
-    generatedBanner,
-    highestStepReached,
-    introDismissed,
-    loadStore,
-    saving,
-    storeSetupDraftKey,
-  ]);
+  }, [currentStep, form, heroAnimation, heroSlides, selectedTemplateId, settings, setupProgress, stepCompletion]);
 
   const saveStore = useCallback(async (launch = false) => {
     if (launch) {
@@ -1775,12 +1522,21 @@ const StoreSetup = () => {
       setSettings(savedSettings);
       showSuccess(launch ? 'Store launched' : 'Store draft saved');
       if (launch) {
-        navigate('/store/dashboard');
+        // Show the post-launch complete UI on setup (not the leftover wizard).
+        setSearchParams((previousParams) => {
+          const nextParams = new URLSearchParams(previousParams);
+          nextParams.delete('edit');
+          nextParams.delete('step');
+          return nextParams;
+        }, { replace: true });
+        await loadStore({ force: true });
       } else {
         await loadStore({ force: true });
       }
+      return savedSettings;
     } catch (error) {
       showError(getErrorMessage(error, 'Failed to save store setup'));
+      return null;
     } finally {
       setSaving(false);
     }
@@ -1791,15 +1547,47 @@ const StoreSetup = () => {
     highestStepReached,
     introDismissed,
     loadStore,
-    navigate,
     readiness.launchReady,
+    setSearchParams,
     storeSetupDraftKey,
   ]);
+
+  /**
+   * Save latest draft if needed, then open the full Online Store in a new tab.
+   */
+  const handlePreviewStore = useCallback(async () => {
+    const slug = resolvedStoreSlug;
+    if (!slug) {
+      showError('Add a store URL before previewing');
+      return;
+    }
+
+    let previewUrl = buildPublicStoreUrl(slug, { preview: settings?.enabled !== true });
+    if (hasUnsavedChanges || !settings?.id) {
+      const savedSettings = await saveStore(false);
+      if (!savedSettings) return;
+      const savedSlug = normalizeSlug(savedSettings?.slug || slug);
+      if (savedSlug) {
+        previewUrl = buildPublicStoreUrl(savedSlug, { preview: savedSettings?.enabled !== true });
+      }
+    }
+
+    window.open(previewUrl, '_blank', 'noopener,noreferrer');
+  }, [hasUnsavedChanges, resolvedStoreSlug, saveStore, settings?.enabled, settings?.id]);
 
   const stepContent = useMemo(() => {
     if (currentStep === 0) {
       return (
         <div className="space-y-5">
+          {showProfilePrefillHint ? (
+            <Alert className="border-emerald-200 bg-emerald-50 text-emerald-900">
+              <Sparkles className="h-4 w-4" />
+              <AlertTitle>Ready to customize</AlertTitle>
+              <AlertDescription>
+                We&apos;ve filled this from your business profile — you can edit anytime.
+              </AlertDescription>
+            </Alert>
+          ) : null}
           <FormField control={form.control} name="displayName" render={({ field }) => (
             <FormItem>
               <FormLabel>Store Name</FormLabel>
@@ -1820,7 +1608,7 @@ const StoreSetup = () => {
               <FormControl>
                 <div className="flex min-h-12 overflow-hidden rounded-xl border border-input bg-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
                   <span className="flex items-center whitespace-nowrap border-r border-border bg-muted px-3 text-sm text-muted-foreground">
-                    {getStorefrontDisplayBaseUrl()}/
+                    {getOnlineStoreDisplayBaseUrl()}/
                   </span>
                   <Input
                     {...field}
@@ -1935,76 +1723,155 @@ const StoreSetup = () => {
               <FormMessage />
             </FormItem>
           )} />
-          <FormField control={form.control} name="bannerImageUrl" render={({ field }) => (
-            <FormItem>
-              <UploadField
-                label="Banner upload"
-                description="Add a wide image for the top of your public store."
-                value={field.value}
-                onChange={field.onChange}
-                onUpload={(file) => handleAssetUpload('bannerImageUrl', file)}
-                uploading={uploadingField === 'bannerImageUrl'}
-                previewClassName="h-36 sm:h-40"
-                actionSlot={(
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11 rounded-xl"
-                    onClick={handleOpenBannerGenerator}
-                  >
-                    <Sparkles className="mr-2 h-4 w-4" />
-                    Generate with AI
-                  </Button>
-                )}
-              />
-              <FormMessage />
-            </FormItem>
-          )} />
-          <FormField control={form.control} name="primaryColor" render={({ field }) => (
-            <FormItem>
-              <FormLabel>Theme color</FormLabel>
-              <div className="grid grid-cols-2 gap-3">
-                {THEME_PRESETS.map((preset) => (
-                  <button
-                    key={preset.value}
-                    type="button"
-                    onClick={() => field.onChange(preset.value)}
-                    className={cn(
-                      'flex min-h-20 flex-col items-start justify-between rounded-xl border p-3 text-left',
-                      field.value === preset.value ? 'border-green-700 bg-green-50' : 'border-border',
-                    )}
-                  >
-                    <span className="flex w-full items-center justify-between gap-3">
-                      <span className="h-8 w-8 rounded-full border border-border" style={{ backgroundColor: preset.value }} />
-                      {field.value === preset.value && <Check className="h-4 w-4 text-green-700" />}
-                    </span>
-                    <span className="text-sm font-medium">{preset.label}</span>
-                  </button>
-                ))}
+          {(() => {
+            const colorSlots = getTemplateColorSlots(selectedTemplateId);
+            const slotFlags = getTemplateColorSlotFlags(selectedTemplateId);
+            const hasCompanions = slotFlags.hasSecondary || slotFlags.hasTertiary;
+            const primaryValue = normalizePrimaryColor(values.primaryColor || '#166534');
+            const derivedCompanions = deriveTemplateCompanionColors(selectedTemplateId, primaryValue);
+            const secondaryValue = slotFlags.hasSecondary
+              ? normalizePrimaryColor(values.secondaryColor || '', derivedCompanions.secondaryColor || '#86efac')
+              : null;
+            const tertiaryValue = slotFlags.hasTertiary
+              ? normalizePrimaryColor(values.tertiaryColor || '', derivedCompanions.tertiaryColor || '#fde68a')
+              : null;
+
+            return (
+              <div className="space-y-4">
+                {hasCompanions ? (
+                  <div className="rounded-xl border border-border bg-muted/20 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex overflow-hidden rounded-lg border border-border">
+                          <span
+                            className="h-10 w-10"
+                            style={{ backgroundColor: primaryValue }}
+                            title={`Primary ${primaryValue}`}
+                          />
+                          {secondaryValue ? (
+                            <span
+                              className="h-10 w-10"
+                              style={{ backgroundColor: secondaryValue }}
+                              title={`Secondary ${secondaryValue}`}
+                            />
+                          ) : null}
+                          {tertiaryValue ? (
+                            <span
+                              className="h-10 w-10"
+                              style={{ backgroundColor: tertiaryValue }}
+                              title={`Highlight ${tertiaryValue}`}
+                            />
+                          ) : null}
+                        </div>
+                        <p className="max-w-sm text-sm text-muted-foreground">
+                          {colorsLinked
+                            ? 'Secondary is chosen to work with your primary.'
+                            : 'Secondary is unlocked — edit freely, or match primary again.'}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-10 rounded-xl"
+                          onClick={() => setColorsLinked((linked) => !linked)}
+                        >
+                          {colorsLinked ? (
+                            <>
+                              <Link2Off className="mr-2 h-4 w-4" />
+                              Customize secondary
+                            </>
+                          ) : (
+                            <>
+                              <Link2 className="mr-2 h-4 w-4" />
+                              Keep linked
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-10 rounded-xl"
+                          onClick={handleMatchPrimary}
+                        >
+                          Match primary
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
+                {colorSlots.map((slot) => {
+                  const fieldName = colorFieldNameForSlot(slot.key);
+                  const isPrimary = slot.key === 'primary';
+                  const isCompanion = slot.key === 'secondary' || slot.key === 'tertiary';
+                  const companionLocked = isCompanion && colorsLinked;
+
+                  return (
+                    <FormField
+                      key={slot.key}
+                      control={form.control}
+                      name={fieldName}
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{slot.label}</FormLabel>
+                          {isPrimary ? (
+                            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                              {THEME_PRESETS.map((preset) => (
+                                <button
+                                  key={preset.value}
+                                  type="button"
+                                  onClick={() => applyPrimaryColor(preset.value)}
+                                  className={cn(
+                                    'flex min-h-20 flex-col items-start justify-between rounded-xl border p-3 text-left',
+                                    field.value === preset.value ? 'border-green-700 bg-green-50' : 'border-border',
+                                  )}
+                                >
+                                  <span className="flex w-full items-center justify-between gap-3">
+                                    <span className="h-8 w-8 rounded-full border border-border" style={{ backgroundColor: preset.value }} />
+                                    {field.value === preset.value && <Check className="h-4 w-4 text-green-700" />}
+                                  </span>
+                                  <span className="text-sm font-medium">{preset.label}</span>
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                          <FormControl>
+                            <div className="mt-3 flex items-center gap-3">
+                              <Input
+                                type="color"
+                                className="h-11 w-24 rounded-xl p-1"
+                                value={normalizePrimaryColor(field.value || slot.default, slot.default)}
+                                disabled={companionLocked}
+                                onChange={(event) => {
+                                  if (isPrimary) {
+                                    applyPrimaryColor(event.target.value);
+                                    return;
+                                  }
+                                  setColorsLinked(false);
+                                  field.onChange(event.target.value);
+                                }}
+                                onBlur={field.onBlur}
+                                name={field.name}
+                                ref={field.ref}
+                              />
+                              <span className="text-sm text-muted-foreground">
+                                {normalizePrimaryColor(field.value || slot.default, slot.default)}
+                                {companionLocked ? ' · linked' : ''}
+                              </span>
+                            </div>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  );
+                })}
               </div>
-              <FormControl>
-                <Input
-                  type="color"
-                  className="mt-3 h-11 w-24 rounded-xl p-1"
-                  value={normalizePrimaryColor(field.value)}
-                  onChange={(event) => field.onChange(event.target.value)}
-                  onBlur={field.onBlur}
-                  name={field.name}
-                  ref={field.ref}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )} />
-          <StorePreview
-            className="xl:hidden"
-            values={values}
-            previewSlug={previewSlug}
-            previewMode={previewMode}
-            onPreviewModeChange={setPreviewMode}
-            enabledPaymentMethods={enabledPaymentMethods}
-            enabledDeliveryOptions={enabledDeliveryOptions}
-          />
+            );
+          })()}
         </div>
       );
     }
@@ -2223,6 +2090,18 @@ const StoreSetup = () => {
       );
     }
 
+    if (currentStep === 4) {
+      return (
+        <StoreHeroSetupPanel
+          primaryColor={values.primaryColor}
+          heroSlides={heroSlides}
+          onChange={setHeroSlides}
+          heroAnimation={heroAnimation}
+          onAnimationChange={setHeroAnimation}
+        />
+      );
+    }
+
     return (
       <div className="space-y-5">
         <div className="rounded-xl border border-border p-4">
@@ -2236,14 +2115,32 @@ const StoreSetup = () => {
             </Badge>
           </div>
         </div>
-        <StorePreview
-          values={values}
-          previewSlug={previewSlug}
-          previewMode={previewMode}
-          onPreviewModeChange={setPreviewMode}
-          enabledPaymentMethods={enabledPaymentMethods}
-          enabledDeliveryOptions={enabledDeliveryOptions}
-        />
+        <div className="rounded-xl border border-border p-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="font-medium">Preview your store</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Open the full storefront in a new tab to review branding and layout before launch.
+              </p>
+              {resolvedStoreSlug ? (
+                <p className="mt-2 break-all text-xs text-muted-foreground">
+                  {getPublicStoreDisplayUrl(resolvedStoreSlug)}
+                </p>
+              ) : null}
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 shrink-0 rounded-xl bg-background"
+              onClick={handlePreviewStore}
+              disabled={saving || !resolvedStoreSlug}
+            >
+              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Eye className="mr-2 h-4 w-4" />}
+              Preview store
+              <ExternalLink className="ml-2 h-4 w-4" />
+            </Button>
+          </div>
+        </div>
         <div className="grid gap-4">
           <SummaryCard
             title="Store Info"
@@ -2257,7 +2154,14 @@ const StoreSetup = () => {
             status={{ ready: readiness.brandingReady, label: readiness.brandingReady ? 'Theme selected' : 'Needs color' }}
             onEdit={() => handleStepClick(1)}
           >
-            Theme color {values.primaryColor}. Logo {values.logoUrl ? 'uploaded' : 'not uploaded'} and banner {values.bannerImageUrl ? 'uploaded' : 'not uploaded'}.
+            Theme colors for {getStoreTemplate(selectedTemplateId).name}
+            {' · '}
+            {getTemplateColorSlots(selectedTemplateId).map((slot) => {
+              const fieldName = colorFieldNameForSlot(slot.key);
+              const value = values[fieldName] || slot.default;
+              return `${slot.label.split(' ')[0]} ${value}`;
+            }).join(', ')}.
+            {' '}Logo {values.logoUrl ? 'uploaded' : 'not uploaded'}.
           </SummaryCard>
           <SummaryCard
             title="Payments"
@@ -2271,7 +2175,16 @@ const StoreSetup = () => {
             status={{ ready: readiness.deliveryReady, label: readiness.deliveryReady ? 'Fulfillment ready' : 'Needs delivery or pickup' }}
             onEdit={() => handleStepClick(3)}
           >
-            {enabledDeliveryOptions.length ? enabledDeliveryOptions.join(', ') : 'No fulfillment options enabled.'}
+            {enabledDeliveryOptions.length ? enabledDeliveryOptions.join(', ') : 'No fulfillment options enabled yet.'}
+          </SummaryCard>
+          <SummaryCard
+            title="Hero"
+            status={{ ready: true, label: heroSlides.length ? `${heroSlides.length} slide(s)` : 'No hero (optional)' }}
+            onEdit={() => handleStepClick(4)}
+          >
+            {heroSlides.length
+              ? `${heroSlides.length} hero slide${heroSlides.length === 1 ? '' : 's'} selected. Colors match your brand automatically.`
+              : 'No hero slider — your storefront will start with products.'}
           </SummaryCard>
         </div>
         {readiness.launchReady && (
@@ -2305,14 +2218,19 @@ const StoreSetup = () => {
     enabledPaymentMethods,
     form.control,
     handleAssetUpload,
-    handleOpenBannerGenerator,
     handleOpenDeliveryEditor,
     handleOptionToggle,
+    handlePreviewStore,
     handleStepClick,
     handleStoreNameBlur,
-    previewMode,
+    heroAnimation,
+    heroSlides,
     previewSlug,
     readiness,
+    resolvedStoreSlug,
+    saving,
+    selectedTemplateId,
+    showProfilePrefillHint,
     slugStatus,
     storeInfoSummary,
     uploadingField,
@@ -2327,19 +2245,61 @@ const StoreSetup = () => {
     );
   }
 
-  if (showWelcomeIntro) {
-    return <OnlineStoreWelcome onStartSetup={handleStartSetup} />;
+  if (needsOnlineStoreWelcome) {
+    return (
+      <div className="flex min-h-[420px] items-center justify-center">
+        <Loader2 className="h-7 w-7 animate-spin text-emerald-700" />
+      </div>
+    );
+  }
+
+  if (showLiveComplete) {
+    return (
+      <div className="space-y-5 md:space-y-6">
+        <MobileStoreTopBar onBack={() => navigate('/online-store')} />
+        <StoreSetupComplete
+          publicStoreUrl={publicStoreUrl}
+          isStudioStore={isStudioStore}
+          onEditStep={handleEditLiveStep}
+        />
+      </div>
+    );
   }
 
   return (
     <div className="space-y-5 md:space-y-6">
-      <MobileStoreTopBar onBack={() => navigate('/store/dashboard')} />
+      <MobileStoreTopBar onBack={() => (
+        isEditingLiveSetup ? handleExitLiveEdit() : navigate('/online-store')
+      )}
+      />
 
       <div className="hidden flex-col gap-4 md:flex lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="text-sm font-medium uppercase tracking-wide text-green-700">Sabito Store</p>
-          <h1 className="text-2xl font-semibold">Setup wizard</h1>
-          <p className="mt-1 text-muted-foreground">Build your customer-facing store from information to launch.</p>
+          <nav className="mb-1 flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
+            <Link to="/online-store" className="hover:text-foreground">
+              Online Store
+            </Link>
+            <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            {isEditingLiveSetup ? (
+              <button
+                type="button"
+                className="text-foreground hover:underline"
+                onClick={handleExitLiveEdit}
+              >
+                Setup
+              </button>
+            ) : (
+              <span className="text-foreground">Setup</span>
+            )}
+          </nav>
+          <h1 className="text-2xl font-semibold">
+            {isEditingLiveSetup ? 'Edit store setup' : 'Store Setup'}
+          </h1>
+          <p className="mt-1 text-muted-foreground">
+            {isEditingLiveSetup
+              ? 'Update this step, then return to your live store overview.'
+              : 'Build your customer-facing store from information to launch.'}
+          </p>
         </div>
         <div className="w-full rounded-xl border border-border p-3 lg:w-72">
           <div className="mb-2 flex items-center justify-between text-sm">
@@ -2350,76 +2310,6 @@ const StoreSetup = () => {
         </div>
       </div>
 
-      {settings?.id && (
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
-          <Card className="border border-border">
-            <CardHeader>
-              <CardTitle>Live store actions</CardTitle>
-              <p className="text-sm text-muted-foreground">Quick links for managing the storefront after launch.</p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {publicStoreUrl && (
-                <div className="rounded-xl border border-border bg-muted/30 p-4">
-                  <p className="text-sm font-medium">Public store link</p>
-                  <p className="mt-1 break-all text-sm text-muted-foreground">{publicStoreUrl}</p>
-                </div>
-              )}
-
-              {publicApiPreviewPath && (
-                <div className="rounded-xl border border-border bg-muted/30 p-4">
-                  <p className="text-sm font-medium">Public API preview</p>
-                  <code className="mt-1 block break-all text-sm text-muted-foreground">{publicApiPreviewPath}</code>
-                  <Button type="button" variant="outline" className="mt-3 w-full bg-background" onClick={handleCopyApiPreview}>
-                    <Copy className="mr-2 h-4 w-4" />
-                    Copy API path
-                  </Button>
-                </div>
-              )}
-
-              <div className="grid gap-2 sm:grid-cols-3">
-                {publicStoreUrl && (
-                  <Button variant="outline" className="justify-start bg-background" asChild>
-                    <a href={publicStoreUrl} target="_blank" rel="noreferrer">
-                      <ExternalLink className="mr-2 h-4 w-4" />
-                      Public store
-                    </a>
-                  </Button>
-                )}
-                {!isStudioStore ? (
-                  <Button variant="outline" className="justify-start bg-background" asChild>
-                    <Link to="/store/orders">
-                      <ShoppingBag className="mr-2 h-4 w-4" />
-                      Online orders
-                    </Link>
-                  </Button>
-                ) : null}
-                <Button className="justify-start" asChild>
-                  <Link to={isStudioStore ? '/store/services' : '/store/listings'}>
-                    <Package className="mr-2 h-4 w-4" />
-                    {isStudioStore ? 'Manage services' : 'Manage listings'}
-                  </Link>
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border border-border">
-            <CardHeader>
-              <CardTitle>Launch checklist</CardTitle>
-              <p className="text-sm text-muted-foreground">Setup completion reference for this store.</p>
-            </CardHeader>
-            <CardContent className="grid gap-3">
-              {checklistItems.map(([label, done]) => (
-                <div key={label} className="flex items-center justify-between rounded-lg border border-border p-3">
-                  <span className="text-sm font-medium">{label}</span>
-                  <Badge variant={done ? 'default' : 'outline'}>{done ? 'Done' : 'Needed'}</Badge>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
       <Stepper
         currentStep={currentStep}
         completion={stepCompletion}
@@ -2427,93 +2317,78 @@ const StoreSetup = () => {
         onStepClick={handleStepClick}
       />
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_440px]">
-        <Card className="overflow-hidden border border-border">
-          <CardHeader className="px-4 sm:px-6">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <CardTitle className="text-xl sm:text-2xl">{STEPS[currentStep].label}</CardTitle>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Step {currentStep + 1} of {STEPS.length}
-                </p>
-              </div>
-              {settings?.enabled && <Badge className="bg-green-700 text-white hover:bg-green-700">Launched</Badge>}
+      <Card className="overflow-hidden border border-border">
+        <CardHeader className="px-4 sm:px-6">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <CardTitle className="text-xl sm:text-2xl">{STEPS[currentStep].label}</CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Step {currentStep + 1} of {STEPS.length}
+              </p>
             </div>
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <div className="flex min-h-64 items-center justify-center">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-              </div>
-            ) : (
-              <Form {...form}>
-                <form className="space-y-6" onSubmit={(event) => event.preventDefault()}>
-                  {stepContent}
-        <div className={cn(
-          'grid gap-3 border-t border-border pt-5 sm:flex sm:flex-row sm:items-center sm:justify-between',
-          currentStep === 0 ? 'grid-cols-1' : 'grid-cols-2',
-        )}
-        >
-          <Button
-            type="button"
-            variant="outline"
-            className={cn('h-12 rounded-xl sm:h-10', currentStep === 0 && 'hidden sm:inline-flex')}
-            onClick={handleBack}
-            disabled={currentStep === 0 || saving}
-          >
-            <ChevronLeft className="mr-2 h-4 w-4" />
-            Back
-          </Button>
-          <div className="contents sm:flex sm:gap-2">
-            {(!settings?.enabled || hasUnsavedChanges) && (
-              <Button
-                type="button"
-                variant="outline"
-                className="hidden h-10 rounded-xl sm:inline-flex"
-                onClick={() => saveStore(false)}
-                disabled={saving}
-              >
-                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                {settings?.enabled ? 'Save changes' : 'Save as Draft'}
-              </Button>
-            )}
-            {currentStep < STEPS.length - 1 ? (
-              <Button type="button" className="h-12 rounded-xl sm:h-10" onClick={handleNext} disabled={saving}>
-                Continue
-                <ChevronRight className="ml-2 h-4 w-4" />
-              </Button>
-            ) : settings?.enabled ? (
-              <Button type="button" className="h-12 rounded-xl sm:h-10" asChild>
-                <Link to="/store/dashboard">
-                  <Check className="mr-2 h-4 w-4" />
-                  Back to Dashboard
-                </Link>
-              </Button>
-            ) : (
-              <Button type="button" className="h-12 rounded-xl sm:h-10" onClick={() => saveStore(true)} disabled={saving || !readiness.launchReady}>
-                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
-                Launch Store
-              </Button>
-            )}
+            {settings?.enabled && <Badge className="bg-green-700 text-white hover:bg-green-700">Launched</Badge>}
           </div>
-        </div>
-                </form>
-              </Form>
-            )}
-          </CardContent>
-        </Card>
-
-        <StorePreview
-          className={currentStep === STEPS.length - 1 ? 'hidden' : 'hidden xl:block'}
-          sticky
-          values={values}
-          previewSlug={previewSlug}
-          previewMode={previewMode}
-          onPreviewModeChange={setPreviewMode}
-          enabledPaymentMethods={enabledPaymentMethods}
-          enabledDeliveryOptions={enabledDeliveryOptions}
-        />
-      </div>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="flex min-h-64 items-center justify-center">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <Form {...form}>
+              <form className="space-y-6" onSubmit={(event) => event.preventDefault()}>
+                {stepContent}
+                <div className={cn(
+                  'grid gap-3 border-t border-border pt-5 sm:flex sm:flex-row sm:items-center sm:justify-between',
+                  currentStep === 0 ? 'grid-cols-1' : 'grid-cols-2',
+                )}
+                >
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={cn('h-12 rounded-xl sm:h-10', currentStep === 0 && 'hidden sm:inline-flex')}
+                    onClick={handleBack}
+                    disabled={currentStep === 0 || saving}
+                  >
+                    <ChevronLeft className="mr-2 h-4 w-4" />
+                    Back
+                  </Button>
+                  <div className="contents sm:flex sm:gap-2">
+                    {(!settings?.enabled || hasUnsavedChanges) && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="hidden h-10 rounded-xl sm:inline-flex"
+                        onClick={() => saveStore(false)}
+                        disabled={saving}
+                      >
+                        {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                        {settings?.enabled ? 'Save changes' : 'Save as Draft'}
+                      </Button>
+                    )}
+                    {currentStep < STEPS.length - 1 ? (
+                      <Button type="button" className="h-12 rounded-xl sm:h-10" onClick={handleNext} disabled={saving}>
+                        Continue
+                        <ChevronRight className="ml-2 h-4 w-4" />
+                      </Button>
+                    ) : settings?.enabled ? (
+                      <Button type="button" className="h-12 rounded-xl sm:h-10" onClick={handleExitLiveEdit}>
+                        <Check className="mr-2 h-4 w-4" />
+                        Done
+                      </Button>
+                    ) : (
+                      <Button type="button" className="h-12 rounded-xl sm:h-10" onClick={() => saveStore(true)} disabled={saving || !readiness.launchReady}>
+                        {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
+                        Launch Store
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </form>
+            </Form>
+          )}
+        </CardContent>
+      </Card>
 
       <DeliveryAreasEditorDialog
         open={Boolean(activeDeliveryEditor)}
@@ -2523,19 +2398,6 @@ const StoreSetup = () => {
         }}
         form={form}
         onSaved={handleDeliveryEditorSaved}
-      />
-      <BannerGeneratorDialog
-        open={bannerGeneratorOpen}
-        onOpenChange={setBannerGeneratorOpen}
-        prompt={bannerPrompt}
-        onPromptChange={setBannerPrompt}
-        styleHint={bannerStyleHint}
-        onStyleHintChange={setBannerStyleHint}
-        generatedBanner={generatedBanner}
-        generating={generatingBanner}
-        saving={saving}
-        onGenerate={handleGenerateBanner}
-        onUseBanner={handleUseGeneratedBanner}
       />
     </div>
   );

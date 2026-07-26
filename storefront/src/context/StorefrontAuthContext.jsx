@@ -20,7 +20,8 @@ const buildDefaultIntent = (intent = {}) => {
   return {
     action: intent.action || 'home',
     returnTo: intent.returnTo || currentPath || '/',
-    productId: intent.productId || null,
+    productId: intent.productId || intent.listingId || null,
+    listingId: intent.listingId || intent.productId || null,
     productSlug: intent.productSlug || null,
     storeSlug: intent.storeSlug || null,
   };

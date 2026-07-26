@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { QUERY_CACHE } from '../constants';
+import { useStorefrontMode } from '../context/StorefrontModeContext';
 import storeService from '../services/storeService';
 
 const PREFETCH_STALE_TIME = QUERY_CACHE.STALE_TIME_DEFAULT * 2;
@@ -34,11 +35,15 @@ const seedProductModeCaches = (queryClient, response) => {
 /**
  * Warms likely marketplace routes after the first paint so navigation does not
  * show avoidable loading states for data we can safely fetch in advance.
+ * Skipped on Online Store hosts (`/shop/:slug`, custom domain) and templates.
  */
 export const useStorefrontBackgroundPrefetch = () => {
   const queryClient = useQueryClient();
+  const { isSingleStoreMode, isTemplatesMode } = useStorefrontMode();
 
   useEffect(() => {
+    if (isSingleStoreMode || isTemplatesMode) return undefined;
+
     let cancelled = false;
     const cancelIdle = scheduleWhenIdle(() => {
       if (cancelled) return;
@@ -89,5 +94,5 @@ export const useStorefrontBackgroundPrefetch = () => {
       cancelled = true;
       cancelIdle?.();
     };
-  }, [queryClient]);
+  }, [isSingleStoreMode, isTemplatesMode, queryClient]);
 };

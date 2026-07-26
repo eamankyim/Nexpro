@@ -1,6 +1,9 @@
 # Sabito Storefront
 
-Customer-only storefront app for browsing the Sabito Store marketplace, tenant stores, and public products.
+Customer storefront app with two product surfaces:
+
+- **Sabito marketplace** — multi-store discovery (`/`, `/stores`, `/products`, …)
+- **ABS Online Store** — single-merchant shop (custom domains, `/shop/:slug`, templates gallery)
 
 ## Setup
 
@@ -10,24 +13,47 @@ cp .env.example .env.local
 npm run dev
 ```
 
-Default dev server: `http://localhost:3002`.
+Default dev server: `http://localhost:3002` (strict — do not run sabito-app or other apps on this port).
+
+**Online Store template gallery:** `http://localhost:3002/templates`  
+**Template preview:** `http://localhost:3002/templates/classic/preview`  
+**Live merchant shop:** `http://localhost:3002/shop/:storeSlug`
 
 ## Environment
 
 - `VITE_API_URL`: Backend API origin, without `/api` at the end.
 - `VITE_DASHBOARD_URL`: Merchant dashboard origin used for Login/Register/Open Store links.
-- `VITE_STOREFRONT_URL`: Public storefront origin used for deployed link generation. Use `http://localhost:3002` locally.
+- `VITE_ABS_APP_URL`: ABS merchant app (gallery “Use this template” CTA).
+- `VITE_STOREFRONT_URL`: Public storefront origin (Sabito marketplace). Use `http://localhost:3002` locally.
+- `VITE_TEMPLATES_HOST`: Hostname that serves the gallery as home (production: `templates.absghana.com`).
+
+ABS Frontend (merchant app) also uses:
+
+- `VITE_TEMPLATES_GALLERY_URL` — gallery base for iframes (defaults to storefront origin locally)
+- `VITE_ONLINE_STORE_URL` — Online Store / `/shop/:slug` origin
 
 ## Routes
 
+### Sabito marketplace
 - `/`: Marketplace homepage.
-- `/store/:storeSlug`: Shared tenant storefront link, redirects to the storefront view.
-- `/store/:storeSlug/products/:productSlug`: Shared product link, redirects to the product view.
-- `/stores/:storeSlug`: Tenant storefront view.
-- `/stores/:storeSlug/products/:productSlug`: Product detail view.
-- `/cart`, `/checkout`, `/track-order`: Coming-soon placeholders until ordering is implemented.
+- `/stores`, `/products`, `/services`, …: Discovery.
+- `/stores/:storeSlug`: Marketplace store page (includes Sabito breadcrumb chrome).
+- Bare `/shop` redirects to `/products` (marketplace products alias).
 
-Legacy `/store...` and `/marketplace` URLs redirect into the new customer route shape.
+### Online Store (single shop)
+- `/shop/:storeSlug`: Live Online Store path (single-shop chrome, no marketplace discovery).
+- `/templates`: Visual template gallery (no marketplace nav).
+- `/templates/:templateId/preview`: Demo brand + sample products.
+- `/templates/:templateId/preview-tenant`: Personalized ABS iframe preview.
+- Custom domain host: `/` maps to that merchant’s store only.
+
+Legacy `/template/:slug` redirects to `/shop/:slug`.  
+Legacy `/store/:slug` redirects into `/stores/:slug` (marketplace browsing).
+
+## Architecture notes
+
+Mode is resolved in `StorefrontModeContext` (`marketplace` | `online-store` | `templates`).  
+Single-shop route modules live under `src/online-store/`. Template shells live under `src/templates/`.
 
 ## Build And Deploy
 

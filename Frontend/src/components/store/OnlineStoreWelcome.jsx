@@ -19,6 +19,9 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { STUDIO_LIKE_TYPES } from '../../constants';
 import { useAuth } from '../../context/AuthContext';
+import { buildOnlineStoreDefaultsFromTenant } from '../../utils/onlineStoreDefaults';
+import { resolveImageUrl } from '../../utils/fileUtils';
+import { normalizePrimaryColor } from '../../utils/brandingColors';
 
 const SHARED_BENEFITS = [
   {
@@ -167,7 +170,8 @@ const STUDIO_MOCK_ITEMS = [
 
 const WELCOME_COPY = {
   product: {
-    subtitle: 'Set up your store in a few simple steps and start selling to customers online.',
+    subtitle:
+      'Your branding, your products, your domain — pick a layout, then finish setup and start selling online.',
     benefits: PRODUCT_BENEFITS,
     features: PRODUCT_FEATURES,
     mockItems: PRODUCT_MOCK_ITEMS,
@@ -178,7 +182,8 @@ const WELCOME_COPY = {
     mockBadges: ['WhatsApp', 'Payments', 'Delivery'],
   },
   studio: {
-    subtitle: 'Set up your storefront in a few simple steps and start selling your services online.',
+    subtitle:
+      'Your branding, your services, your domain — pick a layout, then finish setup and start taking bookings online.',
     benefits: STUDIO_BENEFITS,
     features: STUDIO_FEATURES,
     mockItems: STUDIO_MOCK_ITEMS,
@@ -191,11 +196,25 @@ const WELCOME_COPY = {
 };
 
 /**
- * @param {{ copy: typeof WELCOME_COPY.product }} props
+ * @param {{
+ *   copy: typeof WELCOME_COPY.product,
+ *   storeName?: string,
+ *   logoUrl?: string,
+ *   primaryColor?: string,
+ * }} props
  */
-const WelcomeStoreMockup = ({ copy }) => (
+const WelcomeStoreMockup = ({ copy, storeName, logoUrl, primaryColor }) => {
+  const brandName = storeName || copy.mockStoreName;
+  const accent = normalizePrimaryColor(primaryColor || '#166534');
+  const logoSrc = resolveImageUrl(logoUrl);
+
+  return (
   <div className="relative mx-auto flex h-full min-h-[340px] w-full max-w-[560px] items-center justify-center lg:max-w-none">
-    <div className="absolute inset-4 rounded-[32px] border border-emerald-100 bg-emerald-50/70" aria-hidden />
+    <div
+      className="absolute inset-4 rounded-[32px] border bg-emerald-50/70"
+      style={{ borderColor: `${accent}33`, backgroundColor: `${accent}12` }}
+      aria-hidden
+    />
 
     <div className="relative w-full rounded-[28px] border border-slate-200 bg-white p-3 sm:p-4">
       <div className="rounded-[22px] border border-slate-200 bg-slate-50">
@@ -211,18 +230,31 @@ const WelcomeStoreMockup = ({ copy }) => (
         </div>
 
         <div className="space-y-4 p-4 sm:p-5">
-          <div className="rounded-[20px] border border-emerald-200 bg-emerald-600 p-4 text-white">
+          <div
+            className="rounded-[20px] border p-4 text-white"
+            style={{ backgroundColor: accent, borderColor: `${accent}cc` }}
+          >
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                <span className="flex h-10 w-10 items-center justify-center rounded-full border border-emerald-300 bg-emerald-500">
-                  <Store className="h-5 w-5" aria-hidden />
+                <span
+                  className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border"
+                  style={{ borderColor: `${accent}99`, backgroundColor: `${accent}dd` }}
+                >
+                  {logoSrc ? (
+                    <img src={logoSrc} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <Store className="h-5 w-5" aria-hidden />
+                  )}
                 </span>
                 <div>
-                  <p className="text-sm font-bold">{copy.mockStoreName}</p>
-                  <p className="text-xs text-emerald-50">{copy.mockStoreTagline}</p>
+                  <p className="text-sm font-bold">{brandName}</p>
+                  <p className="text-xs text-white/90">{copy.mockStoreTagline}</p>
                 </div>
               </div>
-              <span className="rounded-full border border-emerald-300 bg-emerald-500 px-3 py-1 text-xs font-semibold">
+              <span
+                className="rounded-full border px-3 py-1 text-xs font-semibold"
+                style={{ borderColor: `${accent}99`, backgroundColor: `${accent}dd` }}
+              >
                 Open
               </span>
             </div>
@@ -234,7 +266,7 @@ const WelcomeStoreMockup = ({ copy }) => (
                 <div className={cn('mb-3 h-16 rounded-xl border border-white/70', item.colorClass)} />
                 <p className="truncate text-xs font-semibold text-slate-900">{item.name}</p>
                 <div className="mt-2 flex items-center justify-between gap-2">
-                  <span className="text-xs font-bold text-emerald-700">{item.price}</span>
+                  <span className="text-xs font-bold" style={{ color: accent }}>{item.price}</span>
                   <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600">
                     {item.actionLabel}
                   </span>
@@ -271,7 +303,7 @@ const WelcomeStoreMockup = ({ copy }) => (
     <div className="absolute -bottom-2 right-3 hidden w-32 rounded-[24px] border border-slate-200 bg-white p-2 sm:block lg:right-0">
       <div className="rounded-[18px] border border-slate-200 bg-slate-50 p-2">
         <div className="mx-auto mb-2 h-1 w-8 rounded-full bg-slate-300" />
-        <div className="rounded-2xl bg-emerald-600 p-2 text-white">
+        <div className="rounded-2xl p-2 text-white" style={{ backgroundColor: accent }}>
           <ShoppingBag className="mb-6 h-4 w-4" aria-hidden />
           <p className="text-[10px] font-bold leading-tight">{copy.mockNotificationLabel}</p>
         </div>
@@ -282,16 +314,15 @@ const WelcomeStoreMockup = ({ copy }) => (
       </div>
     </div>
   </div>
-);
+  );
+};
 
 /**
- * Sabito Store welcome intro shown before the setup wizard. This is the Sabito
- * marketplace-backed storefront (trade assurance, marketplace discovery) — distinct
- * from the "Online Store" custom-domain product (see pages/OnlineStore.jsx).
+ * Online Store welcome intro shown before the setup wizard.
  * @param {{ onStartSetup: () => void, onSeeHowItWorks?: () => void, className?: string }} props
  */
 const OnlineStoreWelcome = ({ onStartSetup, onSeeHowItWorks, className }) => {
-  const { activeTenant } = useAuth();
+  const { activeTenant, user } = useAuth();
 
   const isStudioLike = useMemo(
     () => STUDIO_LIKE_TYPES.includes(activeTenant?.businessType || ''),
@@ -301,6 +332,11 @@ const OnlineStoreWelcome = ({ onStartSetup, onSeeHowItWorks, className }) => {
   const copy = useMemo(
     () => (isStudioLike ? WELCOME_COPY.studio : WELCOME_COPY.product),
     [isStudioLike],
+  );
+
+  const branding = useMemo(
+    () => buildOnlineStoreDefaultsFromTenant(activeTenant, user),
+    [activeTenant, user],
   );
 
   const handleSeeHowItWorks = () => {
@@ -319,11 +355,11 @@ const OnlineStoreWelcome = ({ onStartSetup, onSeeHowItWorks, className }) => {
             <div className="flex flex-col">
               <span className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">
                 <ShoppingBag className="h-3.5 w-3.5" />
-                Sabito Store
+                Online Store
               </span>
 
             <h1 className="mt-5 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl lg:text-[2.65rem] lg:leading-tight">
-              Welcome to Sabito Store! 🎉
+              Welcome to your Online Store
             </h1>
             <p className="mt-3 max-w-xl text-base leading-relaxed text-slate-600 sm:text-lg">
               {copy.subtitle}
@@ -361,15 +397,6 @@ const OnlineStoreWelcome = ({ onStartSetup, onSeeHowItWorks, className }) => {
             <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
               <Button
                 type="button"
-                onClick={onStartSetup}
-                className="h-12 rounded-xl bg-emerald-600 px-6 text-base font-semibold text-white hover:bg-emerald-700"
-              >
-                <Sparkles className="mr-2 h-4 w-4" />
-                Start setup
-                <ChevronRight className="ml-2 h-4 w-4" />
-              </Button>
-              <Button
-                type="button"
                 variant="outline"
                 onClick={handleSeeHowItWorks}
                 className="h-12 rounded-xl border-slate-300 bg-white px-6 text-base font-semibold text-slate-800 hover:bg-slate-50"
@@ -377,11 +404,25 @@ const OnlineStoreWelcome = ({ onStartSetup, onSeeHowItWorks, className }) => {
                 <PlayCircle className="mr-2 h-4 w-4" />
                 See how it works
               </Button>
+              <Button
+                type="button"
+                onClick={onStartSetup}
+                className="h-12 rounded-xl bg-[#166534] px-6 text-base font-semibold text-white hover:bg-[#14532d]"
+              >
+                <Sparkles className="mr-2 h-4 w-4" />
+                Get started
+                <ChevronRight className="ml-2 h-4 w-4" />
+              </Button>
             </div>
           </div>
 
           <div id="store-welcome-preview" className="relative min-h-[320px] lg:min-h-[420px]">
-            <WelcomeStoreMockup copy={copy} />
+            <WelcomeStoreMockup
+              copy={copy}
+              storeName={branding.displayName}
+              logoUrl={branding.logoUrl}
+              primaryColor={branding.primaryColor}
+            />
           </div>
         </div>
 

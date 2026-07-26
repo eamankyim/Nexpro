@@ -1,5 +1,6 @@
 import api from './api';
 import { buildScopedQueryString, withActiveShopScope } from '../utils/shopScope';
+import { resolveStoreCurrencyCode } from '../utils/storeCurrency';
 
 const buildQuery = (params = {}) => {
   const searchParams = new URLSearchParams();
@@ -10,10 +11,37 @@ const buildQuery = (params = {}) => {
   return searchParams.toString();
 };
 
+/**
+ * Ensure upsert payloads never send template ids / display names as currency.
+ * `templateId` is left untouched for the backend template column.
+ * @param {Record<string, unknown>} payload
+ * @returns {Record<string, unknown>}
+ */
+const normalizeStoreSettingsPayload = (payload = {}) => {
+  const body = { ...payload };
+  if (Object.prototype.hasOwnProperty.call(body, 'currency')) {
+    body.currency = resolveStoreCurrencyCode(body.currency);
+  }
+  return body;
+};
+
 const storeService = {
   getSettings: async () => api.get('/store/settings'),
 
-  updateSettings: async (payload) => api.put('/store/settings', payload),
+  updateSettings: async (payload) => api.put('/store/settings', normalizeStoreSettingsPayload(payload)),
+
+  getHeroLibrary: async (params = {}) => {
+    const query = buildQuery(params);
+    return api.get(query ? `/store/heroes/library?${query}` : '/store/heroes/library');
+  },
+
+  uploadHeroImages: async (files) => {
+    const formData = new FormData();
+    (files || []).forEach((file) => formData.append('files', file));
+    return api.post('/store/heroes/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
 
   getSetupStatus: async () => api.get('/store/setup-status'),
 

@@ -1046,11 +1046,15 @@ exports.updateExpense = async (req, res, next) => {
     invalidateExpenseStatsCache(req.tenantId);
 
     if (updatePayload.approvalStatus === 'approved' && previousStatus !== 'approved') {
-      try {
-        await createExpenseJournal(updatedExpense, req.user?.id);
-      } catch (journalError) {
-        console.error('Failed to create accounting entry for approved expense', journalError?.message);
-      }
+      const expenseForJournal = updatedExpense;
+      const actorUserId = req.user?.id;
+      setImmediate(async () => {
+        try {
+          await createExpenseJournal(expenseForJournal, actorUserId);
+        } catch (journalError) {
+          console.error('Failed to create accounting entry for approved expense', journalError?.message);
+        }
+      });
     }
 
     res.status(200).json({
@@ -1427,12 +1431,16 @@ exports.approveExpense = async (req, res, next) => {
       console.error('Failed to log expense approval activity:', error);
     }
 
-    // Post to accounting (Dr Expense Cr Cash/Bank)
-    try {
-      await createExpenseJournal(updatedExpense, getActorUserId(req));
-    } catch (journalError) {
-      console.error('Failed to create accounting entry for approved expense', journalError?.message);
-    }
+    // Post to accounting (Dr Expense Cr Cash/Bank) after response
+    const expenseForJournal = updatedExpense;
+    const actorUserId = getActorUserId(req);
+    setImmediate(async () => {
+      try {
+        await createExpenseJournal(expenseForJournal, actorUserId);
+      } catch (journalError) {
+        console.error('Failed to create accounting entry for approved expense', journalError?.message);
+      }
+    });
     invalidateAfterMutation(req.tenantId);
     invalidateExpenseStatsCache(req.tenantId);
 

@@ -14,24 +14,37 @@ const ABS_PRODUCTION_HOSTS = new Set([
   'www.absghana.com',
 ]);
 
+/** Match Frontend vite/api LOCAL_API_URL — avoid :5000 (AirPlay) and :5001 (often non-ABS). */
+const LOCAL_WS_URL = 'http://localhost:5002';
+
+/**
+ * Resolve Socket.IO base URL at connect time (not module load) so HMR/env changes apply.
+ * @returns {string}
+ */
 const getWsUrl = () => {
   const explicit = import.meta.env.VITE_WS_URL?.trim();
-  if (explicit && explicit.startsWith('http')) return explicit;
-  const base = API_BASE_URL?.trim();
-  if (base && base.startsWith('http')) {
-    try {
-      const u = new URL(base);
-      if (u.hostname && u.hostname !== 'http' && u.hostname !== 'https') return base;
-    } catch (_) {}
-  }
+  if (explicit && explicit.startsWith('http')) return explicit.replace(/\/$/, '');
+
   if (typeof window !== 'undefined') {
     const { hostname } = window.location;
     if (ABS_PRODUCTION_HOSTS.has(hostname)) return ABS_WS_URL;
   }
-  return 'http://localhost:5001';
-};
 
-const WS_URL = getWsUrl();
+  // Local Vite typically proxies /api with empty API_BASE_URL — do not fall back to :5001.
+  if (import.meta.env.DEV) return LOCAL_WS_URL;
+
+  const base = API_BASE_URL?.trim();
+  if (base && base.startsWith('http')) {
+    try {
+      const u = new URL(base);
+      if (u.hostname && u.hostname !== 'http' && u.hostname !== 'https') {
+        return base.replace(/\/$/, '');
+      }
+    } catch (_) {}
+  }
+
+  return LOCAL_WS_URL;
+};
 
 /** When 'false' or '0', skip Socket.IO. When 'true' or '1', force on. On ABS production hosts, off unless explicitly enabled (API on Vercel has no socket.io). */
 const isWsEnabled = () => {
@@ -114,7 +127,12 @@ export const useWebSocket = (options = {}) => {
       channelList = [];
     }
 
-    const socket = io(WS_URL, {
+    const wsUrl = getWsUrl();
+    if (import.meta.env.DEV) {
+      console.log('[WebSocket] Connecting to', wsUrl);
+    }
+
+    const socket = io(wsUrl, {
       auth: { token, tenantId: activeTenantId },
       query: { token, tenantId: activeTenantId },
       transports: ['websocket', 'polling'],

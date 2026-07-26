@@ -97,6 +97,27 @@ export default defineConfig(({ mode }) => {
               },
             }
           : undefined,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return undefined;
+            if (
+              id.includes(`${path.sep}node_modules${path.sep}react-dom${path.sep}`)
+              || id.includes(`${path.sep}node_modules${path.sep}react${path.sep}`)
+              || id.includes(`${path.sep}node_modules${path.sep}scheduler${path.sep}`)
+            ) {
+              return 'vendor-react';
+            }
+            if (id.includes(`${path.sep}node_modules${path.sep}@tanstack${path.sep}react-query`)) {
+              return 'vendor-query';
+            }
+            if (id.includes(`${path.sep}node_modules${path.sep}lucide-react${path.sep}`)) {
+              return 'vendor-lucide';
+            }
+            return undefined;
+          },
+        },
+      },
     },
   };
 });

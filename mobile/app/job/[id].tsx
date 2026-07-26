@@ -263,7 +263,10 @@ export default function JobDetailsScreen() {
 
   const handleDeleteJob = () => {
     if (!job) return;
-    Alert.alert('Delete job', 'Delete this job permanently? Linked invoices or payments may prevent deletion.', [
+    Alert.alert(
+      'Delete job',
+      'Delete this job permanently? Linked invoices, payments, expenses, and material movements will also be removed.',
+      [
       { text: 'Keep job', style: 'cancel' },
       {
         text: 'Delete',

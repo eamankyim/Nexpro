@@ -1079,7 +1079,11 @@ const Quotes = () => {
       }
       if (payload.autoSendToCustomer) {
         try {
-          const channels = await settingsService.getNotificationChannels();
+          // Prefer already-fetched channels (loaded when modal opens) so create isn't delayed.
+          const channels =
+            notificationChannels != null
+              ? notificationChannels
+              : await settingsService.getNotificationChannels();
           const data = channels?.data ?? channels;
           const hasChannel = !!(data?.email || data?.whatsapp || data?.sms);
           if (!hasChannel) {
@@ -1108,25 +1112,22 @@ const Quotes = () => {
       if (!guardOnline(showError)) return;
       if (editingQuote) {
         await quoteService.update(editingQuote.id, payload);
-        await persistLineItemDescriptions(payload.items);
-        await persistQuoteCustomCategories(items);
+        void Promise.all([
+          persistLineItemDescriptions(payload.items),
+          persistQuoteCustomCategories(items),
+        ]);
         showSuccess('Quote updated successfully');
       } else {
         const createRes = await quoteService.create(payload);
-        await persistLineItemDescriptions(payload.items);
-        await persistQuoteCustomCategories(items);
-        showSuccess('Quote created successfully');
-        const delivery = createRes?.data?.delivery;
-        if (delivery) {
-          if (delivery.emailSent === false && delivery.emailError) {
-            showError(delivery.emailError, 'Quote created but email could not be sent');
-          }
-          if (delivery.whatsappSent === false && delivery.whatsappError) {
-            showError(delivery.whatsappError, 'Quote created but WhatsApp could not be sent');
-          }
-          if (delivery.smsSent === false && delivery.smsError) {
-            showError(delivery.smsError, 'Quote created but SMS could not be sent');
-          }
+        void Promise.all([
+          persistLineItemDescriptions(payload.items),
+          persistQuoteCustomCategories(items),
+        ]);
+        const delivery = createRes?.data?.delivery ?? createRes?.delivery;
+        if (delivery?.queued) {
+          showSuccess('Quote created successfully. Sending notifications…');
+        } else {
+          showSuccess('Quote created successfully');
         }
       }
       setQuoteModalVisible(false);

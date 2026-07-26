@@ -67,6 +67,7 @@ const SettingsAppearancePage = lazy(() => import('./pages/settings/SettingsAppea
 const SettingsSmsPage = lazy(() => import('./pages/settings/SettingsSmsPage'));
 const SettingsInvoicesReceiptsPage = lazy(() => import('./pages/settings/SettingsInvoicesReceiptsPage'));
 const SettingsPaymentsPage = lazy(() => import('./pages/settings/SettingsPaymentsPage'));
+const SettingsSabitoPartnersPage = lazy(() => import('./pages/settings/SettingsSabitoPartnersPage'));
 const SettingsWhatsAppPage = lazy(() => import('./pages/settings/SettingsWhatsAppPage'));
 const SettingsEmailPage = lazy(() => import('./pages/settings/SettingsEmailPage'));
 const SettingsDeliveryRulesPage = lazy(() => import('./pages/settings/SettingsDeliveryRulesPage'));
@@ -100,6 +101,7 @@ const AdminReports = lazy(() => import('./pages/admin/AdminReports'));
 const AdminHealth = lazy(() => import('./pages/admin/AdminHealth'));
 const AdminAutomationsMessaging = lazy(() => import('./pages/admin/AdminAutomationsMessaging'));
 const AdminSettings = lazy(() => import('./pages/admin/AdminSettings'));
+const AdminOnlineStoreHeroes = lazy(() => import('./pages/admin/AdminOnlineStoreHeroes'));
 const AdminUsers = lazy(() => import('./pages/admin/AdminUsers'));
 const AdminCustomers = lazy(() => import('./pages/admin/AdminCustomers'));
 const AdminSupportTickets = lazy(() => import('./pages/admin/AdminSupportTickets'));
@@ -372,6 +374,7 @@ function AppContent() {
               <Route path="sms" element={<RequireWorkspaceManager><SettingsSmsPage /></RequireWorkspaceManager>} />
               <Route path="invoices-receipts" element={<RequireWorkspaceManager><SettingsInvoicesReceiptsPage /></RequireWorkspaceManager>} />
               <Route path="payments" element={<RequireWorkspaceManager><SettingsPaymentsPage /></RequireWorkspaceManager>} />
+              <Route path="sabito-partners" element={<RequireWorkspaceManager><SettingsSabitoPartnersPage /></RequireWorkspaceManager>} />
               <Route path="whatsapp" element={<RequireWorkspaceManager><SettingsWhatsAppPage /></RequireWorkspaceManager>} />
               <Route path="email" element={<RequireWorkspaceManager><SettingsEmailPage /></RequireWorkspaceManager>} />
               <Route path="delivery-rules" element={<RequireWorkspaceManager><SettingsDeliveryRulesPage /></RequireWorkspaceManager>} />
@@ -415,6 +418,7 @@ function AppContent() {
             <Route path="sabito/disputes" element={<SabitoAdmin section="disputes" />} />
             <Route path="sabito/customers" element={<SabitoAdmin section="customers" />} />
             <Route path="sabito/settings" element={<SabitoAdmin section="settings" />} />
+            <Route path="online-store/heroes" element={<AdminOnlineStoreHeroes />} />
             <Route path="workspace" element={<AdminWorkspaceRedirect />} />
             <Route path="tasks" element={<HideForBootstrapSuperAdmin><Tasks /></HideForBootstrapSuperAdmin>} />
             <Route path="settings" element={<AdminSettings />} />

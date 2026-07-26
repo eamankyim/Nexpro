@@ -1,7 +1,10 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { useStorefrontAuth } from './StorefrontAuthContext';
+import {
+  STOREFRONT_PURCHASE_INTENT_KEY,
+  useStorefrontAuth,
+} from './StorefrontAuthContext';
 import storeService from '../services/storeService';
 import { showError, showSuccess } from '../utils/toast';
 import {
@@ -11,6 +14,34 @@ import {
 } from '../utils/queryInvalidation';
 
 const WishlistContext = createContext(null);
+
+const readWishlistIntent = () => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(STOREFRONT_PURCHASE_INTENT_KEY);
+    if (!raw) return null;
+    const intent = JSON.parse(raw);
+    if (intent?.action !== 'wishlist') return null;
+    const listingId = intent.productId || intent.listingId || null;
+    if (!listingId) return null;
+    return {
+      listingId,
+      slug: intent.productSlug || null,
+      storeSlug: intent.storeSlug || null,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const clearPurchaseIntent = () => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.removeItem(STOREFRONT_PURCHASE_INTENT_KEY);
+  } catch {
+    // Intent cleanup is best-effort.
+  }
+};
 
 const getCurrentReturnTo = () => {
   if (typeof window === 'undefined') return '/products';
@@ -66,6 +97,8 @@ export const WishlistProvider = ({ children }) => {
   const [items, setItems] = useState([]);
   const [listingIds, setListingIds] = useState([]);
   const [pendingListingIds, setPendingListingIds] = useState([]);
+  const resumeIntentRef = useRef(false);
+  const toggleWishlistRef = useRef(async () => ({ ok: false, saved: false }));
 
   const applyWishlist = useCallback((payload) => {
     const data = unwrapWishlist(payload);
@@ -108,6 +141,7 @@ export const WishlistProvider = ({ children }) => {
     if (!isAuthenticated) {
       setItems([]);
       setListingIds([]);
+      resumeIntentRef.current = false;
       return;
     }
     if (wishlistQuery.data) {
@@ -130,9 +164,10 @@ export const WishlistProvider = ({ children }) => {
       mode: 'signup',
       intent: {
         action: 'wishlist',
-        productId: product?.id || product?.listingId || null,
+        productId: product?.listingId || product?.id || null,
+        listingId: product?.listingId || product?.id || null,
         productSlug: product?.slug || null,
-        storeSlug: product?.store?.slug || null,
+        storeSlug: product?.store?.slug || product?.storeSlug || null,
         returnTo: getCurrentReturnTo(),
       },
     });
@@ -151,6 +186,12 @@ export const WishlistProvider = ({ children }) => {
     if (!listingId) {
       showError('This product cannot be saved right now.');
       return { ok: false, saved: false };
+    }
+
+    // Avoid bouncing signed-in shoppers to /signup while session is still hydrating
+    // (Online Store redirects the auth modal to a full page).
+    if (isLoading) {
+      return { ok: false, authPending: true, saved: false };
     }
 
     if (!isAuthenticated) {
@@ -189,7 +230,46 @@ export const WishlistProvider = ({ children }) => {
     } finally {
       markPending(listingId, false);
     }
-  }, [applyWishlist, isAuthenticated, isWishlisted, items, listingIds, markPending, queryClient, requireWishlistAuth]);
+  }, [applyWishlist, isAuthenticated, isLoading, isWishlisted, items, listingIds, markPending, queryClient, requireWishlistAuth]);
+
+  useEffect(() => {
+    toggleWishlistRef.current = toggleWishlist;
+  }, [toggleWishlist]);
+
+  // After Online Store full-page auth (/login|/signup), complete the pending heart click.
+  useEffect(() => {
+    if (isLoading || !isAuthenticated || resumeIntentRef.current) return;
+
+    const intent = readWishlistIntent();
+    if (!intent?.listingId) return;
+
+    resumeIntentRef.current = true;
+    clearPurchaseIntent();
+
+    const product = {
+      id: intent.listingId,
+      listingId: intent.listingId,
+      slug: intent.slug,
+      storeSlug: intent.storeSlug,
+      store: intent.storeSlug ? { slug: intent.storeSlug } : undefined,
+    };
+
+    (async () => {
+      try {
+        const response = await storeService.getWishlist();
+        const snapshot = unwrapWishlist(response);
+        const ids = Array.isArray(snapshot.listingIds)
+          ? snapshot.listingIds
+          : (Array.isArray(snapshot.items) ? snapshot.items.map((item) => item.listingId) : []);
+        applyWishlist(snapshot);
+        queryClient.setQueryData(SHOPPER_QUERY_KEYS.wishlist, snapshot);
+        if (ids.includes(intent.listingId)) return;
+        await toggleWishlistRef.current(product);
+      } catch {
+        // Errors are surfaced inside toggleWishlist / toast helpers.
+      }
+    })();
+  }, [applyWishlist, isAuthenticated, isLoading, queryClient]);
 
   const removeWishlistItem = useCallback(async (listingId) => {
     if (!listingId) return { ok: false };

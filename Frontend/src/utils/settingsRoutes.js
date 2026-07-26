@@ -114,6 +114,14 @@ export const SETTINGS_HUB_CARDS = [
     managerOnly: true,
   },
   {
+    slug: 'sabito-partners',
+    title: 'Sabito Partners',
+    subtitle: 'Partner program, marketer applications, commissions, and payouts',
+    group: 'channels',
+    migrated: true,
+    managerOnly: true,
+  },
+  {
     slug: 'sms',
     title: 'SMS',
     subtitle: 'Platform usage, provider, templates, and SMS delivery rules',
@@ -165,6 +173,7 @@ const MIGRATED_TAB_ROUTES = {
   sms: '/settings/sms',
   'invoices-receipts': '/settings/invoices-receipts',
   payments: '/settings/payments',
+  'sabito-partners': '/settings/sabito-partners',
   whatsapp: '/settings/whatsapp',
   email: '/settings/email',
   'delivery-rules': '/settings/delivery-rules',

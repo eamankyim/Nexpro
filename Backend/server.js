@@ -134,7 +134,15 @@ app.use('/uploads', (req, res, next) => {
   res.set('Cross-Origin-Resource-Policy', 'cross-origin');
   next();
 });
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Upload filenames include timestamp + random segment (immutable once written).
+// 7d maxAge keeps CDN/browser caches warm while still allowing eventual refresh
+// if an object is ever replaced at the same path; etag/lastModified remain on.
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
+  maxAge: '7d',
+  etag: true,
+  lastModified: true,
+  immutable: false,
+}));
 
 // Explicit OPTIONS preflight for /api (runs before rate limit). CORS uses preflightContinue,
 // so we must respond to OPTIONS here and always send CORS headers.
@@ -254,6 +262,7 @@ app.use('/api/leads', leadRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/tours', tourRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/partner-program', require('./routes/partnerProgramRoutes'));
 app.use('/api/employees', employeeRoutes);
 app.use('/api/accounting', accountingRoutes);
 app.use('/api/payroll', payrollRoutes);
@@ -380,12 +389,12 @@ app.use((req, res) => {
 const server = http.createServer(app);
 
 if (!IS_VERCEL_SERVERLESS) {
-  const PORT_BASE = config.port;
+  const PORT_BASE = Number(process.env.PORT) || Number(config.port) || 5000;
   const PORT_MAX = PORT_BASE + 10;
 
   const onListen = (port) => {
-    const configuredPort = Number(process.env.PORT) || config.port || 5000;
-    if (port !== configuredPort) {
+    const configuredPort = PORT_BASE;
+    if (Number(port) !== configuredPort) {
       console.warn(
         `[Server] Port ${configuredPort} was in use; listening on ${port} instead. ` +
           'On macOS, AirPlay Receiver often uses :5000 — disable it in System Settings or set PORT=5001 in Backend/.env.'
@@ -476,15 +485,16 @@ if (!IS_VERCEL_SERVERLESS) {
       }
 
       const tryListen = (port) => {
-        if (port > PORT_MAX) {
+        const listenPort = Number(port);
+        if (listenPort > PORT_MAX) {
           console.error(`[Server] No available port in range ${PORT_BASE}-${PORT_MAX}`);
           process.exit(1);
         }
         const onError = (err) => {
           if (err.code === 'EADDRINUSE') {
-            console.warn(`[Server] Port ${port} in use, trying ${port + 1}...`);
+            console.warn(`[Server] Port ${listenPort} in use, trying ${listenPort + 1}...`);
             server.off('listening', onListening);
-            tryListen(port + 1);
+            tryListen(listenPort + 1);
           } else {
             console.error('Server error:', err);
             process.exit(1);
@@ -492,11 +502,11 @@ if (!IS_VERCEL_SERVERLESS) {
         };
         const onListening = () => {
           server.off('error', onError);
-          onListen(port);
+          onListen(listenPort);
         };
         server.once('error', onError);
         server.once('listening', onListening);
-        server.listen(port, '0.0.0.0');
+        server.listen(listenPort, '0.0.0.0');
       };
 
       tryListen(PORT_BASE);

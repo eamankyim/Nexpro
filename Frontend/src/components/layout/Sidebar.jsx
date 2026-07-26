@@ -124,7 +124,7 @@ const MENU_HINTS = {
   '/store/services': 'Services published on your Sabito studio storefront',
   '/store/orders': 'Orders from your Sabito Store',
   '/store/settings': 'Sabito Store setup and contact details',
-  '/online-store': 'Your own storefront on your domain — not Sabito',
+  '/online-store': 'Your own storefront on your domain',
 };
 
 /**

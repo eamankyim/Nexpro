@@ -25,7 +25,17 @@ const storeService = {
     return api.get(query ? `/public/marketplace/stores?${query}` : '/public/marketplace/stores');
   },
 
-  getMarketplaceStoreHome: async (slug) => api.get(`/public/marketplace/stores/${encodeURIComponent(slug || '')}`),
+  getMarketplaceStoreHome: async (slug, params = {}) => {
+    const search = new URLSearchParams();
+    Object.entries(params || {}).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') return;
+      search.append(key, value);
+    });
+    const qs = search.toString();
+    return api.get(
+      `/public/marketplace/stores/${encodeURIComponent(slug || '')}${qs ? `?${qs}` : ''}`
+    );
+  },
 
   getMarketplaceProducts: async (params = {}) => {
     const query = buildPublicQuery(params);

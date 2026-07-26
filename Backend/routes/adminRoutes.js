@@ -328,6 +328,68 @@ router.get('/sabito/customers', requirePlatformAdminPermission('tenants.view'), 
 router.get('/sabito/settings', requirePlatformAdminPermission('settings.view'), getSabitoSettings);
 
 /**
+ * Online Store hero library (platform CMS — not Sabito).
+ */
+const {
+  listAdminHeroCategories,
+  createAdminHeroCategory,
+  updateAdminHeroCategory,
+  deleteAdminHeroCategory,
+  createAdminHeroDesign,
+  updateAdminHeroDesign,
+  deleteAdminHeroDesign,
+  createAdminHeroColorway,
+  updateAdminHeroColorway,
+  deleteAdminHeroColorway,
+  uploadAdminHeroImage,
+} = require('../controllers/onlineStoreHeroController');
+const { imageOnlyMulter } = require('../middleware/upload');
+const heroImageUploader = imageOnlyMulter();
+
+router.get('/online-store/heroes', requirePlatformAdminPermission('settings.view'), listAdminHeroCategories);
+router.post('/online-store/heroes/categories', requirePlatformAdminPermission('settings.view'), createAdminHeroCategory);
+router.patch('/online-store/heroes/categories/:id', requirePlatformAdminPermission('settings.view'), updateAdminHeroCategory);
+router.delete('/online-store/heroes/categories/:id', requirePlatformAdminPermission('settings.view'), deleteAdminHeroCategory);
+router.post(
+  '/online-store/heroes/designs',
+  requirePlatformAdminPermission('settings.view'),
+  heroImageUploader.single('thumbnail'),
+  createAdminHeroDesign
+);
+router.patch(
+  '/online-store/heroes/designs/:id',
+  requirePlatformAdminPermission('settings.view'),
+  heroImageUploader.single('thumbnail'),
+  updateAdminHeroDesign
+);
+router.delete('/online-store/heroes/designs/:id', requirePlatformAdminPermission('settings.view'), deleteAdminHeroDesign);
+router.post(
+  '/online-store/heroes/designs/:designId/colorways',
+  requirePlatformAdminPermission('settings.view'),
+  heroImageUploader.single('image'),
+  createAdminHeroColorway
+);
+router.post(
+  '/online-store/heroes/colorways',
+  requirePlatformAdminPermission('settings.view'),
+  heroImageUploader.single('image'),
+  createAdminHeroColorway
+);
+router.patch(
+  '/online-store/heroes/colorways/:id',
+  requirePlatformAdminPermission('settings.view'),
+  heroImageUploader.single('image'),
+  updateAdminHeroColorway
+);
+router.delete('/online-store/heroes/colorways/:id', requirePlatformAdminPermission('settings.view'), deleteAdminHeroColorway);
+router.post(
+  '/online-store/heroes/upload',
+  requirePlatformAdminPermission('settings.view'),
+  heroImageUploader.single('file'),
+  uploadAdminHeroImage
+);
+
+/**
  * @swagger
  * /api/admin/billing/summary:
  *   get:

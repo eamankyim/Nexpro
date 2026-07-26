@@ -61,6 +61,33 @@ const OnlineStoreSettings = sequelize.define('OnlineStoreSettings', {
     allowNull: false,
     defaultValue: '#166534',
   },
+  secondaryColor: {
+    type: DataTypes.STRING(24),
+    allowNull: true,
+    defaultValue: null,
+    comment: 'Template secondary brand color; null → template default',
+  },
+  tertiaryColor: {
+    type: DataTypes.STRING(24),
+    allowNull: true,
+    defaultValue: null,
+    comment: 'Template tertiary brand color; null → template default',
+  },
+  templateId: {
+    type: DataTypes.STRING(40),
+    allowNull: false,
+    defaultValue: 'classic',
+    comment: 'Visual storefront layout: classic | minimal | bold | marketplace | catalog',
+  },
+  /**
+   * Ordered hero carousel slides:
+   * [{ type: 'library'|'upload', designId?, colorwayId?, imageUrl?, sortOrder }]
+   */
+  heroSlides: {
+    type: DataTypes.JSONB,
+    allowNull: false,
+    defaultValue: [],
+  },
   contactPhone: {
     type: DataTypes.STRING(40),
     allowNull: true,

@@ -38,6 +38,16 @@ const Job = sequelize.define('Job', {
       key: 'id'
     }
   },
+  partnerMarketerId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: { model: 'marketers', key: 'id' },
+  },
+  partnershipId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: { model: 'partnerships', key: 'id' },
+  },
   title: {
     type: DataTypes.STRING,
     allowNull: false

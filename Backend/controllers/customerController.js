@@ -198,6 +198,22 @@ exports.createCustomer = async (req, res, next) => {
     if (payload.email === '') payload.email = null;
     if (payload.phone === '') payload.phone = null;
     normalizeCustomerBirthdayPayload(payload);
+
+    const referralCode = payload.referralCode || payload.partnerReferralCode;
+    delete payload.referralCode;
+    delete payload.partnerReferralCode;
+
+    if (referralCode) {
+      const { findPartnershipByReferralCode } = require('../services/partnerProgramService');
+      const partnership = await findPartnershipByReferralCode(referralCode, req.tenantId);
+      if (partnership) {
+        payload.partnershipId = partnership.id;
+        payload.partnerMarketerId = partnership.marketerId;
+        if (!payload.howDidYouHear) payload.howDidYouHear = 'Sabito Partner';
+        if (!payload.referralName) payload.referralName = partnership.referralCode;
+      }
+    }
+
     await assertCustomerContactUnique(req, {
       phone: payload.phone,
       email: payload.email,

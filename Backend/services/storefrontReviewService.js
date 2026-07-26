@@ -167,16 +167,29 @@ const attachProductReviewSummaries = async (products = []) => {
   const listingIds = [...new Set(products.map((product) => product?.id || product?.listingId).filter(Boolean))];
   if (!listingIds.length) return products;
 
-  let reviews;
+  let rows;
   try {
-    reviews = await StorefrontReview.findAll({
+    // Aggregates only — avoid loading unbounded full review rows + customer joins.
+    rows = await StorefrontReview.findAll({
+      attributes: [
+        'listingId',
+        [sequelize.fn('COUNT', sequelize.col('StorefrontReview.id')), 'reviewsCount'],
+        [sequelize.fn('AVG', sequelize.col('StorefrontReview.rating')), 'avgRating'],
+        [
+          sequelize.fn(
+            'SUM',
+            sequelize.literal('CASE WHEN "StorefrontReview"."rating" >= 4 THEN 1 ELSE 0 END')
+          ),
+          'positiveCount',
+        ],
+      ],
       where: {
         reviewType: 'product',
         listingId: { [Op.in]: listingIds },
         status: 'published',
       },
-      include: [{ model: StorefrontCustomer, as: 'storefrontCustomer', attributes: ['id', 'name'], required: false }],
-      order: [['createdAt', 'DESC']],
+      group: ['listingId'],
+      raw: true,
     });
   } catch (error) {
     if (isMissingReviewsTableError(error)) {
@@ -184,17 +197,23 @@ const attachProductReviewSummaries = async (products = []) => {
     }
     throw error;
   }
-  const reviewsByListingId = reviews.reduce((map, review) => {
-    const key = review.listingId;
-    const current = map.get(key) || [];
-    current.push(review);
-    map.set(key, current);
+
+  const summaryByListingId = rows.reduce((map, row) => {
+    const reviewsCount = Number(row.reviewsCount || 0);
+    const avgRating = Number(row.avgRating);
+    const positiveCount = Number(row.positiveCount || 0);
+    map.set(row.listingId, {
+      rating: reviewsCount > 0 && Number.isFinite(avgRating) ? Number(avgRating.toFixed(1)) : null,
+      reviewsCount,
+      positiveReviewsPercent: reviewsCount > 0 ? Math.round((positiveCount / reviewsCount) * 100) : null,
+      reviews: [],
+    });
     return map;
   }, new Map());
 
   return products.map((product) => {
     const listingId = product?.listingId || product?.id;
-    const summary = summarizeReviews(reviewsByListingId.get(listingId) || [], { includeList: false });
+    const summary = summaryByListingId.get(listingId) || { ...DEFAULT_SUMMARY };
     return {
       ...product,
       rating: summary.rating,
@@ -826,16 +845,28 @@ const attachServiceReviewSummaries = async (services = []) => {
   const listingIds = [...new Set(services.map((service) => service?.id).filter(Boolean))];
   if (!listingIds.length) return services;
 
-  let reviews;
+  let rows;
   try {
-    reviews = await StorefrontReview.findAll({
+    rows = await StorefrontReview.findAll({
+      attributes: [
+        'serviceListingId',
+        [sequelize.fn('COUNT', sequelize.col('StorefrontReview.id')), 'reviewsCount'],
+        [sequelize.fn('AVG', sequelize.col('StorefrontReview.rating')), 'avgRating'],
+        [
+          sequelize.fn(
+            'SUM',
+            sequelize.literal('CASE WHEN "StorefrontReview"."rating" >= 4 THEN 1 ELSE 0 END')
+          ),
+          'positiveCount',
+        ],
+      ],
       where: {
         reviewType: 'service',
         serviceListingId: { [Op.in]: listingIds },
         status: 'published',
       },
-      include: [{ model: StorefrontCustomer, as: 'storefrontCustomer', attributes: ['id', 'name'], required: false }],
-      order: [['createdAt', 'DESC']],
+      group: ['serviceListingId'],
+      raw: true,
     });
   } catch (error) {
     if (isMissingReviewsTableError(error)) {
@@ -849,15 +880,21 @@ const attachServiceReviewSummaries = async (services = []) => {
     throw error;
   }
 
-  const reviewsByListingId = reviews.reduce((map, review) => {
-    const current = map.get(review.serviceListingId) || [];
-    current.push(review);
-    map.set(review.serviceListingId, current);
+  const summaryByListingId = rows.reduce((map, row) => {
+    const reviewsCount = Number(row.reviewsCount || 0);
+    const avgRating = Number(row.avgRating);
+    const positiveCount = Number(row.positiveCount || 0);
+    map.set(row.serviceListingId, {
+      rating: reviewsCount > 0 && Number.isFinite(avgRating) ? Number(avgRating.toFixed(1)) : null,
+      reviewsCount,
+      positiveReviewsPercent: reviewsCount > 0 ? Math.round((positiveCount / reviewsCount) * 100) : null,
+      reviews: [],
+    });
     return map;
   }, new Map());
 
   return services.map((service) => {
-    const summary = summarizeReviews(reviewsByListingId.get(service.id) || [], { includeList: false });
+    const summary = summaryByListingId.get(service.id) || { ...DEFAULT_SUMMARY };
     return {
       ...service,
       rating: summary.rating,

@@ -1705,17 +1705,16 @@ useEffect(() => {
       if (editingJobId) {
         // Update existing job
         response = await jobService.update(editingJobId, jobData);
-        await persistLineItemDescriptions();
-        await persistCustomCategories();
         showSuccess('Job updated successfully');
+        // Don't hold the save spinner on dropdown persistence
+        void Promise.all([persistLineItemDescriptions(), persistCustomCategories()]);
       } else {
         // Create new job
         response = await jobService.create(jobData);
-        await persistLineItemDescriptions();
-        await persistCustomCategories();
+        void Promise.all([persistLineItemDescriptions(), persistCustomCategories()]);
         
-        // Check if invoice was auto-generated
-        if (response.invoice) {
+        // Check if invoice was auto-generated (create may still return a queued stub)
+        if (response.invoice?.invoiceNumber) {
           showSuccess(`Job created successfully! Invoice ${response.invoice.invoiceNumber} automatically generated.`);
           // Navigate to invoice after a short delay
           setTimeout(() => {
@@ -3483,7 +3482,7 @@ useEffect(() => {
             <AlertDialogTitle>Delete job?</AlertDialogTitle>
             <AlertDialogDescription>
               {jobToDelete
-                ? `Are you sure you want to delete "${jobToDelete.jobNumber || jobToDelete.title || 'this job'}"? This action cannot be undone.`
+                ? `Delete "${jobToDelete.jobNumber || jobToDelete.title || 'this job'}"? This permanently removes linked invoices, payments, expenses, and material movements, and cannot be undone.`
                 : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>

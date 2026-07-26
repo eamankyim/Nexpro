@@ -43,6 +43,34 @@ const getSabitoDisputes = async (params = {}) => api.get('/admin/sabito/disputes
 const getSabitoCustomers = async (params = {}) => api.get('/admin/sabito/customers', { params });
 const getSabitoSettings = async () => api.get('/admin/sabito/settings');
 
+const getOnlineStoreHeroLibrary = async () => api.get('/admin/online-store/heroes');
+const createOnlineStoreHeroCategory = async (payload) =>
+  api.post('/admin/online-store/heroes/categories', payload);
+const updateOnlineStoreHeroCategory = async (id, payload) =>
+  api.patch(`/admin/online-store/heroes/categories/${id}`, payload);
+const deleteOnlineStoreHeroCategory = async (id) =>
+  api.delete(`/admin/online-store/heroes/categories/${id}`);
+const createOnlineStoreHeroDesign = async (formData) =>
+  api.post('/admin/online-store/heroes/designs', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+const updateOnlineStoreHeroDesign = async (id, formData) =>
+  api.patch(`/admin/online-store/heroes/designs/${id}`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+const deleteOnlineStoreHeroDesign = async (id) =>
+  api.delete(`/admin/online-store/heroes/designs/${id}`);
+const createOnlineStoreHeroColorway = async (formData) =>
+  api.post('/admin/online-store/heroes/colorways', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+const updateOnlineStoreHeroColorway = async (id, formData) =>
+  api.patch(`/admin/online-store/heroes/colorways/${id}`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+const deleteOnlineStoreHeroColorway = async (id) =>
+  api.delete(`/admin/online-store/heroes/colorways/${id}`);
+
 const getActiveSupportAccess = async () => api.get('/admin/support-access/active');
 const startSupportAccess = async (tenantId, payload) =>
   api.post(`/admin/tenants/${tenantId}/support-access`, payload);
@@ -263,6 +291,16 @@ export default {
   getSabitoDisputes,
   getSabitoCustomers,
   getSabitoSettings,
+  getOnlineStoreHeroLibrary,
+  createOnlineStoreHeroCategory,
+  updateOnlineStoreHeroCategory,
+  deleteOnlineStoreHeroCategory,
+  createOnlineStoreHeroDesign,
+  updateOnlineStoreHeroDesign,
+  deleteOnlineStoreHeroDesign,
+  createOnlineStoreHeroColorway,
+  updateOnlineStoreHeroColorway,
+  deleteOnlineStoreHeroColorway,
   getActiveSupportAccess,
   startSupportAccess,
   endSupportAccess,

@@ -33,7 +33,9 @@ const {
   getMarketplaceCategories,
   getPublicStore,
   getPublicStoreProducts,
-  resolveStoreByDomain
+  resolveStoreByDomain,
+  listPublicStoreTemplates,
+  getPublicStoreTemplate,
 } = require('../controllers/storeController');
 const {
   getMarketplaceStudios,
@@ -111,7 +113,12 @@ const {
 } = require('../middleware/rateLimiter');
 
 const router = express.Router();
-const publicMarketplaceHomeCache = cacheMiddleware(45, generatePublicCacheKey('public-marketplace'));
+const publicMarketplaceHomeCache = cacheMiddleware(45, generatePublicCacheKey('public-marketplace'), {
+  browserMaxAge: 45,
+});
+const publicStoreReadCache = cacheMiddleware(45, generatePublicCacheKey('public-store'), {
+  browserMaxAge: 45,
+});
 const STOREFRONT_AVATAR_MAX_SIZE_MB = Math.max(1, parseInt(process.env.STOREFRONT_AVATAR_MAX_SIZE_MB || '2', 10) || 2);
 const STOREFRONT_AVATAR_ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 const storefrontAvatarUploader = multer({
@@ -264,8 +271,36 @@ router.get('/storefront/notifications/preferences', requireStorefrontCustomer, g
 router.patch('/storefront/notifications/preferences', requireStorefrontCustomer, updateStorefrontNotificationPreferences);
 router.get('/storefront/disputes', requireStorefrontCustomer, listStorefrontCustomerDisputes);
 router.get('/storefront/disputes/:id', requireStorefrontCustomer, getStorefrontCustomerDispute);
-router.get('/store/:slug', getPublicStore);
-router.get('/store/:slug/products', getPublicStoreProducts);
+router.get('/store/:slug', publicStoreReadCache, getPublicStore);
+router.get('/store/:slug/products', publicStoreReadCache, getPublicStoreProducts);
+router.get('/store-templates', listPublicStoreTemplates);
+router.get('/store-templates/:templateId', getPublicStoreTemplate);
+
+// Sabito App Partner Program marketplace + marketer auth
+const {
+  listPublicSabitoPartners,
+  getPublicSabitoPartner,
+  registerMarketer,
+  loginMarketer,
+  getMarketerSession,
+  updateMarketerProfile,
+  applyToPartner,
+  listMyApplications,
+  listMyPartnerships,
+  listMyEarnings,
+} = require('../controllers/partnerProgramController');
+const { requireMarketer } = require('../middleware/marketerAuth');
+
+router.get('/sabito-partners', listPublicSabitoPartners);
+router.get('/sabito-partners/:slug', getPublicSabitoPartner);
+router.post('/sabito-marketer/auth/register', registrationLimiter, registerMarketer);
+router.post('/sabito-marketer/auth/login', authLimiter, loginMarketer);
+router.get('/sabito-marketer/auth/me', requireMarketer, getMarketerSession);
+router.patch('/sabito-marketer/auth/profile', requireMarketer, updateMarketerProfile);
+router.post('/sabito-marketer/applications', requireMarketer, applyToPartner);
+router.get('/sabito-marketer/applications', requireMarketer, listMyApplications);
+router.get('/sabito-marketer/partnerships', requireMarketer, listMyPartnerships);
+router.get('/sabito-marketer/earnings', requireMarketer, listMyEarnings);
 
 // "Online Store" custom domain resolution: storefront app calls this on boot to check
 // whether the current Host is a merchant's connected custom domain (single-store mode)

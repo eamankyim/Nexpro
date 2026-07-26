@@ -1,5 +1,12 @@
 export const APP_NAME = 'Sabito Store';
 
+/** ABS marketing site (Powered by ABS footer link). */
+export const ABS_MARKETING_SITE_URL = 'https://africanbusinesssuite.com';
+
+/** WhatsApp CTA for Online Store footer promo (trial/starter tenants). */
+export const ABS_ONLINE_STORE_PROMO_WHATSAPP_HREF =
+  `https://wa.me/233209735525?text=${encodeURIComponent('I want to setup online store')}`;
+
 export const CURRENCY = {
   CODE: 'GHS',
   SYMBOL: 'GHS',

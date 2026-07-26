@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
   ChevronDown,
   CreditCard,
+  Eye,
   Heart,
   Home,
   Loader2,
@@ -12,10 +13,12 @@ import {
   MailCheck,
   MapPin,
   Menu,
+  MessageCircle,
   Package,
   Phone,
   Search,
   SlidersHorizontal,
+  ShoppingBag,
   ShoppingCart,
   Sparkles,
   Star,
@@ -27,14 +30,24 @@ import {
 } from 'lucide-react';
 
 import { dashboardLink } from '../../config';
-import { APP_NAME } from '../../constants';
+import { ABS_MARKETING_SITE_URL, ABS_ONLINE_STORE_PROMO_WHATSAPP_HREF, APP_NAME } from '../../constants';
 import { useCart } from '../../context/CartContext';
 import { useStorefrontAuth } from '../../context/StorefrontAuthContext';
+import { useStorefrontMode } from '../../context/StorefrontModeContext';
 import { useWishlist } from '../../context/WishlistContext';
+import OnlineStorePageShell from '../../online-store/OnlineStorePageShell';
+import { buildStoreHomePath, buildStoreProductPath, isOnlineStoreShopPrefix } from '../../online-store/storePaths';
 import { buildProductsSearchPath } from '../../utils/marketplaceSearch';
 import { getCustomerAvatarUrl, getCustomerInitials } from '../../utils/avatarUtils';
 import { resolveImageUrl, resolveStoreBannerImageUrl } from '../../utils/fileUtils';
 import { formatAmount, formatInteger } from '../../utils/formatNumber';
+import { resolveVisibleProductCardActions } from '../../utils/productCardActions';
+import {
+  buildStoreWhatsAppHref,
+  resolveStoreWhatsAppPhone,
+  whatsappPriceInquiryMessage,
+  whatsappProductInterestMessage,
+} from '../../utils/whatsapp';
 import { showError, showSuccess } from '../../utils/toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -63,10 +76,22 @@ export const getPublishedTime = (product) => {
   return Number.isNaN(timestamp) ? 0 : timestamp;
 };
 
-export const getProductUrl = (product) => {
-  const storeSlug = product?.store?.slug;
+export const getProductUrl = (product, { pathname = '', prefix } = {}) => {
+  const storeSlug = product?.store?.slug || product?.storeSlug;
   const productSlug = product?.slug || product?.id;
-  return storeSlug && productSlug ? `/stores/${encodeURIComponent(storeSlug)}/products/${encodeURIComponent(productSlug)}` : '/products';
+  if (!storeSlug || !productSlug) return '/products';
+  const useShopPrefix = (
+    prefix === 'shop'
+    || prefix === 'template'
+    || isOnlineStoreShopPrefix(pathname)
+  );
+  if (useShopPrefix) {
+    return buildStoreProductPath(storeSlug, productSlug, {
+      pathname,
+      ...(prefix ? { prefix } : {}),
+    });
+  }
+  return `/stores/${encodeURIComponent(storeSlug)}/products/${encodeURIComponent(productSlug)}`;
 };
 
 export const getServiceUrl = (service) => {
@@ -77,11 +102,11 @@ export const getServiceUrl = (service) => {
     : '/services';
 };
 
-export const getStoreServiceUrl = (storeSlug, service) => {
+export const getStoreServiceUrl = (storeSlug, service, { pathname = '' } = {}) => {
   const serviceSlug = service?.slug || service?.id;
-  return storeSlug && serviceSlug
-    ? `/stores/${encodeURIComponent(storeSlug)}/services/${encodeURIComponent(serviceSlug)}`
-    : getServiceUrl(service);
+  if (!storeSlug || !serviceSlug) return getServiceUrl(service);
+  const prefix = isOnlineStoreShopPrefix(pathname) ? 'shop' : 'stores';
+  return `/${prefix}/${encodeURIComponent(storeSlug)}/services/${encodeURIComponent(serviceSlug)}`;
 };
 
 const formatServicePrice = (service) => {
@@ -388,10 +413,18 @@ export const StoreLogo = ({ store: storeItem }) => {
   );
 };
 
-export const ProductImage = ({ product }) => {
+export const ProductImage = ({ product, loading = 'lazy' }) => {
   const imageUrl = resolveImageUrl(product?.images?.[0]);
   if (imageUrl) {
-    return <img src={imageUrl} alt={product?.title || 'Product'} className="h-full w-full object-contain p-2 transition-transform duration-500 group-hover:scale-105" />;
+    return (
+      <img
+        src={imageUrl}
+        alt={product?.title || 'Product'}
+        loading={loading}
+        decoding="async"
+        className="h-full w-full object-contain p-2 transition-transform duration-500 group-hover:scale-105"
+      />
+    );
   }
   return (
     <div className="flex h-full flex-col items-center justify-center bg-gradient-to-br from-slate-50 via-green-50 to-amber-50 text-slate-500">
@@ -603,7 +636,7 @@ export const StorefrontHeader = ({
               >
                 <Link to="/stores" className="inline-flex items-center gap-2">
                   <Store className="h-4 w-4" />
-                  Back to Stores
+                  Back to stores
                 </Link>
               </Button>
             ) : null}
@@ -799,15 +832,57 @@ export const StorefrontFooter = () => {
   );
 };
 
-export const StoreScopedFooter = ({ store, isServiceStore = false, contactHref = '' }) => {
+export const StoreScopedFooter = ({
+  store,
+  isServiceStore = false,
+  contactHref = '',
+  singleStoreMode = false,
+  storeBasePath: storeBasePathProp,
+  subtitle,
+  /** Optional brand primary override (falls back to store.primaryColor / --store-accent). */
+  accentColor,
+}) => {
   const storeSlug = store?.slug || '';
-  const storeBasePath = storeSlug ? `/stores/${encodeURIComponent(storeSlug)}` : '/stores';
+  const storeBasePath = storeBasePathProp
+    || (storeSlug ? `/stores/${encodeURIComponent(storeSlug)}` : '/stores');
   const catalogPath = isServiceStore ? `${storeBasePath}/services` : `${storeBasePath}/products`;
   const listingCount = isServiceStore ? store?.stats?.serviceCount : store?.stats?.productCount;
   const year = new Date().getFullYear();
+  const brandSubtitle = subtitle !== undefined
+    ? subtitle
+    : (singleStoreMode ? '' : 'Official Store');
+  const showAbsPromo = Boolean(singleStoreMode && store?.showAbsPromo);
+  const storeName = store?.displayName || 'Store';
+  /** Owned / single-shop only — marketplace Sabito store pages keep platform green. */
+  const useBrandTheme = Boolean(singleStoreMode);
+  const brandPrimary = String(accentColor || store?.primaryColor || '').trim();
+  const brandStyle = useBrandTheme
+    ? {
+      ...(brandPrimary
+        ? {
+          '--store-accent': brandPrimary,
+          '--store-accent-soft': `${brandPrimary}22`,
+          '--store-accent-hover': `color-mix(in srgb, ${brandPrimary} 85%, black)`,
+        }
+        : {}),
+      backgroundColor: 'color-mix(in srgb, var(--store-accent, #166534) 42%, #0b1220 58%)',
+      borderColor: 'color-mix(in srgb, var(--store-accent, #166534) 55%, #0b1220 45%)',
+    }
+    : undefined;
+  const mutedText = useBrandTheme ? 'text-white/70' : 'text-green-50/70';
+  const mutedTextSoft = useBrandTheme ? 'text-white/60' : 'text-green-50/60';
+  const mutedTextFaint = useBrandTheme ? 'text-white/75' : 'text-green-50/75';
+  const subtitleTone = useBrandTheme ? 'text-white/70' : 'text-green-100/70';
+  const chipClass = `rounded-full border border-white/15 px-3 py-1 ${mutedTextFaint}`;
+  const linkColClass = `mt-4 grid gap-2 text-sm ${mutedText}`;
 
   return (
-    <footer className="mt-6 w-full border-t border-green-900 bg-green-950 text-white">
+    <footer
+      className={useBrandTheme
+        ? 'mt-6 w-full border-t text-white'
+        : 'mt-6 w-full border-t border-green-900 bg-green-950 text-white'}
+      style={brandStyle}
+    >
       <div className="mx-auto grid w-full max-w-[1440px] gap-8 px-4 py-12 md:grid-cols-2 lg:grid-cols-[1.35fr_repeat(4,1fr)]">
         <div>
           <Link to={storeBasePath} className="flex min-w-0 items-center gap-3">
@@ -815,16 +890,22 @@ export const StoreScopedFooter = ({ store, isServiceStore = false, contactHref =
               <StoreLogo store={store} />
             </span>
             <span className="min-w-0">
-              <span className="block truncate text-xl font-black">{store?.displayName || 'Store'}</span>
-              <span className="block truncate text-xs font-semibold uppercase tracking-[0.16em] text-green-100/70">Official Store</span>
+              <span className="block truncate text-xl font-black">{storeName}</span>
+              {brandSubtitle ? (
+                <span className={`block truncate text-xs font-semibold uppercase tracking-[0.16em] ${subtitleTone}`}>{brandSubtitle}</span>
+              ) : null}
             </span>
           </Link>
-          <p className="mt-4 max-w-sm text-sm leading-6 text-green-50/75">
-            {store?.description || `Browse ${isServiceStore ? 'services' : 'products'} directly from this store.`}
+          <p className={`mt-4 max-w-sm text-sm leading-6 ${mutedTextFaint}`}>
+            {store?.description || (singleStoreMode
+              ? `Browse our ${isServiceStore ? 'services' : 'products'}.`
+              : `Browse ${isServiceStore ? 'services' : 'products'} directly from this store.`)}
           </p>
           <div className="mt-5 flex flex-wrap gap-2 text-xs">
-            <span className="rounded-full border border-white/15 px-3 py-1 text-green-50/75">Verified Store</span>
-            <span className="rounded-full border border-white/15 px-3 py-1 text-green-50/75">
+            {!singleStoreMode ? (
+              <span className={chipClass}>Verified Store</span>
+            ) : null}
+            <span className={chipClass}>
               {formatInteger(listingCount || 0)} {isServiceStore ? 'services' : 'products'}
             </span>
           </div>
@@ -832,8 +913,8 @@ export const StoreScopedFooter = ({ store, isServiceStore = false, contactHref =
 
         <div>
           <h3 className="font-black">Store</h3>
-          <div className="mt-4 grid gap-2 text-sm text-green-50/70">
-            <Link to={storeBasePath}>Store Home</Link>
+          <div className={linkColClass}>
+            <Link to={storeBasePath}>{singleStoreMode ? 'Home' : 'Store Home'}</Link>
             <Link to={catalogPath}>{isServiceStore ? 'All Services' : 'All Products'}</Link>
             <Link to={`${storeBasePath}/categories`}>Categories</Link>
             <Link to={`${storeBasePath}/about`}>About Us</Link>
@@ -842,8 +923,8 @@ export const StoreScopedFooter = ({ store, isServiceStore = false, contactHref =
         </div>
 
         <div>
-          <h3 className="font-black">Customer Service</h3>
-          <div className="mt-4 grid gap-2 text-sm text-green-50/70">
+          <h3 className="font-black">{singleStoreMode ? 'Your account' : 'Customer Service'}</h3>
+          <div className={linkColClass}>
             <Link to="/cart">Cart</Link>
             <Link to="/track-order">Track Order</Link>
             <Link to="/account/orders">My Orders</Link>
@@ -854,37 +935,90 @@ export const StoreScopedFooter = ({ store, isServiceStore = false, contactHref =
 
         <div>
           <h3 className="font-black">Contact</h3>
-          <div className="mt-4 grid gap-2 text-sm text-green-50/70">
+          <div className={linkColClass}>
             {store?.contactPhone ? <a href={`tel:${store.contactPhone}`}>{store.contactPhone}</a> : null}
             {store?.contactEmail ? <a href={`mailto:${store.contactEmail}`}>{store.contactEmail}</a> : null}
-            {contactHref ? <a href={contactHref} target="_blank" rel="noreferrer">Contact Store</a> : null}
+            {contactHref ? (
+              <a href={contactHref} target="_blank" rel="noreferrer">
+                {singleStoreMode ? 'Contact us' : 'Contact Store'}
+              </a>
+            ) : null}
             {!store?.contactPhone && !store?.contactEmail && !contactHref ? <span>Contact details not published</span> : null}
           </div>
         </div>
 
         <div>
           <h3 className="font-black">Checkout</h3>
-          <p className="mt-4 text-sm leading-6 text-green-50/70">
+          <p className={`mt-4 text-sm leading-6 ${mutedText}`}>
             {isServiceStore
               ? 'Request quotes, book services, and manage your service conversations from your account.'
               : 'Shop securely, review your cart, and track store-managed orders from your account.'}
           </p>
           <div className="mt-5 flex flex-wrap gap-2 text-xs">
             {['MoMo', 'Card', 'Bank', 'COD'].map((item) => (
-              <span key={item} className="rounded-full border border-white/15 px-3 py-1 text-green-50/75">{item}</span>
+              <span key={item} className={chipClass}>{item}</span>
             ))}
           </div>
         </div>
       </div>
       <div className="border-t border-white/10">
-        <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-3 px-4 py-5 text-xs text-green-50/60 sm:flex-row sm:items-center sm:justify-between">
-          <p>&copy; {year} {store?.displayName || 'Store'}. Storefront powered by {APP_NAME}.</p>
+        <div className={`mx-auto flex w-full max-w-[1440px] flex-col gap-3 px-4 py-5 text-xs ${mutedTextSoft} sm:flex-row sm:items-center sm:justify-between`}>
+          {singleStoreMode ? (
+            <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+              <span>&copy; {year} {storeName}.</span>
+              <a
+                href={ABS_MARKETING_SITE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={useBrandTheme
+                  ? 'transition-opacity hover:opacity-100'
+                  : 'text-green-50/45 transition-colors hover:text-green-50/75'}
+                style={useBrandTheme
+                  ? { color: 'color-mix(in srgb, var(--store-accent, #166534) 55%, white)' }
+                  : undefined}
+              >
+                Powered by ABS
+              </a>
+            </p>
+          ) : (
+            <p>&copy; {year} {storeName}. Storefront powered by {APP_NAME}.</p>
+          )}
           <div className="flex flex-wrap gap-4">
             <span>{store?.deliveryEnabled ? 'Delivery available' : 'Store-managed fulfillment'}</span>
             <span>Secure checkout options</span>
           </div>
         </div>
       </div>
+      {showAbsPromo ? (
+        <div
+          className={useBrandTheme ? 'border-t border-white/10' : 'border-t border-white/10 bg-green-900/80'}
+          style={useBrandTheme
+            ? { backgroundColor: 'color-mix(in srgb, var(--store-accent, #166534) 32%, #0b1220 68%)' }
+            : undefined}
+        >
+          <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-white">Free websites for SMEs</p>
+              <p className={`mt-0.5 text-xs leading-5 ${mutedText}`}>
+                Launch an online store with ABS — get free websites now.
+              </p>
+            </div>
+            <a
+              href={ABS_ONLINE_STORE_PROMO_WHATSAPP_HREF}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={useBrandTheme
+                ? 'inline-flex shrink-0 items-center justify-center rounded-md border border-white/20 px-4 py-2 text-sm font-semibold text-white hover:opacity-90'
+                : 'inline-flex shrink-0 items-center justify-center rounded-md border border-white/20 bg-white px-4 py-2 text-sm font-semibold text-green-950 transition-colors hover:bg-green-50'}
+              style={useBrandTheme
+                ? { backgroundColor: 'var(--store-accent, #166534)' }
+                : undefined}
+            >
+              Get free websites now
+            </a>
+          </div>
+        </div>
+      ) : null}
     </footer>
   );
 };
@@ -923,7 +1057,7 @@ export const StoreCard = ({ store: storeItem }) => {
     >
       <div className="relative h-24 overflow-hidden bg-gradient-to-br from-green-900 via-green-800 to-amber-300/80 p-4">
         {bannerUrl ? (
-          <img src={bannerUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
+          <img src={bannerUrl} alt="" loading="lazy" decoding="async" className="absolute inset-0 h-full w-full object-cover" />
         ) : null}
         {bannerUrl ? <div className="absolute inset-0 bg-black/15" /> : null}
         <div className="relative z-10">
@@ -979,38 +1113,166 @@ export const StoreCard = ({ store: storeItem }) => {
 };
 
 export const ProductCard = ({ product }) => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const params = useParams();
   const { addItem } = useCart();
   const { isWishlisted, pendingListingIds, toggleWishlist } = useWishlist();
+  const { isSingleStoreMode, isMarketplaceMode } = useStorefrontMode();
+  const isOwnedShop = isSingleStoreMode || !isMarketplaceMode;
   const compareAt = Number.parseFloat(product?.compareAtPrice || 0);
   const price = Number.parseFloat(product?.publicPrice || 0);
   const discount = getDiscountPercent(product);
   const currency = product?.store?.currency;
-  const productUrl = getProductUrl(product);
+  const productWithStore = product?.store?.slug || product?.storeSlug
+    ? product
+    : {
+      ...product,
+      storeSlug: params.storeSlug || product?.storeSlug,
+      store: {
+        ...(product?.store || {}),
+        slug: params.storeSlug || product?.store?.slug,
+      },
+    };
+  const storeForActions = productWithStore?.store || {};
+  const productUrl = getProductUrl(productWithStore, { pathname: location.pathname });
   const review = getReviewMeta(product, 'New');
   const availability = getProductAvailability(product);
   const listingId = product?.listingId || product?.id;
   const saved = isWishlisted(listingId);
   const wishlistPending = pendingListingIds.includes(listingId);
+  const cardActions = useMemo(
+    () => resolveVisibleProductCardActions(
+      storeForActions.productCardActions,
+      storeForActions,
+      { resolvePhone: resolveStoreWhatsAppPhone },
+    ),
+    [storeForActions],
+  );
+  const softenPrice = cardActions.includes('contact_for_price');
 
   const handleAddToCart = useCallback(() => {
-    const result = addItem({ product, quantity: 1 });
+    const result = addItem({ product: productWithStore, quantity: 1 });
     if (!result.ok) {
       showError('This product could not be added to your cart.');
       return;
     }
-    showSuccess(result.replacedStore
-      ? 'Cart updated for this seller. Previous seller items were removed.'
-      : 'Added to cart.');
-  }, [addItem, product]);
+    if (result.replacedStore) {
+      showSuccess(isOwnedShop ? 'Cart updated.' : 'Cart updated for this seller. Previous seller items were removed.');
+    } else {
+      showSuccess('Added to cart.');
+    }
+  }, [addItem, isOwnedShop, productWithStore]);
+
+  const handleBuyNow = useCallback(() => {
+    const result = addItem({ product: productWithStore, quantity: 1 });
+    if (!result.ok) {
+      showError('This product could not be added to your cart.');
+      return;
+    }
+    navigate('/checkout');
+  }, [addItem, navigate, productWithStore]);
 
   const handleWishlistClick = useCallback((event) => {
     event.preventDefault();
     event.stopPropagation();
-    toggleWishlist(product);
-  }, [product, toggleWishlist]);
+    toggleWishlist(productWithStore);
+  }, [productWithStore, toggleWishlist]);
+
+  const whatsappInterestHref = useMemo(() => (
+    buildStoreWhatsAppHref(
+      storeForActions,
+      whatsappProductInterestMessage(product, storeForActions.displayName, {
+        available: availability.available,
+      }),
+    )
+  ), [availability.available, product, storeForActions]);
+
+  const whatsappPriceHref = useMemo(() => (
+    buildStoreWhatsAppHref(
+      storeForActions,
+      whatsappPriceInquiryMessage(product, storeForActions.displayName),
+    )
+  ), [product, storeForActions]);
+
+  const outlineClassName = 'h-10 min-w-0 rounded-full border-[color:color-mix(in_srgb,var(--store-accent,#166534)_28%,white)] px-2 text-xs font-bold text-[color:var(--store-accent,#166534)] hover:border-[color:color-mix(in_srgb,var(--store-accent,#166534)_45%,white)] hover:bg-[var(--store-accent-soft,#16653422)] hover:text-[color:var(--store-accent,#166534)] sm:px-3 sm:text-sm';
+  // hover:bg-* (not opacity) so twMerge drops Button's hover:bg-primary/90 (Sabito green)
+  const primaryClassName = 'h-10 min-w-0 rounded-full bg-[var(--store-accent,#166534)] px-2 text-xs font-bold text-white hover:bg-[color-mix(in_srgb,var(--store-accent,#166534)_85%,black)] sm:px-3 sm:text-sm';
+
+  const renderAction = (actionId, isPrimary) => {
+    const className = isPrimary ? primaryClassName : outlineClassName;
+    const variant = isPrimary ? 'default' : 'outline';
+
+    if (actionId === 'view') {
+      return (
+        <Button key={actionId} type="button" variant={variant} className={className} asChild>
+          <Link to={productUrl}>
+            <Eye className="mr-1.5 h-4 w-4 shrink-0 sm:mr-2" />
+            <span className="truncate">View</span>
+          </Link>
+        </Button>
+      );
+    }
+
+    if (actionId === 'add_to_cart') {
+      return (
+        <Button
+          key={actionId}
+          type="button"
+          variant={variant}
+          className={className}
+          disabled={!availability.available}
+          onClick={handleAddToCart}
+        >
+          <ShoppingCart className="mr-1.5 h-4 w-4 shrink-0 sm:mr-2" />
+          <span className="truncate">{availability.available ? 'Add' : 'Out of stock'}</span>
+        </Button>
+      );
+    }
+
+    if (actionId === 'buy_now') {
+      return (
+        <Button
+          key={actionId}
+          type="button"
+          variant={variant}
+          className={className}
+          disabled={!availability.available}
+          onClick={handleBuyNow}
+        >
+          <ShoppingBag className="mr-1.5 h-4 w-4 shrink-0 sm:mr-2" />
+          <span className="truncate">Buy now</span>
+        </Button>
+      );
+    }
+
+    if (actionId === 'contact_for_price' && whatsappPriceHref) {
+      return (
+        <Button key={actionId} type="button" variant={variant} className={className} asChild>
+          <a href={whatsappPriceHref} target="_blank" rel="noreferrer">
+            <MessageCircle className="mr-1.5 h-4 w-4 shrink-0 sm:mr-2" />
+            <span className="truncate">Price</span>
+          </a>
+        </Button>
+      );
+    }
+
+    if (actionId === 'whatsapp' && whatsappInterestHref) {
+      return (
+        <Button key={actionId} type="button" variant={variant} className={className} asChild>
+          <a href={whatsappInterestHref} target="_blank" rel="noreferrer">
+            <MessageCircle className="mr-1.5 h-4 w-4 shrink-0 sm:mr-2" />
+            <span className="truncate">WhatsApp</span>
+          </a>
+        </Button>
+      );
+    }
+
+    return null;
+  };
 
   return (
-    <div className="group flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white transition-all hover:-translate-y-0.5 hover:border-green-300 sm:rounded-3xl">
+    <div className="group flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white transition-all hover:-translate-y-0.5 hover:border-[color:color-mix(in_srgb,var(--store-accent,#166534)_40%,#e2e8f0)] sm:rounded-3xl">
       <div className="relative aspect-square overflow-hidden border-b border-slate-100 bg-slate-50">
         <Link to={productUrl} className="block h-full w-full">
           <ProductImage product={product} />
@@ -1023,7 +1285,7 @@ export const ProductCard = ({ product }) => {
           className={`absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full border transition-colors ${
             saved
               ? 'border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100'
-              : 'border-white/80 bg-white/90 text-slate-600 hover:bg-green-50 hover:text-green-800'
+              : 'border-white/80 bg-white/90 text-slate-600 hover:bg-[var(--store-accent-soft,#16653422)] hover:text-[color:var(--store-accent,#166534)]'
           }`}
           onClick={handleWishlistClick}
           disabled={wishlistPending}
@@ -1035,7 +1297,9 @@ export const ProductCard = ({ product }) => {
       </div>
       <div className="flex flex-1 flex-col p-4">
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-xs font-semibold uppercase tracking-wide text-green-700">{product?.category?.name || 'Featured'}</span>
+          <span className="truncate text-xs font-semibold uppercase tracking-wide text-[color:var(--store-accent,#166534)]">
+            {product?.category?.name || 'Featured'}
+          </span>
           <span className={`inline-flex items-center gap-1 text-xs font-semibold ${
             review.hasRealReviews ? 'text-amber-600' : 'text-slate-500'
           }`}
@@ -1044,10 +1308,15 @@ export const ProductCard = ({ product }) => {
             {review.label}
           </span>
         </div>
-        <Link to={productUrl} className="mt-3 line-clamp-2 min-h-[2.75rem] font-bold leading-snug text-slate-950 hover:text-green-800">
+        <Link
+          to={productUrl}
+          className="mt-3 line-clamp-2 min-h-[2.75rem] font-bold leading-snug text-slate-950 hover:text-[color:var(--store-accent,#166534)]"
+        >
           {product.title}
         </Link>
-        <p className="mt-1 truncate text-xs text-slate-500">{product?.store?.displayName || `${APP_NAME} seller`}</p>
+        {!isOwnedShop ? (
+          <p className="mt-1 truncate text-xs text-slate-500">{product?.store?.displayName || `${APP_NAME} seller`}</p>
+        ) : null}
         <div className="mt-3 flex flex-wrap gap-2">
           <Badge variant="outline" className="border-slate-200 bg-slate-50 text-[11px] text-slate-600">
             {availability.label}
@@ -1057,31 +1326,24 @@ export const ProductCard = ({ product }) => {
           </Badge>
         </div>
         <div className="mt-4 flex flex-wrap items-baseline gap-2">
-          <span className="text-lg font-extrabold text-green-800">{formatAmount(price, currency)}</span>
-          {compareAt > price ? <span className="text-sm text-slate-400 line-through">{formatAmount(compareAt, currency)}</span> : null}
+          {softenPrice ? (
+            <span className="text-lg font-extrabold text-slate-700">Contact for price</span>
+          ) : (
+            <>
+              <span className="text-lg font-extrabold text-[color:var(--store-accent,#166534)]">{formatAmount(price, currency)}</span>
+              {compareAt > price ? <span className="text-sm text-slate-400 line-through">{formatAmount(compareAt, currency)}</span> : null}
+            </>
+          )}
         </div>
-        <div className="mt-auto grid grid-cols-2 gap-2 pt-4">
-          <Button type="button" variant="outline" className="h-10 min-w-0 rounded-full border-green-200 px-2 text-xs font-bold text-green-800 hover:bg-green-50 sm:px-3 sm:text-sm" asChild>
-            <Link to={productUrl}>
-              <span className="truncate">View</span>
-            </Link>
-          </Button>
-          <Button
-            type="button"
-            className="h-10 min-w-0 rounded-full bg-green-700 px-2 text-xs font-bold text-white hover:bg-green-800 sm:px-3 sm:text-sm"
-            disabled={!availability.available}
-            onClick={handleAddToCart}
-          >
-            <ShoppingCart className="mr-1.5 h-4 w-4 shrink-0 sm:mr-2" />
-            <span className="truncate">{availability.available ? 'Add' : 'Out of stock'}</span>
-          </Button>
+        <div className={`mt-auto grid gap-2 pt-4 ${cardActions.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+          {cardActions.map((actionId, index) => renderAction(actionId, index === cardActions.length - 1))}
         </div>
       </div>
     </div>
   );
 };
 
-export const LoadingState = ({ label = 'Loading Sabito Store data...' }) => (
+export const LoadingState = ({ label = 'Loading store data...' }) => (
   <div className="flex min-h-60 items-center justify-center rounded-2xl border border-slate-200 bg-white sm:rounded-[2rem]">
     <span className="inline-flex items-center gap-2 text-sm font-semibold text-slate-500">
       <Loader2 className="h-5 w-5 animate-spin" />
@@ -1105,6 +1367,7 @@ export const BuyerSidebar = () => {
   const location = useLocation();
   const { cartSummary } = useCart();
   const { customer, isAuthenticated, openShopperAuthModal } = useStorefrontAuth();
+  const { isSingleStoreMode } = useStorefrontMode();
   const { count: wishlistCount } = useWishlist();
   const customerAvatarUrl = useMemo(() => getCustomerAvatarUrl(customer), [customer]);
   const customerInitials = useMemo(() => getCustomerInitials(customer), [customer]);
@@ -1155,7 +1418,7 @@ export const BuyerSidebar = () => {
             className="mt-3 inline-flex min-h-10 w-full items-center justify-center rounded-2xl bg-green-700 px-4 text-sm font-black text-white transition-colors hover:bg-green-800"
             onClick={handleSignIn}
           >
-            Sign in/Register
+            {isSingleStoreMode ? 'Sign in' : 'Sign in/Register'}
           </button>
         )}
       </div>
@@ -1243,9 +1506,18 @@ export const PageShell = ({
   buyerDescription,
   children,
 }) => {
+  const { isSingleStoreMode, isTemplatesMode } = useStorefrontMode();
   const mainClassName = showBuyerSidebar
     ? 'w-full px-3 py-6 sm:px-4 sm:py-8'
     : 'mx-auto max-w-[2440px] px-3 py-6 sm:px-4 sm:py-8';
+
+  if (isSingleStoreMode || isTemplatesMode) {
+    return (
+      <OnlineStorePageShell title={buyerTitle} description={buyerDescription}>
+        {children}
+      </OnlineStorePageShell>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#f4f7f2] text-slate-900">
@@ -1274,7 +1546,7 @@ export const StudioCard = ({ studio: studioItem }) => {
       className="group mx-auto flex h-full w-full max-w-[400px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white transition-all hover:-translate-y-0.5 hover:border-green-300 hover:bg-green-50/30 sm:rounded-3xl"
     >
       <div className="relative h-24 overflow-hidden bg-gradient-to-br from-green-900 via-green-800 to-amber-300/80 p-4">
-        {bannerUrl ? <img src={bannerUrl} alt="" className="absolute inset-0 h-full w-full object-cover" /> : null}
+        {bannerUrl ? <img src={bannerUrl} alt="" loading="lazy" decoding="async" className="absolute inset-0 h-full w-full object-cover" /> : null}
         {bannerUrl ? <div className="absolute inset-0 bg-black/15" /> : null}
         <div className="relative z-10 flex items-start justify-between gap-3">
           <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-white/70 bg-white">
@@ -1327,7 +1599,7 @@ export const ServiceCard = ({ service, serviceUrl: serviceUrlOverride }) => {
     >
       <div className="relative aspect-[4/3] overflow-hidden border-b border-slate-100 bg-slate-50">
         {image ? (
-          <img src={resolveImageUrl(image)} alt={service.title} className="h-full w-full object-cover" />
+          <img src={resolveImageUrl(image)} alt={service.title} loading="lazy" decoding="async" className="h-full w-full object-cover" />
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-slate-400">Service preview</div>
         )}
@@ -1354,17 +1626,29 @@ export const ServiceCard = ({ service, serviceUrl: serviceUrlOverride }) => {
   );
 };
 
-export const Breadcrumbs = ({ items }) => (
-  <div className="mb-6 flex flex-wrap items-center gap-2 text-sm text-slate-500">
-    <Link to="/" className="inline-flex items-center gap-1 hover:text-green-800">
-      <Home className="h-4 w-4" />
-      Home
-    </Link>
-    {items.map((item) => (
-      <span key={item.label} className="inline-flex items-center gap-2">
-        <ArrowRight className="h-3.5 w-3.5" />
-        {item.to ? <Link to={item.to} className="hover:text-green-800">{item.label}</Link> : <span className="font-semibold text-slate-800">{item.label}</span>}
-      </span>
-    ))}
-  </div>
-);
+export const Breadcrumbs = ({ items }) => {
+  const { isSingleStoreMode, storeSlug, pathPrefix, isCustomDomain } = useStorefrontMode();
+  const homeTo = isSingleStoreMode
+    ? (isCustomDomain
+      ? '/'
+      : (storeSlug
+        ? buildStoreHomePath(storeSlug, { ...(pathPrefix ? { prefix: pathPrefix } : {}) })
+        : '/'))
+    : '/';
+  const homeLabel = isSingleStoreMode ? 'Shop' : 'Home';
+
+  return (
+    <div className="mb-6 flex flex-wrap items-center gap-2 text-sm text-slate-500">
+      <Link to={homeTo} className="inline-flex items-center gap-1 hover:text-green-800">
+        <Home className="h-4 w-4" />
+        {homeLabel}
+      </Link>
+      {items.map((item) => (
+        <span key={item.label} className="inline-flex items-center gap-2">
+          <ArrowRight className="h-3.5 w-3.5" />
+          {item.to ? <Link to={item.to} className="hover:text-green-800">{item.label}</Link> : <span className="font-semibold text-slate-800">{item.label}</span>}
+        </span>
+      ))}
+    </div>
+  );
+};

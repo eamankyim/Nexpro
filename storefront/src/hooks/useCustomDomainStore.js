@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import storeService from '../services/storeService';
-import { STOREFRONT_URL } from '../config';
+import { isTemplatesGalleryHost, STOREFRONT_URL } from '../config';
 
 const ABS_STOREFRONT_HOSTS = new Set([
   'absghana.com',
@@ -20,6 +20,7 @@ const ABS_STOREFRONT_HOSTS = new Set([
 const isKnownMarketplaceHost = (hostname) => {
   if (!hostname) return true;
   if (hostname === 'localhost' || hostname === '127.0.0.1') return true;
+  if (isTemplatesGalleryHost(hostname)) return true;
   if (ABS_STOREFRONT_HOSTS.has(hostname)) return true;
   try {
     if (hostname === new URL(STOREFRONT_URL).hostname) return true;
@@ -34,11 +35,20 @@ const isKnownMarketplaceHost = (hostname) => {
  * domain ("Online Store" product) rather than the shared Sabito marketplace domain.
  * When matched, the app should render a single-store experience (no marketplace chrome,
  * `/` maps straight to that store) instead of the marketplace home/discovery pages.
+ * Template gallery host (`templates.*`) is never treated as a custom store domain.
  *
- * @returns {{ isLoading: boolean, matched: boolean, slug: string|null, launched: boolean, displayName: string|null }}
+ * @returns {{
+ *   isLoading: boolean,
+ *   matched: boolean,
+ *   slug: string|null,
+ *   launched: boolean,
+ *   displayName: string|null,
+ *   isTemplatesHost: boolean,
+ * }}
  */
 export const useCustomDomainStore = () => {
   const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+  const isTemplatesHost = isTemplatesGalleryHost(hostname);
   const skip = isKnownMarketplaceHost(hostname);
 
   const { data, isLoading } = useQuery({
@@ -50,7 +60,14 @@ export const useCustomDomainStore = () => {
   });
 
   if (skip) {
-    return { isLoading: false, matched: false, slug: null, launched: false, displayName: null };
+    return {
+      isLoading: false,
+      matched: false,
+      slug: null,
+      launched: false,
+      displayName: null,
+      isTemplatesHost,
+    };
   }
 
   const payload = data?.data?.data || data?.data || {};
@@ -60,6 +77,7 @@ export const useCustomDomainStore = () => {
     slug: payload.slug || null,
     launched: Boolean(payload.launched),
     displayName: payload.displayName || null,
+    isTemplatesHost: false,
   };
 };
 
