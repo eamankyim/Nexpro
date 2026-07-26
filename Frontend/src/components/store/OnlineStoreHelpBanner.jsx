@@ -1,4 +1,4 @@
-import { Headset, Mail, MessageCircle } from 'lucide-react';
+import { Headphones, Mail, MessageCircle } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -23,7 +23,7 @@ const OnlineStoreHelpBanner = ({ className = '', compact = false }) => (
         }`}
         aria-hidden
       >
-        <Headset className={compact ? 'h-4 w-4' : 'h-5 w-5'} />
+        <Headphones className={compact ? 'h-4 w-4' : 'h-5 w-5'} />
       </span>
       <div className="min-w-0 flex-1 space-y-1">
         <p className={`font-medium text-foreground ${compact ? 'text-sm' : 'text-sm sm:text-base'}`}>
