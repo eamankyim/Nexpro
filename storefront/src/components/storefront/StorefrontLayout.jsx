@@ -401,14 +401,14 @@ export const ActionLink = ({ to, icon: Icon, label, badge, disabled = false, onC
   return <Link to={to}>{content}</Link>;
 };
 
-export const StoreLogo = ({ store: storeItem }) => {
+export const StoreLogo = ({ store: storeItem, fit = 'contain', className = '' }) => {
   const logoUrl = resolveImageUrl(storeItem?.logoUrl);
   if (logoUrl) {
     return (
       <img
         src={logoUrl}
         alt={storeItem.displayName}
-        className="h-full w-full object-contain"
+        className={`h-full w-full ${fit === 'cover' ? 'object-cover' : 'object-contain'}${className ? ` ${className}` : ''}`}
       />
     );
   }
@@ -900,8 +900,8 @@ export const StoreScopedFooter = ({
       <div className="mx-auto grid w-full max-w-[1440px] gap-8 px-4 py-12 md:grid-cols-2 lg:grid-cols-[1.35fr_repeat(4,1fr)]">
         <div>
           <Link to={storeBasePath} className="flex min-w-0 items-center gap-3">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/15 bg-white">
-              <StoreLogo store={store} />
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/15 bg-white">
+              <StoreLogo store={store} fit="cover" className="scale-110" />
             </span>
             <span className="min-w-0">
               <span className="block truncate text-xl font-black">{storeName}</span>
