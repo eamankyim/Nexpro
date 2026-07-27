@@ -311,11 +311,12 @@ const PublicStoreProduct = () => {
   const store = useMemo(() => unwrapData(storeQuery.data), [storeQuery.data]);
 
   useEffect(() => {
-    if (!isSingleStoreMode || !store?.slug) return;
+    // Custom domains use root paths — do not persist a Sabito `/stores` or shared `/shop` prefix.
+    if (!isSingleStoreMode || !store?.slug || isCustomDomain) return;
     persistOnlineStoreBrand(store, {
       pathPrefix: pathPrefix === 'stores' ? 'stores' : 'shop',
     });
-  }, [isSingleStoreMode, pathPrefix, store]);
+  }, [isCustomDomain, isSingleStoreMode, pathPrefix, store]);
 
   const products = useMemo(() => {
     const response = productsQuery.data || {};

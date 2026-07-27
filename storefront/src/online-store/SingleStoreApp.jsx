@@ -230,6 +230,7 @@ export function CustomDomainStoreApp({ slug, launched, displayName }) {
       <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route path="/" element={withRouteSuspense(<PublicStoreHome />)} />
+          <Route path="/home" element={<Navigate to="/" replace />} />
           <Route path="/products" element={withRouteSuspense(<PublicStoreHome />)} />
           <Route path="/services" element={withRouteSuspense(<PublicStoreHome />)} />
           <Route path="/categories" element={withRouteSuspense(<PublicStoreHome />)} />
@@ -241,9 +242,11 @@ export function CustomDomainStoreApp({ slug, launched, displayName }) {
           <Route path="/services/:serviceSlug" element={withRouteSuspense(<PublicStudioService />)} />
           {/* Legacy bookmarks / shared-host links → clean owned-domain paths */}
           <Route path="/stores" element={<Navigate to="/" replace />} />
-          <Route path="/stores/*" element={<RedirectPrefixedStoreToRoot />} />
+          <Route path="/stores/:storeSlug" element={<RedirectPrefixedStoreToRoot />} />
+          <Route path="/stores/:storeSlug/*" element={<RedirectPrefixedStoreToRoot />} />
           <Route path="/shop" element={<Navigate to="/" replace />} />
-          <Route path="/shop/*" element={<RedirectPrefixedStoreToRoot />} />
+          <Route path="/shop/:storeSlug" element={<RedirectPrefixedStoreToRoot />} />
+          <Route path="/shop/:storeSlug/*" element={<RedirectPrefixedStoreToRoot />} />
           <Route path="/template" element={<Navigate to="/" replace />} />
           <Route path="/template/*" element={<Navigate to="/" replace />} />
           {singleStoreCommerceRouteElements}

@@ -182,7 +182,9 @@ const StoreScopedHeader = ({
     };
   }, [mobileMenuOpen]);
 
-  const homeTo = previewMode ? '#' : (homeToProp || `/stores/${encodeURIComponent(store.slug)}`);
+  const homeTo = previewMode
+    ? '#'
+    : (homeToProp || (store?.slug ? `/stores/${encodeURIComponent(store.slug)}` : '/'));
 
   const desktopNavLinkClass = (key) => (
     `whitespace-nowrap text-sm font-semibold transition-colors ${
@@ -478,11 +480,12 @@ const PublicStoreHome = ({
   const store = data.store || null;
 
   useEffect(() => {
-    if (previewMode || !isSingleStoreMode || !store?.slug) return;
+    // Custom domains use root paths — do not persist a Sabito `/stores` or shared `/shop` prefix.
+    if (previewMode || !isSingleStoreMode || !store?.slug || isCustomDomain) return;
     persistOnlineStoreBrand(store, {
       pathPrefix: pathPrefix === 'stores' ? 'stores' : 'shop',
     });
-  }, [isSingleStoreMode, pathPrefix, previewMode, store]);
+  }, [isCustomDomain, isSingleStoreMode, pathPrefix, previewMode, store]);
 
   const theme = useMemo(() => getTemplateTheme(store?.templateId), [store?.templateId]);
   const brandColors = useMemo(
