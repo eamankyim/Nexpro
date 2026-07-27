@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 
 import storeService from '../../services/storeService';
+import { buildOnlineStoreUrl } from '../../utils/storefrontUrl';
 import { showError, showSuccess } from '../../utils/toast';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -54,10 +55,19 @@ const StoreSetupComplete = ({ publicStoreUrl, isStudioStore = false, onEditStep 
   const customDomain = domainData.customDomain || '';
   const domainStatus = domainData.customDomainStatus || 'none';
   const cnameTarget = domainData.cnameTarget || 'store.absghana.com';
+  const storeSlug = domainData.slug || '';
+
+  const preferredStoreUrl = useMemo(() => {
+    const fromHelper = buildOnlineStoreUrl(storeSlug || '', {
+      customDomain,
+      customDomainStatus: domainStatus,
+    });
+    return fromHelper || publicStoreUrl || '';
+  }, [customDomain, domainStatus, publicStoreUrl, storeSlug]);
 
   const displayUrl = useMemo(() => (
-    String(publicStoreUrl || '').replace(/^https?:\/\//i, '')
-  ), [publicStoreUrl]);
+    String(preferredStoreUrl || '').replace(/^https?:\/\//i, '')
+  ), [preferredStoreUrl]);
 
   const dnsRecord = useMemo(
     () => buildDnsRecord(customDomain, cnameTarget),
@@ -90,17 +100,17 @@ const StoreSetupComplete = ({ publicStoreUrl, isStudioStore = false, onEditStep 
   });
 
   const handleCopyLink = useCallback(async () => {
-    if (!publicStoreUrl) {
+    if (!preferredStoreUrl) {
       showError('Store link is not available yet');
       return;
     }
     try {
-      await navigator.clipboard.writeText(publicStoreUrl);
+      await navigator.clipboard.writeText(preferredStoreUrl);
       showSuccess('Store link copied');
     } catch {
       showError('Could not copy the store link');
     }
-  }, [publicStoreUrl]);
+  }, [preferredStoreUrl]);
 
   const handleSaveDomain = useCallback((event) => {
     event.preventDefault();
@@ -156,9 +166,9 @@ const StoreSetupComplete = ({ publicStoreUrl, isStudioStore = false, onEditStep 
       <div>
         <h2 className="mb-3 text-sm font-medium text-muted-foreground">Quick actions</h2>
         <div className="grid gap-3 sm:grid-cols-3">
-          {publicStoreUrl ? (
+          {preferredStoreUrl ? (
             <a
-              href={publicStoreUrl}
+              href={preferredStoreUrl}
               target="_blank"
               rel="noreferrer"
               className="flex flex-col items-start gap-2 rounded-xl border border-border bg-background p-4 transition-colors hover:border-green-700 hover:bg-green-50/40"
@@ -257,14 +267,14 @@ const StoreSetupComplete = ({ publicStoreUrl, isStudioStore = false, onEditStep 
               variant="outline"
               className="bg-background"
               onClick={handleCopyLink}
-              disabled={!publicStoreUrl}
+              disabled={!preferredStoreUrl}
             >
               <Copy className="mr-2 h-4 w-4" />
               Copy
             </Button>
-            {publicStoreUrl ? (
+            {preferredStoreUrl ? (
               <Button type="button" asChild className="bg-[#166534] text-white hover:bg-[#14532d]">
-                <a href={publicStoreUrl} target="_blank" rel="noreferrer">
+                <a href={preferredStoreUrl} target="_blank" rel="noreferrer">
                   <ExternalLink className="mr-2 h-4 w-4" />
                   Open Store
                 </a>

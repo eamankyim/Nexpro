@@ -78,19 +78,92 @@ export const buildStorefrontStoreUrl = (slug) => {
 };
 
 /**
- * Live Online Store (merchant shop) URL: store.absghana.com/shop/:slug
- * @param {string} slug - Store slug
- * @param {{ preview?: boolean }} [opts] - When preview is true, append ?preview=1 so
- *   draft (not yet launched) stores can be opened from Store Setup.
+ * Hostnames that should never be treated as a merchant custom domain.
+ * @param {string} host
+ * @returns {boolean}
+ */
+const isReservedOnlineStoreHost = (host) => {
+  const h = String(host || '').trim().toLowerCase();
+  return (
+    h === 'store.absghana.com'
+    || h === 'www.store.absghana.com'
+    || h === 'absghana.com'
+    || h === 'www.absghana.com'
+    || h === 'sabitostore.com'
+    || h === 'www.sabitostore.com'
+    || h === 'templates.absghana.com'
+    || h.endsWith('.absghana.com')
+    || h.endsWith('.sabitostore.com')
+  );
+};
+
+/**
+ * Normalize a merchant custom domain to a bare hostname (no protocol/path).
+ * @param {string} value
+ * @returns {string}
+ */
+export const normalizeCustomDomainHost = (value) => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  try {
+    const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    const { hostname } = new URL(withProtocol);
+    return hostname.replace(/\.$/, '') || '';
+  } catch {
+    return raw
+      .replace(/^https?:\/\//i, '')
+      .split('/')[0]
+      .split('?')[0]
+      .split('#')[0]
+      .replace(/\.$/, '')
+      .trim();
+  }
+};
+
+/**
+ * Prefer custom domain when connected (pending or verified). Pending is treated
+ * as live when DNS already points at the store — same as CORS allowlist.
+ * @param {string|null|undefined} customDomain
+ * @param {string|null|undefined} customDomainStatus
+ * @returns {boolean}
+ */
+export const shouldPreferCustomDomain = (customDomain, customDomainStatus) => {
+  const host = normalizeCustomDomainHost(customDomain);
+  if (!host || isReservedOnlineStoreHost(host)) return false;
+  const status = String(customDomainStatus || '').trim().toLowerCase();
+  return status === 'pending' || status === 'verified';
+};
+
+/**
+ * Live Online Store (merchant shop) URL.
+ * Prefers `https://{customDomain}` when a custom domain is pending|verified
+ * (shop is served at `/` on owned domains). Falls back to
+ * store.absghana.com/shop/:slug.
+ *
+ * @param {string} slug - Store slug (required when no usable custom domain)
+ * @param {{
+ *   preview?: boolean,
+ *   customDomain?: string|null,
+ *   customDomainStatus?: string|null,
+ * }} [opts] - When preview is true, append ?preview=1 so draft stores can be
+ *   opened from Store Setup.
  * @returns {string}
  * @example
  * buildOnlineStoreUrl('my-shop'); // https://store.absghana.com/shop/my-shop
+ * buildOnlineStoreUrl('my-shop', { customDomain: 'www.gapconnects.com', customDomainStatus: 'verified' });
+ * // https://www.gapconnects.com
  * buildOnlineStoreUrl('my-shop', { preview: true }); // .../shop/my-shop?preview=1
  */
 export const buildOnlineStoreUrl = (slug, opts = {}) => {
+  const { preview = false, customDomain, customDomainStatus } = opts;
+  if (shouldPreferCustomDomain(customDomain, customDomainStatus)) {
+    const host = normalizeCustomDomainHost(customDomain);
+    const base = `${addProtocol(host)}`.replace(/\/+$/g, '');
+    return preview ? `${base}?preview=1` : base;
+  }
   if (!slug) return '';
   const base = `${getOnlineStoreBaseUrl()}/shop/${encodeURIComponent(slug)}`;
-  return opts.preview ? `${base}?preview=1` : base;
+  return preview ? `${base}?preview=1` : base;
 };
 
 /** @deprecated Use buildOnlineStoreUrl — live shop is /shop/:slug, not a template */

@@ -439,10 +439,16 @@ const OnlineStore = () => {
   ]);
 
   const liveStoreUrl = useMemo(
-    () => (data.slug
-      ? buildOnlineStoreUrl(data.slug, { preview: settings?.enabled !== true })
-      : ''),
-    [data.slug, settings?.enabled],
+    () => (
+      data.slug || data.customDomain
+        ? buildOnlineStoreUrl(data.slug, {
+          preview: settings?.enabled !== true,
+          customDomain: data.customDomain,
+          customDomainStatus: data.customDomainStatus || domainStatus,
+        })
+        : ''
+    ),
+    [data.customDomain, data.customDomainStatus, data.slug, domainStatus, settings?.enabled],
   );
 
   const dnsRecord = useMemo(
