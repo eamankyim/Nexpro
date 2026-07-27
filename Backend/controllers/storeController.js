@@ -32,7 +32,7 @@ const {
   getStudioMarketplaceHomeData,
   isStudioTenant,
 } = require('./studioStoreController');
-const { invalidateSaleListCache } = require('../middleware/cache');
+const { invalidateSaleListCache, invalidatePublicStorefrontCache } = require('../middleware/cache');
 const { validateStorageLimit } = require('../utils/storageLimitHelper');
 const {
   DEFAULT_TEMPLATE_ID,
@@ -2464,6 +2464,8 @@ exports.upsertSettings = async (req, res, next) => {
         existing?.tertiaryColor
       ),
       templateId,
+      // Only re-resolve when the client explicitly sends heroSlides. Re-resolving on
+      // every branding/template save used to persist [] when library lookup failed in prod.
       heroSlides: Object.prototype.hasOwnProperty.call(req.body, 'heroSlides')
         ? await resolveHeroSlidesForStore(
             Array.isArray(req.body.heroSlides) ? req.body.heroSlides.slice(0, MAX_HERO_SLIDES) : [],
@@ -2474,15 +2476,7 @@ exports.upsertSettings = async (req, res, next) => {
               existing?.primaryColor
             )
           )
-        : await resolveHeroSlidesForStore(
-            existing?.heroSlides,
-            resolveIncomingColor(
-              'primary',
-              'primaryColor',
-              req.body.primaryColor,
-              existing?.primaryColor
-            )
-          ),
+        : (Array.isArray(existing?.heroSlides) ? existing.heroSlides : []),
       contactPhone: req.body.contactPhone || null,
       whatsappNumber: req.body.whatsappNumber || null,
       contactEmail: req.body.contactEmail || null,
@@ -2538,6 +2532,8 @@ exports.upsertSettings = async (req, res, next) => {
     const settings = existing
       ? await existing.update(payload)
       : await OnlineStoreSettings.create(payload);
+
+    invalidatePublicStorefrontCache(settings.slug || payload.slug);
 
     res.status(existing ? 200 : 201).json({
       success: true,

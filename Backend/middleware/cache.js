@@ -436,6 +436,32 @@ const invalidateAllCache = (tenantId) => {
   return invalidateCache(tenantId, '*');
 };
 
+/**
+ * Drop public Online Store / marketplace GET caches for a store slug (and related paths).
+ * Public keys are not tenant-scoped, so tenant invalidate helpers cannot clear them.
+ * @param {string|null|undefined} slug
+ * @returns {number} Number of keys removed
+ */
+const invalidatePublicStorefrontCache = (slug) => {
+  const normalized = String(slug || '').trim().toLowerCase();
+  if (!normalized) return 0;
+  const keys = cache.keys();
+  let count = 0;
+  keys.forEach((key) => {
+    if (
+      key.includes(`/store/${normalized}`)
+      || key.includes(`/marketplace/stores/${normalized}`)
+    ) {
+      cache.del(key);
+      count += 1;
+    }
+  });
+  if (count) {
+    logCacheDebug('Public storefront cache INVALIDATED', { slug: normalized, count });
+  }
+  return count;
+};
+
 /** TTL in seconds for auth user cache (short-lived to reduce DB hits per request) */
 const AUTH_USER_TTL = 90;
 
@@ -607,6 +633,7 @@ module.exports = {
   invalidateExpenseStatsCache,
   invalidateAllCache,
   invalidateAfterMutation,
+  invalidatePublicStorefrontCache,
   getCacheStats,
   clearAllCache
 };

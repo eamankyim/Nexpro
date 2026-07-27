@@ -147,7 +147,22 @@ const saveHeroImageFile = (file, subfolder = 'heroes') => {
 };
 
 /**
+ * Preserve hero image URLs (paths, absolute URLs, or data URLs).
+ * Do not hard-cap data: URLs — base64 banners exceed typical path limits.
+ * @param {unknown} value
+ * @returns {string}
+ */
+const compactHeroImageUrl = (value) => {
+  const s = String(value || '').trim();
+  if (!s) return '';
+  if (s.startsWith('data:')) return s.slice(0, 6_000_000);
+  return compact(s, 2000);
+};
+
+/**
  * Normalize merchant heroSlides and resolve library colorways against primaryColor.
+ * When library lookup fails, keep any already-stored imageUrl so public storefronts
+ * and later settings saves cannot silently wipe applied heroes.
  * @param {Array} slides
  * @param {string} primaryColor
  * @param {Map<string, object>} designMap id → design with colorways
@@ -161,33 +176,34 @@ const normalizeAndResolveHeroSlides = (slides, primaryColor, designMap = new Map
     const raw = list[i] || {};
     const type = raw.type === 'upload' ? 'upload' : 'library';
     const sortOrder = resolved.length;
+    const fallbackImageUrl = compactHeroImageUrl(raw.imageUrl);
 
     if (type === 'upload') {
-      const imageUrl = compact(raw.imageUrl, 2000);
-      if (!imageUrl) continue;
+      if (!fallbackImageUrl) continue;
       resolved.push({
         type: 'upload',
-        imageUrl,
+        imageUrl: fallbackImageUrl,
         sortOrder,
       });
       continue;
     }
 
     const designId = compact(raw.designId, 80);
-    if (!designId) continue;
-    const design = designMap.get(designId);
+    const design = designId ? designMap.get(designId) : null;
     const colorways = design?.colorways || [];
     let colorway =
       (raw.colorwayId && colorways.find((c) => c.id === raw.colorwayId && c.isActive !== false)) ||
       pickClosestColorway(colorways, primaryColor);
 
-    if (!colorway?.imageUrl) continue;
+    const imageUrl = compactHeroImageUrl(colorway?.imageUrl) || fallbackImageUrl;
+    if (!imageUrl) continue;
 
+    // Keep a usable slide even when the library row is missing (prod/local drift).
     resolved.push({
       type: 'library',
-      designId,
-      colorwayId: colorway.id,
-      imageUrl: colorway.imageUrl,
+      ...(designId ? { designId } : {}),
+      ...(colorway?.id ? { colorwayId: colorway.id } : raw.colorwayId ? { colorwayId: compact(raw.colorwayId, 80) } : {}),
+      imageUrl,
       sortOrder,
     });
   }

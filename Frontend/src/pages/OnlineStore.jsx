@@ -183,7 +183,7 @@ const OnlineStore = () => {
         currency: resolveStoreCurrencyCode(currentSettings.currency),
         enabled: currentSettings.enabled,
         templateId: currentSettings.templateId,
-        heroSlides: currentSettings.heroSlides,
+        // Omit heroSlides so upsert keeps the DB value (avoids wiping when resolve is empty).
         metadata: {
           ...(currentSettings.metadata || {}),
           testimonials,
@@ -230,7 +230,6 @@ const OnlineStore = () => {
         currency: resolveStoreCurrencyCode(currentSettings.currency),
         enabled: currentSettings.enabled,
         templateId: currentSettings.templateId,
-        heroSlides: currentSettings.heroSlides,
         metadata: {
           ...(currentSettings.metadata || {}),
           productSections,
@@ -277,7 +276,6 @@ const OnlineStore = () => {
         currency: resolveStoreCurrencyCode(currentSettings.currency),
         enabled: currentSettings.enabled,
         templateId: currentSettings.templateId,
-        heroSlides: currentSettings.heroSlides,
         metadata: {
           ...(currentSettings.metadata || {}),
           productCardActions,

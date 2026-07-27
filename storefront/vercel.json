@@ -1,7 +1,15 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "rewrites": [
+  rewrites: [
+    {
+      "source": "/api/(.*)",
+      "destination": "https://api.africanbusinesssuite.com/api/$1"
+    },
+    {
+      "source": "/uploads/(.*)",
+      "destination": "https://api.africanbusinesssuite.com/uploads/$1"
+    },
     {
       "source": "/(.*)",
       "destination": "/index.html"

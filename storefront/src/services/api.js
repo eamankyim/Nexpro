@@ -3,14 +3,6 @@ import axios from 'axios';
 /** Local backend URL used when VITE_API_DIRECT=true without a VITE_API_URL override. */
 const LOCAL_API_URL = 'http://localhost:5002';
 const ABS_API_URL = 'https://api.africanbusinesssuite.com';
-const ABS_PRODUCTION_HOSTS = new Set([
-  'store.absghana.com',
-  'store.africanbusinesssuite.com',
-  'absghana.com',
-  'www.absghana.com',
-  'africanbusinesssuite.com',
-  'www.africanbusinesssuite.com',
-]);
 const PRODUCTION_API_HOSTS = new Set(['api.africanbusinesssuite.com']);
 
 const normalizeEnvApiUrl = (envUrl) => {
@@ -80,11 +72,10 @@ const deriveApiBaseUrl = () => {
     return normalizeEnvApiUrl(envUrl);
   }
 
-  if (ABS_PRODUCTION_HOSTS.has(hostname)) {
-    return ABS_API_URL;
-  }
-
-  return '';
+  // Non-local hosts (including custom merchant domains like www.gapconnects.com) must
+  // use the API origin. Vercel SPA rewrites turn relative /uploads into index.html, so
+  // resolveImageUrl (heroes, products, logos) needs an absolute API base.
+  return ABS_API_URL;
 };
 
 export const API_BASE_URL = deriveApiBaseUrl();
