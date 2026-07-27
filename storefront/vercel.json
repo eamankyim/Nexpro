@@ -1,7 +1,7 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  rewrites: [
+  "rewrites": [
     {
       "source": "/api/(.*)",
       "destination": "https://api.africanbusinesssuite.com/api/$1"
