@@ -874,6 +874,26 @@ function getTemplates() {
         }]
       }
     },
+    {
+      key: 'task_assigned_staff',
+      name: 'Task assigned — staff notify',
+      description: 'Notify assignees when a workspace task is assigned to them.',
+      triggerType: 'task_assigned_staff',
+      audience: 'internal',
+      allowedBusinessTypes: ['shop', 'studio', 'pharmacy'],
+      triggerConfig: {},
+      actionConfig: {
+        audience: 'internal',
+        defaultRecipient: { type: 'assignee' },
+        actions: [{
+          type: 'send_email_platform',
+          audience: 'internal',
+          recipient: { type: 'assignee' },
+          subject: 'Task assigned: {{taskTitle}}',
+          body: 'Hi {{assigneeName}},\n\n{{assignedByName}} assigned you the task "{{taskTitle}}".\n\nPriority: {{taskPriority}}\nDue: {{dueDate}}\n\n{{taskDescription}}\n\nOpen tasks: {{taskLink}}\n\n— {{businessName}}',
+        }]
+      }
+    },
   ];
   return templates.map(annotateTemplateEligibility);
 }
@@ -4027,6 +4047,64 @@ async function runLeadAssignedStaffAutomations({
   });
 }
 
+/**
+ * Build staff-facing context when a workspace task is assigned.
+ * @param {object} params
+ * @param {object} params.task
+ * @param {object|null} [params.assignee]
+ * @param {object|null} [params.assignedByUser]
+ * @returns {object}
+ */
+function buildTaskAssignedStaffTriggerContext({
+  task,
+  assignee = null,
+  assignedByUser = null,
+}) {
+  const assigneeUser = assignee || task?.assignee || {};
+  const dueDate = task?.dueDate ? formatAutomationDate(task.dueDate) : 'No due date';
+  const priority = task?.priority ? String(task.priority) : 'medium';
+  const description = String(task?.description || '').trim();
+  return {
+    subjectKey: `task_assigned_staff:${task.id}:${assigneeUser.id || task.assigneeId || 'none'}`,
+    taskId: task.id,
+    taskTitle: task.title || 'Task',
+    taskDescription: description || 'No description',
+    taskPriority: priority,
+    dueDate,
+    assigneeId: assigneeUser.id || task.assigneeId || null,
+    assigneeName: assigneeUser.name || 'Team member',
+    assignedByName: assignedByUser?.name || assignedByUser?.email || 'A teammate',
+    taskLink: '/workspace',
+    email: null,
+    phone: null,
+    shopId: task.shopId || null,
+    studioLocationId: task.studioLocationId || null,
+    message: `Task "${task.title || task.id}" assigned to ${assigneeUser.name || 'team member'}.`,
+  };
+}
+
+async function runTaskAssignedStaffAutomations({
+  tenantId,
+  task,
+  assignee = null,
+  assignedByUser = null,
+  actorUserId = null,
+}) {
+  if (!tenantId || !task?.id) return { skipped: true, reason: 'missing_task' };
+  const assigneeId = assignee?.id || task.assigneeId || null;
+  if (!assigneeId) return { skipped: true, reason: 'missing_assignee' };
+  return executeMatchingRules({
+    tenantId,
+    triggerType: 'task_assigned_staff',
+    triggerContext: buildTaskAssignedStaffTriggerContext({
+      task,
+      assignee,
+      assignedByUser,
+    }),
+    actorUserId,
+  });
+}
+
 module.exports = {
   DEDUPE_WINDOW_HOURS,
   STICKY_TRIGGER_TYPES,
@@ -4050,6 +4128,7 @@ module.exports = {
   buildQuoteAcceptedStaffTriggerContext,
   buildOrderStatusStaffTriggerContext,
   buildLeadAssignedStaffTriggerContext,
+  buildTaskAssignedStaffTriggerContext,
   buildDailySalesSummaryContext,
   buildLeadTriggerContext,
   buildCustomerCreatedTriggerContext,
@@ -4076,6 +4155,7 @@ module.exports = {
   runOrderStatusStaffAutomations,
   runSaleCompletedStaffAutomations,
   runLeadAssignedStaffAutomations,
+  runTaskAssignedStaffAutomations,
   runNewLeadAutomations,
   runCustomerCreatedAutomations,
   runInvoiceSentAutomations,

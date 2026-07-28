@@ -91,13 +91,15 @@ Create `mobile/.env`:
 EXPO_PUBLIC_API_URL=http://localhost:5001
 ```
 
-**For physical device on same WiFi:** Use your machine's LAN IP:
+**For physical device on same WiFi:** Use your machine's LAN IP **and the Backend listen port**:
 
 ```bash
 cd mobile && npm run show-api-url
 ```
 
-Copy the output to `mobile/.env`. Or get your IP: `ipconfig getifaddr en0` (Mac).
+Copy the output to `mobile/.env`. The script probes `GET /health` so it picks up Backend port bumps (e.g. configured `5001` but listening on `5002`). Restart Expo after changing `.env` (`npx expo start --clear`).
+
+Or get your IP: `ipconfig getifaddr en0` (Mac) — still verify the Backend port from the server log.
 
 **Important:** Expo only exposes env vars prefixed with `EXPO_PUBLIC_`. Access via `process.env.EXPO_PUBLIC_API_URL`.
 
@@ -312,22 +314,23 @@ npx expo start
 
 ---
 
-## Troubleshooting: "Connection refused" / "Network Error"
+## Troubleshooting: "Connection refused" / "Network Error" / Store timeout
 
-If the app shows **Connection refused** or **Network Error** when calling the API:
+If the app shows **Connection refused**, **Network Error**, or Store tab **Request timed out** / "Still working…":
 
-1. **Start the backend** on the same machine (use the port that matches `EXPO_PUBLIC_API_URL`):
+1. **Start the backend** and note the **actual listen port** in the Backend log:
    ```bash
    cd Backend
-   # Use port 5001 if your .env has EXPO_PUBLIC_API_URL=http://<IP>:5001
-   PORT=5001 npm run dev
+   npm run dev
    ```
-   Or set `PORT=5001` in `Backend/.env` and run `npm run dev`.
+   If `PORT` (e.g. 5001) is busy, Backend auto-bumps (`Port 5001 in use, trying 5002...`). Mobile must use that bumped port — not the configured `PORT` alone.
 
-2. **Same WiFi**: For a physical device, `EXPO_PUBLIC_API_URL` must be your computer’s LAN IP (e.g. `http://192.168.0.110:5001`). Get it with:
+2. **Same WiFi + fresh LAN IP**: For a physical device, `EXPO_PUBLIC_API_URL` must be your computer’s current LAN IP and the listen port. Get both with:
    ```bash
    cd mobile && npm run show-api-url
    ```
-   or `ipconfig getifaddr en0` (Mac).
+   Copy the printed line into `mobile/.env`, then restart Expo with cache clear (`npx expo start --clear`). LAN IPs change across networks; a stale IP hangs until axios’s 30s timeout.
 
-3. **Port match**: Backend default port is **5000** (from `Backend/config/config.js`). If you use `5001` in the app, run the backend with `PORT=5001`.
+3. **Port match**: Prefer matching `Backend/.env` `PORT` and free that port. If something else owns it (e.g. another Python app on `:5001`), either stop that process or point mobile at the port Backend actually logged.
+
+4. **Empty Online Store settings** are not a timeout: `GET /api/store/setup-status` should return quickly with `checklist.hasSettings: false` and the Store tab shows the welcome screen. Timeouts mean the phone never reached ABS.

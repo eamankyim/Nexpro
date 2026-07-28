@@ -1,9 +1,15 @@
 import React from 'react';
-import { View, Text, StyleSheet, Pressable, ActivityIndicator, Modal } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 
 import { AppIcon } from '@/components/AppIcon';
+import {
+  AppBottomSheet,
+  APP_SHEET_HEIGHT_COMPACT,
+  SheetMenuRow,
+} from '@/components/AppBottomSheet';
 import { useScreenColors } from '@/hooks/useScreenColors';
+import { FontFamily, FontSize } from '@/constants/typography';
 
 type EntityDetailHeaderProps = {
   title: string;
@@ -317,80 +323,61 @@ export function DetailMoreActions({
         onPress={() => setOpen(true)}
         disabled={disabled}
       />
-      <Modal
+      <AppBottomSheet
         visible={open}
-        transparent
-        animationType="slide"
-        onRequestClose={() => {
+        title={title}
+        onClose={() => {
           if (!disabled) setOpen(false);
         }}
+        height={APP_SHEET_HEIGHT_COMPACT}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
       >
-        <Pressable
-          style={styles.moreBackdrop}
-          onPress={() => {
-            if (!disabled) setOpen(false);
-          }}
-        >
-          <Pressable
-            style={[styles.moreSheet, { backgroundColor: cardBg, borderColor }]}
-            onPress={(event) => event.stopPropagation()}
-          >
-            <View style={styles.moreSheetHeader}>
-              <Text style={[styles.moreTitle, { color: textColor }]}>{title}</Text>
-              <Pressable
-                onPress={() => setOpen(false)}
-                disabled={disabled}
-                hitSlop={10}
-                style={[styles.moreCloseButton, disabled && styles.moreDisabled]}
-              >
-                <AppIcon name="x" size={18} color={mutedColor} />
-              </Pressable>
-            </View>
-            <View style={styles.moreActionList}>
-              {visibleActions.map((action, index) => {
-                const isDanger = action.variant === 'danger';
-                const actionColor = isDanger ? '#dc2626' : textColor;
-                const isDisabled = disabled || action.disabled || action.loading;
-                return (
-                  <Pressable
-                    key={action.key ?? action.label}
-                    onPress={() => {
-                      setOpen(false);
-                      action.onPress();
-                    }}
-                    disabled={isDisabled}
-                    style={[
-                      styles.moreActionRow,
-                      { borderColor },
-                      index === visibleActions.length - 1 && styles.moreLastActionRow,
-                      isDisabled && !action.loading && styles.moreDisabled,
-                    ]}
-                  >
-                    <View style={styles.moreActionLabelWrap}>
-                      {action.icon ? (
-                        <AppIcon name={action.icon} size={18} color={isDanger ? '#dc2626' : colors.tint} />
-                      ) : null}
-                      <Text style={[styles.moreActionLabel, { color: actionColor }]}>{action.label}</Text>
-                    </View>
-                    {action.loading ? (
-                      <ActivityIndicator size="small" color={isDanger ? '#dc2626' : colors.tint} />
-                    ) : (
-                      <AppIcon name="chevron-right" size={14} color={mutedColor} />
-                    )}
-                  </Pressable>
-                );
-              })}
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
+        {visibleActions.map((action) => {
+          const isDanger = action.variant === 'danger';
+          const isDisabled = disabled || action.disabled || action.loading;
+          return (
+            <SheetMenuRow
+              key={action.key ?? action.label}
+              label={action.label}
+              danger={isDanger}
+              disabled={isDisabled}
+              icon={
+                action.icon ? (
+                  <AppIcon
+                    name={action.icon}
+                    size={18}
+                    color={isDanger ? '#dc2626' : colors.tint}
+                  />
+                ) : undefined
+              }
+              onPress={() => {
+                setOpen(false);
+                action.onPress();
+              }}
+              trailing={
+                action.loading ? (
+                  <ActivityIndicator size="small" color={isDanger ? '#dc2626' : colors.tint} />
+                ) : undefined
+              }
+            />
+          );
+        })}
+      </AppBottomSheet>
     </>
   );
 }
 
 const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
-  loadingText: { marginTop: 12, fontSize: 14 },
+  loadingText: {
+    marginTop: 12,
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.sm,
+    fontWeight: '500',
+  },
   backBtn: { paddingHorizontal: 8, paddingVertical: 6 },
   heroCard: {
     position: 'relative',
@@ -431,9 +418,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
   },
-  heroPillText: { color: '#d1fae5', fontSize: 12, fontWeight: '800', letterSpacing: 0.3 },
+  heroPillText: {
+    color: '#d1fae5',
+    fontFamily: FontFamily.bold,
+    fontSize: FontSize.xs,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
   heroStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 18 },
-  heroTitle: { flexShrink: 1, color: '#fff', fontSize: 28, lineHeight: 34, fontWeight: '800' },
+  heroTitle: {
+    flexShrink: 1,
+    color: '#fff',
+    fontFamily: FontFamily.bold,
+    fontSize: FontSize.display,
+    lineHeight: 34,
+    fontWeight: '700',
+  },
   heroCheckInline: {
     width: 24,
     height: 24,
@@ -442,17 +442,46 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#fff',
   },
-  heroMessage: { color: '#d1fae5', fontSize: 13, fontWeight: '600', marginTop: 8 },
+  heroMessage: {
+    color: '#d1fae5',
+    fontFamily: FontFamily.semiBold,
+    fontSize: FontSize.sm,
+    fontWeight: '600',
+    marginTop: 8,
+  },
   heroDivider: { height: 1, backgroundColor: 'rgba(255,255,255,0.16)', marginTop: 18, marginBottom: 14 },
   heroMetrics: { flexDirection: 'row', alignItems: 'center' },
   heroMetricBlock: { flex: 1 },
-  heroMetricLabel: { color: '#d1fae5', fontSize: 12, fontWeight: '700', marginBottom: 5 },
-  heroAmount: { color: '#fff', fontSize: 30, lineHeight: 36, fontWeight: '800' },
+  heroMetricLabel: {
+    color: '#d1fae5',
+    fontFamily: FontFamily.semiBold,
+    fontSize: FontSize.xs,
+    fontWeight: '600',
+    marginBottom: 5,
+  },
+  heroAmount: {
+    color: '#fff',
+    fontFamily: FontFamily.bold,
+    fontSize: 30,
+    lineHeight: 36,
+    fontWeight: '700',
+  },
   heroMetricDivider: { width: 1, height: 54, backgroundColor: 'rgba(255,255,255,0.15)', marginHorizontal: 22 },
   heroSecondaryBlock: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
   heroSecondaryTextBlock: { flex: 1 },
-  heroSecondaryLabel: { color: '#a7f3d0', fontSize: 11, fontWeight: '700', marginBottom: 3 },
-  heroSecondaryValue: { color: '#d1fae5', fontSize: 14, fontWeight: '800' },
+  heroSecondaryLabel: {
+    color: '#a7f3d0',
+    fontFamily: FontFamily.semiBold,
+    fontSize: 11,
+    fontWeight: '600',
+    marginBottom: 3,
+  },
+  heroSecondaryValue: {
+    color: '#d1fae5',
+    fontFamily: FontFamily.bold,
+    fontSize: FontSize.md,
+    fontWeight: '700',
+  },
   card: {
     borderRadius: 12,
     borderWidth: 1,
@@ -469,15 +498,38 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#dcfce7',
   },
-  cardHeading: { fontSize: 14, fontWeight: '800' },
+  cardHeading: {
+    fontFamily: FontFamily.bold,
+    fontSize: FontSize.md,
+    fontWeight: '700',
+  },
   cardBody: { marginTop: 16 },
   infoRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 14 },
   infoContent: { flex: 1, minWidth: 0 },
-  infoLabel: { fontSize: 12, fontWeight: '700', marginBottom: 4 },
-  infoText: { fontSize: 15, lineHeight: 20, fontWeight: '700' },
+  infoLabel: {
+    fontFamily: FontFamily.semiBold,
+    fontSize: FontSize.xs,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  infoText: {
+    fontFamily: FontFamily.semiBold,
+    fontSize: FontSize.md,
+    lineHeight: 20,
+    fontWeight: '600',
+  },
   row: { marginBottom: 14 },
-  label: { fontSize: 12, marginBottom: 4, fontWeight: '500' },
-  value: { fontSize: 16, fontWeight: '500' },
+  label: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.xs,
+    marginBottom: 4,
+    fontWeight: '500',
+  },
+  value: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.body,
+    fontWeight: '500',
+  },
   footer: {
     borderTopWidth: 1,
     padding: 16,
@@ -499,53 +551,9 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
   },
-  actionText: { fontSize: 15, fontWeight: '800' },
-  moreBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.35)',
-    justifyContent: 'flex-end',
+  actionText: {
+    fontFamily: FontFamily.bold,
+    fontSize: FontSize.md,
+    fontWeight: '700',
   },
-  moreSheet: {
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    borderWidth: 1,
-    padding: 14,
-    paddingBottom: 28,
-  },
-  moreSheetHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  moreTitle: { fontSize: 17, fontWeight: '800' },
-  moreCloseButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  moreActionList: { gap: 8 },
-  moreActionRow: {
-    minHeight: 50,
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  moreLastActionRow: { marginBottom: 0 },
-  moreActionLabelWrap: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  moreActionLabel: { fontSize: 15, fontWeight: '700' },
-  moreDisabled: { opacity: 0.6 },
 });

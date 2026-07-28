@@ -1,30 +1,38 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   Pressable,
   RefreshControl,
   Linking,
   Alert,
+  ScrollView,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 
 import { AppIcon } from '@/components/AppIcon';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
+import { FilterChipRow } from '@/components/FilterChip';
 import { ListLoadingState, ListErrorState } from '@/components/ListScreenStates';
 import { ScreenShell } from '@/components/ScreenShell';
+import { OnlineStoreOrdersList } from '@/components/store/OnlineStoreOrdersList';
+import { OnlineStoreWelcome } from '@/components/store/OnlineStoreWelcome';
 import { useAuth } from '@/context/AuthContext';
 import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { useScreenColors } from '@/hooks/useScreenColors';
+import { useIsStoreSetupRoute } from '@/hooks/useIsStoreSetupRoute';
 import { useOnlineStoreOrderAttention } from '@/hooks/useOnlineStoreOrderAttention';
+import { useRegisterPageSearch } from '@/hooks/useRegisterPageSearch';
 import { storeService } from '@/services/storeService';
 import { resolveBusinessType, STUDIO_LIKE_TYPES } from '@/constants';
+import { SEARCH_PLACEHOLDERS } from '@/constants/searchPlaceholders';
 import { formatCurrency, formatInteger } from '@/utils/formatCurrency';
+import { resolveStoreLogoUrl } from '@/utils/onlineStoreDefaults';
 import { getApiErrorMessage } from '@/utils/parseApiListResponse';
-import { buildStorefrontStoreUrl } from '@/utils/storefrontUrl';
+import { buildOnlineStoreUrl } from '@/utils/storefrontUrl';
+import { getResumeSetupHref, type SetupChecklist } from '@/utils/storeSetupFlow';
 import {
   fulfillmentStateForOrder,
   formatOnlineOrderStatusLabel,
@@ -38,18 +46,48 @@ const toCount = (value: unknown): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+type HubTab = 'overview' | 'orders';
+
+const HUB_TAB_OPTIONS: { value: HubTab; label: string }[] = [
+  { value: 'overview', label: 'Overview' },
+  { value: 'orders', label: 'Orders' },
+];
+
+function normalizeSectionParam(value: string | string[] | undefined): HubTab | null {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (raw === 'orders' || raw === 'overview') return raw;
+  return null;
+}
+
 export default function StoreScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ section?: string | string[] }>();
   const { activeTenant, activeTenantId, hasFeature } = useAuth();
   const { scopeReady } = useWorkspaceScope();
-  const { colors, cardBg, borderColor, textColor, mutedColor } = useScreenColors();
+  const { colors, cardBg, borderColor, textColor, mutedColor, bg } = useScreenColors();
 
   const resolvedType = resolveBusinessType(activeTenant?.businessType);
   const isStudioStore =
     STUDIO_LIKE_TYPES.includes((activeTenant?.businessType || '') as (typeof STUDIO_LIKE_TYPES)[number])
     || resolvedType === 'studio';
 
-  const enabled = !!activeTenantId && scopeReady && hasFeature('paymentsExpenses');
+  const inStoreSetup = useIsStoreSetupRoute();
+  const enabled = !!activeTenantId && scopeReady && hasFeature('paymentsExpenses') && !inStoreSetup;
+
+  const sectionFromParams = normalizeSectionParam(params.section);
+  const [hubTab, setHubTab] = useState<HubTab>(sectionFromParams ?? 'overview');
+
+  useEffect(() => {
+    if (sectionFromParams) setHubTab(sectionFromParams);
+  }, [sectionFromParams]);
+
+  const setHubSection = useCallback(
+    (next: HubTab) => {
+      setHubTab(next);
+      router.setParams({ section: next });
+    },
+    [router]
+  );
 
   const {
     data: statusResponse,
@@ -62,7 +100,8 @@ export default function StoreScreen() {
     queryKey: ['store', 'setup-status'],
     queryFn: () => storeService.getSetupStatus(),
     enabled,
-    staleTime: 60 * 1000,
+    staleTime: 30 * 1000,
+    refetchOnMount: 'always',
   });
 
   const {
@@ -78,13 +117,43 @@ export default function StoreScreen() {
 
   const setupData = (statusResponse as { data?: unknown })?.data ?? statusResponse ?? {};
   const settings = (setupData as { settings?: Record<string, unknown> }).settings || {};
-  const checklist = (setupData as { checklist?: Record<string, unknown> }).checklist || {};
-  const hasStoreSettings = Boolean(checklist.hasSettings);
-  const storefrontUrl = buildStorefrontStoreUrl(String(settings.slug || settings.storeSlug || ''));
+  const checklist = ((setupData as { checklist?: SetupChecklist }).checklist || {}) as SetupChecklist;
+  const isStoreLive = Boolean(checklist.launched);
+  const onlineStoreUrl = buildOnlineStoreUrl(String(settings.slug || settings.storeSlug || ''), {
+    customDomain: settings.customDomain as string | undefined,
+    customDomainStatus: settings.customDomainStatus as string | undefined,
+  });
+
+  const isOrdersTab = isStoreLive && hubTab === 'orders';
+
+  useRegisterPageSearch({
+    scope: isOrdersTab ? 'online-orders' : 'store',
+    placeholder: isOrdersTab ? SEARCH_PLACEHOLDERS.ONLINE_ORDERS : SEARCH_PLACEHOLDERS.GLOBAL,
+    enabled: isOrdersTab,
+    title: 'Online Store',
+    subtitle: isStoreLive ? undefined : 'Not published yet',
+  });
+
+  const openCreateStore = useCallback(() => {
+    const businessLogoUrl = resolveStoreLogoUrl(settings, activeTenant?.metadata, activeTenant);
+    router.push(
+      getResumeSetupHref(checklist, settings, { businessLogoUrl }) as never
+    );
+  }, [activeTenant, checklist, router, settings]);
 
   const totalOrders = useMemo(
     () => toCount(orderStats.total ?? recentOrders.length),
     [orderStats.total, recentOrders.length]
+  );
+
+  const hubTabOptions = useMemo(
+    () =>
+      HUB_TAB_OPTIONS.map((tab) =>
+        tab.value === 'orders' && pendingOrderCount > 0
+          ? { ...tab, label: `Orders (${formatInteger(pendingOrderCount)})` }
+          : tab
+      ),
+    [pendingOrderCount]
   );
 
   const dashboardStats = useMemo(
@@ -98,10 +167,10 @@ export default function StoreScreen() {
       },
       {
         label: isStudioStore ? 'Studio store status' : 'Store status',
-        value: checklist.launched ? 'Live' : 'Draft',
-        description: checklist.launched ? 'Public storefront is active' : 'Finish setup on web',
+        value: 'Live',
+        description: 'Your online store is live',
         icon: 'shopping-cart' as const,
-        valueColor: checklist.launched ? colors.tint : '#b45309',
+        valueColor: colors.tint,
       },
       {
         label: 'Pending orders',
@@ -109,6 +178,7 @@ export default function StoreScreen() {
         description: 'Payment or fulfillment needs attention',
         icon: 'clock' as const,
         valueColor: '#b45309',
+        onPress: () => setHubSection('orders'),
       },
       {
         label: 'Online revenue',
@@ -121,7 +191,6 @@ export default function StoreScreen() {
       },
     ],
     [
-      checklist.launched,
       checklist.listingsCount,
       colors.tint,
       hasLoadedOrderStats,
@@ -129,20 +198,21 @@ export default function StoreScreen() {
       isStudioStore,
       orderStats.totalRevenue,
       pendingOrderCount,
+      setHubSection,
       textColor,
       totalOrders,
     ]
   );
 
-  const openStorefront = useCallback(() => {
-    if (!storefrontUrl) {
-      Alert.alert('Store not launched', 'Finish store setup on the web app to get your storefront link.');
+  const openOnlineStore = useCallback(() => {
+    if (!onlineStoreUrl) {
+      Alert.alert('Store not ready', 'Finish online store setup to get your store link.');
       return;
     }
-    Linking.openURL(storefrontUrl).catch(() => {
-      Alert.alert('Could not open link', storefrontUrl);
+    Linking.openURL(onlineStoreUrl).catch(() => {
+      Alert.alert('Could not open link', onlineStoreUrl);
     });
-  }, [storefrontUrl]);
+  }, [onlineStoreUrl]);
 
   if (!hasFeature('paymentsExpenses')) {
     return <FeatureAccessDenied message="Online store is not enabled for your workspace." />;
@@ -162,18 +232,11 @@ export default function StoreScreen() {
     );
   }
 
-  if (!hasStoreSettings) {
+  // Launch screen until published/live — not empty draft statistics.
+  if (!isStoreLive) {
     return (
-      <ScreenShell scrollable style={styles.container} contentContainerStyle={styles.content}>
-        <View style={[styles.heroCard, { backgroundColor: cardBg, borderColor }]}>
-          <AppIcon name="shopping-cart" size={32} color={colors.tint} />
-          <Text style={[styles.heroTitle, { color: textColor }]}>
-            {isStudioStore ? 'Set up your studio store' : 'Set up your online store'}
-          </Text>
-          <Text style={[styles.heroBody, { color: mutedColor }]}>
-            Complete store setup on the web app to publish your {isStudioStore ? 'services' : 'products'} and receive online orders on mobile.
-          </Text>
-        </View>
+      <ScreenShell style={styles.container}>
+        <OnlineStoreWelcome chrome="tab" onCreateStore={openCreateStore} />
       </ScreenShell>
     );
   }
@@ -181,161 +244,171 @@ export default function StoreScreen() {
   const displayName = String(settings.displayName || (isStudioStore ? 'Studio store' : 'Online store'));
 
   return (
-    <ScreenShell
-      scrollable
-      style={styles.container}
-      contentContainerStyle={styles.content}
-      refreshControl={
-        <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={colors.tint} />
-      }
-    >
-      <View style={[styles.heroCard, { backgroundColor: cardBg, borderColor }]}>
-        <Text style={[styles.heroTitle, { color: textColor }]}>{displayName}</Text>
-        <Text style={[styles.heroBody, { color: mutedColor }]}>
-          {checklist.launched
-            ? 'Track storefront performance and orders from mobile.'
-            : 'Dashboard preview. Finish launch settings on the web app when ready.'}
-        </Text>
-        {storefrontUrl ? (
-          <Pressable
-            onPress={openStorefront}
-            style={({ pressed }) => [styles.linkBtn, { borderColor, opacity: pressed ? 0.85 : 1 }]}
-          >
-            <AppIcon name="share" size={16} color={colors.tint} />
-            <Text style={[styles.linkBtnText, { color: colors.tint }]} numberOfLines={1}>
-              View storefront
-            </Text>
-          </Pressable>
-        ) : null}
+    <ScreenShell style={styles.container}>
+      <View style={[styles.hubTabs, { backgroundColor: bg, borderBottomColor: borderColor }]}>
+        <FilterChipRow
+          options={hubTabOptions}
+          value={hubTab}
+          onChange={(value) => setHubSection(value as HubTab)}
+        />
       </View>
 
-      <View style={styles.statsGrid}>
-        {dashboardStats.map((stat) => (
-          <View key={stat.label} style={[styles.statCard, { backgroundColor: cardBg, borderColor }]}>
-            <View style={styles.statHeader}>
-              <Text style={[styles.statLabel, { color: mutedColor }]}>{stat.label}</Text>
-              <AppIcon name={stat.icon} size={16} color={mutedColor} />
-            </View>
-            <Text style={[styles.statValue, { color: stat.valueColor }]}>{stat.value}</Text>
-            <Text style={[styles.statDescription, { color: mutedColor }]}>{stat.description}</Text>
-          </View>
-        ))}
-      </View>
+      {hubTab === 'orders' ? (
+        <OnlineStoreOrdersList enabled={enabled} />
+      ) : (
+        <ScrollView
+          style={styles.flex}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={colors.tint} />
+          }
+        >
+          {pendingOrderCount > 0 ? (
+            <Pressable
+              onPress={() => setHubSection('orders')}
+              style={({ pressed }) => [
+                styles.alertCard,
+                { backgroundColor: '#fffbeb', borderColor: '#fde68a', opacity: pressed ? 0.9 : 1 },
+              ]}
+            >
+              <AppIcon name="bell" size={20} color="#b45309" />
+              <View style={styles.alertTextCol}>
+                <Text style={styles.alertTitle}>
+                  {pendingOrderCount} online {pendingOrderCount === 1 ? 'order needs' : 'orders need'} attention
+                </Text>
+                <Text style={styles.alertBody}>Review and fulfill pending online store orders</Text>
+              </View>
+              <AppIcon name="chevron-right" size={16} color="#b45309" />
+            </Pressable>
+          ) : null}
 
-      <View style={styles.sectionHeader}>
-        <Text style={[styles.sectionTitle, { color: textColor }]}>Recent online orders</Text>
-        <Pressable onPress={() => router.push('/(tabs)/online-orders' as never)}>
-          <Text style={{ color: colors.tint, fontWeight: '600', fontSize: 14 }}>See all</Text>
-        </Pressable>
-      </View>
-      <View style={[styles.menuCard, { backgroundColor: cardBg, borderColor }]}>
-        {isRecentOrdersLoading || (isRecentOrdersFetching && recentOrders.length === 0) ? (
-          <View style={styles.stateCard}>
-            <AppIcon name="refresh" size={20} color={mutedColor} />
-            <Text style={[styles.stateText, { color: mutedColor }]}>Loading recent online orders...</Text>
-          </View>
-        ) : isRecentOrdersError ? (
-          <View style={[styles.stateCard, { backgroundColor: '#fffbeb' }]}>
-            <AppIcon name="exclamation-triangle" size={20} color="#b45309" />
-            <Text style={[styles.stateText, { color: '#92400e' }]}>
-              Could not load recent online orders. Open orders to try again.
+          <View style={[styles.heroCard, { backgroundColor: cardBg, borderColor }]}>
+            <Text style={[styles.heroTitle, { color: textColor }]}>{displayName}</Text>
+            <Text style={[styles.heroBody, { color: mutedColor }]}>
+              Track online store performance and orders from mobile.
             </Text>
-          </View>
-        ) : recentOrders.length === 0 ? (
-          <View style={styles.stateCard}>
-            <AppIcon name="shopping-cart" size={22} color={mutedColor} />
-            <Text style={[styles.stateTitle, { color: textColor }]}>No online orders yet</Text>
-            <Text style={[styles.stateText, { color: mutedColor }]}>
-              Share your storefront link and new orders will appear here.
-            </Text>
-          </View>
-        ) : (
-          recentOrders.slice(0, 3).map((order, index) => {
-            const fulfillment = fulfillmentStateForOrder(order);
-            return (
+            {onlineStoreUrl ? (
               <Pressable
-                key={String(order.id)}
-                onPress={() => router.push(`/store-order/${order.id}` as never)}
-                style={({ pressed }) => [
-                  styles.recentRow,
-                  index < Math.min(recentOrders.length, 3) - 1 && { borderBottomWidth: 1, borderBottomColor: borderColor },
-                  pressed && { opacity: 0.85 },
-                ]}
+                onPress={openOnlineStore}
+                style={({ pressed }) => [styles.linkBtn, { borderColor, opacity: pressed ? 0.85 : 1 }]}
               >
-                <View style={styles.recentMain}>
-                  <Text style={[styles.recentTitle, { color: textColor }]} numberOfLines={1}>
-                    {getOrderNumber(order)}
-                  </Text>
-                  <Text style={[styles.recentSub, { color: mutedColor }]} numberOfLines={1}>
-                    {getCustomerName(order)} · {formatOnlineOrderStatusLabel(fulfillment)}
-                  </Text>
-                </View>
-                <Text style={[styles.recentTotal, { color: colors.tint }]}>
-                  {formatCurrency(getOrderTotal(order))}
+                <AppIcon name="share" size={16} color={colors.tint} />
+                <Text style={[styles.linkBtnText, { color: colors.tint }]} numberOfLines={1}>
+                  View online store
                 </Text>
               </Pressable>
-            );
-          })
-        )}
-      </View>
-
-      <View style={styles.sectionHeader}>
-        <Text style={[styles.sectionTitle, { color: textColor }]}>Quick links</Text>
-      </View>
-      <View style={[styles.menuCard, { backgroundColor: cardBg, borderColor }]}>
-        <Pressable
-          onPress={() => router.push('/(tabs)/online-orders' as never)}
-          style={({ pressed }) => [styles.menuRow, { borderBottomColor: borderColor, opacity: pressed ? 0.85 : 1 }]}
-        >
-          <AppIcon name="shopping-cart" size={20} color={colors.tint} />
-          <Text style={[styles.menuLabel, { color: textColor }]}>Online orders</Text>
-          <AppIcon name="chevron-right" size={14} color={mutedColor} />
-        </Pressable>
-        {isStudioStore ? (
-          <Pressable
-            onPress={() => router.push('/(tabs)/store-services' as never)}
-            style={({ pressed }) => [styles.menuRow, { opacity: pressed ? 0.85 : 1 }]}
-          >
-            <AppIcon name="cut-outline" size={20} color={colors.tint} />
-            <Text style={[styles.menuLabel, { color: textColor }]}>Studio services</Text>
-            <AppIcon name="chevron-right" size={14} color={mutedColor} />
-          </Pressable>
-        ) : null}
-      </View>
-
-      {!checklist.launched ? (
-        <View style={[styles.noteCard, { backgroundColor: cardBg, borderColor }]}>
-          <AppIcon name="info" size={18} color={mutedColor} />
-          <Text style={[styles.noteText, { color: mutedColor }]}>
-            Store launch settings stay on the web app. Mobile focuses on stats and order follow-up.
-          </Text>
-        </View>
-      ) : null}
-
-      {pendingOrderCount > 0 ? (
-        <Pressable
-          onPress={() => router.push('/(tabs)/online-orders' as never)}
-          style={({ pressed }) => [
-            styles.alertCard,
-            { backgroundColor: '#fffbeb', borderColor: '#fde68a', opacity: pressed ? 0.9 : 1 },
-          ]}
-        >
-          <AppIcon name="bell" size={20} color="#b45309" />
-          <View style={styles.alertTextCol}>
-            <Text style={styles.alertTitle}>
-              {pendingOrderCount} online {pendingOrderCount === 1 ? 'order needs' : 'orders need'} attention
-            </Text>
-            <Text style={styles.alertBody}>Review and fulfill pending online store orders</Text>
+            ) : null}
           </View>
-          <AppIcon name="chevron-right" size={16} color="#b45309" />
-        </Pressable>
-      ) : null}
+
+          <View style={styles.statsGrid}>
+            {dashboardStats.map((stat) => (
+              <Pressable
+                key={stat.label}
+                disabled={!stat.onPress}
+                onPress={stat.onPress}
+                style={({ pressed }) => [
+                  styles.statCard,
+                  { backgroundColor: cardBg, borderColor, opacity: pressed && stat.onPress ? 0.85 : 1 },
+                ]}
+              >
+                <View style={styles.statHeader}>
+                  <Text style={[styles.statLabel, { color: mutedColor }]}>{stat.label}</Text>
+                  <AppIcon name={stat.icon} size={16} color={mutedColor} />
+                </View>
+                <Text style={[styles.statValue, { color: stat.valueColor }]}>{stat.value}</Text>
+                <Text style={[styles.statDescription, { color: mutedColor }]}>{stat.description}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, { color: textColor }]}>Recent orders</Text>
+            <Pressable onPress={() => setHubSection('orders')} hitSlop={8}>
+              <Text style={{ color: colors.tint, fontWeight: '600', fontSize: 14 }}>See all</Text>
+            </Pressable>
+          </View>
+          <View style={[styles.menuCard, { backgroundColor: cardBg, borderColor }]}>
+            {isRecentOrdersLoading || (isRecentOrdersFetching && recentOrders.length === 0) ? (
+              <View style={styles.stateCard}>
+                <AppIcon name="refresh" size={20} color={mutedColor} />
+                <Text style={[styles.stateText, { color: mutedColor }]}>Loading recent orders...</Text>
+              </View>
+            ) : isRecentOrdersError ? (
+              <View style={[styles.stateCard, { backgroundColor: '#fffbeb' }]}>
+                <AppIcon name="exclamation-triangle" size={20} color="#b45309" />
+                <Text style={[styles.stateText, { color: '#92400e' }]}>
+                  Could not load recent orders. Open Orders to try again.
+                </Text>
+              </View>
+            ) : recentOrders.length === 0 ? (
+              <View style={styles.stateCard}>
+                <AppIcon name="shopping-cart" size={22} color={mutedColor} />
+                <Text style={[styles.stateTitle, { color: textColor }]}>No online orders yet</Text>
+                <Text style={[styles.stateText, { color: mutedColor }]}>
+                  Share your online store link and new orders will appear here.
+                </Text>
+              </View>
+            ) : (
+              recentOrders.slice(0, 3).map((order, index) => {
+                const fulfillment = fulfillmentStateForOrder(order);
+                return (
+                  <Pressable
+                    key={String(order.id)}
+                    onPress={() => router.push(`/store-order/${order.id}` as never)}
+                    style={({ pressed }) => [
+                      styles.recentRow,
+                      index < Math.min(recentOrders.length, 3) - 1 && { borderBottomWidth: 1, borderBottomColor: borderColor },
+                      pressed && { opacity: 0.85 },
+                    ]}
+                  >
+                    <View style={styles.recentMain}>
+                      <Text style={[styles.recentTitle, { color: textColor }]} numberOfLines={1}>
+                        {getOrderNumber(order)}
+                      </Text>
+                      <Text style={[styles.recentSub, { color: mutedColor }]} numberOfLines={1}>
+                        {getCustomerName(order)} · {formatOnlineOrderStatusLabel(fulfillment)}
+                      </Text>
+                    </View>
+                    <Text style={[styles.recentTotal, { color: colors.tint }]}>
+                      {formatCurrency(getOrderTotal(order))}
+                    </Text>
+                  </Pressable>
+                );
+              })
+            )}
+          </View>
+
+          {isStudioStore ? (
+            <>
+              <View style={styles.sectionHeader}>
+                <Text style={[styles.sectionTitle, { color: textColor }]}>Quick links</Text>
+              </View>
+              <View style={[styles.menuCard, { backgroundColor: cardBg, borderColor }]}>
+                <Pressable
+                  onPress={() => router.push('/(tabs)/store-services' as never)}
+                  style={({ pressed }) => [styles.menuRow, { opacity: pressed ? 0.85 : 1 }]}
+                >
+                  <AppIcon name="cut-outline" size={20} color={colors.tint} />
+                  <Text style={[styles.menuLabel, { color: textColor }]}>Studio services</Text>
+                  <AppIcon name="chevron-right" size={14} color={mutedColor} />
+                </Pressable>
+              </View>
+            </>
+          ) : null}
+        </ScrollView>
+      )}
     </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  flex: { flex: 1 },
+  hubTabs: {
+    borderBottomWidth: 1,
+    paddingTop: 8,
+  },
   content: { padding: 16, paddingBottom: 32 },
   heroCard: {
     borderWidth: 1,
@@ -390,19 +463,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     padding: 16,
-    borderBottomWidth: 0,
   },
   menuLabel: { flex: 1, fontSize: 16, fontWeight: '500' },
-  noteCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 16,
-  },
-  noteText: { flex: 1, fontSize: 13, lineHeight: 18 },
   stateCard: { alignItems: 'center', justifyContent: 'center', gap: 8, padding: 22 },
   stateTitle: { fontSize: 15, fontWeight: '700' },
   stateText: { fontSize: 13, lineHeight: 18, textAlign: 'center' },

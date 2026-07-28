@@ -7,13 +7,17 @@ import {
   Pressable,
   RefreshControl,
   ActivityIndicator,
-  Modal,
   Alert,
   ScrollView,
 } from 'react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { AppIcon } from '@/components/AppIcon';
+import {
+  AppBottomSheet,
+  APP_SHEET_HEIGHT_COMPACT,
+  SheetMenuRow,
+} from '@/components/AppBottomSheet';
 import { ListEmptyState } from '@/components/ListEmptyState';
 import { SEARCH_PLACEHOLDERS } from '@/constants/searchPlaceholders';
 import { useSmartSearch } from '@/context/SmartSearchContext';
@@ -30,6 +34,7 @@ import { ListLoadingState, ListErrorState } from '@/components/ListScreenStates'
 import { getApiErrorMessage } from '@/utils/parseApiListResponse';
 import { resolveBusinessType } from '@/constants';
 import { useDebounce } from '@/hooks/useDebounce';
+import { useIsStoreSetupRoute } from '@/hooks/useIsStoreSetupRoute';
 import {
   DELIVERY_ACTIVE_FILTERS,
   DELIVERY_STATUS_ORDER,
@@ -49,7 +54,8 @@ export default function DeliveriesScreen() {
 
   const isStudioLike = resolveBusinessType(activeTenant?.businessType) === 'studio';
   const isTerminalFilter = isDriver ? scope === 'done' : statusFilter === 'delivered' || statusFilter === 'returned';
-  const deliveriesEnabled = hasFeature('deliveries') || isDriver;
+  const inStoreSetup = useIsStoreSetupRoute();
+  const deliveriesEnabled = (hasFeature('deliveries') || isDriver) && !inStoreSetup;
 
   const { searchValue } = useSmartSearch();
   useRegisterPageSearch({
@@ -408,50 +414,53 @@ export default function DeliveriesScreen() {
       )}
 
       {!isDriver && (
-      <Modal visible={!!pickerRow} transparent animationType="fade">
-        <Pressable style={styles.modalBackdrop} onPress={() => setPickerRow(null)}>
-          <View style={[styles.modalCard, { backgroundColor: cardBg, borderColor }]}>
-            <Text style={[styles.modalTitle, { color: textColor }]}>Delivery status</Text>
-            <Pressable
+      <AppBottomSheet
+        visible={!!pickerRow}
+        title="Delivery status"
+        onClose={() => setPickerRow(null)}
+        height={APP_SHEET_HEIGHT_COMPACT}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+      >
+        <SheetMenuRow
+          label="Not set yet"
+          active={!pickerRow?.deliveryStatus}
+          onPress={() => {
+            if (!pickerRow) return;
+            patchMutation.mutate([
+              { entityType: pickerRow.entityType, id: pickerRow.id, deliveryStatus: null },
+            ]);
+          }}
+          trailing={
+            !pickerRow?.deliveryStatus ? (
+              <AppIcon name="check" size={18} color="#fff" />
+            ) : (
+              <View />
+            )
+          }
+        />
+        {DELIVERY_STATUS_ORDER.map((key) => {
+          const selected = pickerRow?.deliveryStatus === key;
+          return (
+            <SheetMenuRow
+              key={key}
+              label={getDeliveryStatusDisplayLabel(key)}
+              active={selected}
               onPress={() => {
                 if (!pickerRow) return;
                 patchMutation.mutate([
-                  { entityType: pickerRow.entityType, id: pickerRow.id, deliveryStatus: null },
+                  { entityType: pickerRow.entityType, id: pickerRow.id, deliveryStatus: key },
                 ]);
               }}
-              style={[styles.pickRow, { borderBottomColor: borderColor }]}
-            >
-              <Text style={{ color: textColor, flex: 1 }}>Not set yet</Text>
-              {!pickerRow?.deliveryStatus ? (
-                <AppIcon name="check" size={16} color={colors.tint} />
-              ) : null}
-            </Pressable>
-            {DELIVERY_STATUS_ORDER.map((key) => {
-              const selected = pickerRow?.deliveryStatus === key;
-              return (
-                <Pressable
-                  key={key}
-                  onPress={() => {
-                    if (!pickerRow) return;
-                    patchMutation.mutate([
-                      { entityType: pickerRow.entityType, id: pickerRow.id, deliveryStatus: key },
-                    ]);
-                  }}
-                  style={[styles.pickRow, { borderBottomColor: borderColor }]}
-                >
-                  <Text style={{ color: textColor, flex: 1 }}>
-                    {getDeliveryStatusDisplayLabel(key)}
-                  </Text>
-                  {selected ? <AppIcon name="check" size={16} color={colors.tint} /> : null}
-                </Pressable>
-              );
-            })}
-            <Pressable onPress={() => setPickerRow(null)} style={{ padding: 14, alignItems: 'center' }}>
-              <Text style={{ color: mutedColor, fontWeight: '600' }}>Cancel</Text>
-            </Pressable>
-          </View>
-        </Pressable>
-      </Modal>
+              trailing={
+                selected ? <AppIcon name="check" size={18} color="#fff" /> : <View />
+              }
+            />
+          );
+        })}
+      </AppBottomSheet>
       )}
     </ScreenShell>
   );
@@ -547,14 +556,4 @@ const styles = StyleSheet.create({
   },
   primaryActionText: { color: '#fff', fontSize: 15, fontWeight: '800' },
   actionPressed: { opacity: 0.85 },
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', padding: 20 },
-  modalCard: { borderRadius: 12, borderWidth: 1, overflow: 'hidden' },
-  modalTitle: { fontSize: 18, fontWeight: '700', padding: 14 },
-  pickRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    borderBottomWidth: 1,
-  },
 });

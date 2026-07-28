@@ -2,7 +2,15 @@ import { SEARCH_PLACEHOLDERS } from '@/constants/searchPlaceholders';
 import type { PageSearchConfig } from '@/context/SmartSearchContext';
 
 /** Tab routes that use a dedicated in-page search UI instead of the header. */
-export const HEADER_SEARCH_HIDDEN_ROUTES = new Set(['index', 'more', 'chat', 'cart', 'scan']);
+export const HEADER_SEARCH_HIDDEN_ROUTES = new Set([
+  'index',
+  'more',
+  'chat',
+  'cart',
+  'scan',
+  'store-services',
+  // `store` enables header search only on the Orders hub tab via useRegisterPageSearch.
+]);
 
 /** Default search config per tab route when a screen has not registered yet. */
 export const TAB_ROUTE_SEARCH_DEFAULTS: Record<string, PageSearchConfig> = {
@@ -18,7 +26,7 @@ export const TAB_ROUTE_SEARCH_DEFAULTS: Record<string, PageSearchConfig> = {
   jobs: { scope: 'jobs', placeholder: SEARCH_PLACEHOLDERS.JOBS },
   orders: { scope: 'orders', placeholder: SEARCH_PLACEHOLDERS.ORDERS },
   'online-orders': { scope: 'online-orders', placeholder: SEARCH_PLACEHOLDERS.ONLINE_ORDERS },
-  store: { scope: 'store', placeholder: SEARCH_PLACEHOLDERS.GLOBAL },
+  store: { scope: 'store', placeholder: SEARCH_PLACEHOLDERS.GLOBAL, enabled: false },
   'store-services': { scope: 'store-services', placeholder: SEARCH_PLACEHOLDERS.GLOBAL },
 };
 
@@ -39,5 +47,7 @@ export function resolveHeaderSearchConfig(
   if (pageConfig) {
     return pageConfig.enabled === false ? null : pageConfig;
   }
-  return TAB_ROUTE_SEARCH_DEFAULTS[segment] ?? null;
+  const fallback = TAB_ROUTE_SEARCH_DEFAULTS[segment] ?? null;
+  if (!fallback || fallback.enabled === false) return null;
+  return fallback;
 }

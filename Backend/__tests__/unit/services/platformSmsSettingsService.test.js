@@ -39,6 +39,7 @@ describe('platformSmsSettingsService', () => {
           senderId: 'ABS',
         },
         monthlyLimit: 150,
+        monthlyLimitEnabled: true,
       },
     });
 
@@ -58,6 +59,7 @@ describe('platformSmsSettingsService', () => {
           senderId: 'ABS',
         }),
         monthlyLimit: 150,
+        monthlyLimitEnabled: true,
       }),
     }));
     expect(summary.activeProvider).toBe('arkesel');
@@ -103,6 +105,37 @@ describe('platformSmsSettingsService', () => {
     expect(summary.activeProvider).toBe('mnotify');
     expect(summary.mnotify.apiKeyMasked).toBe('•••• 9876');
     expect(summary.arkesel.apiKeyConfigured).toBe(true);
+  });
+
+  it('can disable the monthly SMS limit while keeping the limit value', async () => {
+    Setting.findOne.mockResolvedValue({
+      value: {
+        enabled: true,
+        activeProvider: 'arkesel',
+        arkesel: {
+          apiKey: 'enc:arkesel-secret-key-1234',
+          apiKeyLast4: '1234',
+          senderId: 'ABS',
+        },
+        monthlyLimit: 100,
+        monthlyLimitEnabled: true,
+      },
+      save: jest.fn(),
+    });
+
+    const setting = await Setting.findOne();
+    Setting.findOne.mockResolvedValue(setting);
+
+    const summary = await platformSmsSettingsService.savePlatformSmsSettings({
+      userId: 'admin-1',
+      payload: {
+        monthlyLimitEnabled: false,
+      },
+    });
+
+    expect(setting.value.monthlyLimitEnabled).toBe(false);
+    expect(setting.value.monthlyLimit).toBe(100);
+    expect(summary.monthlyLimitEnabled).toBe(false);
   });
 
   it('returns a validation error when saving a new secret without an encryption key', async () => {

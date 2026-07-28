@@ -167,13 +167,12 @@ export async function refreshAfterOrderChange(queryClient: QueryClient) {
   await refreshRelatedQueries(queryClient, [['orders'], ['sales'], ['dashboard']]);
 }
 
-/** Online store order status / refund */
+/** Online store order status update */
 export async function refreshAfterOnlineOrderChange(queryClient: QueryClient) {
   await refreshRelatedQueries(queryClient, [
     ['store', 'online-orders'],
     ['store', 'order'],
     ['store', 'dashboard'],
-    ['store', 'trade-assurance'],
     ['store', 'setup-status'],
     ['deliveries-queue'],
     ['sales'],
@@ -225,4 +224,18 @@ export async function refreshAfterWorkspaceScopeChange(queryClient: QueryClient)
   await refetchActivePrefixes(queryClient, SCOPED_WORKSPACE_PREFIXES);
   await queryClient.invalidateQueries({ queryKey: ['shops'] });
   await queryClient.invalidateQueries({ queryKey: ['studio-locations'] });
+}
+
+/**
+ * Drop cached Online Store operational data (orders/stats/listings) when
+ * checklist.hasSettings is false so wiped settings cannot keep showing orphan rows.
+ */
+export async function clearOnlineStoreOperationalQueries(queryClient: QueryClient) {
+  await Promise.all([
+    queryClient.removeQueries({ queryKey: ['store', 'dashboard', 'order-stats'] }),
+    queryClient.removeQueries({ queryKey: ['store', 'dashboard', 'recent-online-orders'] }),
+    queryClient.removeQueries({ queryKey: ['store', 'online-orders'] }),
+    queryClient.removeQueries({ queryKey: ['store', 'order'] }),
+    queryClient.removeQueries({ queryKey: ['store', 'service-listings'] }),
+  ]);
 }

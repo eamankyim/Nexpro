@@ -8,7 +8,8 @@
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.africanbusinesssuite.com"
+        "EXPO_PUBLIC_API_URL": "https://api.africanbusinesssuite.com",
+        "EXPO_PUBLIC_ONLINE_STORE_URL": "https://store.absghana.com"
       },
       "ios": {
         "simulator": true
@@ -20,7 +21,8 @@
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.africanbusinesssuite.com"
+        "EXPO_PUBLIC_API_URL": "https://api.africanbusinesssuite.com",
+        "EXPO_PUBLIC_ONLINE_STORE_URL": "https://store.absghana.com"
       },
       "ios": {
         "simulator": false
@@ -32,7 +34,8 @@
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.africanbusinesssuite.com"
+        "EXPO_PUBLIC_API_URL": "https://api.africanbusinesssuite.com",
+        "EXPO_PUBLIC_ONLINE_STORE_URL": "https://store.absghana.com"
       },
       "ios": {
         "simulator": false

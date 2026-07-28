@@ -75,7 +75,7 @@ const StoreDashboard = () => {
     isRecentOrdersFetching,
     isRecentOrdersLoading,
     isRecentOrdersError,
-  } = useOnlineStoreOrderAttention({ enabled: hasStoreSettings });
+  } = useOnlineStoreOrderAttention({ enabled: hasStoreSettings, commerceChannel: 'sabito_marketplace' });
 
   const totalOrders = useMemo(
     () => toCount(orderStats?.total ?? recentOrders.length),
@@ -162,6 +162,8 @@ const StoreDashboard = () => {
         <OnlineStoreOrderBanner
           pendingOrderCount={pendingOrderCount}
           latestOrder={latestOrder}
+          ordersHref="/store/orders"
+          ordersLabel="View Sabito orders"
         />
       ) : null}
 

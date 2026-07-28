@@ -11,6 +11,7 @@ jest.mock('../../../services/platformSmsSettingsService', () => ({
     if (!Number.isFinite(parsed) || parsed < 1) return 100;
     return parsed;
   }),
+  isMonthlyLimitEnabled: jest.fn((value) => value?.monthlyLimitEnabled !== false),
 }));
 
 const { sequelize } = require('../../../config/database');
@@ -20,7 +21,7 @@ const platformSmsUsageService = require('../../../services/platformSmsUsageServi
 describe('platformSmsUsageService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    getSavedPlatformSmsConfig.mockResolvedValue({ monthlyLimit: 100 });
+    getSavedPlatformSmsConfig.mockResolvedValue({ monthlyLimit: 100, monthlyLimitEnabled: true });
   });
 
   it('returns usage summary with remaining quota', async () => {
@@ -30,6 +31,7 @@ describe('platformSmsUsageService', () => {
 
     expect(summary.sentCount).toBe(25);
     expect(summary.monthlyLimit).toBe(100);
+    expect(summary.monthlyLimitEnabled).toBe(true);
     expect(summary.remaining).toBe(75);
     expect(summary.yearMonth).toMatch(/^\d{4}-\d{2}$/);
     expect(summary.resetsAt).toMatch(/^\d{4}-\d{2}-01T00:00:00\.000Z$/);
@@ -43,6 +45,17 @@ describe('platformSmsUsageService', () => {
     expect(result.allowed).toBe(false);
     expect(result.errorCode).toBe('PLATFORM_SMS_MONTHLY_LIMIT');
     expect(result.error).toMatch(/ABS platform SMS quota exhausted/i);
+  });
+
+  it('allows sends when monthly limit is disabled even if usage exceeds the configured number', async () => {
+    getSavedPlatformSmsConfig.mockResolvedValue({ monthlyLimit: 100, monthlyLimitEnabled: false });
+    sequelize.query.mockResolvedValueOnce([[{ sentCount: 250 }]]);
+
+    const result = await platformSmsUsageService.checkPlatformSmsLimit('tenant-1', 1);
+
+    expect(result.allowed).toBe(true);
+    expect(result.summary.monthlyLimitEnabled).toBe(false);
+    expect(result.summary.remaining).toBeNull();
   });
 
   it('returns zero usage when usage table is missing', async () => {

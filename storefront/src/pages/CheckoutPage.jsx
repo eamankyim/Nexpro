@@ -189,6 +189,7 @@ const CheckoutPage = () => {
     if (!store) return null;
     const payload = {
       storeSlug: store.slug,
+      commerceChannel: isSingleStoreMode ? 'online_store' : 'sabito_marketplace',
       items: items.map((item) => ({
         listingId: item.listingId,
         quantity: item.quantity,
@@ -200,7 +201,7 @@ const CheckoutPage = () => {
       payload.deliveryAddress = buildDeliveryAddressPayload(deliveryAddress);
     }
     return payload;
-  }, [deliveryAddress, fulfillmentMethod, items, notes, store]);
+  }, [deliveryAddress, fulfillmentMethod, isSingleStoreMode, items, notes, store]);
 
   const previewQuery = useQuery({
     queryKey: ['checkout', 'preview', checkoutPayload],

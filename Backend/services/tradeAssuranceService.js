@@ -201,6 +201,7 @@ const recordHeldPaymentForSale = async ({ sale, store, shopper, transaction, pro
     heldAt,
     metadata: {
       source: ONLINE_STORE_SOURCE,
+      commerceChannel: 'sabito_marketplace',
       commissionPercent: fee.commissionPercent,
       fixedFeeAmount: fee.fixedFeeAmount,
       storeSlug: store?.slug || null,
@@ -229,6 +230,7 @@ const recordHeldPaymentForSale = async ({ sale, store, shopper, transaction, pro
   }
 
   const metadata = getSaleMetadata(sale);
+  metadata.commerceChannel = 'sabito_marketplace';
   metadata.tradeAssurance = {
     ...(metadata.tradeAssurance || {}),
     marketplacePaymentId: payment.id,
@@ -250,6 +252,57 @@ const recordHeldPaymentForSale = async ({ sale, store, shopper, transaction, pro
   }, { transaction });
 
   return payment;
+};
+
+/**
+ * Online Store direct settlement — marks the sale paid with no marketplace hold,
+ * fee ledger, or MarketplaceOrderPayment row.
+ * @param {{ sale: object, store?: object, shopper?: object, transaction?: object, provider?: string, providerReference?: string|null }} args
+ * @returns {Promise<object>} Updated sale
+ */
+const recordDirectPaidPaymentForSale = async ({
+  sale,
+  store,
+  shopper,
+  transaction,
+  provider = 'paystack',
+  providerReference = null,
+}) => {
+  const paidAt = new Date();
+  const grossAmount = money(sale.total);
+  const metadata = getSaleMetadata(sale);
+  metadata.commerceChannel = 'online_store';
+  metadata.directPayment = {
+    paymentStatus: 'paid',
+    paidAt: paidAt.toISOString(),
+    provider,
+    providerReference,
+    grossAmount,
+    storeSlug: store?.slug || metadata.storeSlug || null,
+    storefrontCustomerId: shopper?.id || metadata.storefrontCustomerId || null,
+  };
+  // Keep a non-hold tradeAssurance stub so older UIs reading paymentStatus still work.
+  metadata.tradeAssurance = {
+    ...(metadata.tradeAssurance || {}),
+    paymentStatus: 'paid',
+    paidAt: paidAt.toISOString(),
+    grossAmount,
+    feeAmount: 0,
+    netAmount: grossAmount,
+    payoutHold: false,
+    payoutReleaseEligible: false,
+    marketplacePaymentId: null,
+  };
+
+  await sale.update({
+    status: 'completed',
+    amountPaid: grossAmount,
+    change: 0,
+    paymentMethod: provider === 'paystack' ? 'card' : (sale.paymentMethod || 'other'),
+    metadata,
+  }, { transaction });
+
+  return sale;
 };
 
 const markReleaseEligibleForSale = async ({ sale, confirmedAt = new Date(), transaction }) => {
@@ -1014,6 +1067,7 @@ module.exports = {
   getAutoReleaseHours,
   getReleaseEligibleAt,
   recordHeldPaymentForSale,
+  recordDirectPaidPaymentForSale,
   markReleaseEligibleForSale,
   markDeliveryReleaseWindowForSale,
   openDisputeForSale,

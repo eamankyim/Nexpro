@@ -7,13 +7,17 @@ import {
   Pressable,
   Alert,
   ActivityIndicator,
-  Modal,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 
 import { AppIcon } from '@/components/AppIcon';
+import {
+  AppBottomSheet,
+  APP_SHEET_HEIGHT_COMPACT,
+  SheetMenuRow,
+} from '@/components/AppBottomSheet';
 import {
   DetailActionButton,
   DetailFooter,
@@ -37,7 +41,6 @@ import { refreshAfterOnlineOrderChange } from '@/utils/queryInvalidation';
 import { getCountryCallingCodeFromPhone, openWhatsAppChat } from '@/utils/whatsapp';
 import {
   canApplyOnlineOrderStatus,
-  canShowSellerRefund,
   formatOnlineOrderStatusLabel,
   fulfillmentStateForOrder,
   getCustomerName,
@@ -45,7 +48,7 @@ import {
   getOrderNumber,
   getOrderTotal,
   ONLINE_ORDER_STATUS_ACTIONS,
-  paymentStatusForMarketplaceOrder,
+  paymentStatusForOnlineOrder,
 } from '@/utils/marketplaceOrderStatus';
 
 function getOrderItems(order: Record<string, unknown>) {
@@ -166,12 +169,10 @@ function getOrderSubtotal(order: Record<string, unknown>, items: Record<string, 
 
 function getPaymentMethod(order: Record<string, unknown>): string {
   const metadata = getNestedObject(order.metadata);
-  const marketplacePayment = getNestedObject(order.marketplacePayment);
   return titleCase(
     order.paymentMethod
-      ?? marketplacePayment.paymentMethod
-      ?? marketplacePayment.channel
       ?? metadata.paymentMethod
+      ?? metadata.paymentChannel
       ?? 'Mobile Money'
   );
 }
@@ -197,11 +198,10 @@ function isPaidPaymentStatus(status: string | null): boolean {
   return ['paid', 'paid_held', 'held', 'released', 'completed'].includes(String(status || '').toLowerCase());
 }
 
-type StoreOrderAction = 'refund' | 'receipt' | 'whatsapp' | `status:${string}`;
+type StoreOrderAction = 'receipt' | 'whatsapp' | `status:${string}`;
 
 export default function StoreOrderDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const router = useRouter();
   const queryClient = useQueryClient();
   const { activeTenant } = useAuth();
   const { colors, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
@@ -230,35 +230,6 @@ export default function StoreOrderDetailScreen() {
       Alert.alert('Update failed', getApiErrorMessage(e, 'Could not update order status'));
     },
   });
-
-  const refundMutation = useMutation({
-    mutationFn: () => storeService.refundTradeAssuranceOrder(String(id)),
-    onSuccess: async () => {
-      await refreshAfterOnlineOrderChange(queryClient);
-      refetch();
-      Alert.alert('Refund started', 'The refund has been submitted.');
-    },
-    onError: (e: unknown) => {
-      Alert.alert('Refund failed', getApiErrorMessage(e, 'Could not process refund'));
-    },
-  });
-
-  const handleRefund = useCallback(() => {
-    Alert.alert(
-      'Refund order',
-      'Refund the order payment? This cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Refund',
-          style: 'destructive',
-          onPress: () => {
-            runExclusiveAction('refund', () => refundMutation.mutateAsync());
-          },
-        },
-      ]
-    );
-  }, [refundMutation, runExclusiveAction]);
 
   const handleWhatsApp = useCallback(async () => {
     if (!order) return;
@@ -306,7 +277,7 @@ export default function StoreOrderDetailScreen() {
           })),
           subtotal: getOrderSubtotal(orderForReceipt, receiptItems),
           total: getOrderTotal(orderForReceipt),
-          amountPaid: isPaidPaymentStatus(paymentStatusForMarketplaceOrder(orderForReceipt))
+          amountPaid: isPaidPaymentStatus(paymentStatusForOnlineOrder(orderForReceipt))
             ? getOrderTotal(orderForReceipt)
             : numberValue(orderForReceipt.amountPaid),
           paymentMethod: getPaymentMethod(orderForReceipt),
@@ -328,7 +299,7 @@ export default function StoreOrderDetailScreen() {
   if (!order) return <DetailNotFound title="Online order" entityLabel="Order" />;
 
   const fulfillment = fulfillmentStateForOrder(order);
-  const paymentStatus = paymentStatusForMarketplaceOrder(order);
+  const paymentStatus = paymentStatusForOnlineOrder(order);
   const paymentColors = paymentStatus ? getOnlineOrderStatusColors(paymentStatus) : null;
   const items = getOrderItems(order) as Record<string, unknown>[];
   const orderNumber = getOrderNumber(order);
@@ -341,7 +312,6 @@ export default function StoreOrderDetailScreen() {
   const availableActions = ONLINE_ORDER_STATUS_ACTIONS.filter((action) =>
     canApplyOnlineOrderStatus(order, action.value)
   );
-  const canRefund = canShowSellerRefund(order) && fulfillment !== 'cancelled';
   const storeOrderMoreActions: DetailMoreAction[] = [
     {
       key: 'receipt',
@@ -357,17 +327,6 @@ export default function StoreOrderDetailScreen() {
           label: 'Update status',
           icon: 'refresh' as const,
           onPress: () => setStatusOpen(true),
-          disabled: isAnyActionActive,
-        }]
-      : []),
-    ...(canRefund
-      ? [{
-          key: 'refund',
-          label: 'Refund',
-          icon: 'minus-circle' as const,
-          variant: 'danger' as const,
-          onPress: handleRefund,
-          loading: isActionActive('refund'),
           disabled: isAnyActionActive,
         }]
       : []),
@@ -528,31 +487,35 @@ export default function StoreOrderDetailScreen() {
         </DetailFooter>
       </ScreenShell>
 
-      <Modal visible={statusOpen} transparent animationType="fade">
-        <Pressable style={styles.modalBackdrop} onPress={() => !isAnyActionActive && setStatusOpen(false)}>
-          <View style={[styles.modalCard, { backgroundColor: cardBg, borderColor }]}>
-            <Text style={[styles.modalTitle, { color: textColor }]}>Update order status</Text>
-            {availableActions.map((action) => {
-              const actionKey: StoreOrderAction = `status:${action.value}`;
-              return (
-                <Pressable
-                  key={action.value}
-                  onPress={() => handleStatusUpdate(action.value)}
-                  disabled={isAnyActionActive}
-                  style={[styles.modalRow, { borderBottomColor: borderColor }]}
-                >
-                  <Text style={{ color: textColor, fontSize: 16 }}>{action.label}</Text>
-                  {isActionActive(actionKey) ? (
-                    <ActivityIndicator size="small" color={colors.tint} />
-                  ) : (
-                    <AppIcon name="chevron-right" size={14} color={mutedColor} />
-                  )}
-                </Pressable>
-              );
-            })}
-          </View>
-        </Pressable>
-      </Modal>
+      <AppBottomSheet
+        visible={statusOpen}
+        title="Update order status"
+        onClose={() => {
+          if (!isAnyActionActive) setStatusOpen(false);
+        }}
+        height={APP_SHEET_HEIGHT_COMPACT}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+      >
+        {availableActions.map((action) => {
+          const actionKey: StoreOrderAction = `status:${action.value}`;
+          return (
+            <SheetMenuRow
+              key={action.value}
+              label={action.label}
+              disabled={isAnyActionActive}
+              onPress={() => handleStatusUpdate(action.value)}
+              trailing={
+                isActionActive(actionKey) ? (
+                  <ActivityIndicator size="small" color={colors.tint} />
+                ) : undefined
+              }
+            />
+          );
+        })}
+      </AppBottomSheet>
     </>
   );
 }
@@ -716,15 +679,4 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   outlineActionText: { fontSize: 15, fontWeight: '800' },
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 20 },
-  modalCard: { borderRadius: 12, borderWidth: 1, padding: 8 },
-  modalTitle: { fontSize: 18, fontWeight: '700', padding: 12 },
-  modalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-  },
 });

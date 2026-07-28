@@ -9,7 +9,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
-  Modal,
   Image,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
@@ -28,7 +27,13 @@ import {
 import { BUSINESS_GROUPS } from '@/constants/businessTypes';
 
 import { AppIcon, type AppIconName } from '@/components/AppIcon';
+import {
+  AppBottomSheet,
+  APP_SHEET_HEIGHT_MEDIUM,
+  SheetMenuRow,
+} from '@/components/AppBottomSheet';
 import { BRAND_GREEN } from '@/constants/brand';
+import { FontFamily, FontSize } from '@/constants/typography';
 
 /** Icon name per business group (retail = cart; matches web concepts: Briefcase, Scissors, Car, UtensilsCrossed, Pill). */
 function getBusinessGroupIconName(groupKey: string): AppIconName {
@@ -205,7 +210,10 @@ export default function OnboardingScreen() {
     setLoading(true);
     setError('');
     try {
-      await api.post('/tenants/onboarding', formData);
+      // Must override default application/json or axios JSON-stringifies FormData and multer never sees the file.
+      await api.post('/tenants/onboarding', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
       logger.info('Onboarding', 'Complete, refreshing auth');
       await refreshAuth();
       router.replace('/(tabs)');
@@ -311,27 +319,34 @@ export default function OnboardingScreen() {
               <AppIcon name="chevron-down" size={20} color="#6b7280" />
             </Pressable>
 
-            <Modal visible={subTypeDropdownVisible} transparent animationType="fade">
-              <Pressable style={styles.modalOverlay} onPress={() => setSubTypeDropdownVisible(false)}>
-                <Pressable style={styles.dropdownModal} onPress={() => {}}>
-                  <ScrollView style={styles.dropdownScroll} keyboardShouldPersistTaps="handled">
-                    {optionsForSelectedGroup.map((opt) => (
-                      <Pressable
-                        key={opt.id}
-                        style={[styles.dropdownItem, businessSubType === opt.id && styles.dropdownItemSelected]}
-                        onPress={() => {
-                          setBusinessSubType(opt.id);
-                          setSubTypeDropdownVisible(false);
-                        }}
-                      >
-                        <Text style={[styles.dropdownItemLabel, businessSubType === opt.id && styles.dropdownItemLabelSelected]}>{opt.label}</Text>
-                        {opt.description ? <Text style={styles.dropdownItemDesc}>{opt.description}</Text> : null}
-                      </Pressable>
-                    ))}
-                  </ScrollView>
-                </Pressable>
-              </Pressable>
-            </Modal>
+            <AppBottomSheet
+              visible={subTypeDropdownVisible}
+              title="What do you mainly do?"
+              onClose={() => setSubTypeDropdownVisible(false)}
+              height={APP_SHEET_HEIGHT_MEDIUM}
+            >
+              {optionsForSelectedGroup.map((opt) => {
+                const selected = businessSubType === opt.id;
+                return (
+                  <View key={opt.id}>
+                    <SheetMenuRow
+                      label={opt.label}
+                      active={selected}
+                      onPress={() => {
+                        setBusinessSubType(opt.id);
+                        setSubTypeDropdownVisible(false);
+                      }}
+                      trailing={selected ? <AppIcon name="check" size={18} color="#fff" /> : <View />}
+                    />
+                    {opt.description ? (
+                      <Text style={[styles.dropdownItemDesc, selected && { opacity: 0.85 }]}>
+                        {opt.description}
+                      </Text>
+                    ) : null}
+                  </View>
+                );
+              })}
+            </AppBottomSheet>
           </View>
         )}
 
@@ -357,59 +372,48 @@ export default function OnboardingScreen() {
                 editable={!loading}
               />
             </View>
-            <Modal visible={countryDropdownVisible} transparent animationType="fade">
-              <Pressable
-                style={styles.modalOverlay}
-                onPress={() => {
-                  setCountryDropdownVisible(false);
-                  setCountrySearch('');
-                }}
-              >
-                <Pressable style={styles.dropdownModal} onPress={() => {}}>
-                  <TextInput
-                    style={styles.countrySearchInput}
-                    placeholder="Search country or code"
-                    placeholderTextColor="#9ca3af"
-                    value={countrySearch}
-                    onChangeText={setCountrySearch}
-                    autoCapitalize="none"
+            <AppBottomSheet
+              visible={countryDropdownVisible}
+              title="Country code"
+              onClose={() => {
+                setCountryDropdownVisible(false);
+                setCountrySearch('');
+              }}
+              height={APP_SHEET_HEIGHT_MEDIUM}
+            >
+              <TextInput
+                style={styles.countrySearchInput}
+                placeholder="Search country or code"
+                placeholderTextColor="#9ca3af"
+                value={countrySearch}
+                onChangeText={setCountrySearch}
+                autoCapitalize="none"
+              />
+              {COUNTRY_CODES.filter((c) => {
+                if (!countrySearch.trim()) return true;
+                const q = countrySearch.trim().toLowerCase();
+                return (
+                  c.code.toLowerCase().includes(q) ||
+                  c.name.toLowerCase().includes(q) ||
+                  c.country.toLowerCase().includes(q)
+                );
+              }).map((c) => {
+                const selected = phoneCountryCode === c.code;
+                return (
+                  <SheetMenuRow
+                    key={c.country}
+                    label={`${c.code} — ${c.name}`}
+                    active={selected}
+                    onPress={() => {
+                      setPhoneCountryCode(c.code);
+                      setCountryDropdownVisible(false);
+                      setCountrySearch('');
+                    }}
+                    trailing={selected ? <AppIcon name="check" size={18} color="#fff" /> : <View />}
                   />
-                  <ScrollView style={styles.dropdownScroll} keyboardShouldPersistTaps="handled">
-                    {COUNTRY_CODES.filter((c) => {
-                      if (!countrySearch.trim()) return true;
-                      const q = countrySearch.trim().toLowerCase();
-                      return (
-                        c.code.toLowerCase().includes(q) ||
-                        c.name.toLowerCase().includes(q) ||
-                        c.country.toLowerCase().includes(q)
-                      );
-                    }).map((c) => (
-                      <Pressable
-                        key={c.country}
-                        style={[
-                          styles.dropdownItem,
-                          phoneCountryCode === c.code && styles.dropdownItemSelected,
-                        ]}
-                        onPress={() => {
-                          setPhoneCountryCode(c.code);
-                          setCountryDropdownVisible(false);
-                          setCountrySearch('');
-                        }}
-                      >
-                        <Text
-                          style={[
-                            styles.dropdownItemLabel,
-                            phoneCountryCode === c.code && styles.dropdownItemLabelSelected,
-                          ]}
-                        >
-                          {c.code} — {c.name}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </ScrollView>
-                </Pressable>
-              </Pressable>
-            </Modal>
+                );
+              })}
+            </AppBottomSheet>
             <Text style={[styles.label, styles.labelOptional]}>Business email (optional)</Text>
             <TextInput
               style={styles.input}
@@ -503,7 +507,7 @@ const styles = StyleSheet.create({
   },
   setupLaterButtonText: { fontSize: 16, color: '#6b7280', fontWeight: '500' },
   form: { gap: 12 },
-  label: { fontSize: 14, fontWeight: '600', color: '#374151' },
+  label: { fontFamily: FontFamily.semiBold, fontSize: FontSize.md, fontWeight: '600', color: '#374151' },
   labelOptional: { fontWeight: '400', color: '#6b7280' },
   logoSection: { alignItems: 'center', marginBottom: 4 },
   logoLabelCenter: { textAlign: 'center' },
@@ -511,9 +515,9 @@ const styles = StyleSheet.create({
   logoPreview: { width: 80, height: 80, borderRadius: 40 },
   logoPlaceholder: { width: 80, height: 80, borderRadius: 40, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#f9fafb', alignItems: 'center', justifyContent: 'center', gap: 4 },
   logoPlaceholderText: { fontSize: 12, color: '#9ca3af' },
-  dropdownDescription: { fontSize: 13, color: '#6b7280', marginTop: -4, marginBottom: 4 },
+  dropdownDescription: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: '#6b7280', marginTop: -4, marginBottom: 4 },
   dropdownTrigger: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: 48, borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8, paddingHorizontal: 16, backgroundColor: '#fff' },
-  dropdownTriggerText: { fontSize: 16, color: '#111' },
+  dropdownTriggerText: { fontFamily: FontFamily.regular, fontSize: FontSize.body, color: '#111' },
   dropdownTriggerPlaceholder: { color: '#9ca3af' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 24 },
   dropdownModal: { backgroundColor: '#fff', borderRadius: 12, maxHeight: '80%', width: '100%' },
@@ -522,7 +526,7 @@ const styles = StyleSheet.create({
   dropdownItemSelected: { backgroundColor: 'rgba(22, 101, 52, 0.08)' },
   dropdownItemLabel: { fontSize: 16, fontWeight: '600', color: '#111' },
   dropdownItemLabelSelected: { color: BRAND_GREEN },
-  dropdownItemDesc: { fontSize: 13, color: '#6b7280', marginTop: 2 },
+  dropdownItemDesc: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: '#6b7280', marginTop: 2, paddingHorizontal: 14, paddingBottom: 8 },
   input: {
     height: 48,
     borderWidth: 1,

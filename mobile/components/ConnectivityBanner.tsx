@@ -4,15 +4,20 @@ import { useIsFetching, useIsMutating } from '@tanstack/react-query';
 import * as Network from 'expo-network';
 
 import { useTheme } from '@/context/ThemeContext';
+import { useIsStoreSetupRoute } from '@/hooks/useIsStoreSetupRoute';
 import Colors from '@/constants/Colors';
 import { isNetworkStateOnline } from '@/utils/connectivity';
+import { isStoreSetupBackgroundNoiseQuery } from '@/utils/storeSetupQueryGate';
 
 const SLOW_REQUEST_MS = 7000;
 const RECONNECTED_VISIBLE_MS = 4000;
 
 export function ConnectivityBanner() {
   const networkState = Network.useNetworkState();
-  const isFetching = useIsFetching();
+  const inStoreSetup = useIsStoreSetupRoute();
+  const isFetching = useIsFetching({
+    predicate: (query) => !(inStoreSetup && isStoreSetupBackgroundNoiseQuery(query.queryKey)),
+  });
   const isMutating = useIsMutating();
   const { resolvedTheme } = useTheme();
   const [showSlowRequest, setShowSlowRequest] = useState(false);

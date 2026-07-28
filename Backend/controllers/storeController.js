@@ -242,6 +242,12 @@ const publicStoreWhere = (extra = {}) => ({
   ...extra,
 });
 
+/** Sabito marketplace discovery — live store AND opted into marketplace listing. */
+const marketplaceListedStoreWhere = (extra = {}) => publicStoreWhere({
+  listedOnMarketplace: true,
+  ...extra,
+});
+
 const FOOD_SHOP_TYPES = ['restaurant', 'supermarket', 'convenience'];
 const DRINK_CATEGORY_PATTERN = /\b(drink|beverage|juice|water|soda|coffee|tea|smoothie|wine|beer)\b/i;
 const GROCERY_CATEGORY_PATTERN = /\b(grocery|groceries|produce|pantry|snack|dairy|meat|seafood|bakery|frozen)\b/i;
@@ -1195,6 +1201,23 @@ const saleMetadataJsonKey = (key) => sequelize.literal(`"Sale"."metadata"->>'${k
 
 const onlineOrderSourceCondition = () => sequelize.where(saleMetadataJsonKey('source'), ONLINE_STORE_SOURCE);
 
+/**
+ * Filter merchant order lists by Online Store vs Sabito marketplace channel.
+ * Legacy rows without commerceChannel: held marketplace payment → Sabito; else Online Store.
+ * @param {string} channel
+ */
+const onlineOrderCommerceChannelCondition = (channel) => {
+  const resolvedChannel = String(channel || '').trim().toLowerCase() === 'sabito_marketplace'
+    ? 'sabito_marketplace'
+    : 'online_store';
+  return sequelize.where(
+    sequelize.literal(
+      `COALESCE("Sale"."metadata"->>'commerceChannel', CASE WHEN COALESCE("Sale"."metadata"->'tradeAssurance'->>'marketplacePaymentId', '') <> '' THEN 'sabito_marketplace' ELSE 'online_store' END)`
+    ),
+    resolvedChannel
+  );
+};
+
 const applyOnlineOrderStatusFilter = (where, status) => {
   if (!status || status === 'all' || !ORDER_STATUS_FILTERS.has(status)) return where;
 
@@ -1252,6 +1275,11 @@ const applyOnlineOrderStatusFilter = (where, status) => {
 const buildOnlineOrderWhere = (req, { includeStatus = true } = {}) => {
   const where = onlineOrderWhereForRequest(req);
   addAndCondition(where, onlineOrderSourceCondition());
+
+  const channelParam = req.query?.commerceChannel || req.query?.channel;
+  if (channelParam && String(channelParam).toLowerCase() !== 'all') {
+    addAndCondition(where, onlineOrderCommerceChannelCondition(channelParam));
+  }
 
   if (includeStatus) {
     applyOnlineOrderStatusFilter(where, req.query.status);
@@ -1425,13 +1453,27 @@ const serializeStoreOrder = (order) => {
   const tradeAssuranceMeta = metadata.tradeAssurance && typeof metadata.tradeAssurance === 'object'
     ? metadata.tradeAssurance
     : {};
+  const directPaymentMeta = metadata.directPayment && typeof metadata.directPayment === 'object'
+    ? metadata.directPayment
+    : {};
   const marketplacePayment = plain.marketplacePayment && typeof plain.marketplacePayment === 'object'
     ? plain.marketplacePayment
     : null;
-  const paymentStatus = marketplacePayment?.status || tradeAssuranceMeta.paymentStatus || null;
-  const grossAmount = Number(marketplacePayment?.grossAmount ?? tradeAssuranceMeta.grossAmount ?? plain.total ?? 0);
+  const commerceChannel = metadata.commerceChannel
+    || (marketplacePayment || tradeAssuranceMeta.marketplacePaymentId ? 'sabito_marketplace' : 'online_store');
+  const paymentStatus = marketplacePayment?.status
+    || tradeAssuranceMeta.paymentStatus
+    || directPaymentMeta.paymentStatus
+    || null;
+  const grossAmount = Number(
+    marketplacePayment?.grossAmount
+    ?? tradeAssuranceMeta.grossAmount
+    ?? directPaymentMeta.grossAmount
+    ?? plain.total
+    ?? 0
+  );
   const feeAmount = Number(marketplacePayment?.feeAmount ?? tradeAssuranceMeta.feeAmount ?? 0);
-  const netAmount = Number(marketplacePayment?.netAmount ?? tradeAssuranceMeta.netAmount ?? 0);
+  const netAmount = Number(marketplacePayment?.netAmount ?? tradeAssuranceMeta.netAmount ?? grossAmount);
   const refundedAmount = Number(marketplacePayment?.refundedAmount ?? tradeAssuranceMeta.refundedAmount ?? 0);
   const payoutId = marketplacePayment?.metadata?.payoutId || tradeAssuranceMeta.payoutId || null;
   const payoutReleasedAt = marketplacePayment?.releasedAt || tradeAssuranceMeta.payoutReleasedAt || null;
@@ -1453,6 +1495,7 @@ const serializeStoreOrder = (order) => {
     fulfillmentMethod: metadata.fulfillmentMethod || (plain.deliveryRequired ? 'delivery' : 'pickup'),
     deliveryAddress: metadata.deliveryAddress || null,
     deliveryTracking: metadata.deliveryTracking || null,
+    commerceChannel,
     paymentStatus: paymentStatusForMarketplaceOrder(plain),
     tradeAssurance: {
       paymentStatus,
@@ -1472,6 +1515,13 @@ const serializeStoreOrder = (order) => {
       autoReleaseHours: tradeAssuranceMeta.autoReleaseHours || null,
       ...sellerRefundSummary,
     },
+    directPayment: commerceChannel === 'online_store' ? {
+      paymentStatus: directPaymentMeta.paymentStatus || (plain.status === 'completed' ? 'paid' : null),
+      paidAt: directPaymentMeta.paidAt || null,
+      provider: directPaymentMeta.provider || null,
+      providerReference: directPaymentMeta.providerReference || null,
+      grossAmount,
+    } : null,
   };
 };
 
@@ -1687,6 +1737,9 @@ const combineOrderStats = (productStats = {}, serviceStats = {}) => ({
   todayOrders: Number(productStats.todayOrders || 0) + Number(serviceStats.todayOrders || 0),
   todayRevenue: Number(productStats.todayRevenue || 0) + Number(serviceStats.todayRevenue || 0),
 });
+
+/** Empty stats when Online Store settings are wiped / not created yet. */
+const EMPTY_ONLINE_ORDER_STATS = combineOrderStats({}, {});
 
 const serializeServiceBookingOrder = (job) => {
   const plain = typeof job.get === 'function' ? job.get({ plain: true }) : job;
@@ -2185,6 +2238,15 @@ const getCurrentStoreSettings = async (req) => {
   });
 };
 
+/**
+ * Seller Online Store surfaces require an online_store_settings row.
+ * Without it, orphaned sales/listings must not appear as "current store" data.
+ */
+const hasOnlineStoreSettings = async (req) => {
+  const settings = await getCurrentStoreSettings(req);
+  return Boolean(settings?.id);
+};
+
 const resolveStoreLogoFallback = async (req) => {
   const organizationSetting = await Setting.findOne({
     where: { tenantId: req.tenantId, key: 'organization' },
@@ -2438,10 +2500,16 @@ exports.upsertSettings = async (req, res, next) => {
     const payload = {
       tenantId: req.tenantId,
       enabled: req.body.enabled === true || req.body.enabled === 'true',
+      listedOnMarketplace: Object.prototype.hasOwnProperty.call(req.body, 'listedOnMarketplace')
+        ? (req.body.listedOnMarketplace === true || req.body.listedOnMarketplace === 'true')
+        : (existing?.listedOnMarketplace === true),
       slug,
       displayName,
       description: req.body.description || null,
-      logoUrl: req.body.logoUrl || null,
+      logoUrl: req.body.logoUrl
+        || existing?.logoUrl
+        || await resolveStoreLogoFallback(req)
+        || null,
       bannerImageUrl: Object.prototype.hasOwnProperty.call(req.body, 'bannerImageUrl')
         ? (req.body.bannerImageUrl || null)
         : (existing?.bannerImageUrl || null),
@@ -2548,7 +2616,15 @@ exports.getSetupStatus = async (req, res, next) => {
   try {
     const settings = await getCurrentStoreSettings(req);
     const checklist = await buildSetupChecklist(settings, req.tenantId, req);
-    res.status(200).json({ success: true, data: { settings, checklist } });
+    let settingsPayload = settings;
+    if (settings) {
+      const plain = typeof settings.toJSON === 'function' ? settings.toJSON() : { ...settings };
+      if (!plain.logoUrl) {
+        plain.logoUrl = await resolveStoreLogoFallback(req);
+      }
+      settingsPayload = plain;
+    }
+    res.status(200).json({ success: true, data: { settings: settingsPayload, checklist } });
   } catch (error) {
     next(error);
   }
@@ -3103,6 +3179,23 @@ exports.getStoreOrders = async (req, res, next) => {
   try {
     const { page, limit, offset } = getPagination(req);
     const includeStats = shouldIncludeOrderStats(req);
+
+    // Settings wipe / first-run: do not surface orphaned online_store sales or bookings.
+    if (!(await hasOnlineStoreSettings(req))) {
+      finishTiming({ page, limit, count: 0, returned: 0, noSettings: true, includeStats });
+      return res.status(200).json({
+        success: true,
+        count: 0,
+        ...(includeStats ? { stats: EMPTY_ONLINE_ORDER_STATS } : {}),
+        pagination: {
+          page,
+          limit,
+          totalPages: 0,
+        },
+        data: [],
+      });
+    }
+
     if (isStudioStoreRequest(req)) {
       const { count, rows, stats } = await getMixedStoreOrders(req, { limit, offset, includeStats });
       finishTiming({ page, limit, count, returned: rows.length, mixed: true, includeStats });
@@ -3155,6 +3248,9 @@ exports.getStoreOrders = async (req, res, next) => {
 
 exports.getStoreOrderStats = async (req, res, next) => {
   try {
+    if (!(await hasOnlineStoreSettings(req))) {
+      return res.status(200).json({ success: true, data: EMPTY_ONLINE_ORDER_STATS });
+    }
     const [productStats, serviceStats] = await Promise.all([
       getOnlineOrderStats(req),
       getServiceBookingStats(req),
@@ -3168,6 +3264,9 @@ exports.getStoreOrderStats = async (req, res, next) => {
 
 exports.exportStoreOrders = async (req, res, next) => {
   try {
+    if (!(await hasOnlineStoreSettings(req))) {
+      return res.status(404).json({ success: false, message: 'No online orders to export' });
+    }
     const { format = 'csv' } = req.query;
     const { sendCSV, sendExcel } = require('../utils/dataExport');
     const where = buildOnlineOrderWhere(req);
@@ -3202,6 +3301,10 @@ exports.exportStoreOrders = async (req, res, next) => {
 
 exports.getStoreOrder = async (req, res, next) => {
   try {
+    if (!(await hasOnlineStoreSettings(req))) {
+      return res.status(404).json({ success: false, message: 'Online order not found' });
+    }
+
     const where = onlineOrderWhereForRequest(req, { id: req.params.id });
     addAndCondition(where, onlineOrderSourceCondition());
 
@@ -3612,7 +3715,7 @@ exports.getMarketplaceStores = async (req, res, next) => {
     const offset = (page - 1) * limit;
     const search = String(req.query.search || '').trim();
     const shopTypes = parseShopTypeFilter(req.query.shopType);
-    const where = publicStoreWhere();
+    const where = marketplaceListedStoreWhere();
 
     if (search) {
       where[Op.or] = [
@@ -3675,7 +3778,7 @@ exports.getMarketplaceStores = async (req, res, next) => {
 exports.getMarketplaceCategories = async (req, res, next) => {
   try {
     const stores = await OnlineStoreSettings.findAll({
-      where: publicStoreWhere(),
+      where: marketplaceListedStoreWhere(),
       attributes: ['id', 'tenantId', 'shopId'],
       include: publicStoreInclude,
       order: [['createdAt', 'DESC']],
@@ -3697,7 +3800,7 @@ exports.getMarketplaceProducts = async (req, res, next) => {
     const category = String(req.query.category || '').trim();
     const storeSlug = String(req.query.storeSlug || '').trim();
     const shopTypes = parseShopTypeFilter(req.query.shopType);
-    const storeWhere = publicStoreWhere(storeSlug ? { slug: { [Op.iLike]: normalizeSlug(storeSlug) } } : {});
+    const storeWhere = marketplaceListedStoreWhere(storeSlug ? { slug: { [Op.iLike]: normalizeSlug(storeSlug) } } : {});
     const stores = await OnlineStoreSettings.findAll({
       where: storeWhere,
       attributes: [
@@ -3835,7 +3938,7 @@ exports.getMarketplaceProduct = async (req, res, next) => {
       where: {
         tenantId: listing.tenantId,
         ...(listing.shopId ? { shopId: listing.shopId } : {}),
-        ...publicStoreWhere(),
+        ...marketplaceListedStoreWhere(),
       },
       attributes: [
         'id',
@@ -3892,7 +3995,7 @@ exports.getMarketplaceHome = async (req, res, next) => {
   const finishTiming = startHotPathTimer('marketplace.home', req);
   try {
     const stores = await OnlineStoreSettings.findAll({
-      where: publicStoreWhere(),
+      where: marketplaceListedStoreWhere(),
       attributes: [
         'id',
         'tenantId',
@@ -4017,7 +4120,7 @@ exports.getMarketplaceProductsHome = async (req, res, next) => {
   const finishTiming = startHotPathTimer('marketplace.products_home', req);
   try {
     const stores = await OnlineStoreSettings.findAll({
-      where: publicStoreWhere(),
+      where: marketplaceListedStoreWhere(),
       attributes: [
         'id',
         'tenantId',
@@ -4124,7 +4227,7 @@ exports.getMarketplaceFoodHome = async (req, res, next) => {
   const finishTiming = startHotPathTimer('marketplace.food_home', req);
   try {
     const stores = await OnlineStoreSettings.findAll({
-      where: publicStoreWhere(),
+      where: marketplaceListedStoreWhere(),
       attributes: [
         'id',
         'tenantId',

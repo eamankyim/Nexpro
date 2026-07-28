@@ -1,5 +1,9 @@
 const { sequelize } = require('../config/database');
-const { getSavedPlatformSmsConfig, parseMonthlyLimit } = require('./platformSmsSettingsService');
+const {
+  getSavedPlatformSmsConfig,
+  parseMonthlyLimit,
+  isMonthlyLimitEnabled,
+} = require('./platformSmsSettingsService');
 
 const ACCRA_TIMEZONE = 'Africa/Accra';
 
@@ -42,24 +46,42 @@ function getNextResetAt() {
   return `${nextYear}-${pad(nextMonth)}-01T00:00:00.000Z`;
 }
 
-async function getMonthlyLimit() {
+/**
+ * Load platform SMS quota settings (limit value + whether it is enforced).
+ * @returns {Promise<{ monthlyLimit: number, monthlyLimitEnabled: boolean }>}
+ */
+async function getQuotaSettings() {
   const config = await getSavedPlatformSmsConfig();
-  if (config?.monthlyLimit) return config.monthlyLimit;
+  if (config) {
+    return {
+      monthlyLimit: config.monthlyLimit || parseMonthlyLimit(null),
+      monthlyLimitEnabled: isMonthlyLimitEnabled(config),
+    };
+  }
 
   const { Setting } = require('../models');
   const setting = await Setting.findOne({
     where: { tenantId: null, key: 'platform:sms' },
   });
-  return parseMonthlyLimit(setting?.value?.monthlyLimit);
+  const value = setting?.value || {};
+  return {
+    monthlyLimit: parseMonthlyLimit(value.monthlyLimit),
+    monthlyLimitEnabled: isMonthlyLimitEnabled(value),
+  };
+}
+
+async function getMonthlyLimit() {
+  const quota = await getQuotaSettings();
+  return quota.monthlyLimit;
 }
 
 /**
  * @param {string} tenantId
- * @returns {Promise<{ yearMonth: string, sentCount: number, monthlyLimit: number, remaining: number }>}
+ * @returns {Promise<{ yearMonth: string, sentCount: number, monthlyLimit: number, remaining: number|null, monthlyLimitEnabled: boolean }>}
  */
 async function getTenantUsageSummary(tenantId) {
   const yearMonth = getCurrentYearMonth();
-  const monthlyLimit = await getMonthlyLimit();
+  const { monthlyLimit, monthlyLimitEnabled } = await getQuotaSettings();
 
   let sentCount = 0;
   try {
@@ -76,13 +98,13 @@ async function getTenantUsageSummary(tenantId) {
   } catch (error) {
     if (!isMissingUsageTableError(error)) throw error;
   }
-  const remaining = Math.max(0, monthlyLimit - sentCount);
 
   return {
     yearMonth,
     sentCount,
     monthlyLimit,
-    remaining,
+    monthlyLimitEnabled,
+    remaining: monthlyLimitEnabled ? Math.max(0, monthlyLimit - sentCount) : null,
     resetsAt: getNextResetAt(),
   };
 }
@@ -95,6 +117,10 @@ async function getTenantUsageSummary(tenantId) {
 async function checkPlatformSmsLimit(tenantId, count = 1) {
   const summary = await getTenantUsageSummary(tenantId);
   const requested = Math.max(1, parseInt(count, 10) || 1);
+
+  if (!summary.monthlyLimitEnabled) {
+    return { allowed: true, summary };
+  }
 
   if (summary.sentCount + requested > summary.monthlyLimit) {
     return {
@@ -139,6 +165,7 @@ module.exports = {
   getCurrentYearMonth,
   getNextResetAt,
   getMonthlyLimit,
+  getQuotaSettings,
   getTenantUsageSummary,
   checkPlatformSmsLimit,
   incrementPlatformSmsUsage,

@@ -3,7 +3,8 @@ import api from './api';
 const inviteService = {
   // Generate invite token
   generateInvite: async (inviteData) => {
-    return await api.post('/invites', inviteData);
+    // Never auto-retry: create + email side effects must run once
+    return await api.post('/invites', inviteData, { skipRetry: true });
   },
 
   // Validate invite token

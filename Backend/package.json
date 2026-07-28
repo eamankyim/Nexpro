@@ -31,6 +31,7 @@
     "update:superadmin-email": "node scripts/update-superadmin-email.js",
     "verify:user-email": "node scripts/verify-user-email.js",
     "delete:tenant-products": "node scripts/delete-tenant-products.js",
+    "reset:online-store-settings": "node scripts/reset-online-store-settings.js",
     "import:sulas-products": "node scripts/import-sulas-products.js",
     "import:dapong-products": "node scripts/import-dapong-products.js",
     "stock:increment-sulas-main-shop": "node scripts/increment-sulas-main-shop-stock.js",

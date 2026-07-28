@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 
 import { FormSheetModal } from '@/components/FormSheetModal';
+import { FontFamily, FontSize } from '@/constants/typography';
 import { formatCurrency } from '@/utils/formatCurrency';
 import {
   DIRECT_MOMO_PROVIDERS,
@@ -365,7 +366,7 @@ export function InvoiceRecordPaymentSheet({
 }
 
 const styles = StyleSheet.create({
-  label: { fontSize: 14, marginBottom: 8 },
+  label: { fontFamily: FontFamily.semiBold, fontSize: FontSize.md, fontWeight: '600', marginBottom: 8 },
   input: {
     borderWidth: 1,
     borderRadius: 10,
@@ -384,7 +385,7 @@ const styles = StyleSheet.create({
     marginBottom: 18,
   },
   paymentSummaryLabel: { fontSize: 12, fontWeight: '700', marginBottom: 4 },
-  paymentSummaryValue: { fontSize: 22, fontWeight: '800' },
+  paymentSummaryValue: { fontFamily: FontFamily.bold, fontSize: FontSize.title, fontWeight: '700' },
   flowRow: { gap: 10 },
   flowCard: {
     borderWidth: 1,
@@ -426,7 +427,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     justifyContent: 'center',
   },
-  methodChipText: { fontSize: 13, fontWeight: '700', lineHeight: 16, textAlign: 'center' },
+  methodChipText: { fontFamily: FontFamily.semiBold, fontSize: FontSize.sm, fontWeight: '600', lineHeight: 16, textAlign: 'center' },
   sheetActions: { flexDirection: 'row', gap: 10 },
   sheetButton: {
     flex: 1,
@@ -440,7 +441,7 @@ const styles = StyleSheet.create({
   },
   sheetButtonSecondary: { backgroundColor: 'transparent' },
   sheetButtonPrimary: {},
-  sheetButtonText: { fontSize: 15, fontWeight: '800' },
-  sheetButtonPrimaryText: { color: '#fff', fontSize: 15, fontWeight: '800' },
+  sheetButtonText: { fontFamily: FontFamily.bold, fontSize: FontSize.md, fontWeight: '700' },
+  sheetButtonPrimaryText: { color: '#fff', fontFamily: FontFamily.bold, fontSize: FontSize.md, fontWeight: '700' },
   disabledButton: { opacity: 0.6 },
 });

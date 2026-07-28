@@ -19,8 +19,10 @@ import { resolveImageUrl } from '@/utils/fileUtils';
 import { resolveHeaderSearchConfig } from '@/utils/tabRouteSearch';
 import { HeaderScopeTitle } from '@/components/HeaderScopeTitle';
 import { OfflineQueueBanner } from '@/components/WorkspaceScopeSwitcher';
+import { useIsStoreSetupRoute } from '@/hooks/useIsStoreSetupRoute';
 import { notificationService } from '@/services/notificationService';
 import { useScreenColors } from '@/hooks/useScreenColors';
+import { FontFamily, FontSize } from '@/constants/typography';
 
 /**
  * Mobile header with global page-aware search, notifications, avatar, and shop scope.
@@ -32,6 +34,7 @@ export function Header() {
   const { user, activeTenantId, isDriver } = useAuth();
   const { colors, headerBg, borderColor, inputBg, textColor, mutedColor } = useScreenColors();
   const { pageConfig, searchValue, setSearchValue } = useSmartSearch();
+  const inStoreSetup = useIsStoreSetupRoute();
 
   const searchConfig = useMemo(
     () => resolveHeaderSearchConfig(pathname, pageConfig),
@@ -41,9 +44,9 @@ export function Header() {
   const { data: notificationSummary } = useQuery({
     queryKey: ['notifications', 'summary', activeTenantId],
     queryFn: () => notificationService.getSummary(),
-    enabled: !!activeTenantId && !isDriver,
+    enabled: !!activeTenantId && !isDriver && !inStoreSetup,
     staleTime: 5 * 60 * 1000,
-    refetchInterval: 5 * 60 * 1000,
+    refetchInterval: inStoreSetup ? false : 5 * 60 * 1000,
     refetchIntervalInBackground: false,
     refetchOnMount: false,
   });
@@ -199,7 +202,8 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
-    fontSize: 15,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.md,
     paddingVertical: Platform.OS === 'ios' ? 10 : 8,
   },
   iconButton: {
@@ -223,6 +227,7 @@ const styles = StyleSheet.create({
   },
   notificationBadgeText: {
     color: '#fff',
+    fontFamily: FontFamily.bold,
     fontSize: 10,
     fontWeight: '700',
     lineHeight: 12,

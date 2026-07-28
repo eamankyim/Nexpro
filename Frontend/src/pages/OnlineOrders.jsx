@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -688,6 +689,9 @@ const buildOrderActivityTimeline = (order = {}) => {
 
 const OnlineOrders = () => {
   const queryClient = useQueryClient();
+  const location = useLocation();
+  const isOnlineStoreChannel = location.pathname.startsWith('/online-store');
+  const commerceChannel = isOnlineStoreChannel ? 'online_store' : 'sabito_marketplace';
   const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [selectedOrder, setSelectedOrder] = useState(null);
@@ -702,11 +706,13 @@ const OnlineOrders = () => {
     limit: PAGINATION.DEFAULT_PAGE_SIZE,
     status: statusFilter === 'all' ? undefined : statusFilter,
     includeStats: false,
-  }), [page, statusFilter]);
+    commerceChannel,
+  }), [page, statusFilter, commerceChannel]);
 
   const statsQueryParams = useMemo(() => ({
     status: statusFilter === 'all' ? undefined : statusFilter,
-  }), [statusFilter]);
+    commerceChannel,
+  }), [statusFilter, commerceChannel]);
 
   const {
     data: response,
@@ -743,7 +749,7 @@ const OnlineOrders = () => {
   } = useQuery({
     queryKey: queryKeys.store.tradeAssuranceDashboard(listQueryParams),
     queryFn: () => storeService.getTradeAssuranceDashboard(listQueryParams),
-    enabled: !isLoading,
+    enabled: !isLoading && !isOnlineStoreChannel,
     staleTime: QUERY_STALE.SLOW,
     refetchInterval: 2 * 60 * 1000,
     refetchIntervalInBackground: false,
@@ -778,11 +784,11 @@ const OnlineOrders = () => {
   const previewUrl = getPreviewUrl(settings?.settings || settings);
 
   const kpiCards = useMemo(() => ([
-    { label: 'Total online orders', value: stats.totalOrders, icon: ShoppingBag },
+    { label: isOnlineStoreChannel ? 'Total Online Store orders' : 'Total Sabito orders', value: stats.totalOrders, icon: ShoppingBag },
     { label: 'New / pending', value: stats.pendingFulfillment, icon: ShoppingBag },
     { label: 'Processing', value: stats.processing, icon: PackageCheck },
     { label: 'Delivered', value: stats.delivered, icon: PackageCheck },
-  ]), [stats.delivered, stats.pendingFulfillment, stats.processing, stats.totalOrders]);
+  ]), [isOnlineStoreChannel, stats.delivered, stats.pendingFulfillment, stats.processing, stats.totalOrders]);
 
   const detailOrder = selectedOrder || {};
   const detailItems = useMemo(() => getOrderItems(detailOrder), [detailOrder]);
@@ -1003,6 +1009,8 @@ const OnlineOrders = () => {
   );
 
   const renderTradeAssuranceDashboard = () => {
+    if (isOnlineStoreChannel) return null;
+
     if (isTradeAssuranceError) {
       return (
         <Card className="border border-border">
@@ -1370,6 +1378,7 @@ const OnlineOrders = () => {
                   </Descriptions>
                 </DrawerSectionCard>
 
+                {!isOnlineStoreChannel ? (
                 <DrawerSectionCard title="Trade Assurance">
                   <Descriptions column={1} className="space-y-0">
                     <DescriptionItem label="Held status">
@@ -1399,6 +1408,21 @@ const OnlineOrders = () => {
                     </DescriptionItem>
                   </Descriptions>
                 </DrawerSectionCard>
+                ) : (
+                <DrawerSectionCard title="Payment">
+                  <Descriptions column={1} className="space-y-0">
+                    <DescriptionItem label="Status">
+                      {tradeStatus ? <StatusBadge status={tradeStatus} /> : <span>Paid directly</span>}
+                    </DescriptionItem>
+                    <DescriptionItem label="Amount">
+                      <span>{formatAmount(getOrderTotal(fullDetailOrder))}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Settlement">
+                      <span>Direct Paystack settlement (not Trade Assurance)</span>
+                    </DescriptionItem>
+                  </Descriptions>
+                </DrawerSectionCard>
+                )}
 
                 <DrawerSectionCard title="Items">
                   <div className="space-y-3">
@@ -1550,7 +1574,9 @@ const OnlineOrders = () => {
     <div className="space-y-4 sm:space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="space-y-1">
-          <h1 className="text-xl font-semibold sm:text-2xl">Online orders</h1>
+          <h1 className="text-xl font-semibold sm:text-2xl">
+            {isOnlineStoreChannel ? 'Online Store orders' : 'Sabito Store orders'}
+          </h1>
           <p className="max-w-2xl text-sm text-muted-foreground sm:text-base">Track storefront orders, payments, fulfillment, and customer follow-up.</p>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">

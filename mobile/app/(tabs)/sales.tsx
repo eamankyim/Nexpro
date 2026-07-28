@@ -33,6 +33,7 @@ import { formatStatusLabel, getSaleStatusColors } from '@/utils/formatLabels';
 import { QUERY_STALE } from '@/utils/queryInvalidation';
 import { FilterChipRow } from '@/components/FilterChip';
 import { ListLoadingState, ListErrorState } from '@/components/ListScreenStates';
+import { useIsStoreSetupRoute } from '@/hooks/useIsStoreSetupRoute';
 
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
@@ -86,6 +87,7 @@ export default function SalesScreen() {
   const resolvedType = resolveBusinessType(activeTenant?.businessType);
   const isShop = resolvedType === 'shop';
   const isPharmacy = resolvedType === 'pharmacy';
+  const inStoreSetup = useIsStoreSetupRoute();
 
   const {
     data: pagesData,
@@ -113,7 +115,12 @@ export default function SalesScreen() {
       const totalPages = Number(lastPage?.pagination?.totalPages || 1);
       return page < totalPages ? page + 1 : undefined;
     },
-    enabled: !!activeTenantId && (isShop || isPharmacy) && hasFeature('paymentsExpenses') && scopeReady,
+    enabled:
+      !!activeTenantId
+      && (isShop || isPharmacy)
+      && hasFeature('paymentsExpenses')
+      && scopeReady
+      && !inStoreSetup,
     staleTime: QUERY_STALE.TRANSACTIONAL,
     gcTime: 60 * 60 * 1000,
     retry: 2,

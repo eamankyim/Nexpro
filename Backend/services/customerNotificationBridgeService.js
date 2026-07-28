@@ -16,6 +16,7 @@ const TEMPLATE_KEYS = {
   ORDER_CREATED_NOTIFICATION: 'order_created_notification',
   JOB_ASSIGNED_STAFF: 'job_assigned_staff',
   QUOTE_ACCEPTED_STAFF: 'quote_accepted_staff',
+  TASK_ASSIGNED_STAFF: 'task_assigned_staff',
   LOW_STOCK_ON_CHANGE: 'low_stock_on_change',
   OUT_OF_STOCK_ALERT: 'out_of_stock_alert',
   LOW_STOCK_ALERT: 'low_stock_alert',
@@ -26,6 +27,7 @@ const STAFF_TEMPLATE_KEYS = new Set([
   'job_assigned_staff',
   'quote_accepted_staff',
   'sale_completed_staff',
+  'task_assigned_staff',
 ]);
 
 /** Template keys that should also match by trigger type (any custom overdue rule). */
@@ -35,6 +37,7 @@ const TEMPLATE_KEY_TRIGGER_TYPES = {
   [TEMPLATE_KEYS.ORDER_CREATED_NOTIFICATION]: 'order_created',
   [TEMPLATE_KEYS.JOB_ASSIGNED_STAFF]: 'job_assigned_staff',
   [TEMPLATE_KEYS.QUOTE_ACCEPTED_STAFF]: 'quote_accepted_staff',
+  [TEMPLATE_KEYS.TASK_ASSIGNED_STAFF]: 'task_assigned_staff',
   [TEMPLATE_KEYS.LOW_STOCK_ON_CHANGE]: 'low_stock_on_change',
   [TEMPLATE_KEYS.OUT_OF_STOCK_ALERT]: 'out_of_stock_detected',
   [TEMPLATE_KEYS.LOW_STOCK_ALERT]: 'low_stock_detected',

@@ -6,14 +6,19 @@ import {
   ScrollView,
   Pressable,
   ActivityIndicator,
-  TextInput,
-  Modal,
   Alert,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { AppIcon } from '@/components/AppIcon';
+import {
+  AppBottomSheet,
+  APP_SHEET_HEIGHT_COMPACT,
+  SheetMenuRow,
+} from '@/components/AppBottomSheet';
+import { FormSheetModal } from '@/components/FormSheetModal';
+import { FormInput } from '@/components/FormField';
 import {
   DetailHeroCard,
   DetailInfoRow,
@@ -33,7 +38,7 @@ import { leadService } from '@/services/leadService';
 import { getApiErrorMessage, parseApiEntity } from '@/utils/parseApiListResponse';
 import { refreshAfterLeadChange } from '@/utils/queryInvalidation';
 import { formatStatusLabel } from '@/utils/formatLabels';
-
+import { FontFamily, FontSize } from '@/constants/typography';
 const STATUSES = ['new', 'contacted', 'qualified', 'converted', 'lost'] as const;
 type LeadAction = 'note' | 'convert' | `status:${(typeof STATUSES)[number]}`;
 
@@ -229,69 +234,88 @@ export default function LeadDetailScreen() {
         </DetailFooter>
       </ScreenShell>
 
-      <Modal visible={statusOpen} transparent animationType="fade">
-        <Pressable style={styles.modalBackdrop} onPress={() => !isAnyActionActive && setStatusOpen(false)}>
-          <View style={[styles.modalCard, { backgroundColor: cardBg, borderColor }]}>
-            <Text style={[styles.modalTitle, { color: textColor }]}>Set status</Text>
-            {STATUSES.map((s) => {
-              const actionKey: LeadAction = `status:${s}`;
-              return (
-                <Pressable
-                  key={s}
-                  onPress={() => handleStatusUpdate(s)}
-                  disabled={isAnyActionActive}
-                  style={[styles.modalRow, { borderBottomColor: borderColor }]}
-                >
-                  <Text style={{ color: textColor, textTransform: 'capitalize', fontSize: 16 }}>{s}</Text>
-                  {isActionActive(actionKey) ? (
-                    <ActivityIndicator size="small" color={colors.tint} />
-                  ) : (lead.status || 'new') === s ? (
-                    <AppIcon name="check" size={18} color={colors.tint} />
-                  ) : null}
-                </Pressable>
-              );
-            })}
-          </View>
-        </Pressable>
-      </Modal>
-
-      <Modal visible={noteOpen} animationType="slide" transparent>
-        <View style={[styles.modalBackdrop, { justifyContent: 'flex-end' }]}>
-          <View style={[styles.sheet, { backgroundColor: cardBg, borderColor }]}>
-            <Text style={[styles.modalTitle, { color: textColor }]}>Note</Text>
-            <TextInput
-              placeholder="Write a note"
-              placeholderTextColor={mutedColor}
-              value={noteText}
-              onChangeText={setNoteText}
-              multiline
-              style={[styles.noteInput, { borderColor, color: textColor }]}
+      <AppBottomSheet
+        visible={statusOpen}
+        title="Set status"
+        onClose={() => {
+          if (!isAnyActionActive) setStatusOpen(false);
+        }}
+        height={APP_SHEET_HEIGHT_COMPACT}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+      >
+        {STATUSES.map((s) => {
+          const actionKey: LeadAction = `status:${s}`;
+          const selected = (lead.status || 'new') === s;
+          return (
+            <SheetMenuRow
+              key={s}
+              label={formatStatusLabel(s)}
+              active={selected}
+              disabled={isAnyActionActive}
+              onPress={() => handleStatusUpdate(s)}
+              trailing={
+                isActionActive(actionKey) ? (
+                  <ActivityIndicator size="small" color={selected ? '#fff' : colors.tint} />
+                ) : selected ? (
+                  <AppIcon name="check" size={18} color="#fff" />
+                ) : (
+                  <View />
+                )
+              }
             />
-            <View style={styles.rowBtns}>
-              <Pressable
-                onPress={() => setNoteOpen(false)}
-                disabled={isAnyActionActive}
-                style={[styles.secondaryBtn, { borderColor }]}
-              >
-                <Text style={{ color: textColor, fontWeight: '600' }}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => {
-                  if (!noteText.trim()) {
-                    Alert.alert('Note required', 'Enter a note or cancel.');
-                    return;
-                  }
-                  runExclusiveAction('note', () => noteMutation.mutateAsync());
-                }}
-                disabled={isAnyActionActive}
-                style={[styles.primaryBtn, { backgroundColor: colors.tint }]}
-              >
-                {isActionActive('note') ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryTxt}>Save</Text>}
-              </Pressable>
-            </View>
+          );
+        })}
+      </AppBottomSheet>
+
+      <FormSheetModal
+        visible={noteOpen}
+        title="Note"
+        onClose={() => {
+          if (!isAnyActionActive) setNoteOpen(false);
+        }}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+        footer={
+          <View style={styles.rowBtns}>
+            <Pressable
+              onPress={() => setNoteOpen(false)}
+              disabled={isAnyActionActive}
+              style={[styles.secondaryBtn, { borderColor }]}
+            >
+              <Text style={[styles.secondaryBtnText, { color: textColor }]}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                if (!noteText.trim()) {
+                  Alert.alert('Note required', 'Enter a note or cancel.');
+                  return;
+                }
+                runExclusiveAction('note', () => noteMutation.mutateAsync());
+              }}
+              disabled={isAnyActionActive}
+              style={[styles.primaryBtn, { backgroundColor: colors.tint }]}
+            >
+              {isActionActive('note') ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.primaryTxt}>Save</Text>
+              )}
+            </Pressable>
           </View>
-        </View>
-      </Modal>
+        }
+      >
+        <FormInput
+          placeholder="Write a note"
+          value={noteText}
+          onChangeText={setNoteText}
+          multiline
+        />
+      </FormSheetModal>
     </>
   );
 }
@@ -301,7 +325,12 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   content: { padding: 16, paddingBottom: 40 },
   card: { borderRadius: 12, borderWidth: 1, padding: 16 },
-  label: { fontSize: 12, fontWeight: '600', marginBottom: 4 },
+  label: {
+    fontFamily: FontFamily.semiBold,
+    fontSize: FontSize.xs,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -311,7 +340,12 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   disabledAction: { opacity: 0.6 },
-  statusText: { fontSize: 16, fontWeight: '600', textTransform: 'capitalize' },
+  statusText: {
+    fontFamily: FontFamily.semiBold,
+    fontSize: FontSize.body,
+    fontWeight: '600',
+    textTransform: 'capitalize',
+  },
   noteBtn: {
     marginTop: 14,
     flexDirection: 'row',
@@ -321,32 +355,32 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 14,
   },
-  noteBtnText: { fontSize: 16, fontWeight: '600' },
-  sectionTitle: { fontSize: 16, fontWeight: '700', marginBottom: 8 },
+  noteBtnText: {
+    fontFamily: FontFamily.semiBold,
+    fontSize: FontSize.body,
+    fontWeight: '600',
+  },
+  sectionTitle: {
+    fontFamily: FontFamily.bold,
+    fontSize: FontSize.body,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
   activityRow: { paddingVertical: 12, borderTopWidth: 1 },
-  activityMeta: { fontSize: 12 },
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 20 },
-  modalCard: { borderRadius: 12, borderWidth: 1, padding: 8 },
-  modalTitle: { fontSize: 18, fontWeight: '700', padding: 12 },
-  modalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-  },
-  sheet: {
-    alignSelf: 'stretch',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    borderWidth: 1,
-    padding: 16,
-    paddingBottom: 32,
-  },
-  noteInput: { borderWidth: 1, borderRadius: 10, minHeight: 100, padding: 12, textAlignVertical: 'top' },
-  rowBtns: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 12 },
+  activityMeta: { fontFamily: FontFamily.medium, fontSize: FontSize.xs, fontWeight: '500' },
+  rowBtns: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
   secondaryBtn: { paddingVertical: 12, paddingHorizontal: 16, borderRadius: 10, borderWidth: 1 },
-  primaryBtn: { paddingVertical: 12, paddingHorizontal: 20, borderRadius: 10, minWidth: 100, alignItems: 'center' },
-  primaryTxt: { color: '#fff', fontWeight: '700' },
+  secondaryBtnText: { fontFamily: FontFamily.semiBold, fontWeight: '600' },
+  primaryBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    minWidth: 100,
+    alignItems: 'center',
+  },
+  primaryTxt: {
+    color: '#fff',
+    fontFamily: FontFamily.bold,
+    fontWeight: '700',
+  },
 });

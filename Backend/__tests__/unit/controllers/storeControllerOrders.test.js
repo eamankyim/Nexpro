@@ -69,7 +69,7 @@ jest.mock('../../../services/pushNotificationService', () => ({
 }));
 
 const { sequelize } = require('../../../config/database');
-const { Sale, SaleActivity, Job } = require('../../../models');
+const { Sale, SaleActivity, Job, OnlineStoreSettings } = require('../../../models');
 const { invalidateSaleListCache } = require('../../../middleware/cache');
 const {
   getTradeAssuranceSummary,
@@ -91,6 +91,7 @@ describe('storeController online orders', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    OnlineStoreSettings.findOne.mockResolvedValue({ id: 'settings-1', enabled: true });
     Sale.findAndCountAll.mockResolvedValue({ count: 1, rows: [{ id: 'sale-1', saleNumber: 'SALE-1' }] });
     Sale.findAll.mockResolvedValue([]);
     Sale.count.mockResolvedValue(0);
@@ -103,6 +104,44 @@ describe('storeController online orders', () => {
     listTradeAssurancePayments.mockResolvedValue({ count: 0, rows: [] });
     listTradeAssuranceDisputes.mockResolvedValue({ count: 0, rows: [] });
     listPayoutHistory.mockResolvedValue({ count: 0, rows: [] });
+  });
+
+  it('returns empty orders when online store settings are missing', async () => {
+    OnlineStoreSettings.findOne.mockResolvedValue(null);
+
+    const req = { tenantId: 'tenant-1', query: {} };
+    const res = mockRes();
+    const next = jest.fn();
+
+    await storeController.getStoreOrders(req, res, next);
+
+    expect(Sale.findAndCountAll).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      success: true,
+      count: 0,
+      data: [],
+      stats: expect.objectContaining({ total: 0, totalRevenue: 0 }),
+    }));
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('returns empty order stats when online store settings are missing', async () => {
+    OnlineStoreSettings.findOne.mockResolvedValue(null);
+
+    const req = { tenantId: 'tenant-1', query: {} };
+    const res = mockRes();
+    const next = jest.fn();
+
+    await storeController.getStoreOrderStats(req, res, next);
+
+    expect(Sale.count).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      success: true,
+      data: expect.objectContaining({ total: 0, totalRevenue: 0 }),
+    }));
+    expect(next).not.toHaveBeenCalled();
   });
 
   it('lists only online store sales with stats and pagination', async () => {

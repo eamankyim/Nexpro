@@ -1,7 +1,7 @@
 type NotificationPayload = Record<string, unknown>;
 
 export type NotificationDeepLinkRoute =
-  | '/(tabs)/online-orders'
+  | '/(tabs)/store?section=orders'
   | '/(tabs)/orders'
   | '/(tabs)/products'
   | `/customer/${string}`
@@ -71,7 +71,7 @@ function routeFromLink(link: string): NotificationDeepLinkRoute | null {
   const segments = path.split('/').filter(Boolean);
 
   if (segments[0] === 'store' && segments[1] === 'orders') {
-    return segments[2] ? buildDetailRoute('/store-order', segments[2]) : '/(tabs)/online-orders';
+    return segments[2] ? buildDetailRoute('/store-order', segments[2]) : '/(tabs)/store?section=orders';
   }
 
   const firstSegment = segments[0];
@@ -100,7 +100,7 @@ export function resolveNotificationDeepLink(data: unknown): NotificationDeepLink
   const linkRoute = routeFromLink(link);
 
   if (isOnlineStore) {
-    return saleId || orderId ? buildDetailRoute('/store-order', saleId || orderId) : linkRoute || '/(tabs)/online-orders';
+    return saleId || orderId ? buildDetailRoute('/store-order', saleId || orderId) : linkRoute || '/(tabs)/store?section=orders';
   }
 
   if (type === 'order' && (saleId || orderId)) {

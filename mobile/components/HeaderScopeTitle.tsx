@@ -7,12 +7,14 @@ import { WorkspaceScopeSwitcher } from '@/components/WorkspaceScopeSwitcher';
 import { useAuth } from '@/context/AuthContext';
 import { useShopOptional } from '@/context/ShopContext';
 import { useStudioLocationOptional } from '@/context/StudioLocationContext';
+import { useSmartSearch } from '@/context/SmartSearchContext';
 import { useTheme } from '@/context/ThemeContext';
 import { useScopedWorkspaceName } from '@/hooks/useScopedWorkspaceName';
 import {
   resolveHeaderPageTitle,
   shouldShowWorkspaceScopeInHeader,
 } from '@/utils/headerTitle';
+import { FontFamily, FontSize } from '@/constants/typography';
 
 type HeaderScopeTitleProps = {
   embedded?: boolean;
@@ -28,6 +30,7 @@ export function HeaderScopeTitle({ embedded = true }: HeaderScopeTitleProps) {
   const shop = useShopOptional();
   const studio = useStudioLocationOptional();
   const scopedName = useScopedWorkspaceName('ABS');
+  const { pageConfig } = useSmartSearch();
 
   const showWorkspaceScope = shouldShowWorkspaceScopeInHeader(pathname);
   const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
@@ -55,13 +58,20 @@ export function HeaderScopeTitle({ embedded = true }: HeaderScopeTitleProps) {
     );
   }
 
-  const pageTitle = resolveHeaderPageTitle(pathname, activeTenant?.businessType);
+  const pageTitle =
+    pageConfig?.title || resolveHeaderPageTitle(pathname, activeTenant?.businessType);
+  const subtitle = pageConfig?.subtitle?.trim() || '';
 
   return (
-    <View style={rowStyle}>
+    <View style={[rowStyle, styles.titleCol]}>
       <Text style={[styles.pageTitle, { color: textColor }]} numberOfLines={1}>
         {pageTitle}
       </Text>
+      {subtitle ? (
+        <Text style={[styles.pageSubtitle, { color: mutedColor }]} numberOfLines={1}>
+          {subtitle}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -84,14 +94,28 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
+  titleCol: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    gap: 1,
+  },
   label: {
-    fontSize: 13,
+    fontFamily: FontFamily.semiBold,
+    fontSize: FontSize.sm,
     fontWeight: '600',
     flexShrink: 1,
   },
   pageTitle: {
-    fontSize: 15,
+    fontFamily: FontFamily.bold,
+    fontSize: FontSize.body,
     fontWeight: '700',
+    flexShrink: 1,
+  },
+  pageSubtitle: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.xs,
+    fontWeight: '500',
     flexShrink: 1,
   },
 });

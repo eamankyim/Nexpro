@@ -1,12 +1,14 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Tabs, usePathname, useRouter } from 'expo-router';
 import { DeviceEventEmitter, View, Pressable, StyleSheet, Text } from 'react-native';
 import { useAuth } from '@/context/AuthContext';
 
 import { AppIcon, type AppIconName } from '@/components/AppIcon';
 import { Header } from '@/components/Header';
+import { MoreMenuSheet } from '@/components/MoreMenuSheet';
 import { SmartSearchProvider } from '@/context/SmartSearchContext';
 import Colors from '@/constants/Colors';
+import { FontFamily, FontSize } from '@/constants/typography';
 import { useTheme } from '@/context/ThemeContext';
 import { resolveBusinessType } from '@/constants';
 import { OPEN_SCAN_CAMERA_EVENT } from '@/utils/scanTabEvents';
@@ -54,6 +56,8 @@ export default function TabLayout() {
   const showInvoicesInTab = (isRetailLike || isStudio) && hasFeature('invoices');
   const centerTabTitle = isStudio ? 'Add Job' : 'Scan';
   const isScanRoute = pathname === '/scan' || pathname.endsWith('/scan');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
 
   useEffect(() => {
     if (!isDriver) return;
@@ -69,12 +73,19 @@ export default function TabLayout() {
       tabBarInactiveTintColor: colors.tabIconDefault,
       headerShown: true,
       header: TabsHeader,
+      tabBarLabelStyle: {
+        fontFamily: FontFamily.medium,
+        fontSize: FontSize.xs,
+        fontWeight: '500' as const,
+      },
     }),
     [colors.tint, colors.tabIconDefault]
   );
 
   return (
     <SmartSearchProvider>
+    <>
+    <MoreMenuSheet visible={menuOpen} onClose={closeMenu} />
     <Tabs
       screenOptions={screenOptions}
     >
@@ -140,13 +151,23 @@ export default function TabLayout() {
         options={{
           title: isDriver ? 'Account' : 'More',
           tabBarIcon: ({ color }) => <TabBarIcon name={isDriver ? 'user' : 'bars'} color={color} />,
+          tabBarButton: (props) => (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={isDriver ? 'Account menu' : 'More menu'}
+              onPress={() => setMenuOpen(true)}
+              style={props.style}
+            >
+              {props.children}
+            </Pressable>
+          ),
         }}
       />
 
       {/* Accessible via More or deep links — not in tab bar */}
       <Tabs.Screen name="orders" options={{ href: null }} />
-      <Tabs.Screen name="online-orders" options={{ href: null, title: 'Online Orders' }} />
-      <Tabs.Screen name="store" options={{ href: null, title: 'Store' }} />
+      <Tabs.Screen name="online-orders" options={{ href: null, title: 'Online Store' }} />
+      <Tabs.Screen name="store" options={{ href: null, title: 'Online Store' }} />
       <Tabs.Screen name="store-services" options={{ href: null, title: 'Studio Services' }} />
       <Tabs.Screen name="products" options={{ href: null }} />
       <Tabs.Screen name="jobs" options={{ href: null }} />
@@ -170,6 +191,7 @@ export default function TabLayout() {
         }
       />
     </Tabs>
+    </>
     </SmartSearchProvider>
   );
 }
@@ -186,7 +208,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   centerTabLabel: {
-    fontSize: 10,
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.xs,
     marginTop: 2,
     fontWeight: '500',
   },

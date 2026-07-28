@@ -15,8 +15,7 @@ const AccountBalance = sequelize.define(
       references: {
         model: 'tenants',
         key: 'id'
-      },
-      unique: 'tenant_account_period_unique'
+      }
     },
     accountId: {
       type: DataTypes.UUID,
@@ -24,8 +23,7 @@ const AccountBalance = sequelize.define(
       references: {
         model: 'accounts',
         key: 'id'
-      },
-      unique: 'tenant_account_period_unique'
+      }
     },
     fiscalYear: {
       type: DataTypes.INTEGER,
@@ -58,6 +56,7 @@ const AccountBalance = sequelize.define(
     indexes: [
       {
         unique: true,
+        name: 'account_balances_tenant_account_period_idx',
         fields: ['tenantId', 'accountId', 'fiscalYear', 'period']
       }
     ]
@@ -65,6 +64,3 @@ const AccountBalance = sequelize.define(
 );
 
 module.exports = AccountBalance;
-
-
-

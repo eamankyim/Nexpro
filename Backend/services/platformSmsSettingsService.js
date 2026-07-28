@@ -70,8 +70,19 @@ function getPublicSummary(value = {}) {
     arkesel: providerPublicSummary(normalized.arkesel),
     mnotify: providerPublicSummary(normalized.mnotify),
     monthlyLimit: parseMonthlyLimit(normalized.monthlyLimit),
+    monthlyLimitEnabled: isMonthlyLimitEnabled(normalized),
     updatedAt: normalized.updatedAt || null,
   };
+}
+
+/**
+ * Whether the per-tenant monthly platform SMS quota is enforced.
+ * Defaults to true when unset (backward compatible).
+ * @param {object} value
+ * @returns {boolean}
+ */
+function isMonthlyLimitEnabled(value = {}) {
+  return value.monthlyLimitEnabled !== false;
 }
 
 async function getPlatformSmsSettingsSummary() {
@@ -118,8 +129,10 @@ function buildStoredConfig(value = {}) {
     apiKey,
     senderId: senderId.substring(0, 11),
     monthlyLimit: parseMonthlyLimit(normalized.monthlyLimit),
+    monthlyLimitEnabled: isMonthlyLimitEnabled(normalized),
     source: 'platform',
-    limited: true,
+    // When the admin disables the monthly cap, treat platform SMS as unlimited.
+    limited: isMonthlyLimitEnabled(normalized),
   };
 }
 
@@ -193,6 +206,9 @@ function mergeSettings({ existing = {}, payload = {}, userId }) {
     monthlyLimit: payload.monthlyLimit !== undefined
       ? parseMonthlyLimit(payload.monthlyLimit)
       : parseMonthlyLimit(existingNorm.monthlyLimit),
+    monthlyLimitEnabled: payload.monthlyLimitEnabled !== undefined
+      ? payload.monthlyLimitEnabled === true
+      : isMonthlyLimitEnabled(existingNorm),
     updatedAt: now,
     updatedBy: userId || null,
   };
@@ -344,6 +360,7 @@ async function migrateLegacySmsSender() {
     arkesel: { senderId: legacySender },
     mnotify: { senderId: DEFAULT_SENDER_ID },
     monthlyLimit: DEFAULT_MONTHLY_LIMIT,
+    monthlyLimitEnabled: true,
     updatedAt: new Date().toISOString(),
     migratedFrom: 'platform:communications.smsSender',
   };
@@ -379,6 +396,7 @@ module.exports = {
   testPlatformSmsConnection,
   migrateLegacySmsSender,
   parseMonthlyLimit,
+  isMonthlyLimitEnabled,
   hasActiveCredentials,
   buildTestConfig,
 };

@@ -133,6 +133,11 @@ const publicStoreWhere = (extra = {}) => ({
   ...extra,
 });
 
+const marketplaceListedStoreWhere = (extra = {}) => publicStoreWhere({
+  listedOnMarketplace: true,
+  ...extra,
+});
+
 const serviceWhereForRequest = (req, extra = {}) => {
   let where = applyTenantFilter(req.tenantId, extra);
   if (req.studioLocationScoped) {
@@ -579,7 +584,7 @@ exports.getMarketplaceStudios = async (req, res, next) => {
     const limit = marketplaceLimit(req.query.limit, 12, 48);
     const offset = (page - 1) * limit;
     const search = String(req.query.search || '').trim();
-    const where = publicStoreWhere();
+    const where = marketplaceListedStoreWhere();
 
     if (search) {
       where[Op.or] = [
@@ -628,7 +633,7 @@ exports.getMarketplaceServices = async (req, res, next) => {
     const search = String(req.query.search || '').trim();
     const category = String(req.query.category || '').trim();
     const studioSlug = String(req.query.studioSlug || '').trim();
-    const storeWhere = publicStoreWhere(studioSlug ? { slug: { [Op.iLike]: normalizeSlug(studioSlug) } } : {});
+    const storeWhere = marketplaceListedStoreWhere(studioSlug ? { slug: { [Op.iLike]: normalizeSlug(studioSlug) } } : {});
     const stores = await OnlineStoreSettings.findAll({
       where: storeWhere,
       attributes: [
@@ -694,7 +699,7 @@ exports.getMarketplaceServices = async (req, res, next) => {
 exports.getMarketplaceServiceCategories = async (req, res, next) => {
   try {
     const stores = await OnlineStoreSettings.findAll({
-      where: publicStoreWhere(),
+      where: marketplaceListedStoreWhere(),
       attributes: ['id', 'tenantId', 'studioLocationId'],
       include: publicStudioInclude,
       limit: 200,
@@ -1448,7 +1453,7 @@ exports.getMarketplaceServicesHome = async (req, res, next) => {
   try {
     const homeData = await exports.getStudioMarketplaceHomeData();
     const stores = await OnlineStoreSettings.findAll({
-      where: publicStoreWhere(),
+      where: marketplaceListedStoreWhere(),
       attributes: [
         'id', 'tenantId', 'studioLocationId', 'slug', 'displayName', 'description',
         'logoUrl', 'bannerImageUrl', 'primaryColor', 'currency', 'pickupEnabled', 'deliveryEnabled', 'metadata',
@@ -1501,7 +1506,7 @@ exports.getMarketplaceServicesHome = async (req, res, next) => {
 
 exports.getStudioMarketplaceHomeData = async () => {
   const stores = await OnlineStoreSettings.findAll({
-    where: publicStoreWhere(),
+    where: marketplaceListedStoreWhere(),
     attributes: [
       'id', 'tenantId', 'studioLocationId', 'slug', 'displayName', 'description',
       'logoUrl', 'bannerImageUrl', 'primaryColor', 'currency', 'pickupEnabled', 'deliveryEnabled', 'metadata',
@@ -1540,7 +1545,7 @@ exports.getStudioMarketplaceHomeData = async () => {
 
 exports.getMarketplaceServiceCategoriesData = async () => {
   const stores = await OnlineStoreSettings.findAll({
-    where: publicStoreWhere(),
+    where: marketplaceListedStoreWhere(),
     attributes: ['id', 'tenantId', 'studioLocationId'],
     include: publicStudioInclude,
     limit: 200,

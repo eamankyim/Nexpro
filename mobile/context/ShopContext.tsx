@@ -48,7 +48,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     enabled: !!activeTenantId && isShopWorkspace,
     staleTime: 2 * 60 * 1000,
     retry: 2,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
     refetchOnReconnect: true,
   });
 

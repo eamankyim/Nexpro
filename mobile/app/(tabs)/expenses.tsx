@@ -36,6 +36,7 @@ import { FORM_LABELS } from '@/constants/formLabels';
 import { getApiErrorMessage, parseApiListResponse } from '@/utils/parseApiListResponse';
 import { ListLoadingState, ListErrorState } from '@/components/ListScreenStates';
 import { refreshAfterExpense, QUERY_STALE } from '@/utils/queryInvalidation';
+import { useIsStoreSetupRoute } from '@/hooks/useIsStoreSetupRoute';
 
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
@@ -77,6 +78,9 @@ export default function ExpensesScreen() {
   const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const queryClient = useQueryClient();
+  const inStoreSetup = useIsStoreSetupRoute();
+  const expensesEnabled = !!activeTenantId && hasFeature('expenses') && !inStoreSetup;
+  const expensesScopedEnabled = expensesEnabled && scopeReady;
 
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [formData, setFormData] = useState({
@@ -98,14 +102,14 @@ export default function ExpensesScreen() {
   const { data: categoriesResponse } = useQuery({
     queryKey: ['expenses', 'categories', activeTenantId],
     queryFn: () => expenseService.getCategories(),
-    enabled: !!activeTenantId && hasFeature('expenses'),
+    enabled: expensesEnabled,
     staleTime: QUERY_STALE.SLOW,
   });
 
   const { data: statsResponse } = useQuery({
     queryKey: ['expenses', 'stats', activeTenantId, activeShopId, activeStudioLocationId],
     queryFn: () => expenseService.getStats(),
-    enabled: !!activeTenantId && hasFeature('expenses') && scopeReady,
+    enabled: expensesScopedEnabled,
     staleTime: QUERY_STALE.TRANSACTIONAL,
   });
 
@@ -116,7 +120,7 @@ export default function ExpensesScreen() {
         page: 1,
         limit: 20,
       }),
-    enabled: !!activeTenantId && hasFeature('expenses') && scopeReady,
+    enabled: expensesScopedEnabled,
     staleTime: QUERY_STALE.TRANSACTIONAL,
     gcTime: 60 * 60 * 1000,
   });

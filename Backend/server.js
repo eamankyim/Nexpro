@@ -402,6 +402,11 @@ if (!IS_VERCEL_SERVERLESS) {
       console.warn(
         `[Server] Frontend dev uses the Vite proxy (/api). For direct API calls: VITE_API_DIRECT=true VITE_API_URL=http://localhost:${port}`
       );
+      console.warn(
+        `[Server] Mobile must match this port: EXPO_PUBLIC_API_URL=http://<LAN-IP>:${port} ` +
+          '(run: cd mobile && npm run show-api-url). A stale :' +
+          `${configuredPort} URL causes Store tab timeouts.`
+      );
     }
     if (config.nodeEnv === 'development') {
       console.log(`[Server] Running in ${config.nodeEnv} mode on port ${port}`);

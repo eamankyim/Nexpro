@@ -15,6 +15,10 @@ export type PageSearchConfig = {
   placeholder: string;
   /** When false, header search is hidden (e.g. POS / scan). */
   enabled?: boolean;
+  /** Optional override for the header page title while this screen is focused. */
+  title?: string;
+  /** Optional subtitle under the page title (e.g. "Not published yet"). */
+  subtitle?: string;
 };
 
 type SmartSearchContextValue = {

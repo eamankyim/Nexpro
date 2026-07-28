@@ -36,6 +36,16 @@ const OnlineStoreSettings = sequelize.define('OnlineStoreSettings', {
     allowNull: false,
     defaultValue: false,
   },
+  /**
+   * When true, store appears on Sabito marketplace discovery.
+   * Independent of `enabled` (Online Store /shop + custom domain can be live
+   * without marketplace listing).
+   */
+  listedOnMarketplace: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+  },
   slug: {
     type: DataTypes.STRING(80),
     allowNull: false,
@@ -151,6 +161,7 @@ const OnlineStoreSettings = sequelize.define('OnlineStoreSettings', {
     { fields: ['studioLocationId'] },
     { unique: true, fields: ['slug'] },
     { fields: ['enabled'] },
+    { fields: ['listedOnMarketplace'] },
     { unique: true, fields: ['customDomain'] },
   ],
 });

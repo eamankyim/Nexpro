@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { AppIcon } from '@/components/AppIcon';
@@ -16,8 +17,10 @@ import { ListEmptyState } from '@/components/ListEmptyState';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { FilterChipRow } from '@/components/FilterChip';
 import { ListLoadingState, ListErrorState } from '@/components/ListScreenStates';
+import { OnlineStoreWelcome } from '@/components/store/OnlineStoreWelcome';
 import { ScreenShell } from '@/components/ScreenShell';
 import { useAuth } from '@/context/AuthContext';
+import { useIsStoreSetupRoute } from '@/hooks/useIsStoreSetupRoute';
 import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { useScreenColors } from '@/hooks/useScreenColors';
 import { storeService } from '@/services/storeService';
@@ -51,15 +54,36 @@ function formatPriceLabel(listing: ServiceListing): string {
 }
 
 export default function StoreServicesScreen() {
+  const router = useRouter();
   const { activeTenantId, activeTenant, hasFeature } = useAuth();
   const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { colors, cardBg, borderColor, textColor, mutedColor } = useScreenColors();
   const queryClient = useQueryClient();
+  const inStoreSetup = useIsStoreSetupRoute();
   const [statusFilter, setStatusFilter] = useState('all');
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const isStudio = resolveBusinessType(activeTenant?.businessType) === 'studio';
-  const enabled = !!activeTenantId && scopeReady && isStudio && hasFeature('paymentsExpenses');
+  const featureEnabled =
+    !!activeTenantId && scopeReady && isStudio && hasFeature('paymentsExpenses') && !inStoreSetup;
+
+  const {
+    data: statusResponse,
+    isLoading: isSetupLoading,
+    isError: isSetupError,
+    error: setupError,
+    refetch: refetchSetup,
+  } = useQuery({
+    queryKey: ['store', 'setup-status'],
+    queryFn: () => storeService.getSetupStatus(),
+    enabled: featureEnabled,
+    staleTime: 30 * 1000,
+    refetchOnMount: 'always',
+  });
+
+  const setupData = (statusResponse as { data?: unknown })?.data ?? statusResponse ?? {};
+  const checklist = (setupData as { checklist?: Record<string, unknown> }).checklist || {};
+  const hasStoreSettings = Boolean(checklist.hasSettings);
 
   const queryParams = useMemo(
     () => ({
@@ -72,18 +96,19 @@ export default function StoreServicesScreen() {
   const { data, isLoading, isError, error, refetch, isRefetching } = useQuery({
     queryKey: ['store', 'service-listings', activeTenantId, activeShopId, activeStudioLocationId, queryParams],
     queryFn: () => storeService.getServiceListings(queryParams),
-    enabled,
+    enabled: featureEnabled && hasStoreSettings,
     staleTime: QUERY_STALE.LIST,
   });
 
   const listings = useMemo(() => {
+    if (!hasStoreSettings) return [];
     const body = (data as { data?: unknown })?.data ?? data ?? {};
     return Array.isArray((body as { data?: unknown }).data)
       ? ((body as { data: ServiceListing[] }).data)
       : Array.isArray(body)
         ? (body as ServiceListing[])
         : [];
-  }, [data]);
+  }, [data, hasStoreSettings]);
 
   const publishMutation = useMutation({
     mutationFn: async ({ id, publish }: { id: string; publish: boolean }) => {
@@ -111,6 +136,31 @@ export default function StoreServicesScreen() {
 
   if (!isStudio || !hasFeature('paymentsExpenses')) {
     return <FeatureAccessDenied message="Studio services are not enabled for your workspace." />;
+  }
+
+  if (isSetupLoading) {
+    return <ListLoadingState message="Loading services..." />;
+  }
+
+  if (isSetupError) {
+    return (
+      <ListErrorState
+        title="Failed to load store"
+        message={getApiErrorMessage(setupError, 'Could not load store status.')}
+        onRetry={refetchSetup}
+      />
+    );
+  }
+
+  if (!hasStoreSettings) {
+    return (
+      <ScreenShell style={styles.container}>
+        <OnlineStoreWelcome
+          chrome="tab"
+          onCreateStore={() => router.push('/store-setup/confirm-name' as never)}
+        />
+      </ScreenShell>
+    );
   }
 
   const renderItem = ({ item }: { item: ServiceListing }) => {

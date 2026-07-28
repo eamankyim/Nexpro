@@ -42,6 +42,7 @@ export default {
     experiments: { typedRoutes: true },
     extra: {
       apiUrl: process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5001',
+      onlineStoreUrl: process.env.EXPO_PUBLIC_ONLINE_STORE_URL || 'https://store.absghana.com',
       eas: {
         projectId: '8dff9445-6979-427f-b84e-aae48f077d82',
       },

@@ -26,6 +26,46 @@ export const settingsService = {
     return res?.data?.data ?? res?.data ?? res;
   },
 
+  updatePaymentCollectionSettings: async (payload: Record<string, unknown>) => {
+    const res = await api.put('/settings/payment-collection', payload);
+    return res?.data?.data ?? res?.data ?? res;
+  },
+
+  verifyPaymentCollectionPassword: async (password: string) => {
+    const res = await api.post('/settings/payment-collection/verify-password', { password });
+    return res?.data ?? res;
+  },
+
+  sendPaymentCollectionOtp: async () => {
+    const res = await api.post('/settings/payment-collection/send-otp', {});
+    return res?.data ?? res;
+  },
+
+  verifyPaymentCollectionOtp: async (otp: string) => {
+    const res = await api.post('/settings/payment-collection/verify-otp', { otp });
+    return res?.data ?? res;
+  },
+
+  uploadOrganizationLogo: async (uri: string, mimeType = 'image/jpeg', fileName?: string | null) => {
+    const formData = new FormData();
+    const ext = extensionForMimeType(mimeType);
+    formData.append('file', {
+      uri,
+      name: fileName || `logo.${ext}`,
+      type: mimeType,
+    } as unknown as Blob);
+    const res = await api.post('/settings/organization/logo', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,
+    });
+    return res?.data?.data ?? res?.data ?? res;
+  },
+
+  updateOrganizationSettings: async (payload: Record<string, unknown>) => {
+    const res = await api.put('/settings/organization', payload);
+    return res?.data?.data ?? res?.data ?? res;
+  },
+
   getCustomerSources: async () => {
     const res = await api.get('/settings/customer-sources');
     const data = res?.data?.data ?? res?.data ?? [];

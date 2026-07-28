@@ -45,6 +45,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
+import { releaseBodyInteractionLocks } from '@/utils/releaseBodyInteractionLocks';
 
 /**
  * Reusable Details Drawer Component using shadcn/ui
@@ -113,6 +114,12 @@ const DetailsDrawer = ({
       setActiveTab(null);
     }
   }, [tabs, open]);
+
+  // If this drawer unmounts while still open (e.g. "View Invoice" navigates away),
+  // clear leftover Radix body locks so the sidebar keeps working.
+  useEffect(() => () => {
+    releaseBodyInteractionLocks();
+  }, []);
 
   const renderFields = (fieldsToRender) => (
     <Descriptions column={1} className="space-y-4">
@@ -292,7 +299,10 @@ const DetailsDrawer = ({
                   <SecondaryButton
                     onClick={secondaryAction.onClick}
                     disabled={secondaryAction.disabled}
-                    className={cn(isMobile && 'min-h-[44px] flex-1 touch-manipulation')}
+                    className={cn(
+                      isMobile && 'min-h-[44px] flex-1 touch-manipulation',
+                      secondaryAction.className
+                    )}
                   >
                     {secondaryAction.icon && <span className="mr-2 shrink-0">{secondaryAction.icon}</span>}
                     {secondaryAction.label}

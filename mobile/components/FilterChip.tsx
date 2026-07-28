@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 
 import { useScreenColors } from '@/hooks/useScreenColors';
+import { FontFamily, FontSize } from '@/constants/typography';
 
 export type FilterOption = {
   value: string;
@@ -78,13 +79,16 @@ const styles = StyleSheet.create({
   },
   chip: {
     alignSelf: 'center',
+    minHeight: 36,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1,
+    justifyContent: 'center',
   },
   chipText: {
-    fontSize: 14,
+    fontFamily: FontFamily.semiBold,
+    fontSize: FontSize.md,
     fontWeight: '600',
   },
 });

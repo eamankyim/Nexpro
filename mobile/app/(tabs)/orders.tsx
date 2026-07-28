@@ -21,6 +21,7 @@ import { useRegisterPageSearch } from '@/hooks/useRegisterPageSearch';
 import { useDebounce } from '@/hooks/useDebounce';
 import { matchesSearchQuery } from '@/utils/matchesSearchQuery';
 import { useAuth } from '@/context/AuthContext';
+import { useIsStoreSetupRoute } from '@/hooks/useIsStoreSetupRoute';
 import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useScreenColors } from '@/hooks/useScreenColors';
@@ -212,6 +213,7 @@ export default function OrdersScreen() {
   const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const queryClient = useQueryClient();
+  const inStoreSetup = useIsStoreSetupRoute();
 
   const shopType = activeTenant?.metadata?.shopType;
   const isShop = resolveBusinessType(activeTenant?.businessType) === 'shop';
@@ -243,9 +245,9 @@ export default function OrdersScreen() {
   const { data: response, isLoading, isError, error, refetch, isRefetching } = useQuery({
     queryKey: ['orders', activeTenantId, activeShopId, activeStudioLocationId, statusFilter, today],
     queryFn: fetchOrders,
-    enabled: !!activeTenantId && isRestaurant && hasFeature('orders') && scopeReady,
+    enabled: !!activeTenantId && isRestaurant && hasFeature('orders') && scopeReady && !inStoreSetup,
     staleTime: 5000, // 5 sec - keep relatively fresh
-    refetchInterval: POLL_INTERVAL_MS,
+    refetchInterval: inStoreSetup ? false : POLL_INTERVAL_MS,
   });
 
   const updateStatusMutation = useMutation({

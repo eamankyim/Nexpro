@@ -431,6 +431,15 @@ const migrate = async () => {
     const createOnlineStoreHeroLibraryTables = require('./create-online-store-hero-library-tables');
     await createOnlineStoreHeroLibraryTables({ closeConnection: false });
 
+    // Sabito marketplace listing flag (independent of Online Store enabled)
+    const addListedOnMarketplaceToOnlineStoreSettings = require('./add-listed-on-marketplace-to-online-store-settings');
+    await addListedOnMarketplaceToOnlineStoreSettings({ closeConnection: false });
+
+    // Account balances must be unique per (tenantId, accountId, fiscalYear, period)
+    // Fixes UniqueConstraintError when posting journals across months
+    const fixAccountBalancesUniqueConstraint = require('./fix-account-balances-unique-constraint');
+    await fixAccountBalancesUniqueConstraint({ closeConnection: false });
+
     // Quote file attachments (proposal / requirements / agreement docs)
     await addAttachmentsToQuotes();
 

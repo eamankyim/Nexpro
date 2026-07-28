@@ -4,17 +4,21 @@ import {
   View,
   Text,
   Pressable,
-  Modal,
-  FlatList,
   StyleSheet,
   ActivityIndicator,
 } from 'react-native';
 
 import { AppIcon } from '@/components/AppIcon';
+import {
+  AppBottomSheet,
+  APP_SHEET_HEIGHT_COMPACT,
+  SheetMenuRow,
+} from '@/components/AppBottomSheet';
 import { useShopOptional } from '@/context/ShopContext';
 import { useStudioLocationOptional } from '@/context/StudioLocationContext';
 import { useTheme } from '@/context/ThemeContext';
 import Colors from '@/constants/Colors';
+import { FontFamily, FontSize } from '@/constants/typography';
 import { refreshAfterSale } from '@/utils/queryInvalidation';
 
 type ScopeOption = { id: string; label: string; isAll?: boolean };
@@ -31,7 +35,6 @@ export function WorkspaceScopeSwitcher({ embedded = false }: WorkspaceScopeSwitc
   const shop = useShopOptional();
   const studio = useStudioLocationOptional();
   const { resolvedTheme } = useTheme();
-  const colors = Colors[resolvedTheme ?? 'light'];
   const [open, setOpen] = useState(false);
 
   const config = useMemo(() => {
@@ -82,7 +85,6 @@ export function WorkspaceScopeSwitcher({ embedded = false }: WorkspaceScopeSwitc
 
   if (!config || config.loading) return null;
 
-  const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
   const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
   const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
 
@@ -118,40 +120,31 @@ export function WorkspaceScopeSwitcher({ embedded = false }: WorkspaceScopeSwitc
         <AppIcon name="chevron-down" size={12} color={mutedColor} />
       </Pressable>
 
-      <Modal visible={open} animationType="slide" transparent onRequestClose={() => setOpen(false)}>
-        <Pressable style={styles.overlay} onPress={() => setOpen(false)}>
-          <Pressable style={[styles.sheet, { backgroundColor: cardBg }]} onPress={(e) => e.stopPropagation()}>
-            <Text style={[styles.sheetTitle, { color: textColor }]}>
-              {config.kind === 'shop' ? 'Select shop' : 'Select location'}
-            </Text>
-            <FlatList
-              data={config.options}
-              keyExtractor={(item) => item.id}
-              renderItem={({ item }) => {
-                const active =
-                  (item.isAll && !config.activeId) || item.id === config.activeId;
-                return (
-                  <Pressable
-                    onPress={() => {
-                      config.onSelect(item.id);
-                      setOpen(false);
-                    }}
-                    style={[styles.option, active && { backgroundColor: `${colors.tint}18` }]}
-                  >
-                    <Text style={[styles.optionText, { color: active ? colors.tint : textColor }]}>
-                      {item.label}
-                    </Text>
-                    {active ? <AppIcon name="check" size={16} color={colors.tint} /> : null}
-                  </Pressable>
-                );
+      <AppBottomSheet
+        visible={open}
+        title={config.kind === 'shop' ? 'Select shop' : 'Select location'}
+        onClose={() => setOpen(false)}
+        height={APP_SHEET_HEIGHT_COMPACT}
+      >
+        {config.options.map((item) => {
+          const active =
+            (item.isAll && !config.activeId) || item.id === config.activeId;
+          return (
+            <SheetMenuRow
+              key={item.id}
+              label={item.label}
+              active={active}
+              onPress={() => {
+                config.onSelect(item.id);
+                setOpen(false);
               }}
+              trailing={
+                active ? <AppIcon name="check" size={18} color="#fff" /> : <View />
+              }
             />
-            <Pressable onPress={() => setOpen(false)} style={[styles.closeBtn, { borderColor: resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb' }]}>
-              <Text style={{ color: textColor, fontWeight: '600' }}>Close</Text>
-            </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+          );
+        })}
+      </AppBottomSheet>
     </>
   );
 }
@@ -218,7 +211,12 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
     minHeight: 44,
   },
-  staticLabel: { fontSize: 13, fontWeight: '600', flexShrink: 1 },
+  staticLabel: {
+    fontFamily: FontFamily.semiBold,
+    fontSize: FontSize.sm,
+    fontWeight: '600',
+    flexShrink: 1,
+  },
   trigger: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -230,7 +228,12 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
     minHeight: 44,
   },
-  triggerLabel: { fontSize: 13, fontWeight: '600', flexShrink: 1 },
+  triggerLabel: {
+    fontFamily: FontFamily.semiBold,
+    fontSize: FontSize.sm,
+    fontWeight: '600',
+    flexShrink: 1,
+  },
   embeddedRow: {
     marginBottom: 0,
     alignSelf: 'stretch',
@@ -246,33 +249,6 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: 0.7,
   },
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    padding: 20,
-    maxHeight: '55%',
-  },
-  sheetTitle: { fontSize: 18, fontWeight: '700', marginBottom: 12 },
-  option: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 14,
-    paddingHorizontal: 4,
-  },
-  optionText: { fontSize: 16, flex: 1 },
-  closeBtn: {
-    marginTop: 12,
-    paddingVertical: 14,
-    borderRadius: 10,
-    borderWidth: 1,
-    alignItems: 'center',
-  },
 });
 
 const bannerStyles = StyleSheet.create({
@@ -285,7 +261,18 @@ const bannerStyles = StyleSheet.create({
     borderBottomWidth: 1,
     gap: 12,
   },
-  text: { flex: 1, fontSize: 13, fontWeight: '600', color: '#92400e' },
+  text: {
+    flex: 1,
+    fontFamily: FontFamily.semiBold,
+    fontSize: FontSize.sm,
+    fontWeight: '600',
+    color: '#92400e',
+  },
   btn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
-  btnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  btnText: {
+    color: '#fff',
+    fontFamily: FontFamily.semiBold,
+    fontSize: FontSize.sm,
+    fontWeight: '600',
+  },
 });

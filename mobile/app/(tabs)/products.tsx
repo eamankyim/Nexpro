@@ -31,6 +31,7 @@ import { CURRENCY, SHOP_TYPES, resolveBusinessType } from '@/constants';
 import { formatCurrency } from '@/utils/formatCurrency';
 import { resolveImageUrl } from '@/utils/fileUtils';
 import { useRouter } from 'expo-router';
+import { useIsStoreSetupRoute } from '@/hooks/useIsStoreSetupRoute';
 
 import { ListEmptyState, EmptyStateActionButton, ListActionButton } from '@/components/ListEmptyState';
 import { SEARCH_PLACEHOLDERS } from '@/constants/searchPlaceholders';
@@ -67,6 +68,7 @@ export default function ProductsScreen() {
   const isShop = resolvedType === 'shop';
   const isPharmacy = resolvedType === 'pharmacy';
   const isRetailLike = isShop || isPharmacy;
+  const inStoreSetup = useIsStoreSetupRoute();
 
   const { searchValue, setSearchValue } = useSmartSearch();
   useRegisterPageSearch({ scope: 'products', placeholder: SEARCH_PLACEHOLDERS.PRODUCTS });
@@ -104,7 +106,7 @@ export default function ProductsScreen() {
         search: debouncedSearch || undefined,
         isActive: true,
       }),
-    enabled: !!activeTenantId && isRetailLike && hasFeature('products') && scopeReady,
+    enabled: !!activeTenantId && isRetailLike && hasFeature('products') && scopeReady && !inStoreSetup,
     staleTime: QUERY_STALE.LIST,
     gcTime: 2 * 60 * 60 * 1000,
   });

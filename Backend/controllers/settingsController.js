@@ -1201,6 +1201,7 @@ exports.getSMSSettings = async (req, res, next) => {
       platformSms = {
         available: true,
         monthlyLimit: usage.monthlyLimit,
+        monthlyLimitEnabled: usage.monthlyLimitEnabled !== false,
         sentThisMonth: usage.sentCount,
         remaining: usage.remaining,
         yearMonth: usage.yearMonth,

@@ -10,7 +10,7 @@ const sections = [
   {
     title: 'Using African Business Suite',
     body:
-      'African Business Suite helps businesses manage daily operations, storefronts, customer records, jobs, sales, payments, and related workflows. You are responsible for the accuracy of information you enter and for activity under your account.',
+      'African Business Suite helps businesses manage daily operations, online stores, customer records, jobs, sales, payments, and related workflows. You are responsible for the accuracy of information you enter and for activity under your account.',
   },
   {
     title: 'Account responsibility',
@@ -23,9 +23,9 @@ const sections = [
       'Your workspace data belongs to your business. We process it to provide the service, keep the platform reliable, and support features you choose to use.',
   },
   {
-    title: 'Payments and marketplace activity',
+    title: 'Payments and online orders',
     body:
-      'When you use checkout, marketplace, or payment features, you agree to provide accurate transaction details and follow the seller, buyer, and payment rules shown in the app.',
+      'When you use checkout or payment features in your online store, you agree to provide accurate transaction details and follow the payment rules shown in the app.',
   },
   {
     title: 'Acceptable use',

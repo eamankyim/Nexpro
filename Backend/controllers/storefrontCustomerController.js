@@ -31,6 +31,7 @@ const {
   markReleaseEligibleForSale,
   openDisputeForSale,
   recordHeldPaymentForSale,
+  recordDirectPaidPaymentForSale,
 } = require('../services/tradeAssuranceService');
 const {
   buildEligibilityResponse,
@@ -40,6 +41,15 @@ const {
   parseConfirmationReviewPayload,
   updateOwnReview,
 } = require('../services/storefrontReviewService');
+const {
+  COMMERCE_CHANNELS,
+  resolveCommerceChannelFromRequest,
+  usesTradeAssurance,
+  paystackOrderTypeForChannel,
+  getSaleCommerceChannel,
+  getStorefrontPublicBaseUrl,
+  PAYSTACK_ORDER_TYPES,
+} = require('../utils/storefrontCommerceChannel');
 
 const ONLINE_STORE_SOURCE = 'online_store';
 const DEFAULT_CURRENCY = 'GHS';
@@ -145,12 +155,9 @@ const logStorefrontVerificationOtp = ({ customer, code, expiresAt }) => {
   });
   return true;
 };
-const getStorefrontBaseUrl = () => (
-  process.env.STOREFRONT_URL ||
-  process.env.SABITO_STOREFRONT_URL ||
-  process.env.FRONTEND_URL ||
-  'http://localhost:5173'
-).replace(/\/$/, '');
+const getStorefrontBaseUrl = (channel = COMMERCE_CHANNELS.ONLINE_STORE) => (
+  getStorefrontPublicBaseUrl(channel)
+);
 
 const makeStorefrontPaystackReference = (saleId) => (
   `SF-${String(saleId).replace(/-/g, '').slice(0, 12)}-${Date.now()}`.slice(0, 50)
@@ -2118,7 +2125,7 @@ const buildStorefrontCheckoutDraft = async ({ shopper, body, transaction = null 
   };
 };
 
-const createPendingStorefrontSaleFromCheckout = async ({ shopper, body, transaction }) => {
+const createPendingStorefrontSaleFromCheckout = async ({ shopper, body, transaction, commerceChannel }) => {
   const draft = await buildStorefrontCheckoutDraft({ shopper, body, transaction });
   const {
     store,
@@ -2131,6 +2138,10 @@ const createPendingStorefrontSaleFromCheckout = async ({ shopper, body, transact
     fulfillmentMethod,
     notes,
   } = draft;
+
+  const channel = usesTradeAssurance(commerceChannel)
+    ? COMMERCE_CHANNELS.SABITO_MARKETPLACE
+    : COMMERCE_CHANNELS.ONLINE_STORE;
 
   const tenantCustomer = await findOrCreateTenantCustomer({
     shopper,
@@ -2159,6 +2170,7 @@ const createPendingStorefrontSaleFromCheckout = async ({ shopper, body, transact
     notes,
     metadata: {
       source: ONLINE_STORE_SOURCE,
+      commerceChannel: channel,
       storefrontCustomerId: shopper.id,
       storefrontCustomerEmail: shopper.email,
       storefrontCustomerEmailVerified: Boolean(shopper.emailVerifiedAt),
@@ -2173,9 +2185,9 @@ const createPendingStorefrontSaleFromCheckout = async ({ shopper, body, transact
           source: 'storefront_checkout',
         }],
       },
-      tradeAssurance: {
-        paymentStatus: 'awaiting_payment',
-      },
+      ...(channel === COMMERCE_CHANNELS.SABITO_MARKETPLACE
+        ? { tradeAssurance: { paymentStatus: 'awaiting_payment' } }
+        : { directPayment: { paymentStatus: 'awaiting_payment' }, tradeAssurance: { paymentStatus: 'awaiting_payment' } }),
     },
   }, { transaction });
 
@@ -2195,6 +2207,7 @@ const createPendingStorefrontSaleFromCheckout = async ({ shopper, body, transact
       onlineListingId: item.listing.id,
       imageUrl: item.imageUrl,
       source: ONLINE_STORE_SOURCE,
+      commerceChannel: channel,
     },
   })), { transaction });
 
@@ -2213,11 +2226,12 @@ const createPendingStorefrontSaleFromCheckout = async ({ shopper, body, transact
     createdBy: null,
     metadata: {
       source: ONLINE_STORE_SOURCE,
+      commerceChannel: channel,
       storefrontCustomerId: shopper.id,
     },
   }, { transaction });
 
-  return { sale, store, shopper, subtotal, deliveryFee, total };
+  return { sale, store, shopper, subtotal, deliveryFee, total, commerceChannel: channel };
 };
 
 const toInitializedOrderPayload = (sale, store, totals) => ({
@@ -2252,12 +2266,15 @@ exports.initializeStorefrontOrderPaystack = async (req, res, next) => {
   const transaction = await sequelize.transaction();
   try {
     const shopper = req.storefrontCustomer;
+    const commerceChannel = resolveCommerceChannelFromRequest(req, req.body || {});
     const checkout = await createPendingStorefrontSaleFromCheckout({
       shopper,
       body: req.body,
       transaction,
+      commerceChannel,
     });
     const { sale, store, subtotal, deliveryFee, total } = checkout;
+    const channel = checkout.commerceChannel;
 
     const paystackService = require('../services/paystackService');
     if (!paystackService.secretKey) {
@@ -2269,11 +2286,12 @@ exports.initializeStorefrontOrderPaystack = async (req, res, next) => {
       });
     }
 
-    const callbackUrl = `${getStorefrontBaseUrl()}/checkout/paystack-callback?paystack=1`;
+    const callbackUrl = `${getStorefrontBaseUrl(channel)}/checkout/paystack-callback?paystack=1`;
     let paystackReference = makeStorefrontPaystackReference(sale.id);
     const amountPesewas = Math.round(total * 100);
     const metadata = {
-      type: 'storefront_order',
+      type: paystackOrderTypeForChannel(channel),
+      commerceChannel: channel,
       saleId: sale.id,
       tenantId: store.tenantId,
       storefrontCustomerId: shopper.id,
@@ -2281,11 +2299,25 @@ exports.initializeStorefrontOrderPaystack = async (req, res, next) => {
     };
 
     const saleMetadata = getSaleMetadata(sale);
-    saleMetadata.tradeAssurance = {
-      ...(saleMetadata.tradeAssurance || {}),
+    const awaitingPayment = {
       paymentStatus: 'awaiting_payment',
       paystackReference,
     };
+    if (usesTradeAssurance(channel)) {
+      saleMetadata.tradeAssurance = {
+        ...(saleMetadata.tradeAssurance || {}),
+        ...awaitingPayment,
+      };
+    } else {
+      saleMetadata.directPayment = {
+        ...(saleMetadata.directPayment || {}),
+        ...awaitingPayment,
+      };
+      saleMetadata.tradeAssurance = {
+        ...(saleMetadata.tradeAssurance || {}),
+        ...awaitingPayment,
+      };
+    }
     await sale.update({ metadata: saleMetadata }, { transaction });
 
     const buildInit = (reference, channels) => paystackService.initializeTransaction({
@@ -2304,7 +2336,12 @@ exports.initializeStorefrontOrderPaystack = async (req, res, next) => {
     } catch (paystackErr) {
       if (paystackErr?.response?.status === 403) {
         paystackReference = makeStorefrontPaystackReference(sale.id);
-        saleMetadata.tradeAssurance.paystackReference = paystackReference;
+        if (usesTradeAssurance(channel)) {
+          saleMetadata.tradeAssurance.paystackReference = paystackReference;
+        } else {
+          saleMetadata.directPayment.paystackReference = paystackReference;
+          saleMetadata.tradeAssurance.paystackReference = paystackReference;
+        }
         await sale.update({ metadata: saleMetadata }, { transaction });
         try {
           result = await buildInit(paystackReference, ['card']);
@@ -2335,7 +2372,10 @@ exports.initializeStorefrontOrderPaystack = async (req, res, next) => {
         authorization_url: result.data.authorization_url,
         reference: result.data.reference || paystackReference,
         access_code: result.data.access_code,
-        order: toInitializedOrderPayload(sale, store, { subtotal, deliveryFee, total }),
+        order: {
+          ...toInitializedOrderPayload(sale, store, { subtotal, deliveryFee, total }),
+          commerceChannel: channel,
+        },
         verification: {
           isEmailVerified: Boolean(shopper.emailVerifiedAt),
           warning: shopper.emailVerifiedAt ? null : 'Email verification is pending for this shopper account.',
@@ -2427,7 +2467,14 @@ exports.verifyStorefrontOrderPaystack = async (req, res, next) => {
     }
 
     const txMetadata = getStorefrontPaystackMetadata(parsePaystackTransactionMetadata(tx));
-    if (String(txMetadata.type || '').toLowerCase() !== 'storefront_order' || !txMetadata.saleId) {
+    const orderType = String(txMetadata.type || '').toLowerCase();
+    const isStorefrontPaystackOrder = (
+      orderType === PAYSTACK_ORDER_TYPES.SABITO_MARKETPLACE
+      || orderType === PAYSTACK_ORDER_TYPES.ONLINE_STORE
+      || orderType === 'storefront_order'
+      || orderType === 'online_store_order'
+    );
+    if (!isStorefrontPaystackOrder || !txMetadata.saleId) {
       await transaction.rollback();
       return res.status(400).json({
         success: false,
@@ -2468,8 +2515,18 @@ exports.verifyStorefrontOrderPaystack = async (req, res, next) => {
     });
 
     const saleMetadata = getSaleMetadata(sale);
+    const channel = getSaleCommerceChannel({
+      ...saleMetadata,
+      commerceChannel: txMetadata.commerceChannel || saleMetadata.commerceChannel || (
+        orderType === PAYSTACK_ORDER_TYPES.SABITO_MARKETPLACE || orderType === 'storefront_order'
+          ? COMMERCE_CHANNELS.SABITO_MARKETPLACE
+          : COMMERCE_CHANNELS.ONLINE_STORE
+      ),
+    });
+    const holdTradeAssurance = usesTradeAssurance(channel);
     const tradeAssurance = saleMetadata.tradeAssurance || {};
-    const expectedReference = tradeAssurance.paystackReference;
+    const directPayment = saleMetadata.directPayment || {};
+    const expectedReference = tradeAssurance.paystackReference || directPayment.paystackReference;
     const paystackReference = tx.reference || reference;
     if (expectedReference && expectedReference !== reference && expectedReference !== paystackReference) {
       await transaction.rollback();
@@ -2490,7 +2547,9 @@ exports.verifyStorefrontOrderPaystack = async (req, res, next) => {
       });
     }
 
-    if (tradeAssurance.paymentStatus === 'paid_held' || sale.status === 'completed') {
+    const paidStatuses = new Set(['paid_held', 'paid', 'paid_direct']);
+    const currentPaymentStatus = tradeAssurance.paymentStatus || directPayment.paymentStatus;
+    if (paidStatuses.has(currentPaymentStatus) || sale.status === 'completed') {
       await transaction.commit();
       notifyOnlineStoreOrderReceived({ sale, shopper, store }).catch((notifyError) => {
         console.error('[Storefront] Failed to backfill seller notification for online order', notifyError.message);
@@ -2508,7 +2567,8 @@ exports.verifyStorefrontOrderPaystack = async (req, res, next) => {
             deliveryFee: Number(sale.deliveryFee || 0),
             total: Number(sale.total || 0),
             currency: store?.currency || DEFAULT_CURRENCY,
-            paymentStatus: 'paid_held',
+            paymentStatus: holdTradeAssurance ? 'paid_held' : 'paid',
+            commerceChannel: channel,
             storeSlug: store?.slug || txMetadata.storeSlug || getSaleMetadata(sale).storeSlug || null,
             storeName: store?.displayName || null,
             storeWhatsappNumber: store?.whatsappNumber || null,
@@ -2518,7 +2578,7 @@ exports.verifyStorefrontOrderPaystack = async (req, res, next) => {
       });
     }
 
-    if (tradeAssurance.paymentStatus !== 'awaiting_payment' || sale.status !== 'pending') {
+    if (currentPaymentStatus !== 'awaiting_payment' || sale.status !== 'pending') {
       await transaction.rollback();
       return res.status(409).json({
         success: false,
@@ -2527,14 +2587,25 @@ exports.verifyStorefrontOrderPaystack = async (req, res, next) => {
       });
     }
 
-    await recordHeldPaymentForSale({
-      sale,
-      store: store || { currency: DEFAULT_CURRENCY, slug: txMetadata.storeSlug },
-      shopper,
-      transaction,
-      provider: 'paystack',
-      providerReference: reference,
-    });
+    if (holdTradeAssurance) {
+      await recordHeldPaymentForSale({
+        sale,
+        store: store || { currency: DEFAULT_CURRENCY, slug: txMetadata.storeSlug },
+        shopper,
+        transaction,
+        provider: 'paystack',
+        providerReference: reference,
+      });
+    } else {
+      await recordDirectPaidPaymentForSale({
+        sale,
+        store: store || { currency: DEFAULT_CURRENCY, slug: txMetadata.storeSlug },
+        shopper,
+        transaction,
+        provider: 'paystack',
+        providerReference: reference,
+      });
+    }
 
     await SaleActivity.create({
       saleId: sale.id,
@@ -2545,6 +2616,7 @@ exports.verifyStorefrontOrderPaystack = async (req, res, next) => {
       createdBy: null,
       metadata: {
         source: ONLINE_STORE_SOURCE,
+        commerceChannel: channel,
         storefrontCustomerId: shopper.id,
         paystackReference: reference,
       },
@@ -2568,7 +2640,8 @@ exports.verifyStorefrontOrderPaystack = async (req, res, next) => {
           deliveryFee: Number(sale.deliveryFee || 0),
           total: Number(sale.total || 0),
           currency: store?.currency || DEFAULT_CURRENCY,
-          paymentStatus: 'paid_held',
+          paymentStatus: holdTradeAssurance ? 'paid_held' : 'paid',
+          commerceChannel: channel,
           storeSlug: store?.slug || txMetadata.storeSlug || getSaleMetadata(sale).storeSlug || null,
           storeName: store?.displayName || null,
           storeWhatsappNumber: store?.whatsappNumber || null,
@@ -2753,11 +2826,13 @@ exports.confirmStorefrontOrderReceived = async (req, res, next) => {
         byStorefrontCustomerId: req.storefrontCustomer.id,
       },
     };
-    metadata.tradeAssurance = {
-      ...(metadata.tradeAssurance || {}),
-      buyerConfirmedAt: confirmedAt,
-      payoutReleaseEligible: true,
-    };
+    if (usesTradeAssurance(getSaleCommerceChannel(metadata))) {
+      metadata.tradeAssurance = {
+        ...(metadata.tradeAssurance || {}),
+        buyerConfirmedAt: confirmedAt,
+        payoutReleaseEligible: true,
+      };
+    }
 
     await order.update({
       orderStatus: order.orderStatus === 'cancelled' ? order.orderStatus : 'delivered',
@@ -2766,11 +2841,13 @@ exports.confirmStorefrontOrderReceived = async (req, res, next) => {
       metadata,
     }, { transaction });
 
-    await markReleaseEligibleForSale({
-      sale: order,
-      confirmedAt,
-      transaction,
-    });
+    if (usesTradeAssurance(getSaleCommerceChannel(metadata))) {
+      await markReleaseEligibleForSale({
+        sale: order,
+        confirmedAt,
+        transaction,
+      });
+    }
 
     await SaleActivity.create({
       saleId: order.id,
@@ -3027,6 +3104,14 @@ exports.openStorefrontOrderDispute = async (req, res, next) => {
     }
 
     const metadata = getSaleMetadata(order);
+    if (!usesTradeAssurance(getSaleCommerceChannel(metadata))) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Trade Assurance disputes are only available for Sabito marketplace orders. Contact the seller for Online Store support.',
+        errorCode: 'ONLINE_STORE_DISPUTE_NOT_SUPPORTED',
+      });
+    }
     if (metadata.dispute?.status === 'open') {
       await transaction.rollback();
       return res.status(409).json({ success: false, message: 'This order already has an open issue.' });

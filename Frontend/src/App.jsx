@@ -353,6 +353,7 @@ function AppContent() {
             <Route path="store/orders" element={<SabitoStoreRoute><OnlineOrders /></SabitoStoreRoute>} />
             <Route path="store/settings" element={<RequireWorkspaceManager><StoreSettings /></RequireWorkspaceManager>} />
             <Route path="online-store" element={<OnlineStore />} />
+            <Route path="online-store/orders" element={<OnlineOrders />} />
             <Route path="studio-locations" element={<FeatureRoute featureKey="studioLocationsModule"><RequireWorkspaceManager><StudioLocations /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="pharmacies" element={<FeatureRoute featureKey="pharmacyOps"><Pharmacies /></FeatureRoute>} />
             <Route path="products" element={<FeatureRoute featureKey="products"><Products /></FeatureRoute>} />

@@ -2162,7 +2162,13 @@ useEffect(() => {
             key: 'viewInvoice',
             label: 'View Invoice',
             icon: <FileText className="h-4 w-4" />,
-            onClick: () => navigate('/invoices', { state: { openInvoiceId: jobInvoices[viewingJob.id].id } })
+            onClick: () => {
+              const invoiceId = jobInvoices[viewingJob.id].id;
+              handleCloseDrawer();
+              window.setTimeout(() => {
+                navigate('/invoices', { state: { openInvoiceId: invoiceId } });
+              }, 0);
+            },
           }] : []),
           ...(isAdmin ? [{
             key: 'delete',

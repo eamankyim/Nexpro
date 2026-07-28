@@ -38,6 +38,10 @@ import { resolveImageUrl } from '../utils/fileUtils';
 import { numberInputValue, handleNumberChange, numberOrEmptySchema } from '../utils/formUtils';
 import { QUERY_STALE, refreshAfterExpense } from '../utils/queryInvalidation';
 import { queryKeys } from '../utils/queryKeys';
+import {
+  OTHER_DROPDOWN_VALUE,
+  resolveOtherDropdownValue,
+} from '../utils/customDropdownOther';
 import DetailsDrawer from '../components/DetailsDrawer';
 import DrawerSectionCard from '../components/DrawerSectionCard';
 import TableSkeleton from '../components/TableSkeleton';
@@ -197,6 +201,12 @@ const Expenses = () => {
   const [newCategoryName, setNewCategoryName] = useState('');
   const [removingCategoryName, setRemovingCategoryName] = useState(null);
   const [categoryToDelete, setCategoryToDelete] = useState(null);
+  /** Single-expense "Other (specify)" free-text */
+  const [categoryOtherInput, setCategoryOtherInput] = useState('');
+  const [showCategoryOtherInput, setShowCategoryOtherInput] = useState(false);
+  /** Multi-expense "Other (specify)" free-text by row index */
+  const [categoryOtherInputs, setCategoryOtherInputs] = useState({});
+  const [savingCustomCategory, setSavingCustomCategory] = useState(false);
 
   const form = useForm({
     resolver: zodResolver(multipleMode ? multipleExpenseSchema : expenseSchema),
@@ -246,6 +256,10 @@ const Expenses = () => {
       setVendorSelectBatchOpen(false);
       setVendorSelectSingleOpen(false);
       setVendorSelectRowOpen(null);
+      setCategoryOtherInput('');
+      setShowCategoryOtherInput(false);
+      setCategoryOtherInputs({});
+      setSavingCustomCategory(false);
     }
   }, [modalVisible]);
 
@@ -453,6 +467,7 @@ const Expenses = () => {
     setEditingExpense(null);
     setMultipleMode(false);
     setIsExpenseRequest(isRequest);
+    resetCategoryOtherState();
     form.reset({
       category: '',
       amount: 0,
@@ -495,6 +510,7 @@ const Expenses = () => {
     setEditingExpense(expense);
     setMultipleMode(false);
     setIsExpenseRequest(false);
+    resetCategoryOtherState();
     form.reset({
       ...expense,
       amount: expense.amount != null ? Number(expense.amount) : 0,
@@ -536,9 +552,19 @@ const Expenses = () => {
       setSubmittingExpense(true);
 
       if (editingExpense) {
+        let category = resolveOtherDropdownValue(values.category, categoryOtherInput);
+        if (values.category === OTHER_DROPDOWN_VALUE) {
+          if (!category) {
+            showWarning('Enter a category name for "Other (specify)"');
+            return;
+          }
+          const saved = await persistCustomExpenseCategory(category, { fieldName: 'category' });
+          if (!saved) return;
+          category = saved;
+        }
         // Single expense update – normalize optional strings and Select sentinels for API
         const expenseData = {
-          category: values.category,
+          category,
           amount: Number(values.amount),
           expenseDate: values.expenseDate ? dayjs(values.expenseDate).format('YYYY-MM-DD') : null,
           description: values.description ?? '',
@@ -562,15 +588,33 @@ const Expenses = () => {
           await loadExpenseActivities(editingExpense.id);
         }
       } else if (multipleMode && values.expenses && Array.isArray(values.expenses)) {
-        // Multiple expenses creation using bulk endpoint
-        const expensesToCreate = values.expenses
-          .filter(exp => exp.category && exp.amount && exp.description)
-          .map(expense => ({
+        const resolvedExpenses = [];
+        for (let index = 0; index < values.expenses.length; index += 1) {
+          const expense = values.expenses[index];
+          let category = resolveOtherDropdownValue(expense.category, categoryOtherInputs[index]);
+          if (expense.category === OTHER_DROPDOWN_VALUE) {
+            if (!category) {
+              showWarning('Enter a category name for each "Other (specify)" expense');
+              return;
+            }
+            const saved = await persistCustomExpenseCategory(category, {
+              fieldName: `expenses.${index}.category`,
+              multiIndex: index,
+            });
+            if (!saved) return;
+            category = saved;
+          }
+          if (!category || !expense.amount || !expense.description) continue;
+          resolvedExpenses.push({
             ...expense,
-            expenseDate: expense.expenseDate ? dayjs(expense.expenseDate).format('YYYY-MM-DD') : dayjs(values.expenseDate).format('YYYY-MM-DD')
-          }));
-        
-        if (expensesToCreate.length === 0) {
+            category,
+            expenseDate: expense.expenseDate
+              ? dayjs(expense.expenseDate).format('YYYY-MM-DD')
+              : dayjs(values.expenseDate).format('YYYY-MM-DD'),
+          });
+        }
+
+        if (resolvedExpenses.length === 0) {
           showWarning('Please add at least one expense');
           return;
         }
@@ -587,16 +631,27 @@ const Expenses = () => {
         };
 
         // Use bulk create endpoint
-        const response = await expenseService.createBulk(expensesToCreate, commonFields);
-        showSuccess(`Successfully created ${response.data.count || expensesToCreate.length} expense(s)`);
+        const response = await expenseService.createBulk(resolvedExpenses, commonFields);
+        showSuccess(`Successfully created ${response.data.count || resolvedExpenses.length} expense(s)`);
         setModalVisible(false);
         setIsExpenseRequest(false);
         invalidateExpenses();
         fetchStats();
       } else {
+        let category = resolveOtherDropdownValue(values.category, categoryOtherInput);
+        if (values.category === OTHER_DROPDOWN_VALUE) {
+          if (!category) {
+            showWarning('Enter a category name for "Other (specify)"');
+            return;
+          }
+          const saved = await persistCustomExpenseCategory(category, { fieldName: 'category' });
+          if (!saved) return;
+          category = saved;
+        }
+
         // Single expense creation – normalize payload for API (description required, optional UUIDs as null)
         const expenseData = {
-          category: values.category,
+          category,
           amount: Number(values.amount),
           expenseDate: values.expenseDate ? dayjs(values.expenseDate).format('YYYY-MM-DD') : null,
           description: values.description ?? '',
@@ -924,8 +979,104 @@ const Expenses = () => {
     const fromExpenses = new Set((expensesResponse?.data ?? []).map(e => e.category).filter(Boolean));
     const fromApiSet = new Set(Array.isArray(categoriesFromApi) ? categoriesFromApi : []);
     const merged = new Set([...fromApiSet, ...fromExpenses]);
-    return Array.from(merged).sort();
+    // "Other" is handled as a dedicated specify option — keep literal "Other" out of the list
+    // unless it was already saved as a real custom category name from older data.
+    return Array.from(merged)
+      .filter((category) => String(category).toLowerCase() !== 'other')
+      .sort((a, b) => a.localeCompare(b));
   }, [expensesResponse?.data, categoriesFromApi]);
+
+  const resetCategoryOtherState = useCallback(() => {
+    setCategoryOtherInput('');
+    setShowCategoryOtherInput(false);
+    setCategoryOtherInputs({});
+  }, []);
+
+  const handleSingleCategoryChange = useCallback((value, onChange) => {
+    onChange(value);
+    if (value === OTHER_DROPDOWN_VALUE) {
+      setShowCategoryOtherInput(true);
+      setCategoryOtherInput('');
+    } else {
+      setShowCategoryOtherInput(false);
+      setCategoryOtherInput('');
+    }
+  }, []);
+
+  const handleMultiCategoryChange = useCallback((value, index, onChange) => {
+    onChange(value);
+    if (value === OTHER_DROPDOWN_VALUE) {
+      setCategoryOtherInputs((prev) => ({ ...prev, [index]: '' }));
+    } else {
+      setCategoryOtherInputs((prev) => {
+        const next = { ...prev };
+        delete next[index];
+        return next;
+      });
+    }
+  }, []);
+
+  /**
+   * Persist a custom expense category and optionally apply it to the form field.
+   * @param {string} rawName
+   * @param {{ fieldName?: string, multiIndex?: number }} [options]
+   * @returns {Promise<string|null>} Saved category name
+   */
+  const persistCustomExpenseCategory = useCallback(async (rawName, options = {}) => {
+    const name = String(rawName || '').trim();
+    if (!name) {
+      showWarning('Enter a category name');
+      return null;
+    }
+    if (name.toLowerCase() === 'other') {
+      showWarning('Choose a more specific category name');
+      return null;
+    }
+
+    const exists = expenseCategories.some((category) => category.toLowerCase() === name.toLowerCase());
+    if (exists) {
+      if (options.fieldName) {
+        form.setValue(options.fieldName, name, { shouldDirty: true, shouldValidate: true });
+      }
+      if (options.multiIndex != null) {
+        setCategoryOtherInputs((prev) => {
+          const next = { ...prev };
+          delete next[options.multiIndex];
+          return next;
+        });
+      } else {
+        setShowCategoryOtherInput(false);
+        setCategoryOtherInput('');
+      }
+      return name;
+    }
+
+    setSavingCustomCategory(true);
+    try {
+      await expenseService.addCustomCategory(name);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.expenses.categories(activeTenantId) });
+      if (options.fieldName) {
+        form.setValue(options.fieldName, name, { shouldDirty: true, shouldValidate: true });
+      }
+      if (options.multiIndex != null) {
+        setCategoryOtherInputs((prev) => {
+          const next = { ...prev };
+          delete next[options.multiIndex];
+          return next;
+        });
+      } else {
+        setShowCategoryOtherInput(false);
+        setCategoryOtherInput('');
+      }
+      showSuccess(`Category "${name}" saved for future use`);
+      return name;
+    } catch (err) {
+      showError(err?.response?.data?.error || err?.message || 'Failed to save category');
+      return null;
+    } finally {
+      setSavingCustomCategory(false);
+    }
+  }, [activeTenantId, expenseCategories, form, queryClient]);
 
   const paymentMethods = [
     'cash',
@@ -1316,6 +1467,7 @@ const Expenses = () => {
                   variant={multipleMode ? 'default' : 'outline'}
                   onClick={() => {
                     setMultipleMode(!multipleMode);
+                    resetCategoryOtherState();
                     form.reset();
                   }}
                 >
@@ -1497,7 +1649,10 @@ const Expenses = () => {
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>Category</FormLabel>
-                            <Select value={field.value ?? ''} onValueChange={field.onChange}>
+                            <Select
+                              value={field.value ?? ''}
+                              onValueChange={(value) => handleMultiCategoryChange(value, index, field.onChange)}
+                            >
                               <FormControl>
                                 <SelectTrigger>
                                   <SelectValue placeholder="Select category" />
@@ -1507,8 +1662,50 @@ const Expenses = () => {
                                 {expenseCategories.map(category => (
                                   <SelectItem key={category} value={category}>{category}</SelectItem>
                                 ))}
+                                <div className="my-1 border-t border-border" />
+                                <SelectItem
+                                  value={OTHER_DROPDOWN_VALUE}
+                                  className="my-1 font-semibold text-brand bg-brand/5 focus:bg-brand/10 focus:text-brand"
+                                >
+                                  Other (specify)
+                                </SelectItem>
                               </SelectContent>
                             </Select>
+                            {categoryOtherInputs[index] !== undefined && (
+                              <div className="mt-2 space-y-2">
+                                <Label>Enter category name</Label>
+                                <div className="flex gap-2">
+                                  <Input
+                                    className="flex-1"
+                                    placeholder="e.g. Packaging supplies"
+                                    value={categoryOtherInputs[index] || ''}
+                                    onChange={(e) => setCategoryOtherInputs((prev) => ({
+                                      ...prev,
+                                      [index]: e.target.value,
+                                    }))}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        persistCustomExpenseCategory(categoryOtherInputs[index], {
+                                          fieldName: `expenses.${index}.category`,
+                                          multiIndex: index,
+                                        });
+                                      }
+                                    }}
+                                  />
+                                  <Button
+                                    type="button"
+                                    onClick={() => persistCustomExpenseCategory(categoryOtherInputs[index], {
+                                      fieldName: `expenses.${index}.category`,
+                                      multiIndex: index,
+                                    })}
+                                    disabled={savingCustomCategory}
+                                  >
+                                    {savingCustomCategory ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
                             <FormMessage />
                           </FormItem>
                         )}
@@ -1694,7 +1891,7 @@ const Expenses = () => {
                   control={form.control}
                   name="category"
                   render={({ field }) => (
-                    <div className="grid grid-cols-1 gap-y-2" style={{ gridTemplateRows: '1.25rem auto auto' }}>
+                    <div className="grid grid-cols-1 gap-y-2">
                       <div className="flex h-5 items-center justify-between gap-2 overflow-hidden">
                         <FormLabel className="mb-0 shrink-0 leading-none">Category</FormLabel>
                         <Button
@@ -1706,7 +1903,10 @@ const Expenses = () => {
                           Manage categories
                         </Button>
                       </div>
-                      <Select value={field.value ?? ''} onValueChange={field.onChange}>
+                      <Select
+                        value={field.value ?? ''}
+                        onValueChange={(value) => handleSingleCategoryChange(value, field.onChange)}
+                      >
                         <FormControl>
                           <SelectTrigger className="mt-0">
                             <SelectValue placeholder="Select category" />
@@ -1716,8 +1916,41 @@ const Expenses = () => {
                           {expenseCategories.map(category => (
                             <SelectItem key={category} value={category}>{category}</SelectItem>
                           ))}
+                          <div className="my-1 border-t border-border" />
+                          <SelectItem
+                            value={OTHER_DROPDOWN_VALUE}
+                            className="my-1 font-semibold text-brand bg-brand/5 focus:bg-brand/10 focus:text-brand"
+                          >
+                            Other (specify)
+                          </SelectItem>
                         </SelectContent>
                       </Select>
+                      {showCategoryOtherInput ? (
+                        <div className="space-y-2 pt-1">
+                          <Label>Enter category name</Label>
+                          <div className="flex gap-2">
+                            <Input
+                              className="flex-1"
+                              placeholder="e.g. Packaging supplies"
+                              value={categoryOtherInput}
+                              onChange={(e) => setCategoryOtherInput(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  persistCustomExpenseCategory(categoryOtherInput, { fieldName: 'category' });
+                                }
+                              }}
+                            />
+                            <Button
+                              type="button"
+                              onClick={() => persistCustomExpenseCategory(categoryOtherInput, { fieldName: 'category' })}
+                              disabled={savingCustomCategory}
+                            >
+                              {savingCustomCategory ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null}
                       <FormMessage />
                     </div>
                   )}
@@ -2103,12 +2336,45 @@ const Expenses = () => {
         onClose={handleCloseDrawer}
         title="Expense Details"
         width={720}
-        onEdit={viewingExpense ? () => handleEdit(viewingExpense) : null}
-        onDelete={viewingExpense ? () => {
-          handleArchive(viewingExpense);
-          setDrawerVisible(false);
-        } : null}
+        onEdit={
+          viewingExpense
+          && !(isAdmin && viewingExpense.approvalStatus === 'pending_approval')
+            ? () => handleEdit(viewingExpense)
+            : null
+        }
+        onDelete={
+          viewingExpense
+          && !(isAdmin && viewingExpense.approvalStatus === 'pending_approval')
+            ? () => {
+              handleArchive(viewingExpense);
+              setDrawerVisible(false);
+            }
+            : null
+        }
         deleteConfirmText="Are you sure you want to archive this expense?"
+        primaryAction={
+          isAdmin && viewingExpense?.approvalStatus === 'pending_approval'
+            ? {
+              label: approvingExpense ? 'Approving...' : 'Approve',
+              icon: approvingExpense
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : <CheckCircle className="h-4 w-4" />,
+              onClick: () => handleApprove(viewingExpense.id),
+              disabled: approvingExpense || rejectingExpenseLoading,
+            }
+            : null
+        }
+        secondaryAction={
+          isAdmin && viewingExpense?.approvalStatus === 'pending_approval'
+            ? {
+              label: 'Reject',
+              icon: <XCircle className="h-4 w-4" />,
+              onClick: () => handleRejectClick(viewingExpense),
+              disabled: approvingExpense || rejectingExpenseLoading,
+              className: 'border-destructive/40 text-destructive hover:bg-destructive/5',
+            }
+            : null
+        }
         tabs={viewingExpense ? (() => {
           // Prepare activities for timeline
           const activities = expenseActivities || [];
@@ -2231,7 +2497,10 @@ const Expenses = () => {
                   </DescriptionItem>
                   <DescriptionItem label="Approval Status" className="relative">
                     <div className="flex items-center justify-end w-full gap-2">
-                      {viewingExpense.approvalStatus !== 'approved' && viewingExpense.approvalStatus !== 'rejected' && (
+                      {isAdmin
+                        && viewingExpense.approvalStatus !== 'approved'
+                        && viewingExpense.approvalStatus !== 'rejected'
+                        && viewingExpense.approvalStatus !== 'pending_approval' && (
                         <Button
                           variant="link"
                           size="sm"

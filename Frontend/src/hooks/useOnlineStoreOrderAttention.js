@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import storeService from '../services/storeService';
 import { QUERY_STALE } from '../utils/queryInvalidation';
 
@@ -31,6 +31,16 @@ const toCount = (value) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const EMPTY_ORDER_STATS = {
+  total: 0,
+  pendingPayment: 0,
+  pendingFulfillment: 0,
+  processing: 0,
+  ready: 0,
+  outForDelivery: 0,
+  totalRevenue: 0,
+};
+
 export const getOrderNumber = (order) => order?.saleNumber || order?.orderNumber || order?.orderNo || 'Online order';
 
 export const getCustomerName = (order) => (
@@ -43,25 +53,19 @@ export const getCustomerName = (order) => (
 /**
  * Shared online-store order attention stats used by Store and main dashboards.
  * Reuses React Query keys so both pages share cached order stats and recent orders.
+ * When checklist.hasSettings is false, clears cached operational data so orphaned
+ * historical orders cannot leak after an online_store_settings wipe.
  * @param {{ enabled?: boolean }} [options]
- * @returns {{
- *   hasStoreSettings: boolean,
- *   pendingOrderCount: number,
- *   latestOrder: object|null,
- *   showBanner: boolean,
- *   recentOrders: object[],
- *   isOrderStatsFetching: boolean,
- *   isRecentOrdersLoading: boolean,
- *   isRecentOrdersFetching: boolean,
- *   isRecentOrdersError: boolean,
- * }}
  */
-export function useOnlineStoreOrderAttention({ enabled = true } = {}) {
+export function useOnlineStoreOrderAttention({ enabled = true, commerceChannel = 'online_store' } = {}) {
+  const queryClient = useQueryClient();
+
   const { data: statusResponse, isLoading: isSetupStatusLoading } = useQuery({
     queryKey: ['store', 'setup-status'],
     queryFn: () => storeService.getSetupStatus(),
     enabled,
     staleTime: QUERY_STALE.METADATA,
+    refetchOnMount: 'always',
     refetchOnWindowFocus: false,
     retry: 1,
   });
@@ -70,15 +74,24 @@ export function useOnlineStoreOrderAttention({ enabled = true } = {}) {
   const checklist = setupData.checklist || {};
   const hasStoreSettings = Boolean(checklist.hasSettings);
 
+  useEffect(() => {
+    if (!enabled || isSetupStatusLoading) return;
+    if (!hasStoreSettings) {
+      queryClient.removeQueries({ queryKey: ['store', 'dashboard', 'order-stats'] });
+      queryClient.removeQueries({ queryKey: ['store', 'dashboard', 'recent-online-orders'] });
+      queryClient.removeQueries({ queryKey: ['store', 'online-orders'] });
+    }
+  }, [enabled, hasStoreSettings, isSetupStatusLoading, queryClient]);
+
   const {
     data: orderStatsResponse,
     isFetching: isOrderStatsFetching,
   } = useQuery({
-    queryKey: ['store', 'dashboard', 'order-stats'],
-    queryFn: () => storeService.getOrderStats(),
+    queryKey: ['store', 'dashboard', 'order-stats', commerceChannel],
+    queryFn: () => storeService.getOrderStats({ commerceChannel }),
     enabled: enabled && hasStoreSettings,
     staleTime: QUERY_STALE.TRANSACTIONAL,
-    refetchInterval: 60 * 1000,
+    refetchInterval: hasStoreSettings ? 60 * 1000 : false,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
     retry: 1,
@@ -90,29 +103,29 @@ export function useOnlineStoreOrderAttention({ enabled = true } = {}) {
     isLoading: isRecentOrdersLoading,
     isError: isRecentOrdersError,
   } = useQuery({
-    queryKey: ['store', 'dashboard', 'recent-online-orders'],
-    queryFn: () => storeService.getOrders({ limit: 5 }),
+    queryKey: ['store', 'dashboard', 'recent-online-orders', commerceChannel],
+    queryFn: () => storeService.getOrders({ limit: 5, commerceChannel }),
     enabled: enabled && hasStoreSettings,
     staleTime: QUERY_STALE.TRANSACTIONAL,
-    refetchInterval: 60 * 1000,
+    refetchInterval: hasStoreSettings ? 60 * 1000 : false,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
     retry: 1,
   });
 
   const orderStats = useMemo(
-    () => getOrderStatsPayload(orderStatsResponse),
-    [orderStatsResponse]
+    () => (hasStoreSettings ? getOrderStatsPayload(orderStatsResponse) : EMPTY_ORDER_STATS),
+    [hasStoreSettings, orderStatsResponse]
   );
 
   const recentOrdersPayload = useMemo(
-    () => getStoreOrdersPayload(recentOrdersResponse),
-    [recentOrdersResponse]
+    () => (hasStoreSettings ? getStoreOrdersPayload(recentOrdersResponse) : { data: [] }),
+    [hasStoreSettings, recentOrdersResponse]
   );
 
   const recentOrders = useMemo(
-    () => getStoreOrderRows(recentOrdersPayload),
-    [recentOrdersPayload]
+    () => (hasStoreSettings ? getStoreOrderRows(recentOrdersPayload) : []),
+    [hasStoreSettings, recentOrdersPayload]
   );
 
   const pendingOrderCount = useMemo(
@@ -142,11 +155,11 @@ export function useOnlineStoreOrderAttention({ enabled = true } = {}) {
     showBanner,
     recentOrders,
     orderStats,
-    hasLoadedOrderStats: orderStatsResponse != null,
+    hasLoadedOrderStats: hasStoreSettings && orderStatsResponse != null,
     isSetupStatusLoading,
-    isOrderStatsFetching,
-    isRecentOrdersLoading,
-    isRecentOrdersFetching,
-    isRecentOrdersError,
+    isOrderStatsFetching: hasStoreSettings && isOrderStatsFetching,
+    isRecentOrdersLoading: hasStoreSettings && isRecentOrdersLoading,
+    isRecentOrdersFetching: hasStoreSettings && isRecentOrdersFetching,
+    isRecentOrdersError: hasStoreSettings && isRecentOrdersError,
   };
 }

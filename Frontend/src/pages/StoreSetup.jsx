@@ -31,6 +31,7 @@ import {
   WalletCards,
 } from 'lucide-react';
 
+import { isSabitoStoreEnabled } from '../utils/sabitoStoreFeature';
 import storeService from '../services/storeService';
 import settingsService from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
@@ -276,6 +277,7 @@ const setupSchema = z.object({
     (value) => resolveStoreCurrencyCode(value),
     z.string().default(CURRENCY.CODE),
   ),
+  listedOnMarketplace: z.boolean().default(true),
   paymentMethods: z.object({
     mobileMoney: paymentMethodSchema,
     card: paymentMethodSchema,
@@ -838,6 +840,7 @@ const StoreSetup = () => {
       tertiaryColor: '',
       logoUrl: '',
       currency: CURRENCY.CODE,
+      listedOnMarketplace: isSabitoStoreEnabled(),
       paymentMethods: defaultPaymentMethods,
       deliveryOptions: defaultDeliveryOptions,
       deliveryFee: 0,
@@ -1155,6 +1158,9 @@ const StoreSetup = () => {
           inferredDefaults,
         ),
         currency: resolveStoreCurrency(nextSettings?.currency, inferredDefaults.currency),
+        listedOnMarketplace: nextSettings?.id
+          ? nextSettings?.listedOnMarketplace === true
+          : isSabitoStoreEnabled(),
         paymentMethods: nextSettings?.id
           ? savedPaymentMethods
           : resolvePaymentMethods(inferredDefaults.paymentMethods, paymentCollectionRef.current),
@@ -1475,6 +1481,7 @@ const StoreSetup = () => {
       deliveryFee: formValues.deliveryFee,
       currency: resolveStoreCurrency(formValues.currency),
       enabled: launch ? true : settings?.enabled === true,
+      listedOnMarketplace: formValues.listedOnMarketplace !== false,
       markSetupComplete: launch,
       metadata: {
         ...(settings?.metadata || {}),
@@ -2115,6 +2122,26 @@ const StoreSetup = () => {
             </Badge>
           </div>
         </div>
+        {isSabitoStoreEnabled() ? (
+        <div className="rounded-xl border border-border p-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="font-medium">List on Sabito marketplace</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                When on, your store appears in Sabito discovery. Turn off to keep Trade Assurance checkout without marketplace listing.
+                Online Store on your own domain stays separate and uses direct pay.
+              </p>
+            </div>
+            <Switch
+              checked={values.listedOnMarketplace !== false}
+              onCheckedChange={(checked) => {
+                form.setValue('listedOnMarketplace', Boolean(checked), { shouldDirty: true, shouldValidate: true });
+              }}
+              aria-label="List on Sabito marketplace"
+            />
+          </div>
+        </div>
+        ) : null}
         <div className="rounded-xl border border-border p-4">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">

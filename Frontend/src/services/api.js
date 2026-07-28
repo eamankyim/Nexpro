@@ -222,6 +222,14 @@ const shouldRetry = (error) => {
     return false;
   }
 
+  // Never auto-retry non-idempotent methods — a timed-out POST may have
+  // already succeeded server-side (e.g. invite create + email), so retrying
+  // would duplicate side effects.
+  const method = String(error.config?.method || 'get').toLowerCase();
+  if (!['get', 'head', 'options'].includes(method)) {
+    return false;
+  }
+
   // Retry on network errors
   if (!error.response) {
     return true;

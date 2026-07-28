@@ -57,14 +57,14 @@ describe('seller push notification routing', () => {
     ).toBe('/store-order/sale%20123');
   });
 
-  it('routes online store order notifications without saleId to the online orders tab', () => {
+  it('routes online store order notifications without saleId to the store Orders section', () => {
     expect(
       getSellerNotificationRoute({
         type: 'order',
         link: '/store/orders',
         metadata: { source: 'online_store' },
       }),
-    ).toBe('/(tabs)/online-orders');
+    ).toBe('/(tabs)/store?section=orders');
   });
 
   it('routes stock alerts to the products tab', () => {

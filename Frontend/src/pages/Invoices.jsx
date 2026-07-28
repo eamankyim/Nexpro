@@ -322,8 +322,27 @@ const Invoices = () => {
         };
         fetchSpecificInvoice();
       }
+      return;
     }
-  }, [location.state, invoices]);
+
+    // Legacy deep-link: /invoices?openInvoiceId=...
+    const queryInvoiceId = new URLSearchParams(location.search).get('openInvoiceId');
+    if (queryInvoiceId && invoices.length > 0) {
+      const invoiceToOpen = invoices.find((inv) => inv.id === queryInvoiceId);
+      navigate(location.pathname, { replace: true });
+      if (invoiceToOpen) {
+        handleView(invoiceToOpen);
+      } else {
+        invoiceService.getById(queryInvoiceId)
+          .then((response) => {
+            if (response?.data) handleView(response.data);
+          })
+          .catch((error) => {
+            console.error('Failed to load specific invoice:', error);
+          });
+      }
+    }
+  }, [location.state, location.search, invoices]);
 
   const loadCustomers = useCallback(async () => {
     try {

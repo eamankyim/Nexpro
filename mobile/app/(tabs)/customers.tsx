@@ -25,6 +25,7 @@ import { customDropdownService } from '@/services/customDropdownService';
 import { settingsService } from '@/services/settings';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useAuth } from '@/context/AuthContext';
+import { useIsStoreSetupRoute } from '@/hooks/useIsStoreSetupRoute';
 import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useScreenColors } from '@/hooks/useScreenColors';
@@ -81,6 +82,7 @@ export default function CustomersScreen() {
   const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const queryClient = useQueryClient();
+  const inStoreSetup = useIsStoreSetupRoute();
 
   const { searchValue, setSearchValue } = useSmartSearch();
   useRegisterPageSearch({ scope: 'customers', placeholder: SEARCH_PLACEHOLDERS.CUSTOMERS });
@@ -94,6 +96,7 @@ export default function CustomersScreen() {
   }, [params.search, params.add, setSearchValue]);
 
   const debouncedSearch = useDebounce(searchValue, 400);
+  const customersEnabled = !!activeTenantId && hasFeature('crm') && scopeReady && !inStoreSetup;
 
   const { data: response, isLoading, refetch, isRefetching, error, isError } = useQuery({
     queryKey: ['customers', activeTenantId, activeShopId, activeStudioLocationId, debouncedSearch],
@@ -103,7 +106,7 @@ export default function CustomersScreen() {
         limit: 20,
         search: debouncedSearch || undefined,
       }),
-    enabled: !!activeTenantId && hasFeature('crm') && scopeReady,
+    enabled: customersEnabled,
     staleTime: QUERY_STALE.LIST,
     gcTime: 2 * 60 * 60 * 1000,
   });
@@ -111,7 +114,7 @@ export default function CustomersScreen() {
   const { data: statsResponse } = useQuery({
     queryKey: ['customers', 'stats', activeTenantId, activeShopId, activeStudioLocationId],
     queryFn: () => customerService.getStats(),
-    enabled: !!activeTenantId && hasFeature('crm') && scopeReady,
+    enabled: customersEnabled,
     staleTime: QUERY_STALE.TRANSACTIONAL,
     gcTime: 2 * 60 * 60 * 1000,
   });
@@ -119,14 +122,14 @@ export default function CustomersScreen() {
   const { data: customerSourceOptions = [] } = useQuery({
     queryKey: ['settings', 'customer-sources', activeTenantId],
     queryFn: () => settingsService.getCustomerSources(),
-    enabled: !!activeTenantId && hasFeature('crm'),
+    enabled: customersEnabled,
     staleTime: 5 * 60 * 1000,
   });
 
   const { data: customSourceOptions = [] } = useQuery({
     queryKey: ['custom-dropdowns', 'customer_source', activeTenantId],
     queryFn: () => customDropdownService.getCustomOptions('customer_source'),
-    enabled: !!activeTenantId && hasFeature('crm'),
+    enabled: customersEnabled,
     staleTime: 5 * 60 * 1000,
   });
 

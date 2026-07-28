@@ -46,6 +46,7 @@ jest.mock('../../../services/tradeAssuranceService', () => ({
   markReleaseEligibleForSale: jest.fn(),
   openDisputeForSale: jest.fn(),
   recordHeldPaymentForSale: jest.fn(),
+  recordDirectPaidPaymentForSale: jest.fn(),
 }));
 
 jest.mock('../../../services/storefrontReviewService', () => ({

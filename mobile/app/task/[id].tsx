@@ -6,13 +6,17 @@ import {
   ScrollView,
   Pressable,
   ActivityIndicator,
-  Modal,
   Alert,
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { AppIcon } from '@/components/AppIcon';
+import {
+  AppBottomSheet,
+  APP_SHEET_HEIGHT_COMPACT,
+  SheetMenuRow,
+} from '@/components/AppBottomSheet';
 import { FormInput } from '@/components/FormField';
 import { userWorkspaceService } from '@/services/userWorkspaceService';
 import { useScreenColors } from '@/hooks/useScreenColors';
@@ -31,7 +35,7 @@ import {
 } from '@/components/EntityDetailLayout';
 import { useExclusiveAction } from '@/hooks/useExclusiveAction';
 import { refreshAfterTaskChange } from '@/utils/queryInvalidation';
-
+import { FontFamily, FontSize } from '@/constants/typography';
 const STATUSES = ['todo', 'in_progress', 'on_hold', 'completed'] as const;
 type TaskAction = 'status' | 'comment' | `status:${(typeof STATUSES)[number]}`;
 
@@ -206,33 +210,41 @@ export default function TaskDetailScreen() {
         </DetailFooter>
       </ScreenShell>
 
-      <Modal visible={statusOpen} transparent animationType="fade">
-        <Pressable style={styles.modalBackdrop} onPress={() => !isAnyActionActive && setStatusOpen(false)}>
-          <View style={[styles.modalCard, { backgroundColor: cardBg, borderColor }]}>
-            <Text style={[styles.modalTitle, { color: textColor }]}>Set status</Text>
-            {STATUSES.map((s) => {
-              const actionKey: TaskAction = `status:${s}`;
-              return (
-                <Pressable
-                  key={s}
-                  onPress={() => runExclusiveAction(actionKey, () => updateMutation.mutateAsync({ status: s }))}
-                  disabled={isAnyActionActive}
-                  style={[styles.modalRow, { borderBottomColor: borderColor }]}
-                >
-                  <Text style={{ color: textColor, textTransform: 'capitalize', fontSize: 16 }}>
-                    {s.replace(/_/g, ' ')}
-                  </Text>
-                  {isActionActive(actionKey) ? (
-                    <ActivityIndicator size="small" color={colors.tint} />
-                  ) : (task.status || 'todo') === s ? (
-                    <AppIcon name="check" size={18} color={colors.tint} />
-                  ) : null}
-                </Pressable>
-              );
-            })}
-          </View>
-        </Pressable>
-      </Modal>
+      <AppBottomSheet
+        visible={statusOpen}
+        title="Set status"
+        onClose={() => {
+          if (!isAnyActionActive) setStatusOpen(false);
+        }}
+        height={APP_SHEET_HEIGHT_COMPACT}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+      >
+        {STATUSES.map((s) => {
+          const actionKey: TaskAction = `status:${s}`;
+          const selected = (task.status || 'todo') === s;
+          return (
+            <SheetMenuRow
+              key={s}
+              label={s.replace(/_/g, ' ')}
+              active={selected}
+              disabled={isAnyActionActive}
+              onPress={() => runExclusiveAction(actionKey, () => updateMutation.mutateAsync({ status: s }))}
+              trailing={
+                isActionActive(actionKey) ? (
+                  <ActivityIndicator size="small" color={selected ? '#fff' : colors.tint} />
+                ) : selected ? (
+                  <AppIcon name="check" size={18} color="#fff" />
+                ) : (
+                  <View />
+                )
+              }
+            />
+          );
+        })}
+      </AppBottomSheet>
     </>
   );
 }
@@ -240,7 +252,12 @@ export default function TaskDetailScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   content: { padding: 16, paddingBottom: 24, gap: 12 },
-  commentsTitle: { fontSize: 16, fontWeight: '700', marginBottom: 8 },
+  commentsTitle: {
+    fontFamily: FontFamily.bold,
+    fontSize: FontSize.body,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
   commentRow: { paddingVertical: 8, borderTopWidth: 1 },
   statusRow: {
     flexDirection: 'row',
@@ -251,17 +268,10 @@ const styles = StyleSheet.create({
     padding: 12,
     flex: 1,
   },
-  statusText: { fontSize: 16, fontWeight: '600' },
-  sendBtn: { marginTop: 10, paddingVertical: 12, borderRadius: 10, alignItems: 'center' },
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 20 },
-  modalCard: { borderRadius: 12, borderWidth: 1, padding: 8 },
-  modalTitle: { fontSize: 18, fontWeight: '700', padding: 12 },
-  modalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
+  statusText: {
+    fontFamily: FontFamily.semiBold,
+    fontSize: FontSize.body,
+    fontWeight: '600',
   },
+  sendBtn: { marginTop: 10, paddingVertical: 12, borderRadius: 10, alignItems: 'center' },
 });

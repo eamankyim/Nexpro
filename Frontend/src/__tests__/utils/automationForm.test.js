@@ -21,7 +21,52 @@ import {
   scheduleFormFromConfig,
   supportsSendAfter,
   usesDailySchedule,
+  findDuplicateAutomationRule,
+  describeAutomationDuplicateConflict,
 } from '../../utils/automationForm';
+
+describe('findDuplicateAutomationRule', () => {
+  const existing = [
+    {
+      id: 'rule-1',
+      name: 'Birthday greeting',
+      triggerType: 'customer_birthday',
+      shopId: null,
+      studioLocationId: null,
+      actionConfig: { actions: [{ type: 'send_email_platform', subject: 'Happy birthday' }] },
+    },
+  ];
+
+  it('flags same birthday trigger + email channel', () => {
+    const duplicate = findDuplicateAutomationRule(existing, {
+      triggerType: 'customer_birthday',
+      shopId: null,
+      studioLocationId: null,
+      actionConfig: { actions: [{ type: 'send_email_platform', subject: 'Hi' }] },
+    });
+    expect(duplicate?.id).toBe('rule-1');
+    expect(describeAutomationDuplicateConflict(duplicate, {
+      triggerType: 'customer_birthday',
+      actionConfig: { actions: [{ type: 'send_email_platform' }] },
+    })).toMatch(/Birthday greeting/);
+  });
+
+  it('allows birthday + different channel', () => {
+    const duplicate = findDuplicateAutomationRule(existing, {
+      triggerType: 'customer_birthday',
+      actionConfig: { actions: [{ type: 'send_whatsapp', templateName: 'birthday_greeting' }] },
+    });
+    expect(duplicate).toBeNull();
+  });
+
+  it('ignores the rule being edited', () => {
+    const duplicate = findDuplicateAutomationRule(existing, {
+      triggerType: 'customer_birthday',
+      actionConfig: { actions: [{ type: 'send_email_platform' }] },
+    }, { excludeRuleId: 'rule-1' });
+    expect(duplicate).toBeNull();
+  });
+});
 
 describe('automationForm action prefill', () => {
   it('prefills birthday SMS with placeholders when body is empty', () => {
@@ -96,8 +141,8 @@ describe('automationForm action prefill', () => {
       for (const [actionType, content] of Object.entries(actions)) {
         expect(content, `${triggerType}/${actionType}`).toBeTruthy();
       }
-      // job_due_in_hours targets assignees via email/task only
-      if (triggerType !== 'job_due_in_hours') {
+      // Some internal triggers are email/task only (no SMS/WhatsApp defaults)
+      if (!['job_due_in_hours', 'task_assigned_staff'].includes(triggerType)) {
         for (const actionType of ['send_sms', 'send_whatsapp', 'send_email_platform']) {
           expect(actions[actionType], `${triggerType}/${actionType}`).toBeTruthy();
         }

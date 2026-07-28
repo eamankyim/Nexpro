@@ -13,6 +13,13 @@ export function useRegisterPageSearch(config: PageSearchConfig | null) {
     useCallback(() => {
       setPageSearchConfig(config);
       return () => setPageSearchConfig(null);
-    }, [setPageSearchConfig, config?.scope, config?.placeholder, config?.enabled])
+    }, [
+      setPageSearchConfig,
+      config?.scope,
+      config?.placeholder,
+      config?.enabled,
+      config?.title,
+      config?.subtitle,
+    ])
   );
 }

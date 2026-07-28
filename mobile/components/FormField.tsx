@@ -2,6 +2,7 @@ import React from 'react';
 import { Text, TextInput, StyleSheet, type TextInputProps } from 'react-native';
 
 import { useScreenColors } from '@/hooks/useScreenColors';
+import { FontFamily, FontSize } from '@/constants/typography';
 
 type FormLabelProps = {
   children: string;
@@ -50,7 +51,8 @@ FormInput.displayName = 'FormInput';
 
 const styles = StyleSheet.create({
   label: {
-    fontSize: 14,
+    fontFamily: FontFamily.semiBold,
+    fontSize: FontSize.md,
     fontWeight: '600',
     marginTop: 12,
     marginBottom: 6,
@@ -61,7 +63,8 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    fontSize: 15,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.md,
     marginBottom: 8,
   },
   textArea: {

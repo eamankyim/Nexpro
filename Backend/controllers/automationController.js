@@ -13,6 +13,60 @@ const automationSchedulerService = require('../services/automationSchedulerServi
 const openaiService = require('../services/openaiService');
 const { getPagination } = require('../utils/paginationUtils');
 
+const MESSAGING_ACTION_TYPES = new Set(['send_email_platform', 'send_sms', 'send_whatsapp']);
+
+/**
+ * @param {object|null|undefined} actionConfig
+ * @returns {string[]}
+ */
+function messagingActionTypesFromConfig(actionConfig) {
+  const actions = actionConfig?.actions;
+  if (!Array.isArray(actions)) return [];
+  return [...new Set(
+    actions
+      .map((action) => String(action?.type || '').trim())
+      .filter((type) => MESSAGING_ACTION_TYPES.has(type))
+  )];
+}
+
+/**
+ * Block repeated birthday/email (etc.) rules for the same branch scope.
+ * @param {object} params
+ * @returns {Promise<object|null>}
+ */
+async function findDuplicateMessagingAutomationRule({
+  tenantId,
+  triggerType,
+  actionConfig,
+  shopId = null,
+  studioLocationId = null,
+  excludeId = null,
+}) {
+  const candidateChannels = messagingActionTypesFromConfig(actionConfig);
+  if (!candidateChannels.length || !triggerType) return null;
+
+  const where = {
+    tenantId,
+    triggerType: String(triggerType).trim(),
+    shopId: shopId || null,
+    studioLocationId: studioLocationId || null,
+  };
+  if (excludeId) {
+    where.id = { [Op.ne]: excludeId };
+  }
+
+  const rows = await AutomationRule.findAll({
+    where,
+    attributes: ['id', 'name', 'triggerType', 'actionConfig', 'shopId', 'studioLocationId'],
+    limit: 100,
+  });
+
+  return rows.find((rule) => {
+    const existingChannels = messagingActionTypesFromConfig(rule.actionConfig);
+    return candidateChannels.some((channel) => existingChannels.includes(channel));
+  }) || null;
+}
+
 /**
  * Resolve the rule's default branch scope from the active request context
  * (mirrors how Job/Customer/Quote inherit the active shop/studio location on create).
@@ -421,6 +475,23 @@ exports.createRule = async (req, res, next) => {
     if (branchError) {
       return res.status(403).json({ success: false, error: branchError, errorCode: 'BRANCH_ACCESS_DENIED' });
     }
+
+    const duplicate = await findDuplicateMessagingAutomationRule({
+      tenantId: req.tenantId,
+      triggerType: normalizedTriggerType,
+      actionConfig,
+      shopId: branchIds.shopId,
+      studioLocationId: branchIds.studioLocationId,
+    });
+    if (duplicate) {
+      return res.status(409).json({
+        success: false,
+        error: `A "${normalizedTriggerType}" automation with the same channel already exists ("${duplicate.name}"). Edit that rule instead of creating another.`,
+        errorCode: 'DUPLICATE_AUTOMATION_RULE',
+        data: { existingRuleId: duplicate.id, existingRuleName: duplicate.name },
+      });
+    }
+
     const created = await AutomationRule.create({
       tenantId: req.tenantId,
       name: String(name).trim(),
@@ -471,6 +542,24 @@ exports.updateRule = async (req, res, next) => {
       }
     }
     rule.updatedBy = req.user?.id || null;
+
+    const duplicate = await findDuplicateMessagingAutomationRule({
+      tenantId: req.tenantId,
+      triggerType: rule.triggerType,
+      actionConfig: rule.actionConfig,
+      shopId: rule.shopId,
+      studioLocationId: rule.studioLocationId,
+      excludeId: rule.id,
+    });
+    if (duplicate) {
+      return res.status(409).json({
+        success: false,
+        error: `A "${rule.triggerType}" automation with the same channel already exists ("${duplicate.name}"). Edit that rule instead.`,
+        errorCode: 'DUPLICATE_AUTOMATION_RULE',
+        data: { existingRuleId: duplicate.id, existingRuleName: duplicate.name },
+      });
+    }
+
     await rule.save();
     res.status(200).json({ success: true, data: rule });
   } catch (error) {

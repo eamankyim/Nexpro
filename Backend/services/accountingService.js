@@ -18,6 +18,50 @@ const sumLines = (lines = []) =>
     { debit: 0, credit: 0 }
   );
 
+/**
+ * Find or create a period balance row. Uniqueness is (tenantId, accountId, fiscalYear, period).
+ * On concurrent insert races, catch UniqueConstraintError and re-find.
+ * @param {string} tenantId
+ * @param {string} accountId
+ * @param {number} fiscalYear
+ * @param {number} period
+ * @param {import('sequelize').Transaction} transaction
+ * @returns {Promise<import('sequelize').Model>}
+ */
+const findOrCreatePeriodBalance = async (tenantId, accountId, fiscalYear, period, transaction) => {
+  const where = applyTenantFilter(tenantId, { accountId, fiscalYear, period });
+  try {
+    const [balance] = await AccountBalance.findOrCreate({
+      where,
+      defaults: {
+        tenantId,
+        accountId,
+        fiscalYear,
+        period,
+        debit: 0,
+        credit: 0,
+        balance: 0
+      },
+      transaction
+    });
+    return balance;
+  } catch (error) {
+    const isUnique =
+      error?.name === 'SequelizeUniqueConstraintError' ||
+      error?.original?.code === '23505' ||
+      error?.parent?.code === '23505';
+    if (!isUnique) throw error;
+
+    const balance = await AccountBalance.findOne({
+      where,
+      transaction,
+      lock: transaction?.LOCK?.UPDATE
+    });
+    if (!balance) throw error;
+    return balance;
+  }
+};
+
 const updateAccountBalances = async (tenantId, journalEntryId, transaction) => {
   const lines = await JournalEntryLine.findAll({
     where: applyTenantFilter(tenantId, { journalEntryId }),
@@ -37,25 +81,13 @@ const updateAccountBalances = async (tenantId, journalEntryId, transaction) => {
     const fiscalYear = entryDate.getFullYear();
     const period = entryDate.getMonth() + 1;
 
-    const [balance] = await AccountBalance.findOrCreate({
-      where: {
-        ...applyTenantFilter(tenantId, {
-          accountId: line.accountId,
-          fiscalYear,
-          period
-        })
-      },
-      defaults: {
-        tenantId,
-        accountId: line.accountId,
-        fiscalYear,
-        period,
-        debit: 0,
-        credit: 0,
-        balance: 0
-      },
+    const balance = await findOrCreatePeriodBalance(
+      tenantId,
+      line.accountId,
+      fiscalYear,
+      period,
       transaction
-    });
+    );
 
     balance.debit = parseFloat(balance.debit) + parseFloat(line.debit || 0);
     balance.credit = parseFloat(balance.credit) + parseFloat(line.credit || 0);
@@ -320,6 +352,7 @@ module.exports = {
   postJournalEntry,
   sumLines,
   updateAccountBalances,
+  findOrCreatePeriodBalance,
   reverseAndDestroyJournalEntries,
 };
 

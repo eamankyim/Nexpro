@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { InviteToken, User, Tenant, Shop } = require('../models');
 const { Op } = require('sequelize');
+const { sequelize } = require('../config/database');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const activityLogger = require('../services/activityLogger');
 const emailService = require('../services/emailService');
@@ -15,6 +16,31 @@ const {
 } = require('../utils/inviteDisplayName');
 
 const ALLOWED_INVITE_ROLES = ['admin', 'manager', 'staff', 'driver'];
+
+/**
+ * Serialize invite creates for the same tenant+email so concurrent POSTs
+ * (e.g. client timeout retries) cannot both pass the "no active invite" check.
+ * @param {string} tenantId
+ * @param {string} normalizedEmail
+ * @param {import('sequelize').Transaction} transaction
+ */
+const lockInviteCreate = async (tenantId, normalizedEmail, transaction) => {
+  const lockId = `invite_${tenantId}_${normalizedEmail}`.replace(/-/g, '_').substring(0, 63);
+  const [lockHash] = await sequelize.query(
+    `SELECT hashtext(:lockId) as lock_hash`,
+    {
+      replacements: { lockId },
+      type: sequelize.QueryTypes.SELECT,
+      transaction,
+    }
+  );
+  const lockKey = Math.abs(lockHash?.lock_hash || 0);
+  await sequelize.query(`SELECT pg_advisory_xact_lock(:lockKey)`, {
+    replacements: { lockKey },
+    type: sequelize.QueryTypes.SELECT,
+    transaction,
+  });
+};
 
 // Generate a random 32-character token
 const generateToken = () => {
@@ -173,16 +199,55 @@ exports.generateInvite = async (req, res, next) => {
       },
     });
 
-    const invite = await InviteToken.create({
-      ...invitePayload,
-      tenantId: req.tenantId
-    });
-
+    const transaction = await sequelize.transaction();
+    let invite;
     try {
-      await activityLogger.logUserInvited(invite, req.user?.id);
-    } catch (logErr) {
-      console.error('[Invite] logUserInvited failed:', logErr?.message);
+      await lockInviteCreate(req.tenantId, normalizedEmail, transaction);
+
+      const racedInvite = await InviteToken.findOne({
+        where: applyTenantFilter(req.tenantId, {
+          email: normalizedEmail,
+          used: false,
+          expiresAt: { [Op.gt]: new Date() },
+        }),
+        transaction,
+      });
+      if (racedInvite) {
+        await transaction.rollback();
+        console.log('[Invite] Active invite already exists (race):', emailService.maskEmail(email));
+        const frontendUrl = getFrontendBaseUrl(req);
+        const existingInviteUrl = `${frontendUrl}/signup?token=${racedInvite.token}`;
+        return res.status(400).json({
+          success: false,
+          message: 'An active invite already exists for this email. You can revoke it or use the existing link.',
+          data: {
+            invite: racedInvite,
+            inviteUrl: existingInviteUrl,
+          },
+        });
+      }
+
+      invite = await InviteToken.create(
+        {
+          ...invitePayload,
+          tenantId: req.tenantId,
+        },
+        { transaction }
+      );
+      await transaction.commit();
+    } catch (createErr) {
+      await transaction.rollback().catch(() => {});
+      throw createErr;
     }
+
+    // Do not await activity logging — USER_INVITED sends email synchronously and
+    // would block the HTTP response long enough for the client to time out and
+    // re-POST (duplicate invites / emails).
+    setImmediate(() => {
+      activityLogger.logUserInvited(invite, req.user?.id).catch((logErr) => {
+        console.error('[Invite] logUserInvited failed:', logErr?.message);
+      });
+    });
 
     // Generate invite URL
     const frontendUrl = getFrontendBaseUrl(req);

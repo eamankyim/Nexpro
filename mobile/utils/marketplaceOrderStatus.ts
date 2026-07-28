@@ -35,49 +35,36 @@ export function fulfillmentStateForOrder(order: Record<string, unknown> = {}): F
   return 'paid';
 }
 
-export function paymentStatusForMarketplaceOrder(order: Record<string, unknown> = {}): string | null {
+/**
+ * Seller-facing payment status for an Online Store (direct-pay) order.
+ * Prefers directPayment / completed sale → paid; ignores Sabito Trade Assurance.
+ */
+export function paymentStatusForOnlineOrder(order: Record<string, unknown> = {}): string | null {
   const metadata = order.metadata && typeof order.metadata === 'object' && !Array.isArray(order.metadata)
     ? (order.metadata as Record<string, unknown>)
     : {};
-  const tradeAssuranceMeta =
-    metadata.tradeAssurance && typeof metadata.tradeAssurance === 'object'
-      ? (metadata.tradeAssurance as Record<string, unknown>)
-      : {};
-  const marketplacePayment =
-    order.marketplacePayment && typeof order.marketplacePayment === 'object'
-      ? (order.marketplacePayment as Record<string, unknown>)
-      : null;
+  const directFromOrder = order.directPayment && typeof order.directPayment === 'object' && !Array.isArray(order.directPayment)
+    ? (order.directPayment as Record<string, unknown>)
+    : null;
+  const directFromMeta = metadata.directPayment && typeof metadata.directPayment === 'object' && !Array.isArray(metadata.directPayment)
+    ? (metadata.directPayment as Record<string, unknown>)
+    : null;
+  const directPayment = directFromOrder || directFromMeta;
 
-  return (
-    (marketplacePayment?.status as string | undefined)
-    || (tradeAssuranceMeta.paymentStatus as string | undefined)
-    || null
-  );
+  const fromDirect = directPayment?.paymentStatus;
+  if (fromDirect != null && fromDirect !== '') return String(fromDirect);
+
+  if (normalizeStatus(order.status) === 'completed') return 'paid';
+
+  const fromOrder = order.paymentStatus;
+  const fromMeta = metadata.paymentStatus;
+  const value = fromOrder ?? fromMeta;
+  if (value == null || value === '') return null;
+  return String(value);
 }
 
-export function getTradeAssurance(order: Record<string, unknown> = {}): Record<string, unknown> {
-  const metadata = order.metadata && typeof order.metadata === 'object' && !Array.isArray(order.metadata)
-    ? (order.metadata as Record<string, unknown>)
-    : {};
-  const tradeAssurance =
-    order.tradeAssurance && typeof order.tradeAssurance === 'object'
-      ? (order.tradeAssurance as Record<string, unknown>)
-      : null;
-  const tradeAssuranceMeta =
-    metadata.tradeAssurance && typeof metadata.tradeAssurance === 'object'
-      ? (metadata.tradeAssurance as Record<string, unknown>)
-      : null;
-  const marketplacePayment =
-    order.marketplacePayment && typeof order.marketplacePayment === 'object'
-      ? (order.marketplacePayment as Record<string, unknown>)
-      : null;
-
-  return tradeAssurance || tradeAssuranceMeta || marketplacePayment || {};
-}
-
-export function canShowSellerRefund(order: Record<string, unknown> = {}): boolean {
-  return getTradeAssurance(order).canSellerRefund === true;
-}
+/** @deprecated Use paymentStatusForOnlineOrder */
+export const paymentStatusForMarketplaceOrder = paymentStatusForOnlineOrder;
 
 export const ONLINE_ORDER_STATUS_FILTERS = [
   { label: 'All', value: 'all' },

@@ -22,6 +22,9 @@ export const TAB_PAGE_TITLES: Record<string, string> = {
   orders: 'Orders',
   chat: 'Chat',
   cart: 'Cart',
+  store: 'Online Store',
+  'online-orders': 'Online Store',
+  'store-services': 'Studio Services',
 };
 
 /**

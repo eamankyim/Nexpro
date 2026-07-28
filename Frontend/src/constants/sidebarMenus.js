@@ -24,6 +24,9 @@ export const CONFIGURABLE_SIDEBAR_KEYS = [
   '/store/services',
   '/store/orders',
   '/store/settings',
+  'online-store',
+  '/online-store',
+  '/online-store/orders',
   'company-assets',
   '/merchandise',
   '/materials',
@@ -107,8 +110,17 @@ export const SIDEBAR_MENU_GROUPS = [
       { key: '/store', label: 'Store dashboard' },
       { key: '/store/listings', label: 'Store listings' },
       { key: '/store/services', label: 'Studio services' },
-      { key: '/store/orders', label: 'Online orders' },
+      { key: '/store/orders', label: 'Sabito orders' },
       { key: '/store/settings', label: 'Store settings', managerOnly: true },
+    ],
+  },
+  {
+    id: 'online-store',
+    label: 'Online Store',
+    items: [
+      { key: 'online-store', label: 'Online Store section', description: 'Hide the entire Online Store menu group' },
+      { key: '/online-store', label: 'Storefront' },
+      { key: '/online-store/orders', label: 'Orders' },
     ],
   },
   {
@@ -200,6 +212,18 @@ export const isConfigurableSidebarKeyForTenant = (key, ctx = {}) => {
       return sabitoStoreEnabled && !isPlatformAdmin && !isStudio;
     case '/store/services':
       return sabitoStoreEnabled && !isPlatformAdmin && isStudio;
+
+    case 'online-store':
+      return (
+        !isPlatformAdmin &&
+        ['/online-store', '/online-store/orders'].some((childKey) =>
+          isConfigurableSidebarKeyForTenant(childKey, ctx)
+        )
+      );
+    case '/online-store':
+      return !isPlatformAdmin;
+    case '/online-store/orders':
+      return !isPlatformAdmin && !isStudio;
 
     case 'company-assets':
     case '/materials':

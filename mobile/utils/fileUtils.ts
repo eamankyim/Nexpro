@@ -1,6 +1,6 @@
 /**
  * File and image URL utilities for consistent display across the mobile app.
- * Resolves relative paths (e.g. /uploads/...) to full URLs using the API base.
+ * Matches Frontend/storefront resolveImageUrl: relative /uploads/... → API origin.
  */
 
 import { API_BASE_URL } from '../services/api';
@@ -15,22 +15,36 @@ function decodeUrlEntities(url: string): string {
   return url.replace(/&#x2F;/gi, '/').replace(/&#47;/g, '/');
 }
 
+type UrlLike = string | { url?: string | null } | null | undefined;
+
 /**
- * Resolve an image or file URL for display (img src, download link, etc.).
- * - data: URLs (base64) and http(s) URLs are returned as-is.
+ * Resolve an image or file URL for display (Image uri, download link, etc.).
+ * - data: / blob: / http(s) URLs are returned as-is.
  * - Relative paths (e.g. /uploads/products/...) are prefixed with API_BASE_URL.
+ * - Objects with `.url` are unwrapped (storefront parity).
  * - Decodes HTML entities (e.g. &#x2F;) that may come from backend sanitizer.
- * @param url - Raw URL from API (path, data URL, or absolute URL)
+ * @param url - Raw URL from API (path, data URL, absolute URL, or { url })
  * @returns URL safe for use in Image component
+ * @example
+ * resolveImageUrl('/uploads/store-listings/t/logo.png')
+ * // → 'http://localhost:5001/uploads/store-listings/t/logo.png'
  */
-export function resolveImageUrl(url: string | null | undefined): string {
-  if (!url || typeof url !== 'string') return '';
-  const decoded = decodeUrlEntities(url);
+export function resolveImageUrl(url: UrlLike): string {
+  if (url == null) return '';
+  if (typeof url === 'object') {
+    return resolveImageUrl(url.url);
+  }
+  if (typeof url !== 'string') return '';
+  const trimmed = url.trim();
+  if (!trimmed) return '';
+  const decoded = decodeUrlEntities(trimmed);
+  if (!decoded) return '';
   if (decoded.startsWith('data:')) return decoded;
+  if (decoded.startsWith('blob:')) return decoded;
   if (decoded.startsWith('http://') || decoded.startsWith('https://')) return decoded;
+  const path = decoded.startsWith('/') ? decoded : `/${decoded}`;
   if (API_BASE_URL) {
-    const path = decoded.startsWith('/') ? decoded : `/${decoded}`;
     return `${API_BASE_URL.replace(/\/$/, '')}${path}`;
   }
-  return decoded;
+  return path;
 }

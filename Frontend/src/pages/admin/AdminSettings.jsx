@@ -102,6 +102,7 @@ const defaultFormValues = {
     arkesel: { senderId: 'ABS' },
     mnotify: { senderId: 'ABS' },
     monthlyLimit: 100,
+    monthlyLimitEnabled: true,
     encryptionConfigured: true,
   },
 };
@@ -307,6 +308,7 @@ const AdminSettings = () => {
           ...defaultFormValues.platformSms,
           ...(platformSms || {}),
           activeProvider: platformSms?.activeProvider || platformSms?.provider || 'arkesel',
+          monthlyLimitEnabled: platformSms?.monthlyLimitEnabled !== false,
           arkesel: {
             ...defaultFormValues.platformSms.arkesel,
             ...(platformSms?.arkesel || {}),
@@ -922,6 +924,7 @@ const AdminSettings = () => {
   const platformSmsActiveProvider = platformSmsActiveProviderRaw || platformSmsProviderFallback || 'arkesel';
   const platformSmsEncryptionConfigured = useWatch({ control: form.control, name: 'platformSms.encryptionConfigured' });
   const platformSmsEnabled = useWatch({ control: form.control, name: 'platformSms.enabled' }) === true;
+  const platformSmsMonthlyLimitEnabled = useWatch({ control: form.control, name: 'platformSms.monthlyLimitEnabled' }) !== false;
   const currentPlatformSms = useWatch({ control: form.control, name: 'platformSms' }) || {};
   const platformSmsHasSavedCredentials = hasSavedPlatformSmsCredentials(currentPlatformSms);
   const platformSmsActiveLabel = platformSmsActiveProvider === 'mnotify' ? 'Mnotify' : 'Arkesel';
@@ -1766,7 +1769,7 @@ const AdminSettings = () => {
                   <div>
                     <h3 className="font-semibold">Platform SMS</h3>
                     <p className="text-sm text-muted-foreground">
-                      Default SMS for tenants without their own provider. Switch between Arkesel and Mnotify without a deploy. Each tenant still has a monthly ABS message quota.
+                      Default SMS for tenants without their own provider. Switch between Arkesel and Mnotify without a deploy. Optionally enforce a monthly ABS message quota per tenant.
                     </p>
                   </div>
                   {!platformSmsEditing && (
@@ -1828,6 +1831,23 @@ const AdminSettings = () => {
                     />
                     <FormField
                       control={form.control}
+                      name="platformSms.monthlyLimitEnabled"
+                      render={({ field }) => (
+                        <FormItem className="flex items-center justify-between rounded-lg border border-border p-4">
+                          <div>
+                            <FormLabel className="text-base">Enforce monthly SMS limit</FormLabel>
+                            <FormDescription>
+                              When off, tenants on platform SMS have no ABS per-tenant cap (provider wallet balance still applies).
+                            </FormDescription>
+                          </div>
+                          <FormControl>
+                            <Switch checked={field.value !== false} onCheckedChange={field.onChange} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
                       name="platformSms.monthlyLimit"
                       render={({ field }) => (
                         <FormItem>
@@ -1838,9 +1858,10 @@ const AdminSettings = () => {
                               min={1}
                               value={field.value ?? 100}
                               onChange={(e) => field.onChange(parseInt(e.target.value, 10) || 100)}
+                              disabled={!platformSmsMonthlyLimitEnabled}
                             />
                           </FormControl>
-                          <FormDescription>Default 100 SMS per tenant per month (Africa/Accra).</FormDescription>
+                          <FormDescription>Default 100 SMS per tenant per month (Africa/Accra). Ignored when the limit is off.</FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -1955,7 +1976,11 @@ const AdminSettings = () => {
                       </div>
                       <div>
                         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Monthly limit</p>
-                        <p className="text-sm text-foreground">{currentPlatformSms.monthlyLimit || 100} per tenant</p>
+                        <p className="text-sm text-foreground">
+                          {currentPlatformSms.monthlyLimitEnabled === false
+                            ? 'Off (unlimited per tenant)'
+                            : `${currentPlatformSms.monthlyLimit || 100} per tenant`}
+                        </p>
                       </div>
                       <div>
                         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Standby providers</p>

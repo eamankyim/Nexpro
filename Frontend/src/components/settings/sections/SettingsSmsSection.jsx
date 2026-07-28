@@ -132,8 +132,10 @@ const SettingsSmsSection = () => {
                   <AlertDescription className="text-xs md:text-sm space-y-2">
                     <p>
                       <span className="font-medium text-foreground">Default:</span>{' '}
-                      Customer SMS uses ABS platform SMS—no setup required. Messages include your shop name and count toward a{' '}
-                      {smsPlatformInfo?.monthlyLimit ?? 100}/month limit.
+                      Customer SMS uses ABS platform SMS—no setup required. Messages include your shop name
+                      {smsPlatformInfo?.monthlyLimitEnabled === false
+                        ? ' with no ABS per-tenant cap.'
+                        : ` and count toward a ${smsPlatformInfo?.monthlyLimit ?? 100}/month limit.`}
                     </p>
                     <p>
                       <span className="font-medium text-foreground">Optional:</span>{' '}
@@ -160,10 +162,19 @@ const SettingsSmsSection = () => {
                       <div className="space-y-1">
                         <p className="text-sm md:text-base font-medium text-[#166534]">Platform usage</p>
                         <p className="text-xs md:text-sm text-foreground">
-                          {smsPlatformInfo.sentThisMonth ?? 0} / {smsPlatformInfo.monthlyLimit} messages this month
-                          {' · '}
-                          {smsPlatformInfo.remaining} remaining
-                          {smsPlatformInfo.senderId ? ` · sender ${smsPlatformInfo.senderId}` : ''}
+                          {smsPlatformInfo.monthlyLimitEnabled === false ? (
+                            <>
+                              {smsPlatformInfo.sentThisMonth ?? 0} messages sent this month · No ABS per-tenant limit
+                              {smsPlatformInfo.senderId ? ` · sender ${smsPlatformInfo.senderId}` : ''}
+                            </>
+                          ) : (
+                            <>
+                              {smsPlatformInfo.sentThisMonth ?? 0} / {smsPlatformInfo.monthlyLimit} messages this month
+                              {' · '}
+                              {smsPlatformInfo.remaining} remaining
+                              {smsPlatformInfo.senderId ? ` · sender ${smsPlatformInfo.senderId}` : ''}
+                            </>
+                          )}
                         </p>
                         {smsPlatformInfo.resetsAt && (
                           <p className="text-xs text-muted-foreground">
@@ -172,10 +183,14 @@ const SettingsSmsSection = () => {
                         )}
                       </div>
                       <Badge variant="secondary" className="shrink-0">
-                        {smsPlatformInfo.remaining} left
+                        {smsPlatformInfo.monthlyLimitEnabled === false
+                          ? 'Unlimited'
+                          : `${smsPlatformInfo.remaining} left`}
                       </Badge>
                     </div>
-                    <Progress value={smsUsagePercent} className="h-2" />
+                    {smsPlatformInfo.monthlyLimitEnabled !== false && (
+                      <Progress value={smsUsagePercent} className="h-2" />
+                    )}
                   </div>
                 )}
 

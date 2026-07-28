@@ -159,6 +159,8 @@ const Users = () => {
   const [loadingInviteShops, setLoadingInviteShops] = useState(false);
   /** Bumps when a new invite is sent so overlapping polls cancel */
   const inviteEmailPollGenRef = useRef(0);
+  /** Sync lock — React state alone allows a double-click race before re-render */
+  const inviteSubmitLockRef = useRef(false);
   const [deletingUser, setDeletingUser] = useState(false);
   const [togglingStatus, setTogglingStatus] = useState(null);
   const [refreshingUsers, setRefreshingUsers] = useState(false);
@@ -524,6 +526,8 @@ const Users = () => {
   };
 
   const onInviteSubmit = async (values) => {
+    if (inviteSubmitLockRef.current) return;
+    inviteSubmitLockRef.current = true;
     const invitedEmail = (values.email || '').trim().toLowerCase();
     try {
       setSubmittingInvite(true);
@@ -553,6 +557,7 @@ const Users = () => {
         handleApiError(error, { context: 'generate invite' });
       }
     } finally {
+      inviteSubmitLockRef.current = false;
       setSubmittingInvite(false);
     }
   };
@@ -1174,7 +1179,7 @@ const Users = () => {
                                       return [...next];
                                     });
                                   }}
-                                  className="rounded border-border"
+                                  className="rounded border-border accent-primary"
                                 />
                                 {shop.name}
                                 {shop.isDefault ? (
@@ -1376,7 +1381,7 @@ const Users = () => {
                                       else next.delete(shop.id);
                                       field.onChange([...next]);
                                     }}
-                                    className="rounded border-border"
+                                    className="rounded border-border accent-primary"
                                   />
                                   <span>
                                     {shop.name}

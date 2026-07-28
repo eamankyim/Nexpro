@@ -16,6 +16,11 @@ import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 
 import { AppIcon, type AppIconName } from '@/components/AppIcon';
+import {
+  AppBottomSheet,
+  APP_SHEET_HEIGHT_COMPACT,
+  SheetMenuRow,
+} from '@/components/AppBottomSheet';
 import { useAuth } from '@/context/AuthContext';
 import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { dashboardService } from '@/services/dashboardService';
@@ -31,6 +36,8 @@ import { ListErrorState, ListLoadingState } from '@/components/ListScreenStates'
 import { getApiErrorMessage } from '@/utils/parseApiListResponse';
 import { QUERY_STALE } from '@/utils/queryInvalidation';
 import { BRAND_GREEN } from '@/constants/brand';
+import { FontFamily, FontSize } from '@/constants/typography';
+import { useIsStoreSetupRoute } from '@/hooks/useIsStoreSetupRoute';
 import { useOnlineStoreOrderAttention } from '@/hooks/useOnlineStoreOrderAttention';
 import { getCustomerName, getOrderNumber } from '@/utils/marketplaceOrderStatus';
 
@@ -259,8 +266,10 @@ export default function DashboardScreen() {
   const { user, activeTenant, activeTenantId, wasInvited, suppressAppGuidance, refreshAuth, hasFeature } = useAuth();
   const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg, resolvedTheme } = useScreenColors();
+  const inStoreSetup = useIsStoreSetupRoute();
 
   const [filterType, setFilterType] = useState<FilterType>('month');
+  const [periodOpen, setPeriodOpen] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const dateRange = useMemo(() => formatDateRange(filterType), [filterType]);
 
@@ -299,7 +308,7 @@ export default function DashboardScreen() {
     ],
     queryFn: () =>
       dashboardService.getOverview(dateRange.start, dateRange.end, filterType),
-    enabled: !!activeTenantId && scopeReady,
+    enabled: !!activeTenantId && scopeReady && !inStoreSetup,
     // Dashboard data can be stale for 2 minutes (frequent updates but not real-time critical)
     staleTime: QUERY_STALE.TRANSACTIONAL,
     // Keep in cache for 1 hour
@@ -338,9 +347,9 @@ export default function DashboardScreen() {
         endDate: todayIso,
         limit: 100,
       }),
-    enabled: !!activeTenantId && isRestaurant && hasFeature('orders') && scopeReady,
+    enabled: !!activeTenantId && isRestaurant && hasFeature('orders') && scopeReady && !inStoreSetup,
     staleTime: 30 * 1000,
-    refetchInterval: 30 * 1000,
+    refetchInterval: inStoreSetup ? false : 30 * 1000,
   });
 
   const kitchenOrderCounts = useMemo(() => {
@@ -386,7 +395,7 @@ export default function DashboardScreen() {
       actions.push({ label: 'Add expense', icon: 'minus-circle', route: '/(tabs)/expenses', color: '#ea580c' });
     }
     if (showOnlineStore && hasStoreSettings) {
-      actions.push({ label: 'Online orders', icon: 'shopping-cart', route: '/(tabs)/online-orders', color: '#7c3aed' });
+      actions.push({ label: 'Store orders', icon: 'shopping-cart', route: '/(tabs)/store?section=orders', color: '#7c3aed' });
     }
     return actions;
   }, [isShop, isPharmacy, isStudio, isRestaurant, canCreateQuote, hasFeature, colors.tint, showOnlineStore, hasStoreSettings]);
@@ -438,7 +447,7 @@ export default function DashboardScreen() {
       }
       return parseAiInsightResponse(response?.message ?? response?.answerMarkdown ?? '');
     },
-    enabled: !!activeTenantId && !isLoading && !!overviewResponse,
+    enabled: !!activeTenantId && !isLoading && !!overviewResponse && !inStoreSetup,
     staleTime: 10 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
     retry: 1,
@@ -447,14 +456,15 @@ export default function DashboardScreen() {
   const visibleDashboardInsight = aiDashboardInsight ?? dashboardInsight;
 
   const showPeriodPicker = useCallback(() => {
-    Alert.alert('Period', 'Choose a time range', [
-      { text: 'Today', onPress: () => setFilterType('today') },
-      { text: 'This Week', onPress: () => setFilterType('week') },
-      { text: 'This Month', onPress: () => setFilterType('month') },
-      { text: 'This Year', onPress: () => setFilterType('year') },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+    setPeriodOpen(true);
   }, []);
+
+  const periodOptions: { value: FilterType; label: string }[] = [
+    { value: 'today', label: 'Today' },
+    { value: 'week', label: 'This Week' },
+    { value: 'month', label: 'This Month' },
+    { value: 'year', label: 'This Year' },
+  ];
 
   const revenueColor = colors.tint;
   const newCustomersColor = '#7c3aed';
@@ -668,7 +678,7 @@ export default function DashboardScreen() {
 
       {showOnlineStoreBanner && (
         <Pressable
-          onPress={() => router.push('/(tabs)/online-orders' as never)}
+          onPress={() => router.push('/(tabs)/store?section=orders' as never)}
           style={({ pressed }) => [
             styles.onlineStoreBanner,
             {
@@ -857,11 +867,37 @@ export default function DashboardScreen() {
           </View>
         </>
       )}
+
     </ScrollView>
+      <AppBottomSheet
+        visible={periodOpen}
+        title="Period"
+        onClose={() => setPeriodOpen(false)}
+        height={APP_SHEET_HEIGHT_COMPACT}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+      >
+        {periodOptions.map((opt) => {
+          const selected = filterType === opt.value;
+          return (
+            <SheetMenuRow
+              key={opt.value}
+              label={opt.label}
+              active={selected}
+              onPress={() => {
+                setFilterType(opt.value);
+                setPeriodOpen(false);
+              }}
+              trailing={selected ? <AppIcon name="check" size={18} color="#fff" /> : <View />}
+            />
+          );
+        })}
+      </AppBottomSheet>
     </ScreenShell>
   );
 }
-
 type StatMetricCardProps = {
   label: string;
   value: string;
@@ -985,11 +1021,13 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   welcome: {
-    fontSize: 22,
+    fontFamily: FontFamily.bold,
+    fontSize: FontSize.title,
     fontWeight: '700',
   },
   dashboardSubtitle: {
-    fontSize: 14,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.md,
     lineHeight: 20,
     marginTop: 4,
   },
@@ -1004,7 +1042,8 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   periodPillText: {
-    fontSize: 13,
+    fontFamily: FontFamily.semiBold,
+    fontSize: FontSize.sm,
     fontWeight: '600',
   },
   insightCard: {

@@ -7,9 +7,15 @@ import { getCustomerName, getOrderNumber } from '../../hooks/useOnlineStoreOrder
 
 /**
  * Prominent banner for online store orders needing attention.
- * @param {{ pendingOrderCount: number, latestOrder: object|null, className?: string }} props
+ * @param {{ pendingOrderCount: number, latestOrder: object|null, className?: string, ordersHref?: string, ordersLabel?: string }} props
  */
-const OnlineStoreOrderBanner = ({ pendingOrderCount, latestOrder, className = 'mb-6' }) => {
+const OnlineStoreOrderBanner = ({
+  pendingOrderCount,
+  latestOrder,
+  className = 'mb-6',
+  ordersHref = '/online-store/orders',
+  ordersLabel = 'View online orders',
+}) => {
   if (!pendingOrderCount || pendingOrderCount <= 0) return null;
 
   return (
@@ -33,7 +39,7 @@ const OnlineStoreOrderBanner = ({ pendingOrderCount, latestOrder, className = 'm
             </p>
           </div>
           <Button asChild className="shrink-0 bg-emerald-700 text-white hover:bg-emerald-800">
-            <Link to="/store/orders">View online orders</Link>
+            <Link to={ordersHref}>{ordersLabel}</Link>
           </Button>
         </div>
       </CardContent>

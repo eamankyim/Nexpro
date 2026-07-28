@@ -3,11 +3,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useFonts } from 'expo-font';
+import { useFonts, Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
 import { Stack, usePathname, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useRef } from 'react';
-import { AppState, AppStateStatus, View } from 'react-native';
+import { AppState, AppStateStatus, Text, TextInput, View } from 'react-native';
 import 'react-native-reanimated';
 import { offlineQueueService } from '@/services/offlineQueueService';
 import { refreshAfterSale } from '@/utils/queryInvalidation';
@@ -22,6 +22,7 @@ import { CartProvider } from '@/context/CartContext';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
+import { FontFamily } from '@/constants/typography';
 import { getCurrentNetworkOnline, registerReactQueryOnlineManager } from '@/utils/connectivity';
 import { observeSellerNotificationResponses, registerPushNotifications } from '@/utils/pushNotifications';
 
@@ -33,6 +34,15 @@ export const unstable_settings = {
 
 SplashScreen.preventAutoHideAsync();
 
+/** Apply Inter as the default UI typeface app-wide. */
+function applyDefaultTypography() {
+  const TextAny = Text as typeof Text & { defaultProps?: { style?: object } };
+  const InputAny = TextInput as typeof TextInput & { defaultProps?: { style?: object } };
+  TextAny.defaultProps = TextAny.defaultProps ?? {};
+  InputAny.defaultProps = InputAny.defaultProps ?? {};
+  TextAny.defaultProps.style = [{ fontFamily: FontFamily.regular }, TextAny.defaultProps.style];
+  InputAny.defaultProps.style = [{ fontFamily: FontFamily.regular }, InputAny.defaultProps.style];
+}
 // Configure QueryClient with optimized defaults for mobile
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -125,6 +135,10 @@ function PushRegistrationOnActive() {
 
 export default function RootLayout() {
   const [loaded, error] = useFonts({
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Inter_700Bold,
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
   });
 
@@ -133,7 +147,10 @@ export default function RootLayout() {
   }, [error]);
 
   useEffect(() => {
-    if (loaded) SplashScreen.hideAsync();
+    if (loaded) {
+      applyDefaultTypography();
+      SplashScreen.hideAsync();
+    }
   }, [loaded]);
 
   if (!loaded) return null;
@@ -236,6 +253,7 @@ function RootLayoutNav() {
           <Stack.Screen name="data-deletion" options={{ ...innerScreenOptions, title: 'Data Deletion', headerShown: false }} />
           <Stack.Screen name="notifications" options={{ ...innerScreenOptions, title: 'Notifications', headerShown: false }} />
           <Stack.Screen name="store-order/[id]" options={{ headerShown: false }} />
+          <Stack.Screen name="store-setup" options={{ headerShown: false }} />
           <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
         </Stack>
       </View>

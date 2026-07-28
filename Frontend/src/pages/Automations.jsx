@@ -85,6 +85,8 @@ import {
   getReviewAdditionalSettingsLines,
   getWhatHappensNextTiming,
   triggerLabel,
+  findDuplicateAutomationRule,
+  describeAutomationDuplicateConflict,
 } from '../utils/automationForm';
 import {
   filterTriggerOptionsForTenant,
@@ -96,7 +98,7 @@ import {
   buildWhatsAppStatusByMessageId,
   CHANNEL_ORDER,
 } from '../utils/automationDelivery';
-import { handleApiError, showError, showSuccess } from '../utils/toast';
+import { handleApiError, showError, showSuccess, showWarning } from '../utils/toast';
 import AutomationTestRecipientDialog from '../components/automations/AutomationTestRecipientDialog';
 import MessagePreview from '../components/automations/MessagePreview';
 import { useScopedWorkspaceName } from '../hooks/useScopedWorkspaceName';
@@ -356,6 +358,20 @@ const triggerMetaByType = {
     Icon: ClipboardList,
     color: 'text-blue-700',
     bg: 'bg-blue-50',
+  },
+  task_assigned_staff: {
+    title: 'Task assigned',
+    description: () => 'When a task is assigned',
+    Icon: ClipboardList,
+    color: 'text-blue-700',
+    bg: 'bg-blue-50',
+  },
+  lead_assigned_staff: {
+    title: 'Lead assigned',
+    description: () => 'When a lead is assigned',
+    Icon: UserPlus,
+    color: 'text-pink-700',
+    bg: 'bg-pink-50',
   },
 };
 
@@ -1297,6 +1313,16 @@ const TEMPLATE_METADATA = {
     description: 'Notify the assignee when a lead is assigned.',
     Icon: UserPlus,
     accent: 'pink',
+    channels: ['email'],
+    difficulty: 'easy',
+    audience: 'internal',
+  },
+  task_assigned_staff: {
+    category: 'operations',
+    title: 'Task assigned — staff',
+    description: 'Notify assignees when a workspace task is assigned to them.',
+    Icon: ClipboardList,
+    accent: 'blue',
     channels: ['email'],
     difficulty: 'easy',
     audience: 'internal',
@@ -4832,9 +4858,24 @@ export default function Automations() {
       showError(e instanceof Error ? e.message : 'Invalid automation rule');
       return;
     }
+
+    if (!editingRuleId) {
+      const duplicate = findDuplicateAutomationRule(rules, payload);
+      if (duplicate) {
+        showWarning(describeAutomationDuplicateConflict(duplicate, payload));
+        return;
+      }
+    } else {
+      const duplicate = findDuplicateAutomationRule(rules, payload, { excludeRuleId: editingRuleId });
+      if (duplicate) {
+        showWarning(describeAutomationDuplicateConflict(duplicate, payload));
+        return;
+      }
+    }
+
     if (editingRuleId) updateMutation.mutate({ id: editingRuleId, payload });
     else createMutation.mutate(payload);
-  }, [buildAutomationPayloadFromCurrentForm, createMutation, editingRuleId, updateMutation]);
+  }, [buildAutomationPayloadFromCurrentForm, createMutation, editingRuleId, rules, updateMutation]);
 
   const handleRunTest = useCallback(async () => {
     let payload;

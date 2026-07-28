@@ -117,6 +117,28 @@ api.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+
+  if (typeof window !== 'undefined') {
+    const path = window.location.pathname || '';
+    const host = (window.location.hostname || '').toLowerCase();
+    const isAbsOnlineStoreHost = (
+      host === 'store.absghana.com'
+      || host === 'www.store.absghana.com'
+      || host === 'store.africanbusinesssuite.com'
+    );
+    const isOnlineStorePath = path.startsWith('/shop/') || path === '/shop' || path.startsWith('/template/');
+    let hasOnlineStoreSession = false;
+    try {
+      hasOnlineStoreSession = Boolean(window.sessionStorage?.getItem('sabito_online_store_session'));
+    } catch {
+      hasOnlineStoreSession = false;
+    }
+    const channel = (isAbsOnlineStoreHost || isOnlineStorePath || hasOnlineStoreSession)
+      ? 'online_store'
+      : 'sabito_marketplace';
+    config.headers['X-Storefront-Channel'] = channel;
+  }
+
   if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
     if (typeof config.headers?.delete === 'function') {
       config.headers.delete('Content-Type');

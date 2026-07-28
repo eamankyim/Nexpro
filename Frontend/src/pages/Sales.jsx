@@ -495,9 +495,15 @@ const Sales = () => {
   }, [viewingSale]);
 
   const handleViewInvoice = useCallback((sale) => {
-    if (sale.invoiceId) {
-      navigate(`/invoices?openInvoiceId=${sale.invoiceId}`);
-    }
+    if (!sale.invoiceId) return;
+    // Close the sale drawer first so Radix Sheet can release body pointer-events
+    // before we navigate to Invoices (otherwise sidebar clicks stop working).
+    setDrawerVisible(false);
+    setViewingSale(null);
+    const invoiceId = sale.invoiceId;
+    window.setTimeout(() => {
+      navigate('/invoices', { state: { openInvoiceId: invoiceId } });
+    }, 0);
   }, [navigate]);
 
   const handleDeleteSale = useCallback(async (id, reason) => {

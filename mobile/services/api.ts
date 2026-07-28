@@ -15,9 +15,20 @@ declare module 'axios' {
   }
 }
 
+/**
+ * Normalize EXPO_PUBLIC_API_URL like Frontend normalizeEnvApiUrl:
+ * trim, strip trailing slash, strip trailing /api (uploads live at /uploads, not /api/uploads).
+ */
+function normalizeApiBaseUrl(raw: string | undefined | null): string {
+  if (!raw || typeof raw !== 'string') return '';
+  let url = raw.trim().replace(/\/$/, '');
+  url = url.replace(/\/api\/?$/i, '');
+  return url;
+}
+
 const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL ||
-  Constants.expoConfig?.extra?.apiUrl ||
+  normalizeApiBaseUrl(process.env.EXPO_PUBLIC_API_URL) ||
+  normalizeApiBaseUrl(Constants.expoConfig?.extra?.apiUrl as string | undefined) ||
   'http://localhost:5001';
 
 logger.info('API', 'Base URL:', API_BASE_URL);

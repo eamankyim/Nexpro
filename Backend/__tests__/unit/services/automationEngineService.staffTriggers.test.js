@@ -119,6 +119,8 @@ describe('staff automation context builders', () => {
 
   it('marks staff templates with audience internal and recipient model', () => {
     const jobAssigned = getTemplateByKey('job_assigned_staff');
+    expect(jobAssigned?.audience).toBe('internal');
+    expect(jobAssigned?.actionConfig?.defaultRecipient?.type).toBe('assignee');
     expect(jobAssigned.audience).toBe('internal');
     expect(jobAssigned.actionConfig.actions[0].recipient).toEqual({ type: 'assignee' });
 
@@ -126,6 +128,44 @@ describe('staff automation context builders', () => {
     expect(paymentStaff.actionConfig.defaultRecipient).toEqual({
       type: 'role',
       roles: ['owner', 'manager'],
+    });
+
+    const taskAssigned = getTemplateByKey('task_assigned_staff');
+    expect(taskAssigned?.audience).toBe('internal');
+    expect(taskAssigned?.triggerType).toBe('task_assigned_staff');
+    expect(taskAssigned?.actionConfig?.defaultRecipient?.type).toBe('assignee');
+    expect(taskAssigned?.actionConfig?.actions?.[0]?.recipient?.type).toBe('assignee');
+  });
+});
+
+describe('buildTaskAssignedStaffTriggerContext', () => {
+  const { buildTaskAssignedStaffTriggerContext } = require('../../../services/automationEngineService');
+
+  it('builds task assignment context for the assignee', () => {
+    const context = buildTaskAssignedStaffTriggerContext({
+      task: {
+        id: 'task-1',
+        title: 'Follow up with client',
+        description: 'Call about the quote',
+        priority: 'high',
+        dueDate: '2026-08-01',
+        assigneeId: 'user-2',
+        shopId: null,
+      },
+      assignee: { id: 'user-2', name: 'Kojo', email: 'kojo@staff.com' },
+      assignedByUser: { id: 'user-1', name: 'Ama' },
+    });
+
+    expect(context).toMatchObject({
+      subjectKey: 'task_assigned_staff:task-1:user-2',
+      taskTitle: 'Follow up with client',
+      taskDescription: 'Call about the quote',
+      taskPriority: 'high',
+      assigneeId: 'user-2',
+      assigneeName: 'Kojo',
+      assignedByName: 'Ama',
+      email: null,
+      phone: null,
     });
   });
 });

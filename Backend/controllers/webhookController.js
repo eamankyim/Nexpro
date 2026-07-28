@@ -533,10 +533,22 @@ exports.handlePaystackWebhook = async (req, res) => {
           }
           console.log('[Paystack Webhook] POS sale payment applied:', metadata.sale_id);
         }
-      } else if (String(metadata.type || '').toLowerCase() === 'storefront_order' && metadata.saleId) {
+      } else if (
+        ['storefront_order', 'online_store_order'].includes(String(metadata.type || '').toLowerCase())
+        && metadata.saleId
+      ) {
         const { sequelize } = require('../config/database');
         const { Sale, StorefrontCustomer, OnlineStoreSettings, SaleActivity } = require('../models');
-        const { recordHeldPaymentForSale } = require('../services/tradeAssuranceService');
+        const {
+          recordHeldPaymentForSale,
+          recordDirectPaidPaymentForSale,
+        } = require('../services/tradeAssuranceService');
+        const {
+          getSaleCommerceChannel,
+          usesTradeAssurance,
+          COMMERCE_CHANNELS,
+          PAYSTACK_ORDER_TYPES,
+        } = require('../utils/storefrontCommerceChannel');
         const { notifyOnlineStoreOrderReceived } = require('../services/notificationService');
         const transaction = await sequelize.transaction();
         try {
@@ -550,11 +562,24 @@ exports.handlePaystackWebhook = async (req, res) => {
             console.error('[Paystack Webhook] Storefront order not found:', metadata.saleId);
           } else {
             const saleMetadata = sale.metadata && typeof sale.metadata === 'object' ? { ...sale.metadata } : {};
+            const orderType = String(metadata.type || '').toLowerCase();
+            const channel = getSaleCommerceChannel({
+              ...saleMetadata,
+              commerceChannel: metadata.commerceChannel || saleMetadata.commerceChannel || (
+                orderType === PAYSTACK_ORDER_TYPES.SABITO_MARKETPLACE || orderType === 'storefront_order'
+                  ? COMMERCE_CHANNELS.SABITO_MARKETPLACE
+                  : COMMERCE_CHANNELS.ONLINE_STORE
+              ),
+            });
+            const holdTradeAssurance = usesTradeAssurance(channel);
             const tradeAssurance = saleMetadata.tradeAssurance || {};
-            if (tradeAssurance.paymentStatus === 'paid_held' || sale.status === 'completed') {
+            const directPayment = saleMetadata.directPayment || {};
+            const currentPaymentStatus = tradeAssurance.paymentStatus || directPayment.paymentStatus;
+            const paidStatuses = new Set(['paid_held', 'paid', 'paid_direct']);
+            if (paidStatuses.has(currentPaymentStatus) || sale.status === 'completed') {
               await transaction.commit();
               console.log('[Paystack Webhook] Storefront order already paid:', metadata.saleId);
-            } else if (tradeAssurance.paymentStatus === 'awaiting_payment' && sale.status === 'pending') {
+            } else if (currentPaymentStatus === 'awaiting_payment' && sale.status === 'pending') {
               const expectedPesewas = Math.round(Number(sale.total) * 100);
               if (Number(tx.amount) !== expectedPesewas) {
                 await transaction.rollback();
@@ -570,14 +595,25 @@ exports.handlePaystackWebhook = async (req, res) => {
                   },
                   transaction,
                 });
-                await recordHeldPaymentForSale({
-                  sale,
-                  store: store || { currency: 'GHS', slug: metadata.storeSlug },
-                  shopper,
-                  transaction,
-                  provider: 'paystack',
-                  providerReference: reference,
-                });
+                if (holdTradeAssurance) {
+                  await recordHeldPaymentForSale({
+                    sale,
+                    store: store || { currency: 'GHS', slug: metadata.storeSlug },
+                    shopper,
+                    transaction,
+                    provider: 'paystack',
+                    providerReference: reference,
+                  });
+                } else {
+                  await recordDirectPaidPaymentForSale({
+                    sale,
+                    store: store || { currency: 'GHS', slug: metadata.storeSlug },
+                    shopper,
+                    transaction,
+                    provider: 'paystack',
+                    providerReference: reference,
+                  });
+                }
                 await SaleActivity.create({
                   saleId: sale.id,
                   tenantId: sale.tenantId,
@@ -587,6 +623,7 @@ exports.handlePaystackWebhook = async (req, res) => {
                   createdBy: null,
                   metadata: {
                     source: 'online_store',
+                    commerceChannel: channel,
                     storefrontCustomerId: metadata.storefrontCustomerId || null,
                     paystackReference: reference,
                   },
@@ -595,7 +632,7 @@ exports.handlePaystackWebhook = async (req, res) => {
                 notifyOnlineStoreOrderReceived({ sale, shopper, store }).catch((notifyError) => {
                   console.error('[Paystack Webhook] Storefront seller notification failed:', notifyError.message);
                 });
-                console.log('[Paystack Webhook] Storefront order payment confirmed:', metadata.saleId);
+                console.log('[Paystack Webhook] Storefront order payment confirmed:', metadata.saleId, channel);
               }
             } else {
               await transaction.rollback();

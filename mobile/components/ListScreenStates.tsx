@@ -32,9 +32,13 @@ export function ListErrorState({
 }: ListErrorStateProps) {
   const { colors, textColor, mutedColor, danger } = useScreenColors();
 
-  const displayMessage = message.includes('timeout')
-    ? 'Request timed out. Please check your connection and try again.'
-    : message;
+  const lower = message.toLowerCase();
+  const displayMessage =
+    lower.includes('timeout') || lower.includes('econnaborted')
+      ? 'Request timed out. Check Wi‑Fi, that the Backend is running, and that EXPO_PUBLIC_API_URL matches its port (npm run show-api-url), then restart Expo.'
+      : lower.includes('network error') || lower.includes('cannot connect')
+        ? 'Cannot reach the API. On a device, use your Mac LAN IP and the Backend listen port in EXPO_PUBLIC_API_URL, then restart Expo.'
+        : message;
 
   return (
     <View style={styles.center}>

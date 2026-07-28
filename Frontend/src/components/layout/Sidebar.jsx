@@ -122,9 +122,10 @@ const MENU_HINTS = {
   '/store': 'Manage your Sabito marketplace storefront',
   '/store/listings': 'Products published on Sabito Store',
   '/store/services': 'Services published on your Sabito studio storefront',
-  '/store/orders': 'Orders from your Sabito Store',
+  '/store/orders': 'Orders from your Sabito Store (Trade Assurance)',
   '/store/settings': 'Sabito Store setup and contact details',
-  '/online-store': 'Your own storefront on your domain',
+  '/online-store': 'Your own storefront on your domain (direct pay)',
+  '/online-store/orders': 'Orders from your Online Store (direct pay)',
 };
 
 /**
@@ -216,10 +217,16 @@ const getMenuItems = (
 
     // "Online Store" = customer-owned custom domain storefront (not Sabito, not trade assurance).
     baseItems.push({
-      key: '/online-store',
+      key: 'online-store',
       icon: Globe,
       label: 'Online Store',
       tooltip: MENU_HINTS['/online-store'],
+      children: [
+        { key: '/online-store', label: 'Storefront', tooltip: MENU_HINTS['/online-store'] },
+        ...(!isStudioStore
+          ? [{ key: '/online-store/orders', label: 'Orders', tooltip: MENU_HINTS['/online-store/orders'] }]
+          : []),
+      ],
     });
   }
 
@@ -504,6 +511,7 @@ export function Sidebar({ collapsed, onCollapse }) {
         }
       : {}),
     '/online-store': () => import('../../pages/OnlineStore'),
+    '/online-store/orders': () => import('../../pages/OnlineOrders'),
   }), []);
 
   const handlePrefetch = useCallback((key) => {
@@ -549,7 +557,7 @@ export function Sidebar({ collapsed, onCollapse }) {
     <aside 
       data-tour="sidebar"
       className={cn(
-        "fixed left-0 top-0 bottom-0 z-50 flex flex-col bg-card text-foreground transition-all duration-300 border-r border-border overflow-hidden",
+        "fixed left-0 top-0 bottom-0 z-[120] flex flex-col bg-card text-foreground transition-all duration-300 border-r border-border overflow-hidden pointer-events-auto",
         collapsed ? "w-20" : "w-64"
       )}
     >

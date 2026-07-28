@@ -20,6 +20,7 @@ import { useAuth } from '../context/AuthContext';
 import { useDismissibleDashboardBanner } from '../hooks/useDismissibleDashboardBanner';
 import authService from '../services/authService';
 import { showSuccess, showError } from '../utils/toast';
+import { releaseBodyInteractionLocks } from '../utils/releaseBodyInteractionLocks';
 
 // Floating AI assistant is off for now. To restore: import AssistantChatPanel, FloatingActionButton, MessageCircle; add state + FAB + panel (see git history).
 
@@ -102,6 +103,11 @@ const MainLayout = () => {
     }
     wasBelowTabletRef.current = isBelowTablet;
   }, [isBelowTablet, collapsed]);
+
+  // Navigating away while a Sheet/Dialog is open can leave body pointer-events locked.
+  useEffect(() => {
+    releaseBodyInteractionLocks();
+  }, [location.pathname]);
 
   return (
     <SmartSearchProvider>

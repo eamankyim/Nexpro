@@ -63,6 +63,7 @@ const TRIGGER_ELIGIBILITY = Object.freeze({
   new_lead_staff: { allowedBusinessTypes: ALL_RESOLVED_TYPES },
   lead_assigned_staff: { allowedBusinessTypes: ALL_RESOLVED_TYPES },
   lead_no_contact_days: { allowedBusinessTypes: ALL_RESOLVED_TYPES },
+  task_assigned_staff: { allowedBusinessTypes: ALL_RESOLVED_TYPES },
   review_request: { allowedBusinessTypes: ALL_RESOLVED_TYPES },
 });
 

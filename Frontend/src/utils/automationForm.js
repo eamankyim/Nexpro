@@ -184,6 +184,11 @@ export const TRIGGER_OPTIONS = [
     label: 'Lead assigned (staff)',
     hint: 'Notify the assignee when a lead is assigned.',
   },
+  {
+    value: 'task_assigned_staff',
+    label: 'Task assigned (staff)',
+    hint: 'Notify the assignee when a workspace task is assigned to them.',
+  },
 ];
 
 export const THRESHOLD_MODE_OPTIONS = [
@@ -201,7 +206,7 @@ export const ACTION_TYPE_OPTIONS = [
 export const MESSAGING_ACTION_TYPES = ['send_sms', 'send_whatsapp', 'send_email_platform'];
 
 export const STAFF_RECIPIENT_TYPE_OPTIONS = [
-  { value: 'assignee', label: 'Job / lead assignee' },
+  { value: 'assignee', label: 'Job / lead / task assignee' },
   { value: 'role', label: 'Staff roles' },
   { value: 'user', label: 'Specific user' },
 ];
@@ -232,6 +237,7 @@ export const INTERNAL_TRIGGER_TYPES = new Set([
   'new_lead',
   'new_lead_staff',
   'lead_assigned_staff',
+  'task_assigned_staff',
   'high_value_invoice',
   'sale_completed_staff',
   'low_profit_margin',
@@ -393,6 +399,16 @@ export const TRIGGER_PLACEHOLDERS = {
     'businessName',
     'leadEmail',
     'leadPhone',
+  ],
+  task_assigned_staff: [
+    'assigneeName',
+    'assignedByName',
+    'taskTitle',
+    'taskDescription',
+    'taskPriority',
+    'dueDate',
+    'taskLink',
+    'businessName',
   ],
   high_value_invoice: ['customerName', 'businessName', 'invoiceNumber', 'totalAmount', 'totalAmountFormatted'],
   customer_created: ['customerName', 'businessName', 'email', 'phone'],
@@ -835,6 +851,12 @@ export const DEFAULT_ACTION_CONTENT = {
       link: '/sales',
     },
   },
+  task_assigned_staff: {
+    send_email_platform: {
+      subject: 'Task assigned: {{taskTitle}}',
+      body: 'Hi {{assigneeName}},\n\n{{assignedByName}} assigned you the task "{{taskTitle}}".\n\nPriority: {{taskPriority}}\nDue: {{dueDate}}\n\n{{taskDescription}}\n\nOpen tasks: {{taskLink}}\n\n— {{businessName}}',
+    },
+  },
 };
 
 /**
@@ -1113,6 +1135,7 @@ const EVENT_TIMING_PHRASE = {
   out_of_stock_detected: 'a product goes out of stock',
   low_profit_margin: 'a sale has a low profit margin',
   lead_assigned_staff: 'a lead is assigned',
+  task_assigned_staff: 'a task is assigned',
 };
 
 /**
@@ -1514,6 +1537,7 @@ export function defaultRecipientFormForTrigger(triggerType) {
     type === 'job_assigned_staff'
     || type === 'job_due_in_hours'
     || type === 'lead_assigned_staff'
+    || type === 'task_assigned_staff'
   ) {
     return { recipientType: 'assignee', recipientRoles: [], recipientUserId: '' };
   }
@@ -2045,3 +2069,77 @@ export function buildTestContextFromForm({ name, triggerType, triggerForm, condi
 export function triggerLabel(triggerType) {
   return TRIGGER_OPTIONS.find((o) => o.value === triggerType)?.label || triggerType;
 }
+
+export function actionTypeLabel(actionType) {
+  return ACTION_TYPE_OPTIONS.find((o) => o.value === actionType)?.label || actionType;
+}
+
+/**
+ * Messaging action types on a rule/payload (email / SMS / WhatsApp).
+ * @param {{ actionConfig?: { actions?: Array<{ type?: string }> } }|null|undefined} ruleOrPayload
+ * @returns {string[]}
+ */
+export function getMessagingActionTypesFromRule(ruleOrPayload) {
+  const actions = ruleOrPayload?.actionConfig?.actions;
+  if (!Array.isArray(actions)) return [];
+  return [...new Set(
+    actions
+      .map((action) => String(action?.type || '').trim())
+      .filter((type) => MESSAGING_ACTION_TYPES.includes(type))
+  )].sort();
+}
+
+/**
+ * @param {{ shopId?: string|null, studioLocationId?: string|null }} a
+ * @param {{ shopId?: string|null, studioLocationId?: string|null }} b
+ * @returns {boolean}
+ */
+export function sameAutomationBranchScope(a = {}, b = {}) {
+  return String(a?.shopId || '') === String(b?.shopId || '')
+    && String(a?.studioLocationId || '') === String(b?.studioLocationId || '');
+}
+
+/**
+ * Find an existing automation with the same trigger + messaging channel(s) + branch scope.
+ * Prevents repeated birthday/email (etc.) rules.
+ * @param {Array<object>} existingRules
+ * @param {object} candidate - create/update payload
+ * @param {{ excludeRuleId?: string|null }} [options]
+ * @returns {object|null}
+ */
+export function findDuplicateAutomationRule(existingRules, candidate, options = {}) {
+  const triggerType = String(candidate?.triggerType || '').trim();
+  if (!triggerType) return null;
+
+  const candidateChannels = getMessagingActionTypesFromRule(candidate);
+  if (!candidateChannels.length) return null;
+
+  const excludeRuleId = options.excludeRuleId || null;
+  const match = (existingRules || []).find((rule) => {
+    if (!rule) return false;
+    if (excludeRuleId && String(rule.id) === String(excludeRuleId)) return false;
+    if (String(rule.triggerType || '').trim() !== triggerType) return false;
+    if (!sameAutomationBranchScope(rule, candidate)) return false;
+    const existingChannels = getMessagingActionTypesFromRule(rule);
+    return candidateChannels.some((channel) => existingChannels.includes(channel));
+  });
+
+  return match || null;
+}
+
+/**
+ * User-facing message when a duplicate messaging automation already exists.
+ * @param {object} existingRule
+ * @param {object} candidate
+ * @returns {string}
+ */
+export function describeAutomationDuplicateConflict(existingRule, candidate) {
+  const trigger = triggerLabel(candidate?.triggerType);
+  const channels = getMessagingActionTypesFromRule(candidate)
+    .map((type) => actionTypeLabel(type))
+    .join(' / ');
+  const existingName = String(existingRule?.name || 'an existing rule').trim() || 'an existing rule';
+  const channelBit = channels || 'the same channel';
+  return `A "${trigger}" automation with ${channelBit} already exists ("${existingName}"). Open that rule to edit it instead of creating another.`;
+}
+
