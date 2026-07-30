@@ -23,6 +23,7 @@ import {
   Workflow,
   BadgePercent,
   Store,
+  Server,
 } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -75,6 +76,7 @@ const menuItems = [
   { path: '/admin/billing', icon: Currency, label: 'Billing' },
   { path: '/admin/reports', icon: FileSearch, label: 'Reports' },
   { path: '/admin/health', icon: AlertTriangle, label: 'System Health', badgeKey: 'healthIssues' },
+  { path: '/admin/ops', icon: Server, label: 'IT Ops' },
   { path: '/admin/automations', icon: Workflow, label: 'Automations' },
   { path: '/admin/support-tickets', icon: LifeBuoy, label: 'Support Tickets' },
   { path: '/admin/sabito/overview', icon: ShoppingBag, label: 'Sabito Admin', activePrefix: '/admin/sabito' },
@@ -193,6 +195,7 @@ const AdminLayout = () => {
           '/admin/billing': 'billing.view',
           '/admin/reports': 'reports.view',
           '/admin/health': 'health.view',
+          '/admin/ops': 'ops.view',
           '/admin/automations': 'automations.view',
           '/admin/support-tickets': 'tickets.view',
           '/admin/sabito/overview': 'overview.view',

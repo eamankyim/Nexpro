@@ -119,6 +119,9 @@ const createPlatformAdminRoles = async () => {
       
       // Health
       { key: 'health.view', name: 'View System Health', description: 'View system health and status', category: 'health' },
+
+      // IT Ops vault
+      { key: 'ops.view', name: 'View IT Ops Vault', description: 'View and manage platform IT ops assets (domains, servers, services)', category: 'ops' },
       
       // Settings
       { key: 'settings.view', name: 'View Settings', description: 'View platform settings', category: 'settings' },
@@ -190,7 +193,7 @@ const createPlatformAdminRoles = async () => {
       'Operations': [
         'overview.view', 'tenants.view', 'tenants.create', 'tenants.update', 'tenants.delete', 'tenants.manage_status',
         'leads.view', 'leads.manage', 'jobs.view', 'jobs.manage',
-        'billing.view', 'billing.manage', 'reports.view', 'health.view',
+        'billing.view', 'billing.manage', 'reports.view', 'health.view', 'ops.view',
         'settings.view', 'settings.manage', 'users.view', 'users.manage',
         'roles.view', 'roles.manage'
       ],
@@ -198,7 +201,7 @@ const createPlatformAdminRoles = async () => {
         'overview.view', 'tenants.view', 'leads.view', 'leads.manage', 'reports.view'
       ],
       'Engineering': [
-        'overview.view', 'tenants.view', 'jobs.view', 'jobs.manage', 'health.view'
+        'overview.view', 'tenants.view', 'jobs.view', 'jobs.manage', 'health.view', 'ops.view'
       ],
       'Sales': [
         'overview.view', 'tenants.view', 'leads.view', 'leads.manage', 'billing.view', 'reports.view'

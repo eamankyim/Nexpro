@@ -134,6 +134,29 @@ const acknowledgeSystemHealthIssue = async (id) =>
 const resolveSystemHealthIssue = async (id) =>
   api.post(`/admin/health/issues/${id}/resolve`);
 
+const getOpsStats = async () => api.get('/admin/ops/stats');
+
+const getOpsAssets = async (params = {}) =>
+  api.get('/admin/ops/assets', { params });
+
+const createOpsAsset = async (payload) =>
+  api.post('/admin/ops/assets', payload);
+
+const updateOpsAsset = async (id, payload) =>
+  api.patch(`/admin/ops/assets/${id}`, payload);
+
+const archiveOpsAsset = async (id) =>
+  api.delete(`/admin/ops/assets/${id}`);
+
+const challengeOpsReveal = async (id, payload) =>
+  api.post(`/admin/ops/assets/${id}/reveal/challenge`, payload);
+
+const confirmOpsReveal = async (id, payload) =>
+  api.post(`/admin/ops/assets/${id}/reveal/confirm`, payload);
+
+const getOpsReveals = async (id) =>
+  api.get(`/admin/ops/assets/${id}/reveals`);
+
 const getAutomationsOverview = async (params = {}) =>
   api.get('/admin/automations/overview', { params });
 
@@ -338,6 +361,14 @@ export default {
   getSystemHealth,
   acknowledgeSystemHealthIssue,
   resolveSystemHealthIssue,
+  getOpsStats,
+  getOpsAssets,
+  createOpsAsset,
+  updateOpsAsset,
+  archiveOpsAsset,
+  challengeOpsReveal,
+  confirmOpsReveal,
+  getOpsReveals,
   getAutomationsOverview,
   getMessagingUsage,
   getPlatformAdmins,

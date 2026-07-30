@@ -112,6 +112,16 @@ const {
   updateSalesAgentCode,
   updateSalesAgentCommission,
 } = require('../controllers/adminSalesAgentController');
+const {
+  listOpsAssets,
+  getOpsStats,
+  createOpsAsset,
+  updateOpsAsset,
+  archiveOpsAsset,
+  challengeOpsReveal,
+  confirmOpsReveal,
+  listOpsReveals,
+} = require('../controllers/adminOpsAssetsController');
 
 const router = express.Router();
 
@@ -466,6 +476,30 @@ router.post(
   '/health/issues/:id/resolve',
   requirePlatformAdminPermission('health.view'),
   resolveSystemHealthIssue
+);
+
+/**
+ * IT Ops vault (domains, servers, services) — platform-admin only
+ */
+router.get('/ops/stats', requirePlatformAdminPermission('ops.view'), getOpsStats);
+router.get('/ops/assets', requirePlatformAdminPermission('ops.view'), listOpsAssets);
+router.post('/ops/assets', requirePlatformAdminPermission('ops.view'), createOpsAsset);
+router.patch('/ops/assets/:id', requirePlatformAdminPermission('ops.view'), updateOpsAsset);
+router.delete('/ops/assets/:id', requirePlatformAdminPermission('ops.view'), archiveOpsAsset);
+router.post(
+  '/ops/assets/:id/reveal/challenge',
+  requirePlatformAdminPermission('ops.view'),
+  challengeOpsReveal
+);
+router.post(
+  '/ops/assets/:id/reveal/confirm',
+  requirePlatformAdminPermission('ops.view'),
+  confirmOpsReveal
+);
+router.get(
+  '/ops/assets/:id/reveals',
+  requirePlatformAdminPermission('ops.view'),
+  listOpsReveals
 );
 
 /**

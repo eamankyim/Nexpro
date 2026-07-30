@@ -117,12 +117,25 @@ const Partnership = require('./Partnership');
 const PartnerCommission = require('./PartnerCommission');
 const DeliveryEvent = require('./DeliveryEvent');
 const SystemHealthIssue = require('./SystemHealthIssue');
+const PlatformOpsAsset = require('./PlatformOpsAsset');
+const PlatformOpsSecretReveal = require('./PlatformOpsSecretReveal');
+const PlatformOpsRevealChallenge = require('./PlatformOpsRevealChallenge');
 
 // Define relationships
 Tenant.hasMany(DeliveryEvent, { foreignKey: 'tenantId', as: 'deliveryEvents' });
 DeliveryEvent.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 Tenant.hasMany(SystemHealthIssue, { foreignKey: 'tenantId', as: 'systemHealthIssues' });
 SystemHealthIssue.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+
+User.hasMany(PlatformOpsAsset, { foreignKey: 'createdBy', as: 'opsAssetsCreated' });
+PlatformOpsAsset.belongsTo(User, { foreignKey: 'createdBy', as: 'creator' });
+PlatformOpsAsset.belongsTo(User, { foreignKey: 'updatedBy', as: 'updater' });
+PlatformOpsAsset.hasMany(PlatformOpsSecretReveal, { foreignKey: 'assetId', as: 'reveals' });
+PlatformOpsSecretReveal.belongsTo(PlatformOpsAsset, { foreignKey: 'assetId', as: 'asset' });
+PlatformOpsSecretReveal.belongsTo(User, { foreignKey: 'requestedBy', as: 'requester' });
+PlatformOpsAsset.hasMany(PlatformOpsRevealChallenge, { foreignKey: 'assetId', as: 'revealChallenges' });
+PlatformOpsRevealChallenge.belongsTo(PlatformOpsAsset, { foreignKey: 'assetId', as: 'asset' });
+PlatformOpsRevealChallenge.belongsTo(User, { foreignKey: 'userId', as: 'user' });
 
 Tenant.hasMany(Customer, { foreignKey: 'tenantId', as: 'customers' });
 Customer.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
@@ -1071,6 +1084,9 @@ module.exports = {
   PartnerCommission,
   DeliveryEvent,
   SystemHealthIssue,
+  PlatformOpsAsset,
+  PlatformOpsSecretReveal,
+  PlatformOpsRevealChallenge,
 };
 
 
