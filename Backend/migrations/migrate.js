@@ -446,6 +446,10 @@ const migrate = async () => {
     // Studio quotation PDF fields (payment schedule, scope, terms, acceptance)
     await addStudioQuotationFieldsToQuotes();
 
+    // Platform System Health: delivery_events + system_health_issues
+    const createSystemHealthTables = require('./create-system-health-tables');
+    await createSystemHealthTables({ closeConnection: false });
+
     console.log('\n✅ Database migration completed successfully!');
     console.log('📊 Incremental schema updates applied.');
     console.log('👤 User model has been enhanced with new fields.');

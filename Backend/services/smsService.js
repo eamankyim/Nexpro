@@ -206,6 +206,20 @@ function hasValidTenantSmsCredentials(config) {
 
 class SMSService {
   /**
+   * Fire-and-forget delivery event for System Health (never throws).
+   * @param {object} payload
+   */
+  _recordDelivery(payload) {
+    try {
+      const { recordDeliveryEvent } = require('./deliveryEventService');
+      return recordDeliveryEvent(payload);
+    } catch (err) {
+      console.error('[SMS] delivery event record failed:', err?.message || err);
+      return Promise.resolve(null);
+    }
+  }
+
+  /**
    * Get SMS configuration for a tenant (tenant-only, no platform fallback)
    * @param {string} tenantId - Tenant ID
    * @returns {Promise<Object|null>} - SMS configuration or null
@@ -313,35 +327,76 @@ async getResolvedConfig(tenantId) {
    * @returns {Promise<Object>}
    */
   async sendMessage(tenantId, phoneNumber, message, fromNumber = null, options = {}) {
+    const source = options.source || options.context?.source || 'sms_send';
+    const context = options.context || {};
     try {
       const config = await this.getResolvedConfig(tenantId);
       if (!config) {
-        return {
+        const fail = {
           success: false,
           error: 'SMS not configured for this tenant',
           errorCode: 'SMS_NOT_CONFIGURED',
         };
+        void this._recordDelivery({
+          tenantId,
+          channel: 'sms',
+          provider: null,
+          source,
+          status: 'failed',
+          errorCode: fail.errorCode,
+          errorMessage: fail.error,
+          recipient: phoneNumber,
+          subjectOrContext: message ? String(message).slice(0, 80) : null,
+          metadata: context,
+        });
+        return fail;
       }
 
       const formattedPhone = this.validatePhoneNumber(phoneNumber);
       if (!formattedPhone) {
-        return {
+        const fail = {
           success: false,
           error: 'Invalid phone number format',
           errorCode: 'INVALID_PHONE',
         };
+        void this._recordDelivery({
+          tenantId,
+          channel: 'sms',
+          provider: config.provider || null,
+          source,
+          status: 'failed',
+          errorCode: fail.errorCode,
+          errorMessage: fail.error,
+          recipient: phoneNumber,
+          subjectOrContext: message ? String(message).slice(0, 80) : null,
+          metadata: context,
+        });
+        return fail;
       }
 
       const usageCount = Math.max(1, parseInt(options.usageCount, 10) || 1);
       if (config.limited) {
         const limitCheck = await checkPlatformSmsLimit(tenantId, usageCount);
         if (!limitCheck.allowed) {
-          return {
+          const fail = {
             success: false,
             error: limitCheck.error,
             errorCode: limitCheck.errorCode,
             usage: limitCheck.summary,
           };
+          void this._recordDelivery({
+            tenantId,
+            channel: 'sms',
+            provider: config.provider || null,
+            source,
+            status: 'failed',
+            errorCode: fail.errorCode,
+            errorMessage: fail.error,
+            recipient: formattedPhone,
+            subjectOrContext: message ? String(message).slice(0, 80) : null,
+            metadata: context,
+          });
+          return fail;
         }
       }
 
@@ -365,7 +420,7 @@ async getResolvedConfig(tenantId) {
           result = await this.sendViaAfricasTalking(config, formattedPhone, message, fromNumber);
           break;
         default:
-          return {
+          result = {
             success: false,
             error: `Unsupported SMS provider: ${provider}`,
             errorCode: 'UNSUPPORTED_PROVIDER',
@@ -380,6 +435,19 @@ async getResolvedConfig(tenantId) {
         }
       }
 
+      void this._recordDelivery({
+        tenantId,
+        channel: 'sms',
+        provider,
+        source,
+        status: result.success ? 'success' : 'failed',
+        errorCode: result.errorCode || null,
+        errorMessage: result.error || null,
+        recipient: formattedPhone,
+        subjectOrContext: message ? String(message).slice(0, 80) : null,
+        metadata: { ...context, messageId: result.messageId || null },
+      });
+
       return {
         ...result,
         source: config.source,
@@ -391,10 +459,23 @@ async getResolvedConfig(tenantId) {
         tenantId,
       });
 
-      return {
+      const fail = {
         success: false,
         error: error.message || 'Failed to send SMS message',
       };
+      void this._recordDelivery({
+        tenantId,
+        channel: 'sms',
+        provider: null,
+        source,
+        status: 'failed',
+        errorCode: error.code || 'SMS_SEND_ERROR',
+        errorMessage: fail.error,
+        recipient: phoneNumber,
+        subjectOrContext: message ? String(message).slice(0, 80) : null,
+        metadata: context,
+      });
+      return fail;
     }
   }
 

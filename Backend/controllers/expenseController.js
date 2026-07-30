@@ -53,7 +53,7 @@ const {
 const getActorUserId = (req) => req.user?.id || req.userId || null;
 
 /**
- * Prefer persisted submitter; fall back to creation-activity actor or approver for display.
+ * Prefer persisted submitter; fall back to creation/submission activity actor or approver.
  * Covers older rows created when submittedBy was not persisted correctly.
  * @param {Object} expensePlain - Plain expense JSON (with includes)
  * @returns {Object}
@@ -61,16 +61,18 @@ const getActorUserId = (req) => req.user?.id || req.userId || null;
 const withSubmitterFallback = (expensePlain) => {
   if (!expensePlain || expensePlain.submitter) return expensePlain;
 
-  const creationActor = (expensePlain.activities || []).find(
+  const activities = Array.isArray(expensePlain.activities) ? expensePlain.activities : [];
+  const creationActor = activities.find(
     (activity) => activity?.type === 'creation' && activity.createdByUser
   )?.createdByUser;
-  if (creationActor) {
-    return { ...expensePlain, submitter: creationActor };
-  }
-  if (expensePlain.approver) {
-    return { ...expensePlain, submitter: expensePlain.approver };
-  }
-  return expensePlain;
+  const submissionActor = activities.find(
+    (activity) => activity?.type === 'submission' && activity.createdByUser
+  )?.createdByUser;
+  const anyActivityActor = activities.find((activity) => activity?.createdByUser)?.createdByUser;
+  const fallbackActor = creationActor || submissionActor || anyActivityActor || expensePlain.approver || null;
+
+  if (!fallbackActor) return expensePlain;
+  return { ...expensePlain, submitter: fallbackActor };
 };
 
 /**
@@ -439,6 +441,16 @@ exports.getExpenses = async (req, res, next) => {
         { model: User, as: 'submitter', attributes: ['id', 'name', 'email'] },
         { model: User, as: 'approver', attributes: ['id', 'name', 'email'] },
         { model: Shop, as: 'shop', attributes: ['id', 'name'] },
+        {
+          model: ExpenseActivity,
+          as: 'activities',
+          required: false,
+          separate: true,
+          where: { type: 'creation' },
+          attributes: ['id', 'type', 'createdBy', 'createdAt'],
+          include: [{ model: User, as: 'createdByUser', attributes: ['id', 'name', 'email'] }],
+          limit: 1,
+        },
       ],
       order: [['expenseDate', 'DESC']]
     });
@@ -514,6 +526,7 @@ exports.getExpense = async (req, res, next) => {
         { 
           model: ExpenseActivity, 
           as: 'activities',
+          separate: true,
           include: [{ model: User, as: 'createdByUser', attributes: ['id', 'name', 'email'] }],
           order: [['createdAt', 'DESC']],
           limit: 50

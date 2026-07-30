@@ -28,6 +28,8 @@ const {
   getBillingSummary,
   getBillingTenants,
   getSystemHealth,
+  acknowledgeSystemHealthIssue,
+  resolveSystemHealthIssue,
   updateTenantBranding
 } = require('../controllers/adminController');
 const {
@@ -455,6 +457,16 @@ router.get('/billing/tenants', requirePlatformAdminPermission('billing.view'), g
  *         description: Uptime, database status, and recent alerts.
  */
 router.get('/health', requirePlatformAdminPermission('health.view'), getSystemHealth);
+router.post(
+  '/health/issues/:id/acknowledge',
+  requirePlatformAdminPermission('health.view'),
+  acknowledgeSystemHealthIssue
+);
+router.post(
+  '/health/issues/:id/resolve',
+  requirePlatformAdminPermission('health.view'),
+  resolveSystemHealthIssue
+);
 
 /**
  * Automations & Messaging observability (cross-tenant, privacy-safe)

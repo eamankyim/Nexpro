@@ -128,6 +128,12 @@ const testPlatformSmsSettings = async (payload) =>
 
 const getSystemHealth = async () => api.get('/admin/health');
 
+const acknowledgeSystemHealthIssue = async (id) =>
+  api.post(`/admin/health/issues/${id}/acknowledge`);
+
+const resolveSystemHealthIssue = async (id) =>
+  api.post(`/admin/health/issues/${id}/resolve`);
+
 const getAutomationsOverview = async (params = {}) =>
   api.get('/admin/automations/overview', { params });
 
@@ -330,6 +336,8 @@ export default {
   testPlatformEmailSettings,
   testPlatformSmsSettings,
   getSystemHealth,
+  acknowledgeSystemHealthIssue,
+  resolveSystemHealthIssue,
   getAutomationsOverview,
   getMessagingUsage,
   getPlatformAdmins,

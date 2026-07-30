@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import adminService from '../../services/adminService';
@@ -7,6 +8,7 @@ import StatusChip from '../../components/StatusChip';
 import PlanBadge from '../../components/PlanBadge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Timeline,
@@ -17,7 +19,19 @@ import {
   TimelineDescription,
 } from '@/components/ui/timeline';
 import DashboardStatsCard from '../../components/DashboardStatsCard';
-import { Activity, Database, Bell, Users, Gauge, Timer } from 'lucide-react';
+import {
+  Activity,
+  Database,
+  Bell,
+  Users,
+  Gauge,
+  Timer,
+  AlertTriangle,
+  CheckCircle2,
+  Mail,
+  MessageSquare,
+  Settings2,
+} from 'lucide-react';
 
 dayjs.extend(relativeTime);
 
@@ -66,27 +80,64 @@ const formatSlowOpContext = (item) => {
   return parts.join(' • ');
 };
 
+const overallBannerClass = (status) => {
+  if (status === 'critical') return 'border-red-300 bg-red-50 text-red-900';
+  if (status === 'degraded') return 'border-amber-300 bg-amber-50 text-amber-900';
+  return 'border-green-300 bg-green-50 text-green-900';
+};
+
+const severityBadgeVariant = (severity) => {
+  if (severity === 'critical') return 'destructive';
+  if (severity === 'warning') return 'outline';
+  return 'secondary';
+};
+
 const AdminHealth = () => {
   const { hasPermission, loading: permissionsLoading } = usePlatformAdminPermissions();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
+  const [actionId, setActionId] = useState(null);
 
-  useEffect(() => {
-    const fetchHealth = async () => {
-      setLoading(true);
-      try {
-        const response = await adminService.getSystemHealth();
-        if (response?.success) setData(response.data);
-      } catch (error) {
-        console.error('Failed to load system health', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchHealth();
+  const fetchHealth = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await adminService.getSystemHealth();
+      if (response?.success) setData(response.data);
+    } catch (error) {
+      console.error('Failed to load system health', error);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  // Check permission after all hooks
+  useEffect(() => {
+    fetchHealth();
+  }, [fetchHealth]);
+
+  const handleAcknowledge = useCallback(async (id) => {
+    setActionId(id);
+    try {
+      await adminService.acknowledgeSystemHealthIssue(id);
+      await fetchHealth();
+    } catch (error) {
+      console.error('Failed to acknowledge issue', error);
+    } finally {
+      setActionId(null);
+    }
+  }, [fetchHealth]);
+
+  const handleResolve = useCallback(async (id) => {
+    setActionId(id);
+    try {
+      await adminService.resolveSystemHealthIssue(id);
+      await fetchHealth();
+    } catch (error) {
+      console.error('Failed to resolve issue', error);
+    } finally {
+      setActionId(null);
+    }
+  }, [fetchHealth]);
+
   if (!permissionsLoading && !hasPermission('health.view')) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -119,14 +170,200 @@ const AdminHealth = () => {
     (max, item) => Math.max(max, Number(item.durationMs || 0)),
     0
   );
+  const openIssues = data?.openIssues || [];
+  const channels = data?.channels || {};
+  const recentFailures = data?.recentFailures || [];
+  const configChecks = data?.configChecks || [];
+  const overallStatus = data?.overallStatus || 'healthy';
 
   return (
     <div>
-      <div className="mb-6">
-        <h2 className="text-2xl font-semibold text-foreground mb-1">System Health</h2>
-        <p className="text-sm text-muted-foreground">
-          Monitor backend uptime, database responsiveness, and recent events.
-        </p>
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-semibold text-foreground mb-1">System Health</h2>
+          <p className="text-sm text-muted-foreground">
+            Monitor delivery failures, config readiness, uptime, and slow requests.
+          </p>
+        </div>
+        <Button type="button" variant="secondaryStroke" onClick={fetchHealth}>
+          Refresh
+        </Button>
+      </div>
+
+      <div
+        className={`mb-6 rounded-lg border px-4 py-3 flex flex-wrap items-center gap-3 ${overallBannerClass(overallStatus)}`}
+      >
+        {overallStatus === 'healthy' ? (
+          <CheckCircle2 className="h-5 w-5 shrink-0" />
+        ) : (
+          <AlertTriangle className="h-5 w-5 shrink-0" />
+        )}
+        <div className="flex-1 min-w-0">
+          <p className="font-semibold capitalize">{overallStatus} system status</p>
+          <p className="text-sm opacity-90">
+            {openIssues.length
+              ? `${openIssues.length} open issue${openIssues.length === 1 ? '' : 's'} (${data?.openCriticalCount || 0} critical)`
+              : 'No open delivery or config issues'}
+          </p>
+        </div>
+      </div>
+
+      {openIssues.length > 0 && (
+        <Card className="border border-gray-200 mb-6">
+          <CardHeader>
+            <CardTitle className="text-base">Open issues</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {openIssues.map((issue) => (
+              <div
+                key={issue.id}
+                className="border border-gray-200 rounded-lg p-3 space-y-2"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={severityBadgeVariant(issue.severity)}>
+                    {issue.severity}
+                  </Badge>
+                  <Badge variant="outline">{issue.category}</Badge>
+                  <Badge variant="secondary">{issue.status}</Badge>
+                  <span className="font-medium text-sm">{issue.title}</span>
+                </div>
+                <p className="text-sm text-muted-foreground">{issue.summary}</p>
+                {issue.lastErrorMessage ? (
+                  <p className="text-xs text-red-700 break-words">{issue.lastErrorMessage}</p>
+                ) : null}
+                <p className="text-xs text-muted-foreground">
+                  {issue.tenantName || 'Platform'}
+                  {' • '}
+                  Seen {issue.occurrenceCount}×
+                  {' • '}
+                  Last {dayjs(issue.lastSeenAt).fromNow()}
+                  {issue.notifiedAt ? ` • Notified ${dayjs(issue.notifiedAt).fromNow()}` : ''}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {issue.status === 'open' ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondaryStroke"
+                      loading={actionId === issue.id}
+                      disabled={!!actionId}
+                      onClick={() => handleAcknowledge(issue.id)}
+                    >
+                      Acknowledge
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    size="sm"
+                    loading={actionId === issue.id}
+                    disabled={!!actionId}
+                    onClick={() => handleResolve(issue.id)}
+                  >
+                    Resolve
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        {['email', 'sms', 'whatsapp'].map((channel) => {
+          const stats = channels[channel] || { success24h: 0, failed24h: 0, lastFailureAt: null };
+          const Icon = channel === 'email' ? Mail : MessageSquare;
+          return (
+            <Card key={channel} className="border border-gray-200">
+              <CardContent className="pt-6">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                      {channel} (24h)
+                    </p>
+                    <p className="text-2xl font-bold mt-1">
+                      {stats.success24h}
+                      <span className="text-sm font-normal text-muted-foreground"> ok</span>
+                    </p>
+                    <p className={`text-sm mt-1 ${stats.failed24h ? 'text-red-700' : 'text-muted-foreground'}`}>
+                      {stats.failed24h} failed
+                      {stats.lastFailureAt ? ` • last ${dayjs(stats.lastFailureAt).fromNow()}` : ''}
+                    </p>
+                  </div>
+                  <div className="rounded-md p-2 bg-muted">
+                    <Icon className="h-5 w-5 text-foreground" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
+        <Card className="border border-gray-200">
+          <CardHeader>
+            <CardTitle className="text-base">Recent failures</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {recentFailures.length ? (
+              <div className="space-y-3">
+                {recentFailures.map((ev) => (
+                  <div key={ev.id} className="border-b border-gray-100 pb-3 last:border-0 last:pb-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="outline">{ev.channel}</Badge>
+                      {ev.errorCode ? <Badge variant="destructive">{ev.errorCode}</Badge> : null}
+                      <span className="text-sm font-medium">{ev.subjectOrContext || ev.source || 'Delivery'}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {ev.tenantName || 'Platform'} • {ev.recipientMasked || '—'} • {dayjs(ev.createdAt).fromNow()}
+                    </p>
+                    {ev.errorMessage ? (
+                      <p className="text-xs text-red-700 mt-1 break-words line-clamp-2">{ev.errorMessage}</p>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No recent delivery failures recorded.</p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="border border-gray-200">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Settings2 className="h-4 w-4" />
+              Config checks
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {configChecks.length ? (
+              configChecks.map((check) => (
+                <div
+                  key={check.key}
+                  className="flex items-start justify-between gap-3 border-b border-gray-100 pb-3 last:border-0 last:pb-0"
+                >
+                  <div>
+                    <p className="text-sm font-medium">{check.label}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{check.detail}</p>
+                  </div>
+                  <Badge variant={check.ok ? 'secondary' : 'destructive'}>
+                    {check.ok ? 'OK' : 'Issue'}
+                  </Badge>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-muted-foreground">No config checks available.</p>
+            )}
+            <p className="text-xs text-muted-foreground pt-1">
+              Manage providers in{' '}
+              <Link to="/admin/settings" className="text-primary underline-offset-2 hover:underline">
+                Admin Settings
+              </Link>
+              .
+            </p>
+          </CardContent>
+        </Card>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
@@ -147,7 +384,7 @@ const AdminHealth = () => {
                 </p>
                 <StatusChip status={data?.database?.status || 'online'} />
               </div>
-              <div className="rounded-full p-2 bg-blue-100">
+              <div className="rounded-md p-2 bg-blue-100">
                 <Database className="h-5 w-5 text-blue-600" />
               </div>
             </div>

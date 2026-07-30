@@ -8,6 +8,20 @@ class EmailService {
     this.maxEmailsPerDay = 1000;
   }
 
+  /**
+   * Fire-and-forget delivery event for System Health (never throws).
+   * @param {object} payload
+   */
+  _recordDelivery(payload) {
+    try {
+      const { recordDeliveryEvent } = require('./deliveryEventService');
+      return recordDeliveryEvent(payload);
+    } catch (err) {
+      console.error('[Email] delivery event record failed:', err?.message || err);
+      return Promise.resolve(null);
+    }
+  }
+
   maskEmail(email) {
     if (!email) return '(empty)';
     const value = String(email).trim();
@@ -196,17 +210,59 @@ class EmailService {
       const config = await this.resolvePlatformConfig();
       if (!config) {
         console.warn(`${logPrefix}[platform_send_skip]${contextText} to=${toMask} subject="${subjectShort}" reason=platform_not_configured`);
-        return { success: false, error: 'Platform email not configured' };
+        const fail = { success: false, error: 'Platform email not configured' };
+        void this._recordDelivery({
+          tenantId: context.tenantId || null,
+          channel: 'email',
+          provider: 'platform',
+          source: context.source || 'platform_env',
+          status: 'failed',
+          errorCode: 'PLATFORM_EMAIL_NOT_CONFIGURED',
+          errorMessage: fail.error,
+          recipient: to,
+          recipientMasked: toMask,
+          subjectOrContext: subjectShort,
+          metadata: context,
+        });
+        return fail;
       }
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(to)) {
         console.warn(`${logPrefix}[platform_send_skip]${contextText} to=${toMask} subject="${subjectShort}" reason=invalid_recipient`);
-        return { success: false, error: 'Invalid email address format' };
+        const fail = { success: false, error: 'Invalid email address format' };
+        void this._recordDelivery({
+          tenantId: context.tenantId || null,
+          channel: 'email',
+          provider: config.provider || 'platform',
+          source: context.source || 'platform_env',
+          status: 'failed',
+          errorCode: 'INVALID_EMAIL',
+          errorMessage: fail.error,
+          recipient: to,
+          recipientMasked: toMask,
+          subjectOrContext: subjectShort,
+          metadata: context,
+        });
+        return fail;
       }
       const fromEmail = config.fromEmail || config.smtpUser;
       if (!fromEmail) {
         console.warn(`${logPrefix}[platform_send_skip]${contextText} to=${toMask} subject="${subjectShort}" reason=sender_not_configured`);
-        return { success: false, error: 'Platform sender email not configured' };
+        const fail = { success: false, error: 'Platform sender email not configured' };
+        void this._recordDelivery({
+          tenantId: context.tenantId || null,
+          channel: 'email',
+          provider: config.provider || 'platform',
+          source: context.source || 'platform_env',
+          status: 'failed',
+          errorCode: 'PLATFORM_EMAIL_NOT_CONFIGURED',
+          errorMessage: fail.error,
+          recipient: to,
+          recipientMasked: toMask,
+          subjectOrContext: subjectShort,
+          metadata: context,
+        });
+        return fail;
       }
 
       const diag = this.getConfigDiagnostic(config);
@@ -236,6 +292,17 @@ class EmailService {
           `${logPrefix}[platform_send_success]${contextText} to=${toMask} subject="${subjectShort}" ` +
             `provider=sendgrid responseCode=${res?.statusCode || 'n/a'} messageId=${messageId || 'n/a'}`
         );
+        void this._recordDelivery({
+          tenantId: context.tenantId || null,
+          channel: 'email',
+          provider: 'sendgrid',
+          source: context.source || 'platform_env',
+          status: 'success',
+          recipient: to,
+          recipientMasked: toMask,
+          subjectOrContext: subjectShort,
+          metadata: { ...context, messageId: messageId || null },
+        });
         return { success: true, messageId: messageId || res?.messageId, data: res };
       }
 
@@ -258,6 +325,17 @@ class EmailService {
         `${logPrefix}[platform_send_success]${contextText} to=${toMask} subject="${subjectShort}" ` +
           `provider=${config.provider || 'smtp'} responseCode=${info.responseCode || 'n/a'} response="${this.maskEmailsInText(info.response || '').slice(0, 200)}" messageId=${info.messageId || 'n/a'}`
       );
+      void this._recordDelivery({
+        tenantId: context.tenantId || null,
+        channel: 'email',
+        provider: config.provider || 'smtp',
+        source: context.source || 'platform_env',
+        status: 'success',
+        recipient: to,
+        recipientMasked: toMask,
+        subjectOrContext: subjectShort,
+        metadata: { ...context, messageId: info.messageId || null },
+      });
       return { success: true, messageId: info.messageId, data: info };
     } catch (error) {
       const err = this.summarizeProviderError(error);
@@ -265,6 +343,19 @@ class EmailService {
         `${logPrefix}[platform_send_failure]${contextText} to=${toMask} subject="${subjectShort}" ` +
           `code=${err.code} responseCode=${err.responseCode} command=${err.command} message="${err.message}" response="${err.response}"`
       );
+      void this._recordDelivery({
+        tenantId: context.tenantId || null,
+        channel: 'email',
+        provider: 'platform',
+        source: context.source || 'platform_env',
+        status: 'failed',
+        errorCode: err.code,
+        errorMessage: error.message || 'Failed to send email',
+        recipient: to,
+        recipientMasked: toMask,
+        subjectOrContext: subjectShort,
+        metadata: context,
+      });
       return { success: false, error: error.message || 'Failed to send email' };
     }
   }
@@ -734,38 +825,94 @@ class EmailService {
           `${logPrefix}[tenant_send_skip]${contextText} to=${toMask} subject="${subjectShort}" ` +
             `source=tenant_config reason=${resolvedConfig.reason} provider=${resolvedConfig.provider || 'unknown'}`
         );
-        return {
+        const fail = {
           success: false,
           error: resolvedConfig.error
         };
+        void this._recordDelivery({
+          tenantId,
+          channel: 'email',
+          provider: resolvedConfig.provider || 'smtp',
+          source: context.source || 'tenant_config',
+          status: 'failed',
+          errorCode: resolvedConfig.reason || 'EMAIL_CONFIG_INVALID',
+          errorMessage: fail.error,
+          recipient: to,
+          recipientMasked: toMask,
+          subjectOrContext: subjectShort,
+          metadata: context,
+        });
+        return fail;
       }
       const config = resolvedConfig.config;
 
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(to)) {
         console.warn(`${logPrefix}[tenant_send_skip]${contextText} to=${toMask} subject="${subjectShort}" reason=invalid_recipient`);
-        return {
+        const fail = {
           success: false,
           error: 'Invalid email address format'
         };
+        void this._recordDelivery({
+          tenantId,
+          channel: 'email',
+          provider: config.provider || 'smtp',
+          source: context.source || 'tenant_config',
+          status: 'failed',
+          errorCode: 'INVALID_EMAIL',
+          errorMessage: fail.error,
+          recipient: to,
+          recipientMasked: toMask,
+          subjectOrContext: subjectShort,
+          metadata: context,
+        });
+        return fail;
       }
 
       if (!this.checkRateLimit(tenantId)) {
         console.warn(`${logPrefix}[tenant_send_skip]${contextText} to=${toMask} subject="${subjectShort}" reason=rate_limit_exceeded`);
-        return {
+        const fail = {
           success: false,
           error: 'Rate limit exceeded (1000 emails per day)'
         };
+        void this._recordDelivery({
+          tenantId,
+          channel: 'email',
+          provider: config.provider || 'smtp',
+          source: context.source || 'tenant_config',
+          status: 'failed',
+          errorCode: 'RATE_LIMIT',
+          errorMessage: fail.error,
+          recipient: to,
+          recipientMasked: toMask,
+          subjectOrContext: subjectShort,
+          metadata: context,
+        });
+        return fail;
       }
 
       const fromEmail = from || config.fromEmail || config.smtpUser;
 
       if (!fromEmail) {
         console.warn(`${logPrefix}[tenant_send_skip]${contextText} to=${toMask} subject="${subjectShort}" reason=sender_not_configured`);
-        return {
+        const fail = {
           success: false,
           error: 'Sender email address not configured'
         };
+        void this._recordDelivery({
+          tenantId,
+          channel: 'email',
+          provider: config.provider || 'smtp',
+          source: context.source || 'tenant_config',
+          status: 'failed',
+          errorCode: 'SENDER_NOT_CONFIGURED',
+          errorMessage: fail.error,
+          recipient: to,
+          recipientMasked: toMask,
+          subjectOrContext: subjectShort,
+          metadata: context,
+        });
+        return fail;
       }
 
       const transporter = await this.createTransporter(config);
@@ -789,6 +936,17 @@ class EmailService {
           `${logPrefix}[tenant_send_success]${contextText} to=${toMask} subject="${subjectShort}" ` +
             `provider=${config.provider || 'smtp'} responseCode=${info.responseCode || 'n/a'} response="${this.maskEmailsInText(info.response || '').slice(0, 200)}" messageId=${info.messageId || 'n/a'}`
         );
+        void this._recordDelivery({
+          tenantId,
+          channel: 'email',
+          provider: config.provider || 'smtp',
+          source: context.source || 'tenant_config',
+          status: 'success',
+          recipient: to,
+          recipientMasked: toMask,
+          subjectOrContext: subjectShort,
+          metadata: { ...context, messageId: info.messageId || null },
+        });
         return {
           success: true,
           messageId: info.messageId,
@@ -808,9 +966,23 @@ class EmailService {
         `${logPrefix}[tenant_send_failure]${contextText} to=${toMask} subject="${subjectShort}" ` +
           `code=${err.code} responseCode=${err.responseCode} command=${err.command} message="${err.message}" response="${err.response}"`
       );
+      const formatted = this.formatTenantSmtpError(error);
+      void this._recordDelivery({
+        tenantId,
+        channel: 'email',
+        provider: 'smtp',
+        source: context.source || 'tenant_config',
+        status: 'failed',
+        errorCode: err.code,
+        errorMessage: formatted,
+        recipient: to,
+        recipientMasked: toMask,
+        subjectOrContext: subjectShort,
+        metadata: context,
+      });
       return {
         success: false,
-        error: this.formatTenantSmtpError(error)
+        error: formatted
       };
     }
   }

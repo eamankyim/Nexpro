@@ -115,8 +115,15 @@ const Marketer = require('./Marketer');
 const PartnershipApplication = require('./PartnershipApplication');
 const Partnership = require('./Partnership');
 const PartnerCommission = require('./PartnerCommission');
+const DeliveryEvent = require('./DeliveryEvent');
+const SystemHealthIssue = require('./SystemHealthIssue');
 
 // Define relationships
+Tenant.hasMany(DeliveryEvent, { foreignKey: 'tenantId', as: 'deliveryEvents' });
+DeliveryEvent.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Tenant.hasMany(SystemHealthIssue, { foreignKey: 'tenantId', as: 'systemHealthIssues' });
+SystemHealthIssue.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+
 Tenant.hasMany(Customer, { foreignKey: 'tenantId', as: 'customers' });
 Customer.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 
@@ -1062,6 +1069,8 @@ module.exports = {
   PartnershipApplication,
   Partnership,
   PartnerCommission,
+  DeliveryEvent,
+  SystemHealthIssue,
 };
 
 
