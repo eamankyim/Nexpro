@@ -7,14 +7,136 @@ const {
   PlatformOpsSecretReveal,
   PlatformOpsRevealChallenge,
   User,
+  Customer,
+  Tenant,
 } = require('../models');
 const { encryptSecret, decryptSecret, hasKey, isEncryptedSecret } = require('../utils/secretCrypto');
 const emailService = require('./emailService');
 
 const OPS_ASSETS_CREDENTIALS_ENCRYPTION_KEY = 'OPS_ASSETS_CREDENTIALS_ENCRYPTION_KEY';
+const OPS_ASSETS_SECRET_EMAIL = 'OPS_ASSETS_SECRET_EMAIL';
+const PLATFORM_TENANT_SLUG = 'platform';
 const ASSET_TYPES = new Set(['domain', 'server', 'service', 'other']);
 const OTP_TTL_MS = 10 * 60 * 1000;
 const REVEAL_TTL_MS = 5 * 60 * 1000;
+
+const CUSTOMER_INCLUDE = {
+  model: Customer,
+  as: 'customer',
+  attributes: ['id', 'name', 'company', 'email'],
+  required: false,
+};
+
+/**
+ * Platform tenant used for admin-owned customers.
+ * @returns {Promise<string>}
+ */
+async function getPlatformTenantId() {
+  let tenant = await Tenant.findOne({ where: { slug: PLATFORM_TENANT_SLUG } });
+  if (!tenant) {
+    tenant = await Tenant.create({
+      name: 'Platform',
+      slug: PLATFORM_TENANT_SLUG,
+      status: 'active',
+      plan: 'trial',
+    });
+  }
+  return tenant.id;
+}
+
+/**
+ * Validate optional customerId belongs to platform customers.
+ * @param {string|null|undefined} customerId
+ * @returns {Promise<string|null>}
+ */
+async function resolveCustomerId(customerId) {
+  if (customerId === undefined) return undefined;
+  if (customerId === null || customerId === '' || customerId === 'none') return null;
+  const platformTenantId = await getPlatformTenantId();
+  const customer = await Customer.findOne({
+    where: { id: customerId, tenantId: platformTenantId },
+    attributes: ['id'],
+  });
+  if (!customer) {
+    const err = new Error('Customer not found');
+    err.statusCode = 400;
+    throw err;
+  }
+  return customer.id;
+}
+
+/**
+ * List platform customers for the ops asset picker.
+ * @returns {Promise<object[]>}
+ */
+async function listCustomerOptions() {
+  const platformTenantId = await getPlatformTenantId();
+  return Customer.findAll({
+    where: { tenantId: platformTenantId },
+    attributes: ['id', 'name', 'company', 'email'],
+    order: [
+      ['company', 'ASC'],
+      ['name', 'ASC'],
+    ],
+  });
+}
+
+/**
+ * Create a platform customer from IT Ops (same folder as Admin Customers).
+ * @param {object} body
+ * @returns {Promise<object>}
+ */
+async function createCustomer(body = {}) {
+  const name = String(body.name || '').trim();
+  if (!name) {
+    const err = new Error('Name is required');
+    err.statusCode = 400;
+    throw err;
+  }
+  const emailRaw = body.email != null ? String(body.email).trim() : '';
+  if (emailRaw && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)) {
+    const err = new Error('Invalid email');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const platformTenantId = await getPlatformTenantId();
+  const customer = await Customer.create({
+    tenantId: platformTenantId,
+    name,
+    company: body.company != null ? String(body.company).trim() || null : null,
+    email: emailRaw || null,
+    phone: body.phone != null ? String(body.phone).trim() || null : null,
+    address: body.address != null ? String(body.address).trim() || null : null,
+    city: body.city != null ? String(body.city).trim() || null : null,
+    state: body.state != null ? String(body.state).trim() || null : null,
+    notes: body.notes != null ? String(body.notes).trim() || null : null,
+  });
+
+  return {
+    id: customer.id,
+    name: customer.name,
+    company: customer.company,
+    email: customer.email,
+    phone: customer.phone,
+  };
+}
+
+/**
+ * Superadmin-configured inbox for reveal OTP codes.
+ * @returns {string}
+ */
+function getOpsSecretEmail() {
+  const email = String(process.env[OPS_ASSETS_SECRET_EMAIL] || '').trim();
+  if (!email || !email.includes('@')) {
+    const err = new Error(
+      `Server is missing ${OPS_ASSETS_SECRET_EMAIL}. Configure the secret inbox before revealing ops passwords.`
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+  return email;
+}
 
 /**
  * @param {string|null|undefined} plain
@@ -97,6 +219,7 @@ function normalizeAssetPayload(body = {}) {
     notes: body.notes != null ? String(body.notes) : null,
     details: { ...details, ...extras },
     password: body.password !== undefined ? body.password : undefined,
+    customerId: body.customerId !== undefined ? body.customerId : undefined,
   };
 }
 
@@ -105,10 +228,9 @@ async function listAssets({ type, status, search, expiryWindow } = {}) {
   if (type && ASSET_TYPES.has(String(type).toLowerCase())) {
     where.type = String(type).toLowerCase();
   }
+  // Default: show all (active + archived). Pass status=active|archived to filter.
   if (status === 'active' || status === 'archived') {
     where.status = status;
-  } else {
-    where.status = 'active';
   }
   if (search && String(search).trim()) {
     const q = `%${String(search).trim()}%`;
@@ -143,8 +265,10 @@ async function listAssets({ type, status, search, expiryWindow } = {}) {
 
   const rows = await PlatformOpsAsset.findAll({
     where,
+    include: [CUSTOMER_INCLUDE],
     order: [
-      [sequelize.literal('CASE WHEN "expiresOn" IS NULL THEN 1 ELSE 0 END'), 'ASC'],
+      [sequelize.literal('CASE WHEN "PlatformOpsAsset"."status" = \'archived\' THEN 1 ELSE 0 END'), 'ASC'],
+      [sequelize.literal('CASE WHEN "PlatformOpsAsset"."expiresOn" IS NULL THEN 1 ELSE 0 END'), 'ASC'],
       ['expiresOn', 'ASC'],
       ['name', 'ASC'],
     ],
@@ -153,12 +277,12 @@ async function listAssets({ type, status, search, expiryWindow } = {}) {
 }
 
 async function getAssetById(id) {
-  const asset = await PlatformOpsAsset.findByPk(id);
-  return asset;
+  return PlatformOpsAsset.findByPk(id, { include: [CUSTOMER_INCLUDE] });
 }
 
 async function createAsset(body, userId) {
   const payload = normalizeAssetPayload(body);
+  const customerId = await resolveCustomerId(payload.customerId);
   const passwordEncrypted =
     payload.password !== undefined ? encryptPassword(payload.password) : null;
   const asset = await PlatformOpsAsset.create({
@@ -171,10 +295,12 @@ async function createAsset(body, userId) {
     passwordEncrypted,
     details: payload.details,
     notes: payload.notes,
+    customerId: customerId === undefined ? null : customerId,
     createdBy: userId || null,
     updatedBy: userId || null,
   });
-  return toPublicAsset(asset);
+  const full = await getAssetById(asset.id);
+  return toPublicAsset(full || asset);
 }
 
 async function updateAsset(id, body, userId) {
@@ -195,8 +321,10 @@ async function updateAsset(id, body, userId) {
     provider: body.provider,
     vendor: body.vendor,
     password: body.password,
+    customerId: body.customerId !== undefined ? body.customerId : asset.customerId,
   };
   const payload = normalizeAssetPayload(merged);
+  const customerId = await resolveCustomerId(payload.customerId);
 
   asset.type = payload.type;
   asset.name = payload.name;
@@ -207,6 +335,9 @@ async function updateAsset(id, body, userId) {
   asset.notes = payload.notes;
   asset.details = payload.details;
   asset.updatedBy = userId || null;
+  if (customerId !== undefined) {
+    asset.customerId = customerId;
+  }
   if (payload.password !== undefined) {
     if (payload.password === '' || payload.password == null) {
       asset.passwordEncrypted = null;
@@ -215,7 +346,8 @@ async function updateAsset(id, body, userId) {
     }
   }
   await asset.save();
-  return toPublicAsset(asset);
+  const full = await getAssetById(asset.id);
+  return toPublicAsset(full || asset);
 }
 
 async function archiveAsset(id, userId) {
@@ -285,9 +417,9 @@ async function logReveal({ assetId, requestedBy, method, success }) {
 }
 
 /**
- * Start a reveal challenge (email OTP) or acknowledge password method readiness.
+ * Start a reveal challenge: send OTP to the configured secret ops email.
  */
-async function startRevealChallenge({ assetId, userId, method, userEmail, userName }) {
+async function startRevealChallenge({ assetId, userId, userName }) {
   const asset = await PlatformOpsAsset.findByPk(assetId);
   if (!asset || asset.status === 'archived') {
     const err = new Error('Asset not found');
@@ -300,11 +432,7 @@ async function startRevealChallenge({ assetId, userId, method, userEmail, userNa
     throw err;
   }
 
-  const normalizedMethod = method === 'email_otp' ? 'email_otp' : 'password';
-  if (normalizedMethod === 'password') {
-    return { method: 'password', ready: true };
-  }
-
+  const secretEmail = getOpsSecretEmail();
   const code = String(crypto.randomInt(100000, 999999));
   const codeHash = await bcrypt.hash(code, 10);
   const expiresAt = new Date(Date.now() + OTP_TTL_MS);
@@ -327,20 +455,21 @@ async function startRevealChallenge({ assetId, userId, method, userEmail, userNa
     .replace(/>/g, '&gt;');
   const html = `
     <h2>IT Ops secret reveal</h2>
-    <p>Hi ${safeUser},</p>
-    <p>Your one-time code to reveal the password for <strong>${safeName}</strong> is:</p>
+    <p>A reveal was requested by <strong>${safeUser}</strong>.</p>
+    <p>One-time code to reveal the password for <strong>${safeName}</strong>:</p>
     <p style="font-size:24px;letter-spacing:4px;font-weight:bold;">${code}</p>
-    <p>This code expires in 10 minutes. If you did not request this, ignore this email.</p>
+    <p>This code expires in 10 minutes. If you did not expect this, ignore this email.</p>
   `.trim();
   const text = [
     'IT Ops secret reveal',
+    `Requested by: ${userName || 'Admin'}`,
     `Asset: ${asset.name}`,
     `Code: ${code}`,
     'Expires in 10 minutes.',
   ].join('\n');
 
   const sendResult = await emailService.sendPlatformMessage(
-    userEmail,
+    secretEmail,
     subject,
     html,
     text,
@@ -360,14 +489,14 @@ async function startRevealChallenge({ assetId, userId, method, userEmail, userNa
     method: 'email_otp',
     ready: true,
     expiresAt,
-    emailedTo: emailService.maskEmail(userEmail),
+    emailedTo: emailService.maskEmail(secretEmail),
   };
 }
 
 /**
- * Confirm step-up and return plaintext secret once.
+ * Confirm email OTP and return plaintext secret once.
  */
-async function confirmReveal({ assetId, userId, method, password, code }) {
+async function confirmReveal({ assetId, userId, code }) {
   const asset = await PlatformOpsAsset.findByPk(assetId);
   if (!asset || asset.status === 'archived') {
     const err = new Error('Asset not found');
@@ -380,7 +509,7 @@ async function confirmReveal({ assetId, userId, method, password, code }) {
     throw err;
   }
 
-  const normalizedMethod = method === 'email_otp' ? 'email_otp' : 'password';
+  const method = 'email_otp';
   const user = await User.findByPk(userId);
   if (!user) {
     const err = new Error('User not found');
@@ -388,55 +517,39 @@ async function confirmReveal({ assetId, userId, method, password, code }) {
     throw err;
   }
 
-  let ok = false;
   try {
-    if (normalizedMethod === 'password') {
-      if (!password) {
-        const err = new Error('Password is required');
-        err.statusCode = 400;
-        throw err;
-      }
-      ok = await user.comparePassword(password);
-      if (!ok) {
-        await logReveal({ assetId, requestedBy: userId, method: normalizedMethod, success: false });
-        const err = new Error('Incorrect password');
-        err.statusCode = 401;
-        throw err;
-      }
-    } else {
-      if (!code) {
-        const err = new Error('Code is required');
-        err.statusCode = 400;
-        throw err;
-      }
-      const challenge = await PlatformOpsRevealChallenge.findOne({
-        where: {
-          assetId,
-          userId,
-          consumedAt: null,
-          expiresAt: { [Op.gt]: new Date() },
-        },
-        order: [['createdAt', 'DESC']],
-      });
-      if (!challenge) {
-        await logReveal({ assetId, requestedBy: userId, method: normalizedMethod, success: false });
-        const err = new Error('Reveal code expired or not found. Request a new code.');
-        err.statusCode = 400;
-        throw err;
-      }
-      ok = await bcrypt.compare(String(code).trim(), challenge.codeHash);
-      if (!ok) {
-        await logReveal({ assetId, requestedBy: userId, method: normalizedMethod, success: false });
-        const err = new Error('Invalid reveal code');
-        err.statusCode = 401;
-        throw err;
-      }
-      challenge.consumedAt = new Date();
-      await challenge.save();
+    if (!code) {
+      const err = new Error('Code is required');
+      err.statusCode = 400;
+      throw err;
     }
+    const challenge = await PlatformOpsRevealChallenge.findOne({
+      where: {
+        assetId,
+        userId,
+        consumedAt: null,
+        expiresAt: { [Op.gt]: new Date() },
+      },
+      order: [['createdAt', 'DESC']],
+    });
+    if (!challenge) {
+      await logReveal({ assetId, requestedBy: userId, method, success: false });
+      const err = new Error('Reveal code expired or not found. Request a new code.');
+      err.statusCode = 400;
+      throw err;
+    }
+    const ok = await bcrypt.compare(String(code).trim(), challenge.codeHash);
+    if (!ok) {
+      await logReveal({ assetId, requestedBy: userId, method, success: false });
+      const err = new Error('Invalid reveal code');
+      err.statusCode = 401;
+      throw err;
+    }
+    challenge.consumedAt = new Date();
+    await challenge.save();
 
     const secret = decryptPassword(asset.passwordEncrypted);
-    await logReveal({ assetId, requestedBy: userId, method: normalizedMethod, success: true });
+    await logReveal({ assetId, requestedBy: userId, method, success: true });
     return {
       secret,
       expiresAt: new Date(Date.now() + REVEAL_TTL_MS),
@@ -445,7 +558,7 @@ async function confirmReveal({ assetId, userId, method, password, code }) {
     };
   } catch (err) {
     if (err.statusCode) throw err;
-    await logReveal({ assetId, requestedBy: userId, method: normalizedMethod, success: false }).catch(() => {});
+    await logReveal({ assetId, requestedBy: userId, method, success: false }).catch(() => {});
     throw err;
   }
 }
@@ -461,9 +574,11 @@ async function listReveals(assetId) {
 
 module.exports = {
   OPS_ASSETS_CREDENTIALS_ENCRYPTION_KEY,
+  OPS_ASSETS_SECRET_EMAIL,
   ASSET_TYPES,
   encryptPassword,
   decryptPassword,
+  getOpsSecretEmail,
   toPublicAsset,
   normalizeAssetPayload,
   listAssets,
@@ -472,6 +587,8 @@ module.exports = {
   updateAsset,
   archiveAsset,
   getStats,
+  listCustomerOptions,
+  createCustomer,
   startRevealChallenge,
   confirmReveal,
   listReveals,

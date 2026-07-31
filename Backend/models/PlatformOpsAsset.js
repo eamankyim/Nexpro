@@ -47,6 +47,11 @@ const PlatformOpsAsset = sequelize.define('PlatformOpsAsset', {
     type: DataTypes.TEXT,
     allowNull: true,
   },
+  customerId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: { model: 'customers', key: 'id' },
+  },
   createdBy: {
     type: DataTypes.UUID,
     allowNull: true,

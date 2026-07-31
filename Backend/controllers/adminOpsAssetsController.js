@@ -32,6 +32,35 @@ exports.getOpsStats = async (req, res, next) => {
 };
 
 /**
+ * Platform customers for linking to ops assets.
+ * @route GET /api/admin/ops/customers
+ */
+exports.listOpsCustomers = async (req, res, next) => {
+  try {
+    const data = await platformOpsAssetsService.listCustomerOptions();
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Create a platform customer from IT Ops.
+ * @route POST /api/admin/ops/customers
+ */
+exports.createOpsCustomer = async (req, res, next) => {
+  try {
+    const data = await platformOpsAssetsService.createCustomer(req.body);
+    res.status(201).json({ success: true, data });
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({ success: false, message: error.message });
+    }
+    next(error);
+  }
+};
+
+/**
  * Create asset.
  * @route POST /api/admin/ops/assets
  */
@@ -83,17 +112,14 @@ exports.archiveOpsAsset = async (req, res, next) => {
 };
 
 /**
- * Start step-up reveal challenge.
+ * Start step-up reveal challenge (sends OTP to OPS_ASSETS_SECRET_EMAIL).
  * @route POST /api/admin/ops/assets/:id/reveal/challenge
  */
 exports.challengeOpsReveal = async (req, res, next) => {
   try {
-    const method = req.body?.method === 'email_otp' ? 'email_otp' : 'password';
     const data = await platformOpsAssetsService.startRevealChallenge({
       assetId: req.params.id,
       userId: req.user?.id,
-      method,
-      userEmail: req.user?.email,
       userName: req.user?.name,
     });
     res.status(200).json({ success: true, data });
@@ -106,17 +132,14 @@ exports.challengeOpsReveal = async (req, res, next) => {
 };
 
 /**
- * Confirm step-up and return plaintext secret.
+ * Confirm email OTP and return plaintext secret.
  * @route POST /api/admin/ops/assets/:id/reveal/confirm
  */
 exports.confirmOpsReveal = async (req, res, next) => {
   try {
-    const method = req.body?.method === 'email_otp' ? 'email_otp' : 'password';
     const data = await platformOpsAssetsService.confirmReveal({
       assetId: req.params.id,
       userId: req.user?.id,
-      method,
-      password: req.body?.password,
       code: req.body?.code,
     });
     res.status(200).json({ success: true, data });

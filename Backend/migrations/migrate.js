@@ -454,6 +454,9 @@ const migrate = async () => {
     const createPlatformOpsAssets = require('./create-platform-ops-assets');
     await createPlatformOpsAssets({ closeConnection: false });
 
+    const addCustomerIdToPlatformOpsAssets = require('./add-customer-id-to-platform-ops-assets');
+    await addCustomerIdToPlatformOpsAssets({ closeConnection: false });
+
     console.log('\n✅ Database migration completed successfully!');
     console.log('📊 Incremental schema updates applied.');
     console.log('👤 User model has been enhanced with new fields.');

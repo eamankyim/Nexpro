@@ -130,6 +130,8 @@ SystemHealthIssue.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 User.hasMany(PlatformOpsAsset, { foreignKey: 'createdBy', as: 'opsAssetsCreated' });
 PlatformOpsAsset.belongsTo(User, { foreignKey: 'createdBy', as: 'creator' });
 PlatformOpsAsset.belongsTo(User, { foreignKey: 'updatedBy', as: 'updater' });
+PlatformOpsAsset.belongsTo(Customer, { foreignKey: 'customerId', as: 'customer' });
+Customer.hasMany(PlatformOpsAsset, { foreignKey: 'customerId', as: 'opsAssets' });
 PlatformOpsAsset.hasMany(PlatformOpsSecretReveal, { foreignKey: 'assetId', as: 'reveals' });
 PlatformOpsSecretReveal.belongsTo(PlatformOpsAsset, { foreignKey: 'assetId', as: 'asset' });
 PlatformOpsSecretReveal.belongsTo(User, { foreignKey: 'requestedBy', as: 'requester' });

@@ -115,6 +115,8 @@ const {
 const {
   listOpsAssets,
   getOpsStats,
+  listOpsCustomers,
+  createOpsCustomer,
   createOpsAsset,
   updateOpsAsset,
   archiveOpsAsset,
@@ -482,6 +484,8 @@ router.post(
  * IT Ops vault (domains, servers, services) — platform-admin only
  */
 router.get('/ops/stats', requirePlatformAdminPermission('ops.view'), getOpsStats);
+router.get('/ops/customers', requirePlatformAdminPermission('ops.view'), listOpsCustomers);
+router.post('/ops/customers', requirePlatformAdminPermission('ops.view'), createOpsCustomer);
 router.get('/ops/assets', requirePlatformAdminPermission('ops.view'), listOpsAssets);
 router.post('/ops/assets', requirePlatformAdminPermission('ops.view'), createOpsAsset);
 router.patch('/ops/assets/:id', requirePlatformAdminPermission('ops.view'), updateOpsAsset);

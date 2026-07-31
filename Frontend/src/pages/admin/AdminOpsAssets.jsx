@@ -14,6 +14,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -45,6 +46,7 @@ import {
   Globe,
   Archive,
   RefreshCw,
+  UserPlus,
 } from 'lucide-react';
 
 const ASSET_TYPES = [
@@ -66,6 +68,14 @@ const assetSchema = z.object({
   provider: z.string().optional().or(z.literal('')),
   hostOrIp: z.string().optional().or(z.literal('')),
   vendor: z.string().optional().or(z.literal('')),
+  customerId: z.string().optional().or(z.literal('')),
+});
+
+const quickCustomerSchema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  company: z.string().optional().or(z.literal('')),
+  email: z.string().email('Invalid email').optional().or(z.literal('')),
+  phone: z.string().optional().or(z.literal('')),
 });
 
 const typeBadgeClass = {
@@ -75,12 +85,65 @@ const typeBadgeClass = {
   other: 'bg-muted text-foreground border-border',
 };
 
+/** Days ahead that count as “expired soon” (inclusive of today). */
+const EXPIRED_SOON_DAYS = 30;
+
+/**
+ * Derive display status from expiry date.
+ * @param {string|null|undefined} expiresOn
+ * @returns {{ key: 'active' | 'expired_soon' | 'expired', label: string, className: string }}
+ */
+const getExpiryStatus = (expiresOn) => {
+  if (!expiresOn) {
+    return {
+      key: 'active',
+      label: 'Active',
+      className: 'bg-green-50 text-green-800 border-green-200',
+    };
+  }
+  const today = dayjs().startOf('day');
+  const expiry = dayjs(expiresOn).startOf('day');
+  if (expiry.isBefore(today)) {
+    return {
+      key: 'expired',
+      label: 'Expired',
+      className: 'bg-red-50 text-red-800 border-red-200',
+    };
+  }
+  if (expiry.diff(today, 'day') <= EXPIRED_SOON_DAYS) {
+    return {
+      key: 'expired_soon',
+      label: 'Expired soon',
+      className: 'bg-orange-50 text-orange-800 border-orange-200',
+    };
+  }
+  return {
+    key: 'active',
+    label: 'Active',
+    className: 'bg-green-50 text-green-800 border-green-200',
+  };
+};
+
+/**
+ * @param {{ company?: string|null, name?: string|null }} customer
+ * @returns {string}
+ */
+const formatCustomerLabel = (customer) => {
+  if (!customer) return '';
+  const company = String(customer.company || '').trim();
+  const name = String(customer.name || '').trim();
+  if (company && name && company !== name) return `${company} (${name})`;
+  return company || name || 'Customer';
+};
+
 const AdminOpsAssets = () => {
   const { hasPermission, loading: permissionsLoading } = usePlatformAdminPermissions();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState(null);
   const [assets, setAssets] = useState([]);
+  const [customers, setCustomers] = useState([]);
   const [typeFilter, setTypeFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [expiryFilter, setExpiryFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -89,12 +152,13 @@ const AdminOpsAssets = () => {
   const [saving, setSaving] = useState(false);
   const [revealOpen, setRevealOpen] = useState(false);
   const [revealAsset, setRevealAsset] = useState(null);
-  const [revealMethod, setRevealMethod] = useState('password');
-  const [revealPassword, setRevealPassword] = useState('');
   const [revealCode, setRevealCode] = useState('');
   const [revealSecret, setRevealSecret] = useState(null);
   const [revealBusy, setRevealBusy] = useState(false);
   const [codeSent, setCodeSent] = useState(false);
+  const [emailedTo, setEmailedTo] = useState('');
+  const [customerModalOpen, setCustomerModalOpen] = useState(false);
+  const [customerSaving, setCustomerSaving] = useState(false);
 
   const form = useForm({
     resolver: zodResolver(assetSchema),
@@ -110,6 +174,17 @@ const AdminOpsAssets = () => {
       provider: '',
       hostOrIp: '',
       vendor: '',
+      customerId: '',
+    },
+  });
+
+  const customerForm = useForm({
+    resolver: zodResolver(quickCustomerSchema),
+    defaultValues: {
+      name: '',
+      company: '',
+      email: '',
+      phone: '',
     },
   });
 
@@ -125,21 +200,24 @@ const AdminOpsAssets = () => {
     try {
       const params = {};
       if (typeFilter !== 'all') params.type = typeFilter;
+      if (statusFilter !== 'all') params.status = statusFilter;
       if (expiryFilter !== 'all') params.expiryWindow = expiryFilter;
       if (debouncedSearch) params.search = debouncedSearch;
-      const [statsRes, assetsRes] = await Promise.all([
+      const [statsRes, assetsRes, customersRes] = await Promise.all([
         adminService.getOpsStats(),
         adminService.getOpsAssets(params),
+        adminService.getOpsCustomers(),
       ]);
       if (statsRes?.success) setStats(statsRes.data);
       if (assetsRes?.success) setAssets(assetsRes.data || []);
+      if (customersRes?.success) setCustomers(customersRes.data || []);
     } catch (error) {
       console.error('Failed to load IT Ops assets', error);
       showError(null, 'Failed to load IT Ops assets');
     } finally {
       setLoading(false);
     }
-  }, [typeFilter, expiryFilter, debouncedSearch]);
+  }, [typeFilter, statusFilter, expiryFilter, debouncedSearch]);
 
   useEffect(() => {
     if (!permissionsLoading && hasPermission('ops.view')) {
@@ -161,6 +239,7 @@ const AdminOpsAssets = () => {
       provider: '',
       hostOrIp: '',
       vendor: '',
+      customerId: '',
     });
     setEditorOpen(true);
   };
@@ -179,6 +258,7 @@ const AdminOpsAssets = () => {
       provider: asset.details?.provider || '',
       hostOrIp: asset.details?.hostOrIp || '',
       vendor: asset.details?.vendor || '',
+      customerId: asset.customerId || asset.customer?.id || '',
     });
     setEditorOpen(true);
   };
@@ -197,6 +277,7 @@ const AdminOpsAssets = () => {
         provider: values.provider || undefined,
         hostOrIp: values.hostOrIp || undefined,
         vendor: values.vendor || undefined,
+        customerId: values.customerId || null,
       };
       if (values.password) payload.password = values.password;
       if (editing) {
@@ -226,13 +307,46 @@ const AdminOpsAssets = () => {
     }
   };
 
+  const openCreateCustomer = () => {
+    customerForm.reset({ name: '', company: '', email: '', phone: '' });
+    setCustomerModalOpen(true);
+  };
+
+  const onCreateCustomer = async (values) => {
+    setCustomerSaving(true);
+    try {
+      const res = await adminService.createOpsCustomer({
+        name: values.name,
+        company: values.company || undefined,
+        email: values.email || undefined,
+        phone: values.phone || undefined,
+      });
+      if (res?.success && res.data?.id) {
+        const created = res.data;
+        setCustomers((prev) => {
+          const next = [...prev.filter((c) => c.id !== created.id), created];
+          next.sort((a, b) =>
+            formatCustomerLabel(a).localeCompare(formatCustomerLabel(b), undefined, { sensitivity: 'base' })
+          );
+          return next;
+        });
+        form.setValue('customerId', created.id);
+        setCustomerModalOpen(false);
+        showSuccess('Customer created and linked');
+      }
+    } catch (error) {
+      showError(error?.response?.data?.message || null, 'Failed to create customer');
+    } finally {
+      setCustomerSaving(false);
+    }
+  };
+
   const openReveal = (asset) => {
     setRevealAsset(asset);
-    setRevealMethod('password');
-    setRevealPassword('');
     setRevealCode('');
     setRevealSecret(null);
     setCodeSent(false);
+    setEmailedTo('');
     setRevealOpen(true);
   };
 
@@ -240,11 +354,11 @@ const AdminOpsAssets = () => {
     if (!revealAsset) return;
     setRevealBusy(true);
     try {
-      const res = await adminService.challengeOpsReveal(revealAsset.id, { method: 'email_otp' });
+      const res = await adminService.challengeOpsReveal(revealAsset.id, {});
       if (res?.success) {
         setCodeSent(true);
-        setRevealMethod('email_otp');
-        showSuccess(`Code sent to ${res.data?.emailedTo || 'your email'}`);
+        setEmailedTo(res.data?.emailedTo || '');
+        showSuccess(`Code sent to ${res.data?.emailedTo || 'the secret email'}`);
       }
     } catch (error) {
       showError(error?.response?.data?.message || null, 'Failed to send reveal code');
@@ -257,13 +371,8 @@ const AdminOpsAssets = () => {
     if (!revealAsset) return;
     setRevealBusy(true);
     try {
-      if (revealMethod === 'password') {
-        await adminService.challengeOpsReveal(revealAsset.id, { method: 'password' });
-      }
       const res = await adminService.confirmOpsReveal(revealAsset.id, {
-        method: revealMethod,
-        password: revealMethod === 'password' ? revealPassword : undefined,
-        code: revealMethod === 'email_otp' ? revealCode : undefined,
+        code: revealCode,
       });
       if (res?.success) {
         setRevealSecret(res.data?.secret || '');
@@ -376,6 +485,18 @@ const AdminOpsAssets = () => {
                 </SelectContent>
               </Select>
             </div>
+            <div className="w-full sm:w-48">
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All assets</SelectItem>
+                  <SelectItem value="active">Active only</SelectItem>
+                  <SelectItem value="archived">Archived only</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <div className="w-full sm:w-52">
               <Select value={expiryFilter} onValueChange={setExpiryFilter}>
                 <SelectTrigger>
@@ -415,7 +536,9 @@ const AdminOpsAssets = () => {
                 <thead>
                   <tr className="border-b border-gray-200 text-left text-muted-foreground">
                     <th className="py-2 pr-3 font-medium">Name</th>
+                    <th className="py-2 pr-3 font-medium">Customer</th>
                     <th className="py-2 pr-3 font-medium">Type</th>
+                    <th className="py-2 pr-3 font-medium">Status</th>
                     <th className="py-2 pr-3 font-medium">Expires</th>
                     <th className="py-2 pr-3 font-medium">Username</th>
                     <th className="py-2 pr-3 font-medium">Password</th>
@@ -423,7 +546,10 @@ const AdminOpsAssets = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((asset) => (
+                  {rows.map((asset) => {
+                    const expiryStatus = getExpiryStatus(asset.expiresOn);
+                    const isArchived = asset.status === 'archived';
+                    return (
                     <tr key={asset.id} className="border-b border-gray-100 last:border-0">
                       <td className="py-3 pr-3">
                         <div className="font-medium text-foreground">{asset.name}</div>
@@ -434,13 +560,48 @@ const AdminOpsAssets = () => {
                         ) : null}
                       </td>
                       <td className="py-3 pr-3">
+                        {asset.customer ? (
+                          <div>
+                            <div className="text-foreground">
+                              {asset.customer.company || asset.customer.name}
+                            </div>
+                            {asset.customer.company && asset.customer.name && asset.customer.company !== asset.customer.name ? (
+                              <div className="text-xs text-muted-foreground mt-0.5">{asset.customer.name}</div>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 pr-3">
                         <Badge variant="outline" className={typeBadgeClass[asset.type] || ''}>
                           {asset.type}
                         </Badge>
                       </td>
                       <td className="py-3 pr-3">
+                        <div className="flex flex-wrap gap-1.5">
+                          {isArchived ? (
+                            <Badge variant="outline" className="bg-muted text-muted-foreground border-border">
+                              Archived
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className={expiryStatus.className}>
+                              {expiryStatus.label}
+                            </Badge>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 pr-3">
                         {asset.expiresOn ? (
-                          <span className={dayjs(asset.expiresOn).isBefore(dayjs(), 'day') ? 'text-red-700' : ''}>
+                          <span
+                            className={
+                              !isArchived && expiryStatus.key === 'expired'
+                                ? 'text-red-700'
+                                : !isArchived && expiryStatus.key === 'expired_soon'
+                                  ? 'text-orange-700'
+                                  : ''
+                            }
+                          >
                             {dayjs(asset.expiresOn).format('MMM D, YYYY')}
                           </span>
                         ) : (
@@ -462,14 +623,17 @@ const AdminOpsAssets = () => {
                           <Button type="button" size="sm" variant="secondaryStroke" onClick={() => openEdit(asset)}>
                             Edit
                           </Button>
-                          <Button type="button" size="sm" variant="secondaryStroke" onClick={() => handleArchive(asset)}>
-                            <Archive className="h-4 w-4 mr-1" />
-                            Archive
-                          </Button>
+                          {!isArchived ? (
+                            <Button type="button" size="sm" variant="secondaryStroke" onClick={() => handleArchive(asset)}>
+                              <Archive className="h-4 w-4 mr-1" />
+                              Archive
+                            </Button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -478,75 +642,47 @@ const AdminOpsAssets = () => {
       </Card>
 
       <Dialog open={editorOpen} onOpenChange={setEditorOpen}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="max-w-lg [--modal-w:min(92vw,32rem)]">
+          <DialogHeader className="pb-3 sm:pb-4">
             <DialogTitle>{editing ? 'Edit asset' : 'Add asset'}</DialogTitle>
             <DialogDescription>
               Store domains, servers, and services for the platform team.
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-              <FormField
-                control={form.control}
-                name="type"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Type</FormLabel>
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {ASSET_TYPES.map((t) => (
-                          <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="name"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Name</FormLabel>
-                    <FormControl>
-                      <Input placeholder="e.g. africanbusinesssuite.com" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              {watchType === 'domain' && (
-                <FormField
-                  control={form.control}
-                  name="registrar"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Registrar (optional)</FormLabel>
-                      <FormControl>
-                        <Input placeholder="Namecheap, GoDaddy…" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
-              {watchType === 'server' && (
-                <>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col flex-1 min-h-0">
+              <DialogBody>
+                <div className="space-y-5">
                   <FormField
                     control={form.control}
-                    name="provider"
+                    name="type"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Provider (optional)</FormLabel>
+                        <FormLabel>Type</FormLabel>
+                        <Select value={field.value} onValueChange={field.onChange}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {ASSET_TYPES.map((t) => (
+                              <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="name"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Name</FormLabel>
                         <FormControl>
-                          <Input placeholder="Google Cloud, Contabo…" {...field} />
+                          <Input placeholder="e.g. africanbusinesssuite.com" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -554,101 +690,172 @@ const AdminOpsAssets = () => {
                   />
                   <FormField
                     control={form.control}
-                    name="hostOrIp"
+                    name="customerId"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Host / IP (optional)</FormLabel>
+                        <FormLabel>Customer (optional)</FormLabel>
+                        <div className="flex gap-2">
+                          <Select
+                            value={field.value || 'none'}
+                            onValueChange={(value) => field.onChange(value === 'none' ? '' : value)}
+                          >
+                            <FormControl>
+                              <SelectTrigger className="flex-1">
+                                <SelectValue placeholder="Link a customer" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="none">No customer</SelectItem>
+                              {customers.map((customer) => (
+                                <SelectItem key={customer.id} value={customer.id}>
+                                  {formatCustomerLabel(customer)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            type="button"
+                            variant="secondaryStroke"
+                            className="shrink-0"
+                            onClick={openCreateCustomer}
+                          >
+                            <UserPlus className="h-4 w-4 mr-1" />
+                            New
+                          </Button>
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  {watchType === 'domain' && (
+                    <FormField
+                      control={form.control}
+                      name="registrar"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Registrar (optional)</FormLabel>
+                          <FormControl>
+                            <Input placeholder="Namecheap, GoDaddy…" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+                  {watchType === 'server' && (
+                    <>
+                      <FormField
+                        control={form.control}
+                        name="provider"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Provider (optional)</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Google Cloud, Contabo…" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="hostOrIp"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Host / IP (optional)</FormLabel>
+                            <FormControl>
+                              <Input placeholder="203.0.113.10" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </>
+                  )}
+                  {watchType === 'service' && (
+                    <FormField
+                      control={form.control}
+                      name="vendor"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Vendor (optional)</FormLabel>
+                          <FormControl>
+                            <Input placeholder="SendGrid, Mnotify…" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+                  <FormField
+                    control={form.control}
+                    name="expiresOn"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Expires on (optional)</FormLabel>
                         <FormControl>
-                          <Input placeholder="203.0.113.10" {...field} />
+                          <Input type="date" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
-                </>
-              )}
-              {watchType === 'service' && (
-                <FormField
-                  control={form.control}
-                  name="vendor"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Vendor (optional)</FormLabel>
-                      <FormControl>
-                        <Input placeholder="SendGrid, Mnotify…" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
-              <FormField
-                control={form.control}
-                name="expiresOn"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Expires on (optional)</FormLabel>
-                    <FormControl>
-                      <Input type="date" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="loginUrl"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Login URL (optional)</FormLabel>
-                    <FormControl>
-                      <Input placeholder="https://…" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="username"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Username (optional)</FormLabel>
-                    <FormControl>
-                      <Input {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="password"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      {editing?.hasPassword ? 'Password (optional — leave blank to keep)' : 'Password (optional)'}
-                    </FormLabel>
-                    <FormControl>
-                      <Input type="password" autoComplete="new-password" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="notes"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Notes (optional)</FormLabel>
-                    <FormControl>
-                      <Textarea rows={3} {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                  <FormField
+                    control={form.control}
+                    name="loginUrl"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Login URL (optional)</FormLabel>
+                        <FormControl>
+                          <Input placeholder="https://…" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="username"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Username (optional)</FormLabel>
+                        <FormControl>
+                          <Input {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="password"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          {editing?.hasPassword ? 'Password (optional — leave blank to keep)' : 'Password (optional)'}
+                        </FormLabel>
+                        <FormControl>
+                          <Input type="password" autoComplete="new-password" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="notes"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Notes (optional)</FormLabel>
+                        <FormControl>
+                          <Textarea rows={3} {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </DialogBody>
               <DialogFooter>
                 <Button type="button" variant="secondaryStroke" onClick={() => setEditorOpen(false)}>
                   Cancel
@@ -662,32 +869,114 @@ const AdminOpsAssets = () => {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={customerModalOpen} onOpenChange={setCustomerModalOpen}>
+        <DialogContent className="max-w-md [--modal-w:min(92vw,28rem)]">
+          <DialogHeader className="pb-3 sm:pb-4">
+            <DialogTitle>New customer</DialogTitle>
+            <DialogDescription>
+              Create a customer in the Customers folder and link them to this asset.
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...customerForm}>
+            <form onSubmit={customerForm.handleSubmit(onCreateCustomer)} className="flex flex-col flex-1 min-h-0">
+              <DialogBody>
+                <div className="space-y-5">
+                  <FormField
+                    control={customerForm.control}
+                    name="name"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Name</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Customer name" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={customerForm.control}
+                    name="company"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Company (optional)</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Company name" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={customerForm.control}
+                    name="email"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Email (optional)</FormLabel>
+                        <FormControl>
+                          <Input type="email" placeholder="email@example.com" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={customerForm.control}
+                    name="phone"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Phone (optional)</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Phone number" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </DialogBody>
+              <DialogFooter>
+                <Button type="button" variant="secondaryStroke" onClick={() => setCustomerModalOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" loading={customerSaving}>
+                  Create customer
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
       <Dialog
         open={revealOpen}
         onOpenChange={(open) => {
           setRevealOpen(open);
           if (!open) {
             setRevealSecret(null);
-            setRevealPassword('');
             setRevealCode('');
+            setCodeSent(false);
+            setEmailedTo('');
           }
         }}
       >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
+        <DialogContent className="max-w-md [--modal-w:min(92vw,28rem)]">
+          <DialogHeader className="pb-3 sm:pb-4">
             <DialogTitle>Reveal password</DialogTitle>
             <DialogDescription>
               {revealAsset
-                ? `Confirm your identity to view the password for ${revealAsset.name}.`
-                : 'Confirm your identity to view this password.'}
+                ? `A one-time code will be sent to the secret ops email to reveal the password for ${revealAsset.name}.`
+                : 'A one-time code will be sent to the secret ops email.'}
             </DialogDescription>
           </DialogHeader>
 
           {revealSecret != null ? (
-            <div className="space-y-3">
-              <div className="rounded-md border border-border bg-muted px-3 py-2 font-mono text-sm break-all">
-                {revealSecret || '(empty)'}
-              </div>
+            <>
+              <DialogBody>
+                <div className="rounded-md border border-border bg-muted px-3 py-2 font-mono text-sm break-all">
+                  {revealSecret || '(empty)'}
+                </div>
+              </DialogBody>
               <DialogFooter>
                 <Button type="button" variant="secondaryStroke" onClick={() => setRevealOpen(false)}>
                   Close
@@ -696,60 +985,41 @@ const AdminOpsAssets = () => {
                   Copy
                 </Button>
               </DialogFooter>
-            </div>
+            </>
           ) : (
-            <div className="space-y-4">
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={revealMethod === 'password' ? 'default' : 'secondaryStroke'}
-                  onClick={() => setRevealMethod('password')}
-                >
-                  Account password
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={revealMethod === 'email_otp' ? 'default' : 'secondaryStroke'}
-                  onClick={() => setRevealMethod('email_otp')}
-                >
-                  Email code
-                </Button>
-              </div>
-
-              {revealMethod === 'password' ? (
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Your account password</label>
-                  <Input
-                    type="password"
-                    autoComplete="current-password"
-                    value={revealPassword}
-                    onChange={(e) => setRevealPassword(e.target.value)}
-                  />
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="flex gap-2">
+            <>
+              <DialogBody>
+                <div className="space-y-5">
+                  <div className="space-y-2">
                     <Button
                       type="button"
                       variant="secondaryStroke"
                       loading={revealBusy}
                       onClick={sendRevealCode}
                     >
-                      {codeSent ? 'Resend code' : 'Send code to my email'}
+                      {codeSent ? 'Resend code' : 'Send code to secret email'}
                     </Button>
+                    {codeSent && emailedTo ? (
+                      <p className="text-xs text-muted-foreground">
+                        Code sent to {emailedTo}. Check that inbox, then enter the code below.
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        The code is emailed to the configured secret ops inbox (OPS_ASSETS_SECRET_EMAIL), not your login email.
+                      </p>
+                    )}
                   </div>
-                  <label className="text-sm font-medium">One-time code</label>
-                  <Input
-                    inputMode="numeric"
-                    placeholder="6-digit code"
-                    value={revealCode}
-                    onChange={(e) => setRevealCode(e.target.value)}
-                  />
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">One-time code</label>
+                    <Input
+                      inputMode="numeric"
+                      placeholder="6-digit code"
+                      value={revealCode}
+                      onChange={(e) => setRevealCode(e.target.value)}
+                    />
+                  </div>
                 </div>
-              )}
-
+              </DialogBody>
               <DialogFooter>
                 <Button type="button" variant="secondaryStroke" onClick={() => setRevealOpen(false)}>
                   Cancel
@@ -758,16 +1028,12 @@ const AdminOpsAssets = () => {
                   type="button"
                   loading={revealBusy}
                   onClick={confirmReveal}
-                  disabled={
-                    revealMethod === 'password'
-                      ? !revealPassword
-                      : !revealCode
-                  }
+                  disabled={!revealCode}
                 >
                   Reveal
                 </Button>
               </DialogFooter>
-            </div>
+            </>
           )}
         </DialogContent>
       </Dialog>

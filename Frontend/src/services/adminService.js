@@ -136,6 +136,11 @@ const resolveSystemHealthIssue = async (id) =>
 
 const getOpsStats = async () => api.get('/admin/ops/stats');
 
+const getOpsCustomers = async () => api.get('/admin/ops/customers');
+
+const createOpsCustomer = async (payload) =>
+  api.post('/admin/ops/customers', payload);
+
 const getOpsAssets = async (params = {}) =>
   api.get('/admin/ops/assets', { params });
 
@@ -362,6 +367,8 @@ export default {
   acknowledgeSystemHealthIssue,
   resolveSystemHealthIssue,
   getOpsStats,
+  getOpsCustomers,
+  createOpsCustomer,
   getOpsAssets,
   createOpsAsset,
   updateOpsAsset,
