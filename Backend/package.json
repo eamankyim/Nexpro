@@ -28,6 +28,7 @@
     "test-reports": "node scripts/test-report-date-filters.js",
     "generate:platform-email-key": "node scripts/generate-platform-email-encryption-key.js",
     "update:platform-email-key": "node scripts/update-platform-email-encryption-key.js",
+    "setup:ops-assets-credentials": "node scripts/setup-ops-assets-credentials.js",
     "update:superadmin-email": "node scripts/update-superadmin-email.js",
     "verify:user-email": "node scripts/verify-user-email.js",
     "delete:tenant-products": "node scripts/delete-tenant-products.js",
