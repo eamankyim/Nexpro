@@ -251,6 +251,26 @@ const Expenses = () => {
   const [loadingActivities, setLoadingActivities] = useState(false);
   const queryClient = useQueryClient();
 
+  /**
+   * Submitted By may be empty on older expenses — fall back to creation actor, then any activity actor, then approver.
+   * @param {object|null} expense
+   * @param {array} [activities]
+   * @returns {{ id?: string, name?: string, email?: string }|null}
+   */
+  const resolveExpenseSubmitter = useCallback((expense, activities = []) => {
+    if (expense?.submitter) return expense.submitter;
+    const list = Array.isArray(activities) && activities.length
+      ? activities
+      : (Array.isArray(expense?.activities) ? expense.activities : []);
+    const creationActor = list.find((a) => a?.type === 'creation' && a.createdByUser)?.createdByUser;
+    if (creationActor) return creationActor;
+    const submissionActor = list.find((a) => a?.type === 'submission' && a.createdByUser)?.createdByUser;
+    if (submissionActor) return submissionActor;
+    const anyActor = list.find((a) => a?.createdByUser)?.createdByUser;
+    if (anyActor) return anyActor;
+    return expense?.approver || null;
+  }, []);
+
   useEffect(() => {
     if (!modalVisible) {
       setVendorSelectBatchOpen(false);
@@ -494,10 +514,19 @@ const Expenses = () => {
     }
   };
 
-  const handleView = (expense) => {
+  const handleView = async (expense) => {
     setViewingExpense(expense);
     setDrawerVisible(true);
     loadExpenseActivities(expense?.id);
+    if (!expense?.id) return;
+    try {
+      const response = await expenseService.getById(expense.id);
+      const full = response?.data || response;
+      if (full?.id) setViewingExpense(full);
+    } catch (err) {
+      // Keep list row if detail fetch fails
+      console.error('Failed to refresh expense details:', err);
+    }
   };
 
   const handleCloseDrawer = () => {
@@ -944,11 +973,14 @@ const Expenses = () => {
     {
       key: 'submitter',
       label: 'Submitted By',
-      render: (_, record) => (
-        <span className="text-foreground">
-          {record?.submitter?.name || record?.approver?.name || '—'}
-        </span>
-      )
+      render: (_, record) => {
+        const submitter = resolveExpenseSubmitter(record);
+        return (
+          <span className="text-foreground">
+            {submitter?.name || '—'}
+          </span>
+        );
+      }
     },
     {
       key: 'approvalStatus',
@@ -972,7 +1004,7 @@ const Expenses = () => {
         </div>
       )
     }
-  ], [isAdmin, handleView, handleSubmitForApproval, handleApprove, handleRejectClick, handleEdit, submittingForApproval, approvingExpense, rejectingExpenseLoading]);
+  ], [isAdmin, handleView, handleSubmitForApproval, handleApprove, handleRejectClick, handleEdit, submittingForApproval, approvingExpense, rejectingExpenseLoading, resolveExpenseSubmitter]);
 
   // Merge API categories with existing expense categories (for filter dropdown)
   const expenseCategories = useMemo(() => {
@@ -2380,14 +2412,18 @@ const Expenses = () => {
           const activities = expenseActivities || [];
           
           // Add creation activity at the beginning
-          const creationActivity = {
+          const creationFromApi = activities.find((a) => a?.type === 'creation');
+          const creationActivity = creationFromApi || {
             id: 'creation',
             type: 'creation',
             createdAt: viewingExpense.createdAt,
-            createdByUser: viewingExpense.submitter || viewingExpense.approver || null
+            createdByUser: resolveExpenseSubmitter(viewingExpense, activities),
           };
 
-          const allActivities = [creationActivity, ...activities];
+          const restActivities = creationFromApi
+            ? activities.filter((a) => a.id !== creationFromApi.id)
+            : activities;
+          const allActivities = [creationActivity, ...restActivities];
 
           const timelineItems = allActivities.map((activity, index) => {
             const isLast = index === allActivities.length - 1;
@@ -2539,13 +2575,15 @@ const Expenses = () => {
                     </DescriptionItem>
                   )}
                   <DescriptionItem label="Submitted By">
-                    {(viewingExpense.submitter || viewingExpense.approver) ? (
-                      <span>
-                        {(viewingExpense.submitter || viewingExpense.approver).name}
-                        {' '}
-                        ({(viewingExpense.submitter || viewingExpense.approver).email})
-                      </span>
-                    ) : '-'}
+                    {(() => {
+                      const submitter = resolveExpenseSubmitter(viewingExpense, expenseActivities);
+                      return submitter ? (
+                        <span>
+                          {submitter.name}
+                          {submitter.email ? ` (${submitter.email})` : ''}
+                        </span>
+                      ) : '-';
+                    })()}
                   </DescriptionItem>
                   {viewingExpense.approver && (
                     <DescriptionItem label="Approved By">

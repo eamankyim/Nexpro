@@ -1406,7 +1406,10 @@ exports.getPlatformAlerts = async (req, res, next) => {
           plan: tenant.plan,
           status: tenant.status,
           updatedAt: tenant.updatedAt
-        }))
+        })),
+        openCriticalHealthIssues: await require('../services/systemHealthIssueService')
+          .countOpenCriticalIssues()
+          .catch(() => 0),
       }
     });
   } catch (error) {
@@ -2652,8 +2655,16 @@ exports.updateTenantBranding = async (req, res, next) => {
 exports.getSystemHealth = async (req, res, next) => {
   try {
     const dbStart = Date.now();
-    await sequelize.query('SELECT 1');
-    const dbLatencyMs = Date.now() - dbStart;
+    let dbStatus = 'online';
+    let dbLatencyMs = 0;
+    try {
+      await sequelize.query('SELECT 1');
+      dbLatencyMs = Date.now() - dbStart;
+      if (dbLatencyMs > 1000) dbStatus = 'slow';
+    } catch (dbErr) {
+      dbStatus = 'offline';
+      dbLatencyMs = Date.now() - dbStart;
+    }
 
     const [pendingNotifications, pausedTenants, suspendedTenants, activeAdmins] =
       await Promise.all([
@@ -2679,14 +2690,44 @@ exports.getSystemHealth = async (req, res, next) => {
       getRecentSlowOperations(req.query.limit)
     );
 
+    let healthExtras = {
+      overallStatus: dbStatus === 'offline' ? 'critical' : 'healthy',
+      openCriticalCount: 0,
+      openIssues: [],
+      channels: {
+        email: { success24h: 0, failed24h: 0, lastFailureAt: null },
+        sms: { success24h: 0, failed24h: 0, lastFailureAt: null },
+        whatsapp: { success24h: 0, failed24h: 0, lastFailureAt: null },
+      },
+      recentFailures: [],
+      configChecks: [],
+    };
+    try {
+      healthExtras = await require('../services/systemHealthIssueService').buildHealthDashboardExtras();
+    } catch (healthErr) {
+      console.warn('[AdminHealth] extras failed:', healthErr?.message);
+    }
+
+    if (dbStatus === 'offline') {
+      healthExtras.overallStatus = 'critical';
+    } else if (dbStatus === 'slow' && healthExtras.overallStatus === 'healthy') {
+      healthExtras.overallStatus = 'degraded';
+    }
+
     res.status(200).json({
       success: true,
       data: {
+        overallStatus: healthExtras.overallStatus,
+        openCriticalCount: healthExtras.openCriticalCount,
+        openIssues: healthExtras.openIssues,
+        channels: healthExtras.channels,
+        recentFailures: healthExtras.recentFailures,
+        configChecks: healthExtras.configChecks,
         serverStartedAt,
         uptimeSeconds: process.uptime(),
         uptimeHuman: formatDuration(process.uptime()),
         database: {
-          status: 'online',
+          status: dbStatus,
           latencyMs: dbLatencyMs,
         },
         counts: {
@@ -2700,6 +2741,38 @@ exports.getSystemHealth = async (req, res, next) => {
         recentNotifications,
       },
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Acknowledge a System Health issue.
+ * @route POST /api/admin/health/issues/:id/acknowledge
+ */
+exports.acknowledgeSystemHealthIssue = async (req, res, next) => {
+  try {
+    const issue = await require('../services/systemHealthIssueService').acknowledgeIssue(req.params.id);
+    if (!issue) {
+      return res.status(404).json({ success: false, message: 'Issue not found' });
+    }
+    res.status(200).json({ success: true, data: issue });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Resolve a System Health issue.
+ * @route POST /api/admin/health/issues/:id/resolve
+ */
+exports.resolveSystemHealthIssue = async (req, res, next) => {
+  try {
+    const issue = await require('../services/systemHealthIssueService').resolveIssue(req.params.id);
+    if (!issue) {
+      return res.status(404).json({ success: false, message: 'Issue not found' });
+    }
+    res.status(200).json({ success: true, data: issue });
   } catch (error) {
     next(error);
   }

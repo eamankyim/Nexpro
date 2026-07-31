@@ -212,10 +212,69 @@ const notifyCustomDomainSubmitted = async ({
   await sendToPlatformAdmins({ subject, html, text });
 };
 
+/**
+ * Notify platform admins of a critical System Health issue (deduped by caller).
+ * @param {{
+ *   title: string,
+ *   summary?: string,
+ *   severity?: string,
+ *   category?: string,
+ *   tenantName?: string,
+ *   tenantId?: string,
+ *   occurrenceCount?: number,
+ *   adminHealthUrl?: string,
+ *   fingerprint?: string,
+ * }} payload
+ */
+const notifySystemHealthIssue = async ({
+  title,
+  summary,
+  severity = 'critical',
+  category,
+  tenantName,
+  tenantId,
+  occurrenceCount,
+  adminHealthUrl,
+  fingerprint,
+}) => {
+  const subject = `[System Health] ${toDisplay(title)}`;
+  const html = `
+    <h2>System Health alert</h2>
+    <p>A critical platform issue was detected.</p>
+    <ul>
+      <li><strong>Title:</strong> ${escapeHtml(toDisplay(title))}</li>
+      <li><strong>Severity:</strong> ${escapeHtml(toDisplay(severity))}</li>
+      <li><strong>Category:</strong> ${escapeHtml(toDisplay(category))}</li>
+      <li><strong>Summary:</strong> ${escapeHtml(toDisplay(summary))}</li>
+      <li><strong>Tenant:</strong> ${escapeHtml(toDisplay(tenantName))}</li>
+      <li><strong>Tenant ID:</strong> ${escapeHtml(toDisplay(tenantId))}</li>
+      <li><strong>Occurrences:</strong> ${escapeHtml(toDisplay(occurrenceCount))}</li>
+      <li><strong>Fingerprint:</strong> ${escapeHtml(toDisplay(fingerprint))}</li>
+    </ul>
+    <p><a href="${escapeHtml(toDisplay(adminHealthUrl, '#'))}">Open System Health</a></p>
+  `.trim();
+
+  const text = [
+    'System Health alert',
+    `Title: ${toDisplay(title)}`,
+    `Severity: ${toDisplay(severity)}`,
+    `Category: ${toDisplay(category)}`,
+    `Summary: ${toDisplay(summary)}`,
+    `Tenant: ${toDisplay(tenantName)}`,
+    `Tenant ID: ${toDisplay(tenantId)}`,
+    `Occurrences: ${toDisplay(occurrenceCount)}`,
+    `Fingerprint: ${toDisplay(fingerprint)}`,
+    `System Health: ${toDisplay(adminHealthUrl)}`,
+  ].join('\n');
+
+  await sendToPlatformAdmins({ subject, html, text });
+};
+
 module.exports = {
   notifyAccountCreated,
   notifyTenantOnboarded,
   notifyDataDeletionRequested,
   notifyCustomDomainSubmitted,
+  notifySystemHealthIssue,
 };
 

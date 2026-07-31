@@ -128,6 +128,40 @@ const testPlatformSmsSettings = async (payload) =>
 
 const getSystemHealth = async () => api.get('/admin/health');
 
+const acknowledgeSystemHealthIssue = async (id) =>
+  api.post(`/admin/health/issues/${id}/acknowledge`);
+
+const resolveSystemHealthIssue = async (id) =>
+  api.post(`/admin/health/issues/${id}/resolve`);
+
+const getOpsStats = async () => api.get('/admin/ops/stats');
+
+const getOpsCustomers = async () => api.get('/admin/ops/customers');
+
+const createOpsCustomer = async (payload) =>
+  api.post('/admin/ops/customers', payload);
+
+const getOpsAssets = async (params = {}) =>
+  api.get('/admin/ops/assets', { params });
+
+const createOpsAsset = async (payload) =>
+  api.post('/admin/ops/assets', payload);
+
+const updateOpsAsset = async (id, payload) =>
+  api.patch(`/admin/ops/assets/${id}`, payload);
+
+const archiveOpsAsset = async (id) =>
+  api.delete(`/admin/ops/assets/${id}`);
+
+const challengeOpsReveal = async (id, payload) =>
+  api.post(`/admin/ops/assets/${id}/reveal/challenge`, payload);
+
+const confirmOpsReveal = async (id, payload) =>
+  api.post(`/admin/ops/assets/${id}/reveal/confirm`, payload);
+
+const getOpsReveals = async (id) =>
+  api.get(`/admin/ops/assets/${id}/reveals`);
+
 const getAutomationsOverview = async (params = {}) =>
   api.get('/admin/automations/overview', { params });
 
@@ -330,6 +364,18 @@ export default {
   testPlatformEmailSettings,
   testPlatformSmsSettings,
   getSystemHealth,
+  acknowledgeSystemHealthIssue,
+  resolveSystemHealthIssue,
+  getOpsStats,
+  getOpsCustomers,
+  createOpsCustomer,
+  getOpsAssets,
+  createOpsAsset,
+  updateOpsAsset,
+  archiveOpsAsset,
+  challengeOpsReveal,
+  confirmOpsReveal,
+  getOpsReveals,
   getAutomationsOverview,
   getMessagingUsage,
   getPlatformAdmins,

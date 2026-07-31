@@ -28,6 +28,8 @@ const {
   getBillingSummary,
   getBillingTenants,
   getSystemHealth,
+  acknowledgeSystemHealthIssue,
+  resolveSystemHealthIssue,
   updateTenantBranding
 } = require('../controllers/adminController');
 const {
@@ -110,6 +112,18 @@ const {
   updateSalesAgentCode,
   updateSalesAgentCommission,
 } = require('../controllers/adminSalesAgentController');
+const {
+  listOpsAssets,
+  getOpsStats,
+  listOpsCustomers,
+  createOpsCustomer,
+  createOpsAsset,
+  updateOpsAsset,
+  archiveOpsAsset,
+  challengeOpsReveal,
+  confirmOpsReveal,
+  listOpsReveals,
+} = require('../controllers/adminOpsAssetsController');
 
 const router = express.Router();
 
@@ -455,6 +469,42 @@ router.get('/billing/tenants', requirePlatformAdminPermission('billing.view'), g
  *         description: Uptime, database status, and recent alerts.
  */
 router.get('/health', requirePlatformAdminPermission('health.view'), getSystemHealth);
+router.post(
+  '/health/issues/:id/acknowledge',
+  requirePlatformAdminPermission('health.view'),
+  acknowledgeSystemHealthIssue
+);
+router.post(
+  '/health/issues/:id/resolve',
+  requirePlatformAdminPermission('health.view'),
+  resolveSystemHealthIssue
+);
+
+/**
+ * IT Ops vault (domains, servers, services) — platform-admin only
+ */
+router.get('/ops/stats', requirePlatformAdminPermission('ops.view'), getOpsStats);
+router.get('/ops/customers', requirePlatformAdminPermission('ops.view'), listOpsCustomers);
+router.post('/ops/customers', requirePlatformAdminPermission('ops.view'), createOpsCustomer);
+router.get('/ops/assets', requirePlatformAdminPermission('ops.view'), listOpsAssets);
+router.post('/ops/assets', requirePlatformAdminPermission('ops.view'), createOpsAsset);
+router.patch('/ops/assets/:id', requirePlatformAdminPermission('ops.view'), updateOpsAsset);
+router.delete('/ops/assets/:id', requirePlatformAdminPermission('ops.view'), archiveOpsAsset);
+router.post(
+  '/ops/assets/:id/reveal/challenge',
+  requirePlatformAdminPermission('ops.view'),
+  challengeOpsReveal
+);
+router.post(
+  '/ops/assets/:id/reveal/confirm',
+  requirePlatformAdminPermission('ops.view'),
+  confirmOpsReveal
+);
+router.get(
+  '/ops/assets/:id/reveals',
+  requirePlatformAdminPermission('ops.view'),
+  listOpsReveals
+);
 
 /**
  * Automations & Messaging observability (cross-tenant, privacy-safe)

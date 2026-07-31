@@ -23,6 +23,7 @@ import {
   Workflow,
   BadgePercent,
   Store,
+  Server,
 } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -74,7 +75,8 @@ const menuItems = [
   { path: '/admin/expenses', icon: Receipt, label: 'Expenses' },
   { path: '/admin/billing', icon: Currency, label: 'Billing' },
   { path: '/admin/reports', icon: FileSearch, label: 'Reports' },
-  { path: '/admin/health', icon: AlertTriangle, label: 'System Health' },
+  { path: '/admin/health', icon: AlertTriangle, label: 'System Health', badgeKey: 'healthIssues' },
+  { path: '/admin/ops', icon: Server, label: 'IT Ops' },
   { path: '/admin/automations', icon: Workflow, label: 'Automations' },
   { path: '/admin/support-tickets', icon: LifeBuoy, label: 'Support Tickets' },
   { path: '/admin/sabito/overview', icon: ShoppingBag, label: 'Sabito Admin', activePrefix: '/admin/sabito' },
@@ -107,6 +109,7 @@ const AdminLayout = () => {
   const { isMobile: isBelowTablet } = useResponsive({ mobileBreakpoint: BREAKPOINTS.TABLET });
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
   const [pendingDomainCount, setPendingDomainCount] = useState(0);
+  const [criticalHealthCount, setCriticalHealthCount] = useState(0);
   const isBootstrapSuperAdmin = useMemo(
     () => Boolean(user?.isPlatformAdmin) && isBootstrapPlatformSuperAdmin(user),
     [user]
@@ -118,6 +121,7 @@ const AdminLayout = () => {
 
   // Same gate as Tenants — all platform admin roles have tenants.view
   const canViewCustomDomains = !permissionsLoading && hasPermission('tenants.view');
+  const canViewHealth = !permissionsLoading && hasPermission('health.view');
 
   useEffect(() => {
     if (!canViewCustomDomains) return undefined;
@@ -141,6 +145,29 @@ const AdminLayout = () => {
       window.clearInterval(intervalId);
     };
   }, [canViewCustomDomains, location.pathname]);
+
+  useEffect(() => {
+    if (!canViewHealth) return undefined;
+
+    let cancelled = false;
+    const loadHealthBadge = async () => {
+      try {
+        const res = await adminService.getAlerts();
+        if (!cancelled && res?.success) {
+          setCriticalHealthCount(Number(res.data?.openCriticalHealthIssues) || 0);
+        }
+      } catch {
+        // Badge is best-effort
+      }
+    };
+
+    loadHealthBadge();
+    const intervalId = window.setInterval(loadHealthBadge, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [canViewHealth, location.pathname]);
 
   const handleNavigateToSabito = () => {
     const token = localStorage.getItem('token');
@@ -168,6 +195,7 @@ const AdminLayout = () => {
           '/admin/billing': 'billing.view',
           '/admin/reports': 'reports.view',
           '/admin/health': 'health.view',
+          '/admin/ops': 'ops.view',
           '/admin/automations': 'automations.view',
           '/admin/support-tickets': 'tickets.view',
           '/admin/sabito/overview': 'overview.view',
@@ -185,7 +213,12 @@ const AdminLayout = () => {
         } else if (requiredPermission && !permissionsLoading && !hasPermission(requiredPermission)) {
           return null;
         }
-        const badgeCount = item.badgeKey === 'pendingDomains' ? pendingDomainCount : 0;
+        const badgeCount =
+          item.badgeKey === 'pendingDomains'
+            ? pendingDomainCount
+            : item.badgeKey === 'healthIssues'
+              ? criticalHealthCount
+              : 0;
         return (
           <button
             key={item.path}
@@ -208,7 +241,9 @@ const AdminLayout = () => {
                   'min-w-[20px] h-5 px-1.5 flex items-center justify-center rounded-full text-[11px] font-bold',
                   isActive
                     ? 'bg-white text-brand'
-                    : 'bg-amber-100 text-amber-900 border border-amber-200'
+                    : item.badgeKey === 'healthIssues'
+                      ? 'bg-red-100 text-red-900 border border-red-200'
+                      : 'bg-amber-100 text-amber-900 border border-amber-200'
                 )}
               >
                 {badgeCount > 99 ? '99+' : badgeCount}

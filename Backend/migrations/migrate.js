@@ -446,6 +446,17 @@ const migrate = async () => {
     // Studio quotation PDF fields (payment schedule, scope, terms, acceptance)
     await addStudioQuotationFieldsToQuotes();
 
+    // Platform System Health: delivery_events + system_health_issues
+    const createSystemHealthTables = require('./create-system-health-tables');
+    await createSystemHealthTables({ closeConnection: false });
+
+    // Platform IT Ops vault (domains / servers / services) + ops.view permission
+    const createPlatformOpsAssets = require('./create-platform-ops-assets');
+    await createPlatformOpsAssets({ closeConnection: false });
+
+    const addCustomerIdToPlatformOpsAssets = require('./add-customer-id-to-platform-ops-assets');
+    await addCustomerIdToPlatformOpsAssets({ closeConnection: false });
+
     console.log('\n✅ Database migration completed successfully!');
     console.log('📊 Incremental schema updates applied.');
     console.log('👤 User model has been enhanced with new fields.');

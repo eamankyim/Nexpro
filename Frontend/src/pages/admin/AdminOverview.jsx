@@ -6,10 +6,12 @@ import StatusChip from '../../components/StatusChip';
 import PlanBadge from '../../components/PlanBadge';
 import { usePlatformAdminPermissions } from '../../context/PlatformAdminPermissionsContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { Empty } from '@/components/ui/empty';
 import { Skeleton } from '@/components/ui/skeleton';
 import DashboardStatsCard from '../../components/DashboardStatsCard';
-import { Building2, Users, TrendingUp, UserCheck } from 'lucide-react';
+import { Building2, Users, TrendingUp, UserCheck, AlertTriangle } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 dayjs.extend(relativeTime);
 
@@ -20,7 +22,11 @@ const AdminOverview = () => {
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState(null);
   const [metrics, setMetrics] = useState(null);
-  const [alerts, setAlerts] = useState({ upcomingTrials: [], attentionRequired: [] });
+  const [alerts, setAlerts] = useState({
+    upcomingTrials: [],
+    attentionRequired: [],
+    openCriticalHealthIssues: 0,
+  });
 
   useEffect(() => {
     const loadData = async () => {
@@ -72,6 +78,27 @@ const AdminOverview = () => {
           Monitor adoption, health, and upcoming events across the entire African Business Suite platform.
         </p>
       </div>
+
+      {alerts.openCriticalHealthIssues > 0 ? (
+        <div className="mb-6 rounded-lg border border-red-300 bg-red-50 px-4 py-3 flex flex-wrap items-center gap-3">
+          <AlertTriangle className="h-5 w-5 text-red-700 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-red-900">
+              {alerts.openCriticalHealthIssues} critical System Health issue
+              {alerts.openCriticalHealthIssues === 1 ? '' : 's'}
+            </p>
+            <p className="text-sm text-red-800">
+              SMS, email, or config failures need attention.
+            </p>
+          </div>
+          <Link
+            to="/admin/health"
+            className="text-sm font-medium text-red-900 underline underline-offset-2"
+          >
+            Open System Health
+          </Link>
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
         <DashboardStatsCard
@@ -134,6 +161,23 @@ const AdminOverview = () => {
                 <CardTitle className="text-base">Alerts</CardTitle>
               </CardHeader>
               <CardContent className="space-y-6">
+                <div>
+                  <h4 className="text-sm font-medium text-foreground mb-2">System Health</h4>
+                  {alerts.openCriticalHealthIssues > 0 ? (
+                    <Link
+                      to="/admin/health"
+                      className="flex items-center justify-between py-2 border-b border-gray-100 text-sm"
+                    >
+                      <span className="font-medium text-red-800">
+                        {alerts.openCriticalHealthIssues} critical issue
+                        {alerts.openCriticalHealthIssues === 1 ? '' : 's'} open
+                      </span>
+                      <Badge variant="destructive">Critical</Badge>
+                    </Link>
+                  ) : (
+                    <Empty description="No critical health issues" />
+                  )}
+                </div>
                 <div>
                   <h4 className="text-sm font-medium text-foreground mb-2">Trials ending soon</h4>
                   {alerts.upcomingTrials?.length ? (

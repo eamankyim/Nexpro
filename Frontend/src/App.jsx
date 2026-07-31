@@ -99,6 +99,7 @@ const AdminRoles = lazy(() => import('./pages/admin/AdminRoles'));
 const AdminBilling = lazy(() => import('./pages/admin/AdminBilling'));
 const AdminReports = lazy(() => import('./pages/admin/AdminReports'));
 const AdminHealth = lazy(() => import('./pages/admin/AdminHealth'));
+const AdminOpsAssets = lazy(() => import('./pages/admin/AdminOpsAssets'));
 const AdminAutomationsMessaging = lazy(() => import('./pages/admin/AdminAutomationsMessaging'));
 const AdminSettings = lazy(() => import('./pages/admin/AdminSettings'));
 const AdminOnlineStoreHeroes = lazy(() => import('./pages/admin/AdminOnlineStoreHeroes'));
@@ -408,6 +409,7 @@ function AppContent() {
             <Route path="roles" element={<Navigate to="/admin/settings?tab=roles" replace />} />
             <Route path="reports" element={<AdminReports />} />
             <Route path="health" element={<AdminHealth />} />
+            <Route path="ops" element={<AdminOpsAssets />} />
             <Route path="automations" element={<AdminAutomationsMessaging />} />
             <Route path="support-tickets" element={<AdminSupportTickets />} />
             <Route path="sales-agents" element={<AdminSalesAgents />} />
