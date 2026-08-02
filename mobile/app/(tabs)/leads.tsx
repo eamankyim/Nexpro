@@ -16,6 +16,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { AppIcon, type AppIconName } from '@/components/AppIcon';
 import { FormSheetModal } from '@/components/FormSheetModal';
+import { ImportContactsSheet } from '@/components/ImportContactsSheet';
 import { FORM_LABELS } from '@/constants/formLabels';
 import { ListEmptyState, EmptyStateActionButton, ListActionButton } from '@/components/ListEmptyState';
 import { SEARCH_PLACEHOLDERS } from '@/constants/searchPlaceholders';
@@ -70,6 +71,7 @@ export default function LeadsScreen() {
   useRegisterPageSearch({ scope: 'leads', placeholder: SEARCH_PLACEHOLDERS.LEADS });
   const [status, setStatus] = useState<string>('all');
   const [addOpen, setAddOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', phone: '', company: '', source: '' });
   const [customSourceValue, setCustomSourceValue] = useState('');
 
@@ -219,11 +221,19 @@ export default function LeadsScreen() {
   return (
     <ScreenShell style={styles.container}>
       {!isLoading && !isError && leads.length > 0 && (
-        <ListActionButton
-          label="Add Lead"
-          onPress={() => setAddOpen(true)}
-          backgroundColor={colors.tint}
-        />
+        <View style={styles.actionStack}>
+          <Pressable
+            onPress={() => setImportOpen(true)}
+            style={[styles.importBtn, { borderColor }]}
+          >
+            <Text style={[styles.importBtnText, { color: colors.tint }]}>Import contacts</Text>
+          </Pressable>
+          <ListActionButton
+            label="Add Lead"
+            onPress={() => setAddOpen(true)}
+            backgroundColor={colors.tint}
+          />
+        </View>
       )}
 
       {showListFilters(isLoading, isError, leads.length, hasActiveFilter) && (
@@ -251,11 +261,18 @@ export default function LeadsScreen() {
               subtitleColor={mutedColor}
             >
               {status === 'all' ? (
-                <EmptyStateActionButton
-                  label="Add Lead"
-                  onPress={() => setAddOpen(true)}
-                  backgroundColor={colors.tint}
-                />
+                <>
+                  <EmptyStateActionButton
+                    label="Import contacts"
+                    onPress={() => setImportOpen(true)}
+                    backgroundColor={colors.tint}
+                  />
+                  <EmptyStateActionButton
+                    label="Add Lead"
+                    onPress={() => setAddOpen(true)}
+                    backgroundColor={colors.tint}
+                  />
+                </>
               ) : null}
             </ListEmptyState>
           }
@@ -352,12 +369,36 @@ export default function LeadsScreen() {
           </>
         ) : null}
       </FormSheetModal>
+
+      <ImportContactsSheet
+        visible={importOpen}
+        onClose={() => setImportOpen(false)}
+        defaultDestination="leads"
+        onImported={() => {
+          refreshAfterLeadChange(queryClient);
+          refetch();
+        }}
+        colors={colors}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+      />
     </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  actionStack: { gap: 8, marginBottom: 4 },
+  importBtn: {
+    marginHorizontal: 16,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  importBtnText: { fontSize: 15, fontWeight: '600' },
   errorWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   errorTitle: { fontSize: 17, fontWeight: '600', marginTop: 12 },
   errorMsg: { fontSize: 14, marginTop: 8, textAlign: 'center' },

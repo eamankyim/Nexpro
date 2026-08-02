@@ -5,8 +5,10 @@ jest.mock('../../../services/tenantAiSettingsService', () => ({
 const { getTenantAnthropicApiKey } = require('../../../services/tenantAiSettingsService');
 const {
   assertAiProviderConfigured,
+  assertTenantAiProviderConfigured,
   AI_PROVIDER_USER_MESSAGES,
   buildBillingCircuitError,
+  buildTenantKeyRequiredResponse,
   classifyAiProviderError,
   clearBillingCircuit,
   isBillingCreditError,
@@ -90,6 +92,46 @@ describe('aiProviderErrors', () => {
       errorCode: 'OPENAI_NOT_CONFIGURED',
       aiProviderError: true,
     });
+  });
+
+  it('requires a tenant Anthropic key with no system fallback', async () => {
+    process.env.ANTHROPIC_API_KEY = 'system-key-123456789012345678901234567890';
+    getTenantAnthropicApiKey.mockResolvedValue(null);
+
+    await expect(assertTenantAiProviderConfigured('tenant-1')).rejects.toMatchObject({
+      statusCode: 402,
+      errorCode: 'TENANT_AI_KEY_REQUIRED',
+      aiProviderError: true,
+    });
+  });
+
+  it('returns the tenant key from assertTenantAiProviderConfigured', async () => {
+    getTenantAnthropicApiKey.mockResolvedValue('tenant-only-key');
+    await expect(assertTenantAiProviderConfigured('tenant-1')).resolves.toBe('tenant-only-key');
+  });
+
+  it('uses tenant billing copy when keySource is tenant', () => {
+    const classified = classifyAiProviderError(
+      {
+        status: 400,
+        message: 'Your credit balance is too low to access the Anthropic API.',
+      },
+      { keySource: 'tenant' }
+    );
+
+    expect(classified).toMatchObject({
+      statusCode: 402,
+      errorCode: 'AI_PROVIDER_BILLING_REQUIRED',
+      message: AI_PROVIDER_USER_MESSAGES.AI_PROVIDER_BILLING_REQUIRED_TENANT,
+    });
+  });
+
+  it('builds a soft tenant-key-required Ask AI response', () => {
+    const soft = buildTenantKeyRequiredResponse(['How much did I sell today?']);
+    expect(soft.meta.source).toBe('tenant_key_required');
+    expect(soft.meta.settingsPath).toBe('/settings/ai');
+    expect(soft.answerMarkdown).toMatch(/Settings → AI/);
+    expect(soft.answerMarkdown).toMatch(/How much did I sell today/);
   });
 
   it('opens a short billing circuit breaker after a billing failure', () => {

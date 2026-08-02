@@ -2052,6 +2052,14 @@ const buildStorefrontCheckoutDraft = async ({ shopper, body, transaction = null 
       buildCheckoutHttpError(400, 'One or more cart items are no longer available.');
     }
 
+    const listingMeta = listing.metadata && typeof listing.metadata === 'object' ? listing.metadata : {};
+    const productMeta = listing.product?.metadata && typeof listing.product.metadata === 'object'
+      ? listing.product.metadata
+      : {};
+    if (listingMeta.isSample === true || productMeta.isSample === true) {
+      buildCheckoutHttpError(400, 'Sample products cannot be purchased.');
+    }
+
     const availability = getListingAvailability(listing);
     const allowOversell = listing.inventoryPolicy === 'continue';
     if ((!availability.available || availability.quantityOnHand < quantity) && !allowOversell) {

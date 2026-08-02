@@ -48,7 +48,7 @@ const SettingsAiSection = () => {
           AI Settings
         </CardTitle>
         <CardDescription className="text-xs md:text-sm mt-1">
-          Add a workspace Anthropic API key for AI assistant, smart report, and automation drafting. If no key is saved, ABS uses the system default when available.
+          Add a workspace Anthropic API key for growth and strategy questions in Ask AI (required). The same key also powers smart report narratives and automation drafting, and overrides the system default when set. Live sales, stock, and receivables answers work without a key.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -70,11 +70,11 @@ const SettingsAiSection = () => {
               <AlertTitle>Active AI source: {aiSourceText}</AlertTitle>
               <AlertDescription>
                 {aiSettings.apiKeyConfigured ? (
-                  <>This workspace key is saved as <strong>{aiSettings.apiKeyMasked || '••••'}</strong> and overrides the system default.</>
+                  <>This workspace key is saved as <strong>{aiSettings.apiKeyMasked || '••••'}</strong>. It is required for open-ended advice and overrides the system default for other AI features.</>
                 ) : aiSettings.systemConfigured ? (
-                  <>No workspace key is saved. AI features use the system default Anthropic key.</>
+                  <>No workspace key is saved. Product how-tos and drafts can use the system default; growth and strategy questions need a workspace key.</>
                 ) : (
-                  <>No workspace or system key is configured. AI features will stay unavailable until one is added.</>
+                  <>No workspace or system key is configured. Add a workspace key to unlock Ask AI advice, smart report AI, and automation drafting.</>
                 )}
               </AlertDescription>
             </Alert>

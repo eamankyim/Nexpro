@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, useCallback } from 'react';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Building2, CreditCard, Zap, Crown, Eye, EyeOff, UserPlus, Trash2, Copy, Shield, Package, Receipt, ShoppingCart, FileText, RotateCcw } from 'lucide-react';
+import { Loader2, Building2, CreditCard, Zap, Crown, Eye, EyeOff, UserPlus, Trash2, Copy, Shield, Package, Receipt, ShoppingCart, FileText, RotateCcw, Store } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { Textarea } from '@/components/ui/textarea';
 import { useDebounce } from '../../hooks/useDebounce';
@@ -1256,6 +1256,25 @@ const AdminTenants = () => {
                 {canDeleteTenants && <TabsTrigger value="cleanup">Cleanup</TabsTrigger>}
               </TabsList>
               <TabsContent value="overview" className="mt-4 space-y-6 data-[state=inactive]:hidden">
+              {hasPermission('tenants.update') && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Online store</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <p className="text-sm text-muted-foreground">
+                      Set up store info, heroes, sample products, and client products from the control panel.
+                    </p>
+                    <Button
+                      variant="outline"
+                      onClick={() => navigate(`/admin/online-store/setup?tenantId=${selectedTenant.id}`)}
+                    >
+                      <Store className="h-4 w-4 mr-2" />
+                      Set up online store
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
               {hasPermission('tenants.support_access') && (
                 <Card>
                   <CardHeader>

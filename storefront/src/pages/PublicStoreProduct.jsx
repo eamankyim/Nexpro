@@ -419,6 +419,10 @@ const PublicStoreProduct = () => {
   }, [coverImage, galleryImages, hasMultipleImages]);
 
   const handlePurchaseIntent = useCallback(() => {
+    if (product?.isSample) {
+      showError('Sample products cannot be purchased.');
+      return;
+    }
     addItem({ product, store, storeSlug, quantity: 1 });
     openShopperAuthModal({
       mode: 'signup',
@@ -433,6 +437,10 @@ const PublicStoreProduct = () => {
   }, [addItem, openShopperAuthModal, product, productSlug, store, storeBasePath, storeSlug]);
 
   const handleAddToCart = useCallback(() => {
+    if (product?.isSample) {
+      showError('Sample products cannot be purchased.');
+      return;
+    }
     const result = addItem({ product, store, storeSlug, quantity: 1 });
     if (result.ok) {
       if (result.replacedStore) {
@@ -440,6 +448,8 @@ const PublicStoreProduct = () => {
       } else {
         showSuccess('Added to cart.');
       }
+    } else if (result.reason === 'sample_product') {
+      showError('Sample products cannot be purchased.');
     }
   }, [addItem, isOwnedShop, product, store, storeSlug]);
 
@@ -494,9 +504,15 @@ const PublicStoreProduct = () => {
   }, [product?.id, productReviewEligibilityQuery, productReviewsQuery, productsQuery, reviewEligibility?.saleId, reviewSaleId]);
 
   const handleCheckoutClick = useCallback(() => {
+    if (product?.isSample) {
+      showError('Sample products cannot be purchased.');
+      return;
+    }
     const result = addItem({ product, store, storeSlug, quantity: 1 });
     if (result.ok) {
       navigate('/checkout');
+    } else if (result.reason === 'sample_product') {
+      showError('Sample products cannot be purchased.');
     }
   }, [addItem, navigate, product, store, storeSlug]);
 
@@ -505,8 +521,12 @@ const PublicStoreProduct = () => {
       store?.productCardActions,
       store,
       { resolvePhone: resolveStoreWhatsAppPhone },
-    ).filter((action) => action !== 'view'),
-    [store],
+    ).filter((action) => {
+      if (action === 'view') return false;
+      if (product?.isSample && (action === 'add_to_cart' || action === 'buy_now')) return false;
+      return true;
+    }),
+    [product?.isSample, store],
   );
   const softenPrice = cardActions.includes('contact_for_price')
     || (store?.productCardActions || []).includes('contact_for_price');
@@ -682,18 +702,28 @@ const PublicStoreProduct = () => {
 
             <div className="flex flex-col justify-center space-y-5">
               <div>
-                <Badge
-                  className={availability.available
-                    ? 'mb-3 border-0 bg-green-700 text-white hover:bg-green-700'
-                    : 'mb-3 border-red-200 bg-red-50 text-red-700 hover:bg-red-50'}
-                  variant={availability.available ? 'default' : 'outline'}
-                >
-                  {availability.label}
-                </Badge>
+                <div className="mb-3 flex flex-wrap gap-2">
+                  <Badge
+                    className={availability.available
+                      ? 'border-0 bg-green-700 text-white hover:bg-green-700'
+                      : 'border-red-200 bg-red-50 text-red-700 hover:bg-red-50'}
+                    variant={availability.available ? 'default' : 'outline'}
+                  >
+                    {availability.label}
+                  </Badge>
+                  {product.isSample ? (
+                    <Badge className="border-0 bg-slate-800 text-white hover:bg-slate-800">
+                      Sample
+                    </Badge>
+                  ) : null}
+                </div>
                 <h2 className="text-2xl font-black tracking-tight text-slate-950 sm:text-3xl md:text-4xl">{product.title}</h2>
                 <div className="mt-3">
                   <ReviewSummaryLine summary={reviewSummary} />
                 </div>
+                {product.isSample ? (
+                  <p className="mt-2 text-sm font-medium text-slate-500">Demo product — not for sale</p>
+                ) : null}
                 {product.shortDescription ? (
                   <p className="mt-3 text-base leading-7 text-slate-500">{product.shortDescription}</p>
                 ) : null}

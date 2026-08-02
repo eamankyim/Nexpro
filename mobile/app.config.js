@@ -20,6 +20,7 @@ export default {
       infoPlist: {
         NSCameraUsageDescription: 'ABS (African Business Suite) uses the camera to scan products and attach business images when you choose to use those features.',
         NSPhotoLibraryUsageDescription: 'ABS (African Business Suite) uses your photo library to upload logos, profile photos, receipts, and other business images you choose.',
+        NSContactsUsageDescription: 'ABS uses your contacts so you can import customers or leads into your business.',
       },
       config: {
         usesNonExemptEncryption: false,
@@ -32,13 +33,25 @@ export default {
         backgroundColor: '#ffffff',
       },
       edgeToEdgeEnabled: true,
+      permissions: ['READ_CONTACTS'],
     },
     web: {
       bundler: 'metro',
       output: 'static',
       favicon: './assets/images/favicon.png',
     },
-    plugins: ['expo-router', 'expo-secure-store', 'expo-audio', 'expo-camera'],
+    plugins: [
+      'expo-router',
+      'expo-secure-store',
+      'expo-audio',
+      'expo-camera',
+      [
+        'expo-contacts',
+        {
+          contactsPermission: 'Allow ABS to access your contacts so you can import customers or leads.',
+        },
+      ],
+    ],
     experiments: { typedRoutes: true },
     extra: {
       apiUrl: process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5001',

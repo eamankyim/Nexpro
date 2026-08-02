@@ -235,6 +235,7 @@ if (IS_VERCEL_SERVERLESS) {
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/customers', customerRoutes);
+app.use('/api/contacts', require('./routes/contactImportRoutes'));
 app.use('/api/dealers', dealerRoutes);
 app.use('/api/marketing', marketingRoutes);
 app.use('/api/vendors', vendorRoutes);

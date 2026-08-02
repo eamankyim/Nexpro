@@ -31,6 +31,7 @@ import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
 import { FormSheetModal } from '@/components/FormSheetModal';
+import { ImportContactsSheet } from '@/components/ImportContactsSheet';
 import { FORM_LABELS } from '@/constants/formLabels';
 import { getApiErrorMessage, parseApiListResponse } from '@/utils/parseApiListResponse';
 import { ListLoadingState, ListErrorState } from '@/components/ListScreenStates';
@@ -87,6 +88,7 @@ export default function CustomersScreen() {
   const { searchValue, setSearchValue } = useSmartSearch();
   useRegisterPageSearch({ scope: 'customers', placeholder: SEARCH_PLACEHOLDERS.CUSTOMERS });
   const [addModalVisible, setAddModalVisible] = useState(params.add === '1');
+  const [importOpen, setImportOpen] = useState(false);
   const [formData, setFormData] = useState(DEFAULT_CUSTOMER_FORM);
   const [customSourceValue, setCustomSourceValue] = useState('');
 
@@ -310,11 +312,19 @@ export default function CustomersScreen() {
       )}
 
       {!isLoading && !isError && customers.length > 0 && (
-        <ListActionButton
-          label="Add Customer"
-          onPress={() => setAddModalVisible(true)}
-          backgroundColor={colors.tint}
-        />
+        <View style={styles.actionStack}>
+          <Pressable
+            onPress={() => setImportOpen(true)}
+            style={[styles.importBtn, { borderColor }]}
+          >
+            <Text style={[styles.importBtnText, { color: colors.tint }]}>Import contacts</Text>
+          </Pressable>
+          <ListActionButton
+            label="Add Customer"
+            onPress={() => setAddModalVisible(true)}
+            backgroundColor={colors.tint}
+          />
+        </View>
       )}
 
       {isLoading && !response ? (
@@ -330,6 +340,11 @@ export default function CustomersScreen() {
           titleColor={textColor}
           subtitleColor={mutedColor}
         >
+          <EmptyStateActionButton
+            label="Import contacts"
+            onPress={() => setImportOpen(true)}
+            backgroundColor={colors.tint}
+          />
           <EmptyStateActionButton
             label="Add Customer"
             onPress={() => setAddModalVisible(true)}
@@ -469,6 +484,21 @@ export default function CustomersScreen() {
           </>
         ) : null}
       </FormSheetModal>
+
+      <ImportContactsSheet
+        visible={importOpen}
+        onClose={() => setImportOpen(false)}
+        defaultDestination="customers"
+        onImported={() => {
+          refreshAfterCustomerChange(queryClient);
+          refetch();
+        }}
+        colors={colors}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+      />
     </ScreenShell>
   );
 }
@@ -477,6 +507,15 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   listContent: { paddingHorizontal: 16, paddingBottom: 32 },
+  actionStack: { gap: 8, marginBottom: 4 },
+  importBtn: {
+    marginHorizontal: 16,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  importBtnText: { fontSize: 15, fontWeight: '600' },
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',

@@ -69,6 +69,9 @@ export const CartProvider = ({ children }) => {
   }, []);
 
   const addItem = useCallback((payload) => {
+    if (payload?.product?.isSample === true) {
+      return { ok: false, reason: 'sample_product' };
+    }
     const nextItem = normalizeCartItem(payload);
     if (!nextItem.listingId || !nextItem.storeSlug) return { ok: false, reason: 'invalid_item' };
 

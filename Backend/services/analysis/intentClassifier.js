@@ -6,14 +6,14 @@ const {
 
 /**
  * Rules-first intent classifier (regex / keywords). No LLM.
- * Returns analysis intents, support/draft routing, or unsupported.
+ * Returns analysis intents, support/draft, advisory (tenant-key LLM), or unsupported.
  *
  * @param {string} message
  * @param {{ pageContext?: string, businessType?: string }} [options]
  * @returns {{
  *   intent: string | null,
  *   confidence: number,
- *   route: 'analysis' | 'support' | 'draft' | 'unsupported',
+ *   route: 'analysis' | 'support' | 'draft' | 'advisory' | 'unsupported',
  *   suggestedQuestions?: string[],
  * }}
  */
@@ -29,7 +29,18 @@ function classifyIntent(message, options = {}) {
     };
   }
 
-  // Support / how-to — keep Claude path
+  const isAbsProductAction = /\b(create an? invoice|record a payment|add an? expense|add a customer|run (a |the )?pos|make a (new )?sale|create a job|dispense|in abs|in the app|settings|navigate|menu)\b/.test(text);
+  const isGrowthOrStrategy = (
+    /\b(more customers?|get (more )?customers?|attract customers?|grow (my |the )?business|increase (my )?sales|marketing tips?|marketing strateg|business strateg)\b/.test(text)
+    || /\b(customer acquisition|lead generation|brand awareness|social media (tips?|strateg|marketing))\b/.test(text)
+  );
+
+  // Growth / strategy — tenant Anthropic key in Ask AI (before product how-to)
+  if (isGrowthOrStrategy && !isAbsProductAction) {
+    return { intent: 'business_advisory', confidence: 0.9, route: 'advisory' };
+  }
+
+  // Support / how-to — Anthropic with tenant → system fallback
   if (
     /\b(how do i|how to|where (is|can|do)|help me (set|add|create|find|use)|show me how|navigate|steps to|walk me through)\b/.test(text)
     || /\b(create an? invoice|record a payment|add an? expense|add a customer|run (a |the )?pos|make a (new )?sale|create a job|dispense)\b/.test(text)
@@ -131,22 +142,23 @@ function classifyIntent(message, options = {}) {
   }
 
   // Bare greetings are handled by smallTalk in assistant chat (before this classifier).
-  // Analysis API still maps them to unsupported with suggestions below.
+  // Analysis API still maps advisory/unsupported to suggestion-only responses.
 
-  // Predictions / forecasts — not Phase 1 analysis
+  // Predictions / forecasts — advisory (tenant key) in Ask AI; analysis API stays suggestion-only
   if (/\b(predict|forecast|next week|will i sell)\b/.test(text)) {
     return {
-      intent: null,
-      confidence: 0.4,
-      route: 'unsupported',
+      intent: 'business_advisory',
+      confidence: 0.55,
+      route: 'advisory',
       suggestedQuestions: suggestions,
     };
   }
 
+  // Open-ended / unknown questions → advisory for Ask AI (tenant Anthropic key required)
   return {
-    intent: null,
-    confidence: 0.2,
-    route: 'unsupported',
+    intent: 'business_advisory',
+    confidence: 0.25,
+    route: 'advisory',
     suggestedQuestions: suggestions,
   };
 }

@@ -429,6 +429,69 @@ router.patch(
 );
 
 /**
+ * Online Store admin provisioning (settings, samples, client products).
+ */
+const {
+  getSampleCatalog,
+  getTenantOnlineStore,
+  upsertTenantOnlineStore,
+  seedTenantSampleProducts,
+  clearTenantSampleProducts,
+  createTenantStoreProduct,
+  updateTenantStoreProduct,
+  deleteTenantStoreProduct,
+  uploadTenantStoreProductImages,
+} = require('../controllers/adminOnlineStoreProvisionController');
+const storeProductImageUploader = imageOnlyMulter();
+
+router.get(
+  '/online-store/sample-catalog',
+  requirePlatformAdminPermission('tenants.update'),
+  getSampleCatalog
+);
+router.get(
+  '/tenants/:id/online-store',
+  requirePlatformAdminPermission('tenants.update'),
+  getTenantOnlineStore
+);
+router.put(
+  '/tenants/:id/online-store',
+  requirePlatformAdminPermission('tenants.update'),
+  upsertTenantOnlineStore
+);
+router.post(
+  '/tenants/:id/online-store/sample-products',
+  requirePlatformAdminPermission('tenants.update'),
+  seedTenantSampleProducts
+);
+router.delete(
+  '/tenants/:id/online-store/sample-products',
+  requirePlatformAdminPermission('tenants.update'),
+  clearTenantSampleProducts
+);
+router.post(
+  '/tenants/:id/online-store/products/upload-images',
+  requirePlatformAdminPermission('tenants.update'),
+  storeProductImageUploader.array('images', 5),
+  uploadTenantStoreProductImages
+);
+router.post(
+  '/tenants/:id/online-store/products',
+  requirePlatformAdminPermission('tenants.update'),
+  createTenantStoreProduct
+);
+router.patch(
+  '/tenants/:id/online-store/products/:listingId',
+  requirePlatformAdminPermission('tenants.update'),
+  updateTenantStoreProduct
+);
+router.delete(
+  '/tenants/:id/online-store/products/:listingId',
+  requirePlatformAdminPermission('tenants.update'),
+  deleteTenantStoreProduct
+);
+
+/**
  * @swagger
  * /api/admin/billing/summary:
  *   get:

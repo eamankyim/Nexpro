@@ -49,15 +49,34 @@ const IMPORT_COLUMNS = {
     { header: 'Notes', key: 'notes', type: 'string', required: false },
     { header: 'Active', key: 'isActive', type: 'boolean', required: false },
   ],
+  customers: [
+    { header: 'Name', key: 'name', type: 'string', required: true },
+    { header: 'Phone', key: 'phone', type: 'string', required: false },
+    { header: 'Email', key: 'email', type: 'string', required: false },
+    { header: 'Company', key: 'company', type: 'string', required: false },
+    { header: 'Address', key: 'address', type: 'string', required: false },
+    { header: 'City', key: 'city', type: 'string', required: false },
+    { header: 'Notes', key: 'notes', type: 'string', required: false },
+  ],
+  leads: [
+    { header: 'Name', key: 'name', type: 'string', required: true },
+    { header: 'Phone', key: 'phone', type: 'string', required: false },
+    { header: 'Email', key: 'email', type: 'string', required: false },
+    { header: 'Company', key: 'company', type: 'string', required: false },
+    { header: 'Source', key: 'source', type: 'string', required: false },
+    { header: 'Notes', key: 'notes', type: 'string', required: false },
+  ],
 };
 
 const TEMPLATE_COLUMNS = {
   products: ['Product Name', 'Selling Price', 'Stock'],
+  customers: ['Name', 'Phone'],
+  leads: ['Name', 'Phone'],
 };
 
 /**
  * Get CSV template (header row only) for an entity.
- * @param {'products'|'materials'|'equipment'} entity
+ * @param {'products'|'materials'|'equipment'|'customers'|'leads'} entity
  * @returns {string}
  */
 function getTemplateCSV(entity) {
@@ -207,7 +226,7 @@ function coerceValue(raw, type) {
 /**
  * Map raw row (header -> value) to entity object using IMPORT_COLUMNS.
  * @param {Record<string, string>} row - keys are header labels
- * @param {'products'|'materials'|'equipment'} entity
+ * @param {'products'|'materials'|'equipment'|'customers'|'leads'} entity
  * @returns {Record<string, any>}
  */
 function mapRowToEntity(row, entity) {
@@ -271,10 +290,20 @@ function validateEquipmentRow(mapped) {
 }
 
 /**
+ * Validate customer/lead contact row.
+ */
+function validateContactRow(mapped) {
+  if (!mapped.name || String(mapped.name).trim() === '') {
+    return { valid: false, error: 'Name is required' };
+  }
+  return { valid: true };
+}
+
+/**
  * Parse file (CSV or Excel) and map to entity rows with validation.
  * @param {Buffer} buffer
  * @param {string} mimeTypeOrExt - e.g. 'text/csv', '.csv', 'application/vnd.openxmlformats...'
- * @param {'products'|'materials'|'equipment'} entity
+ * @param {'products'|'materials'|'equipment'|'customers'|'leads'} entity
  * @returns {Promise<{ mapped: Array<Record<string, any>>, errors: Array<{ row: number, message: string }> }>}
  */
 async function parseImportFile(buffer, mimeTypeOrExt, entity) {
@@ -303,12 +332,21 @@ async function parseImportFile(buffer, mimeTypeOrExt, entity) {
   }
 
   const cols = IMPORT_COLUMNS[entity];
+  if (!cols) {
+    return {
+      mapped: [],
+      errors: [{ row: 0, message: `Unknown import entity: ${entity}` }],
+    };
+  }
+
   const validator =
     entity === 'products'
       ? validateProductRow
       : entity === 'materials'
         ? validateMaterialRow
-        : validateEquipmentRow;
+        : entity === 'equipment'
+          ? validateEquipmentRow
+          : validateContactRow;
 
   const mapped = [];
   const errors = [];
@@ -337,5 +375,6 @@ module.exports = {
   validateProductRow,
   validateMaterialRow,
   validateEquipmentRow,
+  validateContactRow,
   MAX_ROWS,
 };

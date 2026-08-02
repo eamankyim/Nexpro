@@ -569,6 +569,19 @@ function StoresSection({ rows, pagination, loading, filters, onFiltersChange, on
     { key: 'metrics', label: 'Orders', render: (value) => formatInteger(value?.orderCount || 0) },
     { key: 'contactEmail', label: 'Contact', render: (value, record) => value || record.contactPhone || 'N/A' },
     { key: 'updatedAt', label: 'Updated', render: formatDate },
+    {
+      key: 'actions',
+      label: 'Actions',
+      render: (_, record) => (
+        record?.tenantId ? (
+          <Button asChild variant="outline" size="sm">
+            <Link to={`/admin/online-store/setup?tenantId=${record.tenantId}`}>
+              Set up
+            </Link>
+          </Button>
+        ) : null
+      ),
+    },
   ], []);
 
   return (

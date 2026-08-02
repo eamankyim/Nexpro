@@ -78,6 +78,27 @@ const getOnlineStorePendingDomainCount = async () =>
 const updateOnlineStoreDomainStatus = async (id, action) =>
   api.patch(`/admin/online-store/domains/${id}`, { action });
 
+const getOnlineStoreSampleCatalog = async () =>
+  api.get('/admin/online-store/sample-catalog');
+const getTenantOnlineStore = async (tenantId) =>
+  api.get(`/admin/tenants/${tenantId}/online-store`);
+const upsertTenantOnlineStore = async (tenantId, payload) =>
+  api.put(`/admin/tenants/${tenantId}/online-store`, payload);
+const seedTenantSampleProducts = async (tenantId, sampleIds) =>
+  api.post(`/admin/tenants/${tenantId}/online-store/sample-products`, { sampleIds });
+const clearTenantSampleProducts = async (tenantId) =>
+  api.delete(`/admin/tenants/${tenantId}/online-store/sample-products`);
+const createTenantStoreProduct = async (tenantId, payload) =>
+  api.post(`/admin/tenants/${tenantId}/online-store/products`, payload);
+const updateTenantStoreProduct = async (tenantId, listingId, payload) =>
+  api.patch(`/admin/tenants/${tenantId}/online-store/products/${listingId}`, payload);
+const deleteTenantStoreProduct = async (tenantId, listingId) =>
+  api.delete(`/admin/tenants/${tenantId}/online-store/products/${listingId}`);
+const uploadTenantStoreProductImages = async (tenantId, formData) =>
+  api.post(`/admin/tenants/${tenantId}/online-store/products/upload-images`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+
 const getActiveSupportAccess = async () => api.get('/admin/support-access/active');
 const startSupportAccess = async (tenantId, payload) =>
   api.post(`/admin/tenants/${tenantId}/support-access`, payload);
@@ -345,6 +366,15 @@ export default {
   getOnlineStoreDomains,
   getOnlineStorePendingDomainCount,
   updateOnlineStoreDomainStatus,
+  getOnlineStoreSampleCatalog,
+  getTenantOnlineStore,
+  upsertTenantOnlineStore,
+  seedTenantSampleProducts,
+  clearTenantSampleProducts,
+  createTenantStoreProduct,
+  updateTenantStoreProduct,
+  deleteTenantStoreProduct,
+  uploadTenantStoreProductImages,
   getActiveSupportAccess,
   startSupportAccess,
   endSupportAccess,

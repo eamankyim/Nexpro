@@ -11,10 +11,15 @@ const {
   convertLead,
   exportLeads
 } = require('../controllers/leadController');
+const {
+  getLeadImportTemplate,
+  importLeadsFromFile,
+} = require('../controllers/contactImportController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
-const { exportLimiter } = require('../middleware/rateLimiter');
+const { exportLimiter, bulkOperationLimiter } = require('../middleware/rateLimiter');
 const { timeCrudAction } = require('../middleware/crudTiming');
+const { importFileUploader } = require('../middleware/upload');
 
 const { studioLocationContext } = require('../middleware/studioLocationContext');
 const { shopContext } = require('../middleware/shopContext');
@@ -28,6 +33,21 @@ router.use(shopContext);
 
 router.get('/summary', getLeadSummary);
 router.get('/export', exportLimiter, authorize('admin', 'manager'), exportLeads);
+
+router.get(
+  '/import/template',
+  exportLimiter,
+  authorize('admin', 'manager', 'staff'),
+  getLeadImportTemplate
+);
+router.post(
+  '/import',
+  bulkOperationLimiter,
+  authorize('admin', 'manager', 'staff'),
+  importFileUploader.single('file'),
+  timeCrudAction('leads.import'),
+  importLeadsFromFile
+);
 
 router
   .route('/')

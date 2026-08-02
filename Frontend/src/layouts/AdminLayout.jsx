@@ -81,13 +81,13 @@ const menuItems = [
   { path: '/admin/support-tickets', icon: LifeBuoy, label: 'Support Tickets' },
   { path: '/admin/sabito/overview', icon: ShoppingBag, label: 'Sabito Admin', activePrefix: '/admin/sabito' },
   {
-    path: '/admin/online-store/domains',
+    path: '/admin/online-store/setup',
     icon: Store,
     label: 'Online Store Admin',
     activePrefix: '/admin/online-store',
     badgeKey: 'pendingDomains',
     // Visible if any Online Store Admin child is accessible
-    anyPermission: ['tenants.view', 'settings.view'],
+    anyPermission: ['tenants.update', 'tenants.view', 'settings.view'],
   },
   { path: '/admin/tasks', icon: CheckSquare, label: 'Tasks' },
   { path: '/admin/settings', icon: Settings, label: 'Settings' },

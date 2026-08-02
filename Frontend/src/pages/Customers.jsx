@@ -7,8 +7,9 @@ import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Plus, Loader2, RefreshCw, Filter, Users, Repeat, XCircle, CheckCircle, Phone, Mail, Briefcase, Pencil, Printer, Download, Receipt, CloudOff, Trash2 } from 'lucide-react';
+import { Plus, Loader2, RefreshCw, Filter, Users, Repeat, XCircle, CheckCircle, Phone, Mail, Briefcase, Pencil, Printer, Download, Receipt, CloudOff, Trash2, Upload } from 'lucide-react';
 import customerService from '../services/customerService';
+import ImportContactsDialog from '../components/ImportContactsDialog';
 import { guardOnline } from '../utils/onlineRequired';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import jobService from '../services/jobService';
@@ -144,6 +145,7 @@ const Customers = () => {
   const debouncedSearchText = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { isMobile } = useResponsive();
   const [modalVisible, setModalVisible] = useState(false);
+  const [importContactsOpen, setImportContactsOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const { isManager, tenantRole, activeTenant, activeTenantId } = useAuth();
@@ -804,6 +806,21 @@ const Customers = () => {
             </TooltipTrigger>
             <TooltipContent>Reload customer list</TooltipContent>
           </Tooltip>
+          {canAddCustomer && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  onClick={() => setImportContactsOpen(true)}
+                  size={isMobile ? 'icon' : 'default'}
+                >
+                  <Upload className="h-4 w-4" />
+                  {!isMobile && <span className="ml-2">Import</span>}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Import contacts into Customers or Leads</TooltipContent>
+            </Tooltip>
+          )}
           {canAddCustomer && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -1603,6 +1620,13 @@ const Customers = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      <ImportContactsDialog
+        open={importContactsOpen}
+        onOpenChange={setImportContactsOpen}
+        defaultDestination="customers"
+        onImported={() => refetchCustomers()}
+      />
     </div>
   );
 };

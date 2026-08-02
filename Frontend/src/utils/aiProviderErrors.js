@@ -4,21 +4,24 @@ export const AI_PROVIDER_ERROR_CODES = [
   'OPENAI_INVALID_KEY',
   'AI_PROVIDER_BILLING_REQUIRED',
   'AI_PROVIDER_UNAVAILABLE',
+  'TENANT_AI_KEY_REQUIRED',
 ];
 
-/** Settings path for workspace AI key setup (Operations tab). */
-export const AI_SETTINGS_PATH = '/settings?tab=operations';
+/** Settings path for workspace AI key setup. */
+export const AI_SETTINGS_PATH = '/settings/ai';
 
 /** Short user-facing copy keyed by backend error code. */
 export const AI_PROVIDER_USER_MESSAGES = {
   AI_PROVIDER_BILLING_REQUIRED:
-    'Platform AI credit is finished. Set up AI credit or add your AI API key in Settings.',
+    'Platform AI credit is finished. Set up AI credit or add your AI API key in Settings → AI.',
   OPENAI_NOT_CONFIGURED:
-    'AI is not set up yet. Add your AI API key in Settings → Operations.',
+    'AI is not set up yet. Add your AI API key in Settings → AI.',
   OPENAI_INVALID_KEY:
-    'Your AI API key is invalid. Update it in Settings → Operations.',
+    'Your AI API key is invalid. Update it in Settings → AI.',
   AI_PROVIDER_UNAVAILABLE:
     'AI is temporarily unavailable. Try again in a moment.',
+  TENANT_AI_KEY_REQUIRED:
+    'Growth and strategy questions need your workspace Anthropic API key. Add it in Settings → AI.',
 };
 
 /**

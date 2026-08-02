@@ -4,6 +4,7 @@ export const AI_PROVIDER_ERROR_CODES = [
   'OPENAI_INVALID_KEY',
   'AI_PROVIDER_BILLING_REQUIRED',
   'AI_PROVIDER_UNAVAILABLE',
+  'TENANT_AI_KEY_REQUIRED',
 ] as const;
 
 export type AiProviderErrorCode = (typeof AI_PROVIDER_ERROR_CODES)[number];
@@ -11,13 +12,15 @@ export type AiProviderErrorCode = (typeof AI_PROVIDER_ERROR_CODES)[number];
 /** Short user-facing copy keyed by backend error code. */
 export const AI_PROVIDER_USER_MESSAGES: Record<AiProviderErrorCode, string> = {
   AI_PROVIDER_BILLING_REQUIRED:
-    'Platform AI credit is finished. Set up AI credit or add your AI API key in Settings.',
+    'Platform AI credit is finished. Set up AI credit or add your AI API key in Settings → AI on the web app.',
   OPENAI_NOT_CONFIGURED:
-    'AI is not set up yet. Add your AI API key in Settings → Operations on the web app.',
+    'AI is not set up yet. Add your AI API key in Settings → AI on the web app.',
   OPENAI_INVALID_KEY:
-    'Your AI API key is invalid. Update it in Settings → Operations on the web app.',
+    'Your AI API key is invalid. Update it in Settings → AI on the web app.',
   AI_PROVIDER_UNAVAILABLE:
     'AI is temporarily unavailable. Try again in a moment.',
+  TENANT_AI_KEY_REQUIRED:
+    'Growth and strategy questions need your workspace Anthropic API key. Add it in Settings → AI on the web app.',
 };
 
 type ApiLikeError = {

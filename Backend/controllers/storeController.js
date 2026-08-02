@@ -605,11 +605,21 @@ const withProductDiscountMeta = (product) => {
   };
 };
 
+const listingIsSampleProduct = (listing) => {
+  const metadata = listing?.metadata && typeof listing.metadata === 'object' ? listing.metadata : {};
+  if (metadata.isSample === true) return true;
+  const productMeta = listing?.product?.metadata && typeof listing.product.metadata === 'object'
+    ? listing.product.metadata
+    : {};
+  return productMeta.isSample === true;
+};
+
 const toMarketplaceProduct = (listing, stores, variantsByProductId = new Map()) => {
   const availableListing = buildListingAvailability(listing, variantsByProductId);
   const store = stores.find((candidate) => storeMatchesListing(candidate, availableListing));
   const storeCard = store ? toPublicStoreCard(store) : null;
   const product = availableListing.product || {};
+  const isSample = listingIsSampleProduct(availableListing);
   return withProductDiscountMeta({
     id: availableListing.id,
     title: availableListing.title,
@@ -627,6 +637,7 @@ const toMarketplaceProduct = (listing, stores, variantsByProductId = new Map()) 
     reviewsCount: availableListing.reviewsCount || availableListing.reviewSummary?.reviewsCount || 0,
     reviewSummary: availableListing.reviewSummary || null,
     publishedAt: availableListing.publishedAt,
+    isSample,
   });
 };
 

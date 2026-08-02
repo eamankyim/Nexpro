@@ -2,11 +2,14 @@ const { Customer, Invoice, Expense, Job, Sale, Tenant, Setting, Product } = requ
 const { Op } = require('sequelize');
 const { sequelize } = require('../config/database');
 const openaiService = require('../services/openaiService');
+const { getTenantAnthropicApiKey } = require('../services/tenantAiSettingsService');
 const { parseReportDateRange } = require('../utils/reportDateFilter');
 const { startHotPathTimer } = require('../utils/performanceLogger');
 const {
   assertAiProviderConfigured,
+  assertTenantAiProviderConfigured,
   buildBillingCircuitError,
+  buildTenantKeyRequiredResponse,
   classifyAiProviderError,
   openBillingCircuit,
   toDurationMs,
@@ -88,6 +91,9 @@ const resolveAssistantContextTier = (message) => {
     return 'light';
   }
   if (/\b(draft|write|compose|message|email|sms|whatsapp|reminder|template)\b/.test(text) && !/\b(how much|total|revenue|sales|profit|owe|outstanding)\b/.test(text)) {
+    return 'light';
+  }
+  if (/\b(more customers?|grow (my |the )?business|marketing|strateg|forecast|predict|attract customers?)\b/.test(text)) {
     return 'light';
   }
   return 'full';
@@ -757,7 +763,9 @@ exports.chat = async (req, res, next) => {
       });
     }
 
-    // Support / draft only: Anthropic path (billing circuit + provider key)
+    const isAdvisory = analysisClassification.route === 'advisory';
+
+    // Support / draft / advisory: Anthropic path (billing circuit + provider key)
     const circuitError = buildBillingCircuitError(req.tenantId);
     if (circuitError) {
       timings.preflightMs = toDurationMs(preflightStart);
@@ -765,10 +773,39 @@ exports.chat = async (req, res, next) => {
       return sendAssistantError(res, circuitError);
     }
 
-    const apiKey = await assertAiProviderConfigured(req.tenantId);
+    let apiKey;
+    let chatMode = 'support';
+    let keySource = 'system';
+    try {
+      if (isAdvisory) {
+        chatMode = 'advisory';
+        apiKey = await assertTenantAiProviderConfigured(req.tenantId);
+        keySource = 'tenant';
+      } else {
+        const tenantKey = await getTenantAnthropicApiKey(req.tenantId);
+        apiKey = await assertAiProviderConfigured(req.tenantId);
+        keySource = tenantKey ? 'tenant' : 'system';
+      }
+    } catch (keyError) {
+      if (isAdvisory && (keyError.errorCode === 'TENANT_AI_KEY_REQUIRED' || keyError.code === 'TENANT_AI_KEY_REQUIRED')) {
+        timings.preflightMs = toDurationMs(preflightStart);
+        const soft = buildTenantKeyRequiredResponse(analysisClassification.suggestedQuestions);
+        logAssistantTiming({
+          outcome: 'success',
+          source: 'tenant_key_required',
+          intent: analysisClassification.intent,
+        });
+        return res.status(200).json({
+          success: true,
+          message: soft.answerMarkdown,
+          meta: soft.meta,
+        });
+      }
+      throw keyError;
+    }
     timings.preflightMs = toDurationMs(preflightStart);
 
-    const contextTier = resolveAssistantContextTier(lastMessage.content);
+    const contextTier = isAdvisory ? 'light' : resolveAssistantContextTier(lastMessage.content);
     const contextOptions = {
       shopFilterId: req.shopFilterId || null,
       studioLocationFilterId: req.studioLocationFilterId || null,
@@ -798,14 +835,24 @@ exports.chat = async (req, res, next) => {
       pageContext: typeof pageContext === 'string' ? pageContext : undefined,
       apiKey,
       contextTier,
+      mode: chatMode,
+      keySource,
     });
     timings.providerMs = toDurationMs(providerStart);
 
-    logAssistantTiming({ outcome: 'success', source: 'anthropic' });
+    logAssistantTiming({
+      outcome: 'success',
+      source: isAdvisory ? 'anthropic_advisory' : 'anthropic',
+      intent: analysisClassification.intent,
+    });
     res.status(200).json({
       success: true,
       message: assistantMessage,
-      meta: { source: 'anthropic' },
+      meta: {
+        source: isAdvisory ? 'anthropic_advisory' : 'anthropic',
+        intent: analysisClassification.intent || undefined,
+        keySource,
+      },
     });
   } catch (error) {
     const classified = classifyAiProviderError(error);

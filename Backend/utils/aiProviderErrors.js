@@ -3,14 +3,22 @@ const { getTenantAnthropicApiKey } = require('../services/tenantAiSettingsServic
 /** Short, user-facing copy for AI provider failures (no raw provider text). */
 const AI_PROVIDER_USER_MESSAGES = {
   AI_PROVIDER_BILLING_REQUIRED:
-    'Platform AI credit is finished. Set up AI credit or add your AI API key in Settings.',
+    'Platform AI credit is finished. Set up AI credit or add your AI API key in Settings → AI.',
+  AI_PROVIDER_BILLING_REQUIRED_TENANT:
+    'Your workspace Anthropic credit is finished. Add credits in Anthropic or update your key in Settings → AI.',
   OPENAI_NOT_CONFIGURED:
-    'AI is not set up yet. Add your AI API key in Settings → Operations.',
+    'AI is not set up yet. Add your AI API key in Settings → AI.',
   OPENAI_INVALID_KEY:
-    'Your AI API key is invalid. Update it in Settings → Operations.',
+    'Your AI API key is invalid. Update it in Settings → AI.',
+  OPENAI_INVALID_KEY_TENANT:
+    'Your workspace AI API key is invalid. Update it in Settings → AI.',
   AI_PROVIDER_UNAVAILABLE:
     'AI is temporarily unavailable. Try again in a moment.',
+  TENANT_AI_KEY_REQUIRED:
+    'Growth and strategy questions need your workspace Anthropic API key. Add it in Settings → AI.',
 };
+
+const AI_SETTINGS_PATH = '/settings/ai';
 
 const DEFAULT_BILLING_CIRCUIT_TTL_MS = Math.max(
   5000,
@@ -81,11 +89,26 @@ const isProviderUnavailableError = (error) => {
 
 /**
  * Map provider failures to safe API responses without leaking secrets or raw headers.
- * @param {Error & { status?: number, code?: string, error?: object }} error
+ * @param {Error & { status?: number, code?: string, error?: object, keySource?: string }} error
+ * @param {{ keySource?: 'tenant' | 'system' | 'unknown' }} [options]
  * @returns {{ statusCode: number, errorCode: string, message: string } | null}
  */
-const classifyAiProviderError = (error) => {
+const classifyAiProviderError = (error, options = {}) => {
   if (!error) return null;
+
+  const keySource = options.keySource || error.keySource || 'unknown';
+  const isTenantKey = keySource === 'tenant';
+
+  if (
+    error.code === 'TENANT_AI_KEY_REQUIRED'
+    || error.errorCode === 'TENANT_AI_KEY_REQUIRED'
+  ) {
+    return {
+      statusCode: 402,
+      errorCode: 'TENANT_AI_KEY_REQUIRED',
+      message: AI_PROVIDER_USER_MESSAGES.TENANT_AI_KEY_REQUIRED,
+    };
+  }
 
   if (error.code === 'OPENAI_NOT_CONFIGURED' || error.errorCode === 'OPENAI_NOT_CONFIGURED') {
     return {
@@ -99,7 +122,9 @@ const classifyAiProviderError = (error) => {
     return {
       statusCode: 503,
       errorCode: 'OPENAI_INVALID_KEY',
-      message: AI_PROVIDER_USER_MESSAGES.OPENAI_INVALID_KEY,
+      message: isTenantKey
+        ? AI_PROVIDER_USER_MESSAGES.OPENAI_INVALID_KEY_TENANT
+        : AI_PROVIDER_USER_MESSAGES.OPENAI_INVALID_KEY,
     };
   }
 
@@ -107,7 +132,9 @@ const classifyAiProviderError = (error) => {
     return {
       statusCode: 402,
       errorCode: 'AI_PROVIDER_BILLING_REQUIRED',
-      message: AI_PROVIDER_USER_MESSAGES.AI_PROVIDER_BILLING_REQUIRED,
+      message: isTenantKey
+        ? AI_PROVIDER_USER_MESSAGES.AI_PROVIDER_BILLING_REQUIRED_TENANT
+        : AI_PROVIDER_USER_MESSAGES.AI_PROVIDER_BILLING_REQUIRED,
     };
   }
 
@@ -125,10 +152,11 @@ const classifyAiProviderError = (error) => {
 /**
  * Re-throw provider errors with normalized status/code/message fields.
  * @param {Error} error
+ * @param {{ keySource?: 'tenant' | 'system' | 'unknown' }} [options]
  * @returns {never}
  */
-const normalizeAiProviderError = (error) => {
-  const classified = classifyAiProviderError(error);
+const normalizeAiProviderError = (error, options = {}) => {
+  const classified = classifyAiProviderError(error, options);
   if (!classified) {
     throw error;
   }
@@ -138,6 +166,9 @@ const normalizeAiProviderError = (error) => {
   normalized.errorCode = classified.errorCode;
   normalized.code = classified.errorCode;
   normalized.aiProviderError = true;
+  if (options.keySource || error.keySource) {
+    normalized.keySource = options.keySource || error.keySource;
+  }
   throw normalized;
 };
 
@@ -204,13 +235,65 @@ const assertAiProviderConfigured = async (tenantId) => {
   throw error;
 };
 
+/**
+ * Require a workspace (tenant) Anthropic key — no platform fallback.
+ * Used for advisory / hard Ask AI questions.
+ * @param {string | null | undefined} tenantId
+ * @returns {Promise<string>}
+ */
+const assertTenantAiProviderConfigured = async (tenantId) => {
+  const tenantKey = await getTenantAnthropicApiKey(tenantId);
+  if (tenantKey) {
+    return tenantKey;
+  }
+
+  const error = new Error(AI_PROVIDER_USER_MESSAGES.TENANT_AI_KEY_REQUIRED);
+  error.statusCode = 402;
+  error.errorCode = 'TENANT_AI_KEY_REQUIRED';
+  error.code = 'TENANT_AI_KEY_REQUIRED';
+  error.aiProviderError = true;
+  error.keySource = 'tenant';
+  throw error;
+};
+
+/**
+ * Soft Ask AI response when advisory questions need a workspace key.
+ * @param {string[]} [suggestedQuestions]
+ * @returns {{ answerMarkdown: string, meta: Object }}
+ */
+const buildTenantKeyRequiredResponse = (suggestedQuestions = []) => {
+  const chips = (suggestedQuestions || []).slice(0, 6).map((q) => `- ${q}`);
+  const lines = [
+    AI_PROVIDER_USER_MESSAGES.TENANT_AI_KEY_REQUIRED,
+    '',
+    'In-app numbers and ABS how-tos still work without a workspace key. Try one of these:',
+    ...(chips.length ? chips : [
+      '- How much did I sell today?',
+      '- Who owes me money?',
+      '- How do I create an invoice?',
+    ]),
+  ];
+  return {
+    answerMarkdown: lines.join('\n'),
+    meta: {
+      source: 'tenant_key_required',
+      settingsPath: AI_SETTINGS_PATH,
+      suggestedQuestions: suggestedQuestions || [],
+      unsupported: false,
+    },
+  };
+};
+
 const toDurationMs = (start) => Number((process.hrtime.bigint() - start) / 1000000n);
 
 module.exports = {
   AI_PROVIDER_USER_MESSAGES,
+  AI_SETTINGS_PATH,
   DEFAULT_BILLING_CIRCUIT_TTL_MS,
   assertAiProviderConfigured,
+  assertTenantAiProviderConfigured,
   buildBillingCircuitError,
+  buildTenantKeyRequiredResponse,
   classifyAiProviderError,
   clearBillingCircuit,
   getBillingCircuitState,

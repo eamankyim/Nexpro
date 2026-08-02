@@ -356,6 +356,11 @@ const StoreProductsPanel = ({ homeSections = [] }) => {
                     </p>
                     <div className="mt-1.5 flex flex-wrap gap-2">
                       <Badge variant={isPublished ? 'default' : 'outline'}>{listing.status}</Badge>
+                      {listing.metadata?.isSample === true ? (
+                        <Badge variant="outline" className="border-slate-300 bg-slate-100 text-slate-700">
+                          Sample
+                        </Badge>
+                      ) : null}
                       <Badge variant="outline">{formatAmount(listing.publicPrice || 0)}</Badge>
                     </div>
                   </div>

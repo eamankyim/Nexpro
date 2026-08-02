@@ -192,7 +192,7 @@ describe('assistantController.chat', () => {
       code: 'AI_PROVIDER_BILLING_REQUIRED',
     });
     expect(res.body.error).toBe(
-      'Platform AI credit is finished. Set up AI credit or add your AI API key in Settings.'
+      'Platform AI credit is finished. Set up AI credit or add your AI API key in Settings → AI.'
     );
     expect(next).not.toHaveBeenCalled();
   });
@@ -228,7 +228,7 @@ describe('assistantController.chat', () => {
       errorCode: 'AI_PROVIDER_BILLING_REQUIRED',
     });
     expect(res.body.error).toBe(
-      'Platform AI credit is finished. Set up AI credit or add your AI API key in Settings.'
+      'Platform AI credit is finished. Set up AI credit or add your AI API key in Settings → AI.'
     );
     expect(next).not.toHaveBeenCalled();
   });
@@ -260,7 +260,7 @@ describe('assistantController.chat', () => {
   });
 
   it('passes resolved API key and uses light context for support questions', async () => {
-    openaiService.chatWithContext.mockResolvedValue('Open Settings → Operations to add your API key.');
+    openaiService.chatWithContext.mockResolvedValue('Open Settings → AI to add your API key.');
     getTenantAnthropicApiKey.mockResolvedValue('tenant-anthropic-key-1234567890');
 
     const req = {
@@ -286,9 +286,103 @@ describe('assistantController.chat', () => {
       expect.objectContaining({
         apiKey: 'tenant-anthropic-key-1234567890',
         contextTier: 'light',
+        mode: 'support',
       })
     );
     expect(Customer.count).not.toHaveBeenCalled();
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it('soft-blocks advisory questions when no tenant Anthropic key is configured', async () => {
+    process.env.ANTHROPIC_API_KEY = 'system-key-123456789012345678901234567890';
+    getTenantAnthropicApiKey.mockResolvedValue(null);
+
+    const req = {
+      tenantId: 'tenant-1',
+      tenant: { businessType: 'shop' },
+      body: {
+        messages: [{ role: 'user', content: 'How do I get more customers?' }],
+      },
+      headers: {},
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    await chat(req, res, next);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.meta).toMatchObject({
+      source: 'tenant_key_required',
+      settingsPath: '/settings/ai',
+    });
+    expect(res.body.message).toMatch(/workspace Anthropic API key/i);
+    expect(openaiService.chatWithContext).not.toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('uses tenant-only Anthropic key for advisory questions', async () => {
+    openaiService.chatWithContext.mockResolvedValue('Try WhatsApp promos and referral incentives.');
+    getTenantAnthropicApiKey.mockResolvedValue('tenant-advisory-key-abcdef');
+
+    const req = {
+      tenantId: 'tenant-1',
+      tenant: { businessType: 'shop' },
+      body: {
+        messages: [{ role: 'user', content: 'How do I get more customers?' }],
+      },
+      headers: {},
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    await chat(req, res, next);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.meta).toMatchObject({
+      source: 'anthropic_advisory',
+      keySource: 'tenant',
+    });
+    expect(openaiService.chatWithContext).toHaveBeenCalledWith(
+      req.body.messages,
+      expect.any(Object),
+      expect.objectContaining({
+        apiKey: 'tenant-advisory-key-abcdef',
+        mode: 'advisory',
+        contextTier: 'light',
+      })
+    );
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('still allows support questions with system key when tenant has no key', async () => {
+    openaiService.chatWithContext.mockResolvedValue('Go to Customers → Add customer.');
+    getTenantAnthropicApiKey.mockResolvedValue(null);
+    process.env.ANTHROPIC_API_KEY = 'system-key-123456789012345678901234567890';
+
+    const req = {
+      tenantId: 'tenant-1',
+      tenant: { businessType: 'shop' },
+      body: {
+        messages: [{ role: 'user', content: 'How do I create an invoice?' }],
+      },
+      headers: {},
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    await chat(req, res, next);
+
+    expect(res.statusCode).toBe(200);
+    expect(openaiService.chatWithContext).toHaveBeenCalledWith(
+      req.body.messages,
+      expect.any(Object),
+      expect.objectContaining({
+        apiKey: process.env.ANTHROPIC_API_KEY,
+        mode: 'support',
+        keySource: 'system',
+      })
+    );
+    expect(res.body.meta.keySource).toBe('system');
   });
 });

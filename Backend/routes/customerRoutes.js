@@ -15,6 +15,10 @@ const {
   bulkUpdateCustomerStatus,
   exportCustomers
 } = require('../controllers/customerController');
+const {
+  getCustomerImportTemplate,
+  importCustomersFromFile,
+} = require('../controllers/contactImportController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
 const { studioLocationContext } = require('../middleware/studioLocationContext');
@@ -22,6 +26,7 @@ const { shopContext } = require('../middleware/shopContext');
 const { bulkOperationLimiter, exportLimiter } = require('../middleware/rateLimiter');
 const { cacheMiddleware, generateCustomerListKey } = require('../middleware/cache');
 const { timeCrudAction } = require('../middleware/crudTiming');
+const { importFileUploader } = require('../middleware/upload');
 
 const router = express.Router();
 
@@ -41,6 +46,21 @@ router.route('/stats')
 // Export endpoint - must be before /:id to avoid route conflict
 router.route('/export')
   .get(exportLimiter, authorize('admin', 'manager'), exportCustomers);
+
+router.get(
+  '/import/template',
+  exportLimiter,
+  authorize('admin', 'manager', 'staff'),
+  getCustomerImportTemplate
+);
+router.post(
+  '/import',
+  bulkOperationLimiter,
+  authorize('admin', 'manager', 'staff'),
+  importFileUploader.single('file'),
+  timeCrudAction('customers.import'),
+  importCustomersFromFile
+);
 
 // Bulk operations - must be before /:id to avoid route conflict
 router.route('/bulk')

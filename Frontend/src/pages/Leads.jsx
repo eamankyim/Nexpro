@@ -26,7 +26,8 @@ import {
   X,
   MoreVertical,
   Edit,
-  Archive
+  Archive,
+  Upload,
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import DetailsDrawer from '../components/DetailsDrawer';
@@ -36,6 +37,7 @@ import PhoneNumberInput from '../components/PhoneNumberInput';
 import StatusChip from '../components/StatusChip';
 import TableSkeleton from '../components/TableSkeleton';
 import DetailSkeleton from '../components/DetailSkeleton';
+import ImportContactsDialog from '../components/ImportContactsDialog';
 import leadService from '../services/leadService';
 import userService from '../services/userService';
 import customDropdownService from '../services/customDropdownService';
@@ -188,6 +190,7 @@ const Leads = () => {
   const [convertDialogOpen, setConvertDialogOpen] = useState(false);
   const [tableViewMode, setTableViewMode] = useState('table');
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
+  const [importContactsOpen, setImportContactsOpen] = useState(false);
   const [updateStatusDialogOpen, setUpdateStatusDialogOpen] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [leadBeingUpdated, setLeadBeingUpdated] = useState(null);
@@ -1003,6 +1006,19 @@ const Leads = () => {
               </Button>
             </TooltipTrigger>
             <TooltipContent>Refresh leads list</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                onClick={() => setImportContactsOpen(true)}
+                size={isMobile ? 'icon' : 'default'}
+              >
+                <Upload className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">Import</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Import contacts into Customers or Leads</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -1863,6 +1879,16 @@ const Leads = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <ImportContactsDialog
+        open={importContactsOpen}
+        onOpenChange={setImportContactsOpen}
+        defaultDestination="leads"
+        onImported={() => {
+          fetchLeads(true);
+          fetchSummary();
+        }}
+      />
     </div>
   );
 };

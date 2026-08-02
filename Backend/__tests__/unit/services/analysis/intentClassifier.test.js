@@ -50,9 +50,36 @@ describe('intentClassifier', () => {
     expect(r.route).toBe('draft');
   });
 
-  it('returns unsupported with suggestions for bare greetings (chat uses smallTalk separately)', () => {
-    const r = classifyIntent('hello');
+  it('routes growth advice to advisory', () => {
+    const r = classifyIntent('How do I get more customers?');
+    expect(r.route).toBe('advisory');
+    expect(r.intent).toBe('business_advisory');
+  });
+
+  it('routes marketing strategy to advisory', () => {
+    expect(classifyIntent('Give me marketing tips for my shop').route).toBe('advisory');
+  });
+
+  it('routes predictions to advisory', () => {
+    const r = classifyIntent('Will I sell more next week?');
+    expect(r.route).toBe('advisory');
+    expect(r.suggestedQuestions?.length).toBeGreaterThan(0);
+  });
+
+  it('routes unknown open questions to advisory with suggestions', () => {
+    const r = classifyIntent('What is the meaning of inventory turnover for a boutique?');
+    expect(r.route).toBe('advisory');
+    expect(r.suggestedQuestions?.length).toBeGreaterThan(0);
+  });
+
+  it('keeps empty message unsupported', () => {
+    const r = classifyIntent('   ');
     expect(r.route).toBe('unsupported');
+  });
+
+  it('routes bare greetings to advisory (chat uses smallTalk separately)', () => {
+    const r = classifyIntent('hello');
+    expect(r.route).toBe('advisory');
     expect(r.suggestedQuestions?.length).toBeGreaterThan(0);
   });
 });

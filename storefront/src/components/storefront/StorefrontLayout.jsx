@@ -1173,11 +1173,18 @@ export const ProductCard = ({ product }) => {
     [storeForActions],
   );
   const softenPrice = cardActions.includes('contact_for_price');
+  const isSample = product?.isSample === true;
 
   const handleAddToCart = useCallback(() => {
+    if (isSample) {
+      showError('Sample products cannot be purchased.');
+      return;
+    }
     const result = addItem({ product: productWithStore, quantity: 1 });
     if (!result.ok) {
-      showError('This product could not be added to your cart.');
+      showError(result.reason === 'sample_product'
+        ? 'Sample products cannot be purchased.'
+        : 'This product could not be added to your cart.');
       return;
     }
     if (result.replacedStore) {
@@ -1185,16 +1192,22 @@ export const ProductCard = ({ product }) => {
     } else {
       showSuccess('Added to cart.');
     }
-  }, [addItem, isOwnedShop, productWithStore]);
+  }, [addItem, isOwnedShop, isSample, productWithStore]);
 
   const handleBuyNow = useCallback(() => {
+    if (isSample) {
+      showError('Sample products cannot be purchased.');
+      return;
+    }
     const result = addItem({ product: productWithStore, quantity: 1 });
     if (!result.ok) {
-      showError('This product could not be added to your cart.');
+      showError(result.reason === 'sample_product'
+        ? 'Sample products cannot be purchased.'
+        : 'This product could not be added to your cart.');
       return;
     }
     navigate('/checkout');
-  }, [addItem, navigate, productWithStore]);
+  }, [addItem, isSample, navigate, productWithStore]);
 
   const handleWishlistClick = useCallback((event) => {
     event.preventDefault();
@@ -1238,6 +1251,7 @@ export const ProductCard = ({ product }) => {
     }
 
     if (actionId === 'add_to_cart') {
+      if (isSample) return null;
       return (
         <Button
           key={actionId}
@@ -1254,6 +1268,7 @@ export const ProductCard = ({ product }) => {
     }
 
     if (actionId === 'buy_now') {
+      if (isSample) return null;
       return (
         <Button
           key={actionId}
@@ -1303,6 +1318,11 @@ export const ProductCard = ({ product }) => {
         {discount > 0 ? (
           <Badge className="absolute left-3 top-3 border-0 bg-rose-500 text-white hover:bg-rose-500">-{discount}%</Badge>
         ) : null}
+        {isSample ? (
+          <Badge className={`absolute left-3 border-0 bg-slate-800 text-white hover:bg-slate-800 ${discount > 0 ? 'top-11' : 'top-3'}`}>
+            Sample
+          </Badge>
+        ) : null}
         <button
           type="button"
           className={`absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full border transition-colors ${
@@ -1337,6 +1357,9 @@ export const ProductCard = ({ product }) => {
         >
           {product.title}
         </Link>
+        {isSample ? (
+          <p className="mt-1 text-xs font-medium text-slate-500">Demo product — not for sale</p>
+        ) : null}
         {!isOwnedShop ? (
           <p className="mt-1 truncate text-xs text-slate-500">{product?.store?.displayName || `${APP_NAME} seller`}</p>
         ) : null}

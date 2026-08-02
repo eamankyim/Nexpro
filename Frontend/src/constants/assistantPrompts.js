@@ -210,3 +210,114 @@ export function getPagePrompts(pageContext, opts = {}) {
 
   return filterPromptsForWorkspace(base, kind);
 }
+
+/**
+ * Map a prompt string to a short card title + icon key for the Ask AI home UI.
+ * @param {string} prompt
+ * @returns {{ title: string, icon: string }}
+ */
+function suggestionMetaForPrompt(prompt) {
+  const p = String(prompt || '');
+  if (/owe|collect|outstanding|overdue/i.test(p)) {
+    return { title: 'Collections', icon: 'wallet' };
+  }
+  if (/restock|low on stock|running low|ingredients|drugs or products/i.test(p)) {
+    return { title: 'Low stock items', icon: 'package' };
+  }
+  if (/meals sold|sold best/i.test(p)) {
+    return { title: 'Top meals', icon: 'utensils' };
+  }
+  if (/top products/i.test(p)) {
+    return { title: 'Top products', icon: 'award' };
+  }
+  if (/open jobs|still need attention|job pipeline/i.test(p)) {
+    return { title: 'Open jobs', icon: 'briefcase' };
+  }
+  if (/kitchen orders|orders are waiting/i.test(p)) {
+    return { title: 'Kitchen orders', icon: 'utensils' };
+  }
+  if (/today|sold today|revenue did I make today|food sales/i.test(p)) {
+    return { title: "Today's revenue", icon: 'trending' };
+  }
+  if (/this month|sales this month|revenue this month/i.test(p)) {
+    return { title: 'This month', icon: 'calendar' };
+  }
+  if (/summarize|performance|summary/i.test(p)) {
+    return { title: 'Monthly summary', icon: 'file' };
+  }
+  if (/compare|previous period|why are sales|why is revenue/i.test(p)) {
+    return { title: 'Performance', icon: 'trending' };
+  }
+  if (/top customers/i.test(p)) {
+    return { title: 'Top customers', icon: 'users' };
+  }
+  return { title: 'Ask ABS AI', icon: 'sparkles' };
+}
+
+/**
+ * Card suggestions for Ask AI empty state — driven by business-type prompt sets.
+ * Product businesses never get open-jobs cards; studios can.
+ *
+ * @param {{ businessType?: string|null, shopType?: string|null, limit?: number }} [ctx]
+ * @returns {Array<{ id: string, title: string, prompt: string, icon: string }>}
+ */
+export function getAssistantSuggestionCards(ctx = {}) {
+  const { business } = getAssistantPromptSets(ctx);
+  const limit = Number.isFinite(ctx.limit) ? ctx.limit : 5;
+  const kind = resolveAssistantWorkspaceKind(ctx.businessType, ctx.shopType);
+
+  // Prefer a curated order of themes so the carousel reads well.
+  const preferredMatchers =
+    kind === 'studio'
+      ? [
+          /revenue did I make today|sold today/i,
+          /owe|collect/i,
+          /open jobs|still need attention/i,
+          /summarize performance|summarize my/i,
+          /revenue this month|sales this month/i,
+        ]
+      : kind === 'restaurant'
+        ? [
+            /sold best today|food sales/i,
+            /kitchen orders/i,
+            /ingredients|running low/i,
+            /owe|collect/i,
+            /summarize performance/i,
+          ]
+        : [
+            /sell today|sold today|revenue did I make today/i,
+            /owe|collect/i,
+            /restock|low on stock/i,
+            /top products/i,
+            /summarize performance/i,
+          ];
+
+  const picked = [];
+  const used = new Set();
+
+  for (const matcher of preferredMatchers) {
+    const found = business.find((prompt) => matcher.test(prompt) && !used.has(prompt));
+    if (found) {
+      used.add(found);
+      picked.push(found);
+    }
+    if (picked.length >= limit) break;
+  }
+
+  for (const prompt of business) {
+    if (picked.length >= limit) break;
+    if (used.has(prompt)) continue;
+    used.add(prompt);
+    picked.push(prompt);
+  }
+
+  return picked.map((prompt, index) => {
+    const meta = suggestionMetaForPrompt(prompt);
+    return {
+      id: `${kind}-${index}-${meta.icon}`,
+      title: meta.title,
+      prompt,
+      icon: meta.icon,
+    };
+  });
+}

@@ -5,6 +5,14 @@
 Backend/.env
 Frontend/.env
 
+# Omega 360 (temporary sibling product — extract later)
+omega-360/backend/.env
+omega-360/frontend/.env
+omega-360/backend/node_modules/
+omega-360/frontend/node_modules/
+omega-360/frontend/dist/
+omega-360/backend/uploads/
+
 # Dependencies
 node_modules/
 Backend/node_modules/

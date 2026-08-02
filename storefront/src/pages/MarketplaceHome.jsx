@@ -299,17 +299,24 @@ const ProductCard = ({ product }) => {
   const productUrl = getProductUrl(product);
   const review = getReviewMeta(product, 'New');
   const availability = getProductAvailability(product);
+  const isSample = product?.isSample === true;
 
   const handleAddToCart = useCallback(() => {
+    if (isSample) {
+      showError('Sample products cannot be purchased.');
+      return;
+    }
     const result = addItem({ product, quantity: 1 });
     if (!result.ok) {
-      showError('This product could not be added to your cart.');
+      showError(result.reason === 'sample_product'
+        ? 'Sample products cannot be purchased.'
+        : 'This product could not be added to your cart.');
       return;
     }
     showSuccess(result.replacedStore
       ? 'Cart updated for this seller. Previous seller items were removed.'
       : 'Added to cart.');
-  }, [addItem, product]);
+  }, [addItem, isSample, product]);
 
   return (
     <div className="group flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white transition-all hover:-translate-y-0.5 hover:border-green-300 sm:rounded-3xl">
@@ -317,6 +324,11 @@ const ProductCard = ({ product }) => {
         <ProductImage product={product} />
         {discount > 0 ? (
           <Badge className="absolute left-3 top-3 border-0 bg-rose-500 text-white hover:bg-rose-500">-{discount}%</Badge>
+        ) : null}
+        {isSample ? (
+          <Badge className={`absolute left-3 border-0 bg-slate-800 text-white hover:bg-slate-800 ${discount > 0 ? 'top-11' : 'top-3'}`}>
+            Sample
+          </Badge>
         ) : null}
         <span
           className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full border border-white/80 bg-white/90 text-slate-600"
@@ -340,6 +352,9 @@ const ProductCard = ({ product }) => {
           {product.title}
         </Link>
         <p className="mt-1 truncate text-xs text-slate-500">{product?.store?.displayName || `${APP_NAME} seller`}</p>
+        {isSample ? (
+          <p className="mt-1 text-xs font-medium text-slate-500">Demo product — not for sale</p>
+        ) : null}
         <div className="mt-3 flex flex-wrap gap-2">
           <Badge variant="outline" className="border-slate-200 bg-slate-50 text-[11px] text-slate-600">
             {availability.label}
@@ -358,15 +373,26 @@ const ProductCard = ({ product }) => {
               <span className="truncate">View</span>
             </Link>
           </Button>
-          <Button
-            type="button"
-            className="h-10 min-w-0 rounded-full bg-green-700 px-2 text-xs font-bold text-white hover:bg-green-800 sm:px-3 sm:text-sm"
-            disabled={!availability.available}
-            onClick={handleAddToCart}
-          >
-            <ShoppingCart className="mr-1.5 h-4 w-4 shrink-0 sm:mr-2" />
-            <span className="truncate">{availability.available ? 'Add' : 'Out of stock'}</span>
-          </Button>
+          {isSample ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 min-w-0 rounded-full border-slate-200 px-2 text-xs font-bold text-slate-500 sm:px-3 sm:text-sm"
+              disabled
+            >
+              Sample
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              className="h-10 min-w-0 rounded-full bg-green-700 px-2 text-xs font-bold text-white hover:bg-green-800 sm:px-3 sm:text-sm"
+              disabled={!availability.available}
+              onClick={handleAddToCart}
+            >
+              <ShoppingCart className="mr-1.5 h-4 w-4 shrink-0 sm:mr-2" />
+              <span className="truncate">{availability.available ? 'Add' : 'Out of stock'}</span>
+            </Button>
+          )}
         </div>
       </div>
     </div>

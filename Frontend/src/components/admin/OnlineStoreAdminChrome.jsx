@@ -8,6 +8,15 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 export const ONLINE_STORE_ADMIN_SECTIONS = {
+  setup: {
+    key: 'setup',
+    path: '/admin/online-store/setup',
+    label: 'Setup',
+    title: 'Store setup',
+    description:
+      'Provision an online store for a tenant: store info, heroes, sample products, and real client products — then go live.',
+    permission: 'tenants.update',
+  },
   domains: {
     key: 'domains',
     path: '/admin/online-store/domains',
@@ -28,17 +37,21 @@ export const ONLINE_STORE_ADMIN_SECTIONS = {
   },
 };
 
-const NAV_ITEMS = [ONLINE_STORE_ADMIN_SECTIONS.domains, ONLINE_STORE_ADMIN_SECTIONS.heroes];
+const NAV_ITEMS = [
+  ONLINE_STORE_ADMIN_SECTIONS.setup,
+  ONLINE_STORE_ADMIN_SECTIONS.domains,
+  ONLINE_STORE_ADMIN_SECTIONS.heroes,
+];
 
 /**
  * Shared Sabito-style header + section tabs for Online Store Admin pages.
- * @param {{ section: 'domains' | 'heroes', actions?: import('react').ReactNode, children?: import('react').ReactNode }} props
+ * @param {{ section: 'setup' | 'domains' | 'heroes', actions?: import('react').ReactNode, children?: import('react').ReactNode }} props
  */
 export default function OnlineStoreAdminChrome({ section, actions, children }) {
   const location = useLocation();
   const { hasPermission, loading: permissionsLoading } = usePlatformAdminPermissions();
   const [pendingDomainCount, setPendingDomainCount] = useState(0);
-  const config = ONLINE_STORE_ADMIN_SECTIONS[section] || ONLINE_STORE_ADMIN_SECTIONS.domains;
+  const config = ONLINE_STORE_ADMIN_SECTIONS[section] || ONLINE_STORE_ADMIN_SECTIONS.setup;
   const canViewDomains = !permissionsLoading && hasPermission('tenants.view');
 
   useEffect(() => {
