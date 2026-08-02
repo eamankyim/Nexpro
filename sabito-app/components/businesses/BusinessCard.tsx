@@ -5,7 +5,7 @@ export function BusinessCard({ business }: { business: MarketplaceBusiness }) {
   return (
     <Link
       href={`/businesses/${business.slug}`}
-      className="group block overflow-hidden rounded-2xl border border-slate-200 bg-white transition hover:border-[var(--sabito-teal)]"
+      className="group block overflow-hidden rounded-2xl border border-slate-200 bg-white transition hover:border-[var(--sabito-green)]"
     >
       <div className="aspect-[4/3] bg-[var(--sabito-mint)]">
         {business.logoUrl || business.imageUrl ? (
@@ -16,14 +16,14 @@ export function BusinessCard({ business }: { business: MarketplaceBusiness }) {
             className="h-full w-full object-cover"
           />
         ) : (
-          <div className="flex h-full items-center justify-center text-4xl font-bold text-[var(--sabito-teal)]/40">
+          <div className="flex h-full items-center justify-center text-4xl font-bold text-[var(--sabito-green)]/40">
             {business.name.slice(0, 1)}
           </div>
         )}
       </div>
       <div className="space-y-1 p-4">
-        <p className="text-xs font-medium text-[var(--sabito-teal)]">{business.category}</p>
-        <h3 className="font-semibold text-slate-900 group-hover:text-[var(--sabito-teal-dark)]">
+        <p className="text-xs font-medium text-[var(--sabito-green)]">{business.category}</p>
+        <h3 className="font-semibold text-slate-900 group-hover:text-[var(--sabito-green-dark)]">
           {business.name}
         </h3>
         <p className="text-sm text-slate-500">{business.location}</p>

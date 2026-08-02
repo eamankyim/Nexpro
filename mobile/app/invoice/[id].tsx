@@ -93,7 +93,9 @@ export default function InvoiceDetailScreen() {
   const { colors, cardBg, borderColor, textColor, mutedColor } = useEntityDetailTheme();
   const [showPaymentSheet, setShowPaymentSheet] = useState(false);
   const [awaitingPaystackReturn, setAwaitingPaystackReturn] = useState(false);
-  const [directPaymentStatus, setDirectPaymentStatus] = useState<'idle' | 'pending' | 'success' | 'failed'>('idle');
+  const [directPaymentStatus, setDirectPaymentStatus] = useState<
+    'idle' | 'pending' | 'awaiting_otp' | 'success' | 'failed'
+  >('idle');
   const [directPaymentReference, setDirectPaymentReference] = useState<string | null>(null);
   const [directPaymentMessage, setDirectPaymentMessage] = useState<string | null>(null);
   const { isAnyActionActive, isActionActive, runExclusiveAction } = useExclusiveAction<InvoiceDangerAction>();
@@ -317,6 +319,23 @@ export default function InvoiceDetailScreen() {
         const result = res?.data ?? res;
         const reference = result?.reference ? String(result.reference) : null;
         setDirectPaymentReference(reference);
+        const requiresOtp =
+          result?.requiresOtp === true
+          || String(result?.status || '').toLowerCase() === 'send_otp';
+        if (requiresOtp) {
+          setDirectPaymentStatus('awaiting_otp');
+          setDirectPaymentMessage(
+            result?.message
+            || result?.displayText
+            || 'Enter the OTP sent to the customer to continue payment.'
+          );
+          setAwaitingPaystackReturn(false);
+          Alert.alert(
+            'OTP required',
+            result?.message || 'Enter the OTP sent to the customer phone, then submit.'
+          );
+          return;
+        }
         setDirectPaymentStatus('pending');
         setDirectPaymentMessage(
           result?.message || 'Prompt sent. Ask the customer to approve it on their phone, then check status.'
@@ -341,6 +360,63 @@ export default function InvoiceDetailScreen() {
       }
     });
   }, [directMomoProviders, invoice, paymentCollectionConfigured, reconcileInvoicePaystack, runExclusiveAction]);
+
+  const handleSubmitDirectInvoiceOtp = useCallback(
+    async (otp: string) => {
+      if (!invoice) return;
+      const cleanedOtp = String(otp || '').trim();
+      if (!cleanedOtp) {
+        Alert.alert('OTP required', 'Enter the OTP sent to the customer.');
+        return;
+      }
+      await runExclusiveAction('payment', async () => {
+        try {
+          const res = await invoiceService.submitPaystackOtp(invoice.id, {
+            otp: cleanedOtp,
+            reference: directPaymentReference || undefined,
+          });
+          const result = res?.data ?? res;
+          const stillNeedsOtp =
+            result?.requiresOtp === true
+            || String(result?.status || '').toLowerCase() === 'send_otp';
+          if (stillNeedsOtp) {
+            setDirectPaymentStatus('awaiting_otp');
+            setDirectPaymentMessage(
+              result?.message || 'Enter the new OTP sent to the customer to continue payment.'
+            );
+            Alert.alert('OTP required', result?.message || 'Another OTP is required. Enter it to continue.');
+            return;
+          }
+          const status = String(result?.status || '').toLowerCase();
+          if (status === 'failed' || status === 'abandoned') {
+            setDirectPaymentStatus('failed');
+            setDirectPaymentMessage(result?.message || 'Mobile money payment failed.');
+            Alert.alert('Payment failed', result?.message || 'Mobile money payment failed.');
+            return;
+          }
+          setDirectPaymentStatus('pending');
+          setDirectPaymentMessage(
+            result?.message || 'OTP accepted. Ask the customer to approve if prompted, then check status.'
+          );
+          setAwaitingPaystackReturn(true);
+          setTimeout(() => {
+            void reconcileInvoicePaystack();
+          }, 2500);
+          Alert.alert('OTP submitted', 'Check status after the customer finishes approval on their phone.');
+        } catch (err: unknown) {
+          const message =
+            typeof err === 'object' && err !== null && 'response' in err
+              ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
+              : undefined;
+          const fallback = err instanceof Error ? err.message : 'Could not submit OTP';
+          Alert.alert('OTP failed', message || fallback);
+          setDirectPaymentStatus('awaiting_otp');
+          setDirectPaymentMessage(message || 'Invalid or expired OTP. Try again.');
+        }
+      });
+    },
+    [directPaymentReference, invoice, reconcileInvoicePaystack, runExclusiveAction]
+  );
 
   if (isLoading) return <DetailLoading title="Invoice" />;
   if (!invoice) return <DetailNotFound title="Invoice" entityLabel="Invoice" />;
@@ -501,6 +577,7 @@ export default function InvoiceDetailScreen() {
         onClose={handleClosePaymentSheet}
         onSubmit={handleRecordPayment}
         onDirectPayment={handleOpenDirectPayment}
+        onSubmitDirectOtp={handleSubmitDirectInvoiceOtp}
         onCheckDirectStatus={handleCheckDirectInvoicePayment}
         directProviders={directMomoProviders}
         directStatus={directPaymentStatus}

@@ -43,12 +43,24 @@ async function requireAnthropic(options = {}) {
  */
 const summarizeAssistantContext = (context, tier = 'full') => {
   if (tier === 'light') {
-    return {
+    const light = {
       businessType: context.businessType,
       tenantName: context.tenantName,
       workspaceContact: context.workspaceContact,
       dateFilter: context.dateFilter,
     };
+    if (context.selectedPeriod) {
+      light.selectedPeriod = {
+        label: context.selectedPeriod.label,
+        revenue: context.selectedPeriod.revenue,
+        expenses: context.selectedPeriod.expenses,
+        profit: context.selectedPeriod.profit,
+        newCustomers: context.selectedPeriod.newCustomers,
+        range: context.selectedPeriod.range,
+        topProducts: (context.selectedPeriod.topProducts || []).slice(0, 3),
+      };
+    }
+    return light;
   }
 
   const summarized = {
@@ -521,7 +533,10 @@ Rules:
 - Prefer short sections with **bold** labels and bullet lists.
 - When suggesting forecasts or predictions, end with: "This is an estimate, not a guarantee."
 - Do not claim ABS menu steps unless you are sure; for product how-tos, say they can ask "How do I…" in Ask AI.
-- Keep replies concise and practical. If you lack local market data, say so and give general best practices.`;
+- Keep replies concise and practical. If you lack local market data, say so and give general best practices.
+${context.dateFilter?.active
+  ? `- Live numbers in the JSON are for "${context.dateFilter.periodLabel}" only (${context.dateFilter.startDate} to ${context.dateFilter.endDate}). If the user asks about a different timeframe (e.g. this year while the filter is this quarter), say that clearly, answer with selectedPeriod for the active filter, and tell them to switch the period chip for the other timeframe. Never pretend you lack all sales visibility when selectedPeriod is present.`
+  : ''}`;
     } else {
       const supportGuide = getAssistantSupportGuide(businessType);
       systemPrompt = `You are ABS Assistant for ${context.tenantName || 'this workspace'} (${businessType} business in African Business Suite). If you introduce yourself, say only "I'm ABS Assistant."
@@ -533,7 +548,7 @@ Your roles (detect from the user's message):
 
 ${pageHint ? `Current screen context: ${pageHint}\n` : ''}
 ${context.dateFilter?.active
-  ? `IMPORTANT: The user selected the date filter "${context.dateFilter.periodLabel || 'Selected period'}" (${context.dateFilter.startDate} to ${context.dateFilter.endDate}). For revenue, expenses, profit, sales, and customer counts, use selectedPeriod in the JSON below—not thisMonth or today—unless the user explicitly asks about a different timeframe.\n`
+  ? `IMPORTANT: The user selected the date filter "${context.dateFilter.periodLabel || 'Selected period'}" (${context.dateFilter.startDate} to ${context.dateFilter.endDate}). For revenue, expenses, profit, sales, and customer counts, use selectedPeriod in the JSON below—not thisMonth or today. If they ask about a different timeframe than this filter, say so in the first sentence, still answer with selectedPeriod for the active filter, and tell them to switch the period chip (Today / This week / This month / This quarter / This year) for the other range. Do not say you have no sales visibility when selectedPeriod is present.\n`
   : ''}
 Current business data (GHS; never invent numbers not in this JSON):
 ${contextBlob}

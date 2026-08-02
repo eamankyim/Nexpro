@@ -134,6 +134,16 @@ export const saleService = {
     return res.data;
   },
 
+  submitPaystackOtp: async (
+    saleId: string,
+    payload: { otp: string; reference?: string }
+  ) => {
+    const body: Record<string, string> = { otp: payload.otp };
+    if (payload.reference) body.reference = payload.reference;
+    const res = await api.post(`/sales/${saleId}/paystack-submit-otp`, body);
+    return res.data;
+  },
+
   checkPaystackCharge: async (saleId: string) => {
     const res = await api.get(`/sales/${saleId}/check-paystack-charge`);
     return res.data;

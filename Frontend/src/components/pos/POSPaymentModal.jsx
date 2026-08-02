@@ -833,15 +833,18 @@ const MobileMoneyPayment = ({
   total,
   customer,
   onRequestMobileMoney,
+  onSubmitMobileMoneyOtp,
   onConfirm,
   isProcessing,
   mobileMoneyState = 'idle',
   mobileMoneyError = '',
+  mobileMoneyOtpHint = '',
   mobileMoneyFallbackMode = null,
   canComplete = true,
 }) => {
   const [provider, setProvider] = useState('mtn');
   const [phone, setPhone] = useState(customer?.phone || '');
+  const [otp, setOtp] = useState('');
 
   useEffect(() => {
     const trimmed = phone.trim();
@@ -852,11 +855,20 @@ const MobileMoneyPayment = ({
     else if (detected === 'VODAFONE') setProvider('vodafone');
   }, [phone]);
 
+  useEffect(() => {
+    if (mobileMoneyState !== 'awaiting_otp') setOtp('');
+  }, [mobileMoneyState]);
+
   const isPhoneValid = phone.trim().length >= 10;
-  const isWaiting = mobileMoneyState === 'initiating' || mobileMoneyState === 'waiting';
+  const isAwaitingOtp = mobileMoneyState === 'awaiting_otp';
+  const isWaiting =
+    mobileMoneyState === 'initiating'
+    || mobileMoneyState === 'waiting'
+    || isAwaitingOtp;
   const isSuccess = mobileMoneyState === 'success';
   const isFallbackManual = mobileMoneyFallbackMode === 'manual';
   const logicalProvider = provider === 'mtn' ? 'MTN' : provider === 'airtel' ? 'AIRTEL' : 'VODAFONE';
+  const otpReady = otp.trim().length >= 4;
 
   return (
     <div className={SECTION_STACK}>
@@ -910,8 +922,29 @@ const MobileMoneyPayment = ({
               Customer will receive a mobile money prompt on their phone to approve this payment.
             </p>
             {mobileMoneyState !== 'idle' && (
-              <div className="text-sm">
+              <div className="text-sm space-y-2">
                 {mobileMoneyState === 'initiating' && <span className="text-green-700">Requesting payment…</span>}
+                {isAwaitingOtp && (
+                  <div className="space-y-2">
+                    <p className="text-green-700">
+                      {mobileMoneyOtpHint || 'Enter the OTP sent to the customer to continue payment.'}
+                    </p>
+                    <div>
+                      <Label htmlFor="momo-otp">OTP</Label>
+                      <Input
+                        id="momo-otp"
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        placeholder="Enter OTP"
+                        value={otp}
+                        onChange={(e) => setOtp(e.target.value.replace(/\s/g, ''))}
+                        className="h-11 text-base mt-1.5 tracking-widest"
+                        disabled={isProcessing}
+                      />
+                    </div>
+                  </div>
+                )}
                 {mobileMoneyState === 'waiting' && (
                   <span className="text-green-700">Waiting for customer to approve on their phone…</span>
                 )}
@@ -959,22 +992,33 @@ const MobileMoneyPayment = ({
 
       {!isFallbackManual && (
         <StickyPaymentAction>
-          <Button
-            type="button"
-            className="w-full h-12 text-base font-medium bg-green-700 hover:bg-green-800"
-            disabled={!isPhoneValid || isWaiting || isProcessing || !canComplete}
-            loading={isProcessing || isWaiting}
-            onClick={() => onRequestMobileMoney?.({
-              phone: phone.trim(),
-              provider: logicalProvider,
-              paymentMethodUi: 'momo_prompt',
-              paymentCollectionMode: getPaymentFlowMetadata('momo_prompt').paymentCollectionMode,
-              paymentGroup: getPaymentFlowMetadata('momo_prompt').paymentGroup,
-            })}
-          >
-            <Smartphone className="h-5 w-5 mr-2" aria-hidden />
-            {isWaiting ? 'Waiting for Approval…' : getContinueButtonText('momo_prompt')}
-          </Button>
+          {isAwaitingOtp ? (
+            <Button
+              type="button"
+              className="w-full h-12 text-base font-medium bg-green-700 hover:bg-green-800"
+              disabled={!otpReady || !canComplete}
+              onClick={() => onSubmitMobileMoneyOtp?.(otp.trim())}
+            >
+              Submit OTP
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              className="w-full h-12 text-base font-medium bg-green-700 hover:bg-green-800"
+              disabled={!isPhoneValid || isWaiting || isProcessing || !canComplete}
+              loading={isProcessing || isWaiting}
+              onClick={() => onRequestMobileMoney?.({
+                phone: phone.trim(),
+                provider: logicalProvider,
+                paymentMethodUi: 'momo_prompt',
+                paymentCollectionMode: getPaymentFlowMetadata('momo_prompt').paymentCollectionMode,
+                paymentGroup: getPaymentFlowMetadata('momo_prompt').paymentGroup,
+              })}
+            >
+              <Smartphone className="h-5 w-5 mr-2" aria-hidden />
+              {isWaiting ? 'Waiting for Approval…' : getContinueButtonText('momo_prompt')}
+            </Button>
+          )}
         </StickyPaymentAction>
       )}
     </div>
@@ -1124,8 +1168,10 @@ const POSPaymentModal = ({
   onSelectExistingCustomer,
   onConfirmPayment,
   onRequestMobileMoney,
+  onSubmitMobileMoneyOtp,
   mobileMoneyState = 'idle',
   mobileMoneyError = '',
+  mobileMoneyOtpHint = '',
   mobileMoneyFallbackMode = null,
   isProcessing = false,
   isRestaurant = false,
@@ -1413,10 +1459,12 @@ const POSPaymentModal = ({
               total={dealerPaymentTotal}
               customer={customer}
               onRequestMobileMoney={handleRequestMobileMoneyWithDelivery}
+              onSubmitMobileMoneyOtp={onSubmitMobileMoneyOtp}
               onConfirm={handleConfirm}
               isProcessing={isProcessing}
               mobileMoneyState={mobileMoneyState}
               mobileMoneyError={mobileMoneyError}
+              mobileMoneyOtpHint={mobileMoneyOtpHint}
               mobileMoneyFallbackMode={mobileMoneyFallbackMode}
               canComplete={canCompletePayment}
             />

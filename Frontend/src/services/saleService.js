@@ -187,6 +187,18 @@ const saleService = {
     // Return full response so caller can check success; api interceptor already returns response.data
     console.log('[MoMo] paystackMobileMoneyPay response:', { saleId, rawResponse: res, hasSuccess: !!res?.success, successValue: res?.success });
     return res;
+  },
+
+  /**
+   * Submit OTP for a Paystack MoMo Automatic charge that returned send_otp.
+   * @param {string} saleId
+   * @param {{ otp: string, reference?: string }} payload
+   */
+  submitPaystackOtp: async (saleId, { otp, reference } = {}) => {
+    const body = { otp };
+    if (reference) body.reference = reference;
+    const res = await api.post(`/sales/${saleId}/paystack-submit-otp`, body);
+    return res;
   }
 };
 

@@ -75,7 +75,12 @@ const PartnerCommission = sequelize.define(
       type: DataTypes.STRING(32),
       allowNull: false,
       defaultValue: 'due',
-      comment: 'due | paid',
+      comment: 'due | cashout_pending | paid',
+    },
+    cashoutRequestId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: { model: 'partner_cashout_requests', key: 'id' },
     },
     paidAt: {
       type: DataTypes.DATE,
@@ -105,6 +110,7 @@ const PartnerCommission = sequelize.define(
       { fields: ['partnershipId', 'status'] },
       { fields: ['paymentId'] },
       { fields: ['customerId'] },
+      { fields: ['cashoutRequestId'] },
       { fields: ['createdAt'] },
     ],
   }

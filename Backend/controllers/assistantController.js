@@ -823,6 +823,21 @@ exports.chat = async (req, res, next) => {
       context = contextTier === 'light'
         ? await getAssistantContextLight(req.tenantId)
         : await getAssistantContext(req.tenantId, contextOptions);
+      // Advisory light context omits numbers; when a period chip is active, attach selectedPeriod
+      // so the model can answer for that filter instead of claiming no sales visibility.
+      if (
+        contextTier === 'light'
+        && typeof startDate === 'string'
+        && typeof endDate === 'string'
+        && !context.selectedPeriod
+      ) {
+        const periodContext = await getAssistantContext(req.tenantId, contextOptions);
+        context = {
+          ...context,
+          dateFilter: periodContext.dateFilter,
+          selectedPeriod: periodContext.selectedPeriod,
+        };
+      }
       setCachedAssistantContext(contextCacheKey, context);
     }
     timings.contextMs = toDurationMs(contextStart);

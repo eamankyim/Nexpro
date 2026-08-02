@@ -40,6 +40,20 @@ describe('intentClassifier', () => {
     expect(classifyIntent('Summarize performance').intent).toBe('performance_summary');
   });
 
+  it('classifies what to work on based on sales as performance summary', () => {
+    const r = classifyIntent(
+      'What do I need to work on in my business based on this yearr sales'
+    );
+    expect(r.route).toBe('analysis');
+    expect(r.intent).toBe('performance_summary');
+  });
+
+  it('classifies this quarter sales via selected-period analysis', () => {
+    const r = classifyIntent('How much did I sell this quarter?');
+    expect(r.route).toBe('analysis');
+    expect(r.intent).toBe('sales_this_month');
+  });
+
   it('routes how-to to support', () => {
     const r = classifyIntent('How do I create an invoice?');
     expect(r.route).toBe('support');

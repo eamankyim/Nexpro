@@ -26,8 +26,11 @@ const SettingsSabitoPartnersSection = () => {
   const [applications, setApplications] = useState([]);
   const [partnerships, setPartnerships] = useState([]);
   const [commissions, setCommissions] = useState([]);
+  const [referrals, setReferrals] = useState([]);
+  const [cashouts, setCashouts] = useState([]);
   const [selectedCommissionIds, setSelectedCommissionIds] = useState([]);
   const [paidNote, setPaidNote] = useState('');
+  const [payoutReference, setPayoutReference] = useState('');
   const now = new Date();
   const [payoutMonth, setPayoutMonth] = useState(now.getMonth() + 1);
   const [payoutYear, setPayoutYear] = useState(now.getFullYear());
@@ -35,7 +38,15 @@ const SettingsSabitoPartnersSection = () => {
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [settingsRes, catalogRes, appsRes, partnersRes, commissionsRes] = await Promise.all([
+      const [
+        settingsRes,
+        catalogRes,
+        appsRes,
+        partnersRes,
+        commissionsRes,
+        referralsRes,
+        cashoutsRes,
+      ] = await Promise.all([
         partnerProgramService.getSettings(),
         partnerProgramService.getCatalog(),
         partnerProgramService.listApplications(),
@@ -45,6 +56,8 @@ const SettingsSabitoPartnersSection = () => {
           month: payoutMonth,
           year: payoutYear,
         }),
+        partnerProgramService.listReferrals(),
+        partnerProgramService.listCashouts(),
       ]);
       const s = settingsRes.data?.data || settingsRes.data;
       setSettings(s);
@@ -58,6 +71,8 @@ const SettingsSabitoPartnersSection = () => {
       setApplications(appsRes.data?.data || []);
       setPartnerships(partnersRes.data?.data || []);
       setCommissions(commissionsRes.data?.data || []);
+      setReferrals(referralsRes.data?.data || []);
+      setCashouts(cashoutsRes.data?.data || []);
       setSelectedCommissionIds([]);
     } catch (err) {
       showError(err, 'Failed to load Sabito Partners settings');
@@ -168,6 +183,41 @@ const SettingsSabitoPartnersSection = () => {
     );
   };
 
+  const handleApproveCashout = async (id) => {
+    try {
+      await partnerProgramService.approveCashout(id);
+      showSuccess('Cashout approved');
+      await loadAll();
+    } catch (err) {
+      showError(err, 'Failed to approve cashout');
+    }
+  };
+
+  const handleRejectCashout = async (id) => {
+    try {
+      await partnerProgramService.rejectCashout(id, { notes: 'Rejected by business' });
+      showSuccess('Cashout rejected; commissions released');
+      await loadAll();
+    } catch (err) {
+      showError(err, 'Failed to reject cashout');
+    }
+  };
+
+  const handleMarkCashoutPaid = async (id) => {
+    try {
+      await partnerProgramService.markCashoutPaid(id, {
+        notes: paidNote || undefined,
+        payoutReference: payoutReference || undefined,
+      });
+      showSuccess('Cashout marked paid');
+      setPaidNote('');
+      setPayoutReference('');
+      await loadAll();
+    } catch (err) {
+      showError(err, 'Failed to mark cashout paid');
+    }
+  };
+
   if (!canManage) {
     return (
       <Card className="border border-gray-200">
@@ -183,6 +233,7 @@ const SettingsSabitoPartnersSection = () => {
   }
 
   const pendingApps = applications.filter((a) => a.status === 'pending');
+  const pendingCashouts = cashouts.filter((c) => c.status === 'pending' || c.status === 'approved');
   const dueTotal = commissions.reduce((sum, c) => sum + Number(c.amount || 0), 0);
 
   return (
@@ -193,7 +244,11 @@ const SettingsSabitoPartnersSection = () => {
           Applications{pendingApps.length ? ` (${pendingApps.length})` : ''}
         </TabsTrigger>
         <TabsTrigger value="partners">Partners ({partnerships.length})</TabsTrigger>
-        <TabsTrigger value="payouts">Payouts</TabsTrigger>
+        <TabsTrigger value="referrals">Referrals ({referrals.length})</TabsTrigger>
+        <TabsTrigger value="cashouts">
+          Cashouts{pendingCashouts.length ? ` (${pendingCashouts.length})` : ''}
+        </TabsTrigger>
+        <TabsTrigger value="payouts">Due commissions</TabsTrigger>
       </TabsList>
 
       <TabsContent value="setup" className="space-y-4">
@@ -408,7 +463,8 @@ const SettingsSabitoPartnersSection = () => {
           <CardHeader>
             <CardTitle className="text-base">Active partners</CardTitle>
             <CardDescription>
-              Share each partner’s referral code when creating customers or sales so commissions attribute correctly.
+              Share each partner’s referral code when creating customers if needed — or rely on
+              marketer referrals that match by customer email or phone.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -432,12 +488,113 @@ const SettingsSabitoPartnersSection = () => {
         </Card>
       </TabsContent>
 
+      <TabsContent value="referrals" className="space-y-3">
+        <Card className="border border-gray-200">
+          <CardHeader>
+            <CardTitle className="text-base">Marketer referrals</CardTitle>
+            <CardDescription>
+              Referrals match ABS customers by email or phone. Matched customers attribute commissions when they pay.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {referrals.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No referrals yet.</p>
+            ) : (
+              referrals.map((r) => (
+                <div key={r.id} className="rounded-lg border border-border p-3 text-sm">
+                  <p className="font-medium">{r.clientName}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {r.marketer?.name || 'Marketer'} · {r.status}
+                    {r.email ? ` · ${r.email}` : ''}
+                    {r.phone ? ` · ${r.phone}` : ''}
+                  </p>
+                  {r.customer?.name ? (
+                    <p className="text-xs text-muted-foreground mt-1">Matched customer: {r.customer.name}</p>
+                  ) : null}
+                </div>
+              ))
+            )}
+          </CardContent>
+        </Card>
+      </TabsContent>
+
+      <TabsContent value="cashouts" className="space-y-3">
+        <Card className="border border-gray-200">
+          <CardHeader>
+            <CardTitle className="text-base">Cashout requests</CardTitle>
+            <CardDescription>
+              Marketers request payouts against due commissions. Pay them outside ABS, then mark paid here.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Payout note (optional)</Label>
+              <Input
+                value={paidNote}
+                onChange={(e) => setPaidNote(e.target.value)}
+                placeholder="e.g. Paid via MoMo"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Payout reference (optional)</Label>
+              <Input
+                value={payoutReference}
+                onChange={(e) => setPayoutReference(e.target.value)}
+                placeholder="e.g. MoMo ref ABC123"
+              />
+            </div>
+            {cashouts.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No cashout requests yet.</p>
+            ) : (
+              cashouts.map((c) => (
+                <div
+                  key={c.id}
+                  className="flex flex-col gap-2 rounded-lg border border-border p-3 md:flex-row md:items-center md:justify-between"
+                >
+                  <div>
+                    <p className="font-medium text-sm">
+                      {c.marketer?.name} · GHS {Number(c.amount || 0).toFixed(2)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {c.status}
+                      {c.marketer?.momoNumber ? ` · MoMo ${c.marketer.momoNumber}` : ''}
+                      {Array.isArray(c.commissions) ? ` · ${c.commissions.length} commission(s)` : ''}
+                    </p>
+                  </div>
+                  {c.status === 'pending' || c.status === 'approved' ? (
+                    <div className="flex flex-wrap gap-2">
+                      {c.status === 'pending' ? (
+                        <>
+                          <Button type="button" variant="outline" size="sm" onClick={() => handleRejectCashout(c.id)}>
+                            Reject
+                          </Button>
+                          <Button type="button" variant="outline" size="sm" onClick={() => handleApproveCashout(c.id)}>
+                            Approve
+                          </Button>
+                        </>
+                      ) : (
+                        <Button type="button" variant="outline" size="sm" onClick={() => handleRejectCashout(c.id)}>
+                          Reject
+                        </Button>
+                      )}
+                      <Button type="button" size="sm" onClick={() => handleMarkCashoutPaid(c.id)}>
+                        Mark paid
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              ))
+            )}
+          </CardContent>
+        </Card>
+      </TabsContent>
+
       <TabsContent value="payouts" className="space-y-3">
         <Card className="border border-gray-200">
           <CardHeader>
             <CardTitle className="text-base">Due commissions</CardTitle>
             <CardDescription>
-              Commission accrues when customer payment is collected. Pay marketers outside ABS (MoMo/bank), then mark paid.
+              Commission accrues when customer payment is collected. Prefer cashout requests above; you can still mark individual due commissions paid here.
               Due this filter: GHS {dueTotal.toFixed(2)}
             </CardDescription>
           </CardHeader>

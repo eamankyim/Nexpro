@@ -14,7 +14,8 @@ const {
   markInvoicePaid,
   exportInvoices,
   verifyPaystackChargeForInvoice,
-  paystackMobileMoneyForInvoice
+  paystackMobileMoneyForInvoice,
+  submitPaystackOtpForInvoice
 } = require('../controllers/invoiceController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
@@ -66,6 +67,7 @@ router.post('/:id/cancel', authorize('admin', 'manager'), timeCrudAction('invoic
 router.post('/:id/mark-paid', authorize('admin', 'manager', 'staff'), timeCrudAction('invoices.mark_paid'), markInvoicePaid);
 router.post('/:id/verify-paystack', authorize('admin', 'manager', 'staff'), timeCrudAction('invoices.verify_paystack'), verifyPaystackChargeForInvoice);
 router.post('/:id/paystack-mobile-money', authorize('admin', 'manager', 'staff'), timeCrudAction('invoices.paystack_mobile_money'), paystackMobileMoneyForInvoice);
+router.post('/:id/paystack-submit-otp', authorize('admin', 'manager', 'staff'), timeCrudAction('invoices.paystack_submit_otp'), submitPaystackOtpForInvoice);
 
 module.exports = router;
 

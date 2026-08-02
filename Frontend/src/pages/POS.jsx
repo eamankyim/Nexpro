@@ -464,9 +464,11 @@ const POS = () => {
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [completedSale, setCompletedSale] = useState(null);
   const [customerForReceipt, setCustomerForReceipt] = useState(null);
-  const [mobileMoneyState, setMobileMoneyState] = useState('idle'); // idle | initiating | waiting | success | failed
+  const [mobileMoneyState, setMobileMoneyState] = useState('idle'); // idle | initiating | awaiting_otp | waiting | success | failed
   const [mobileMoneyError, setMobileMoneyError] = useState('');
+  const [mobileMoneyOtpHint, setMobileMoneyOtpHint] = useState('');
   const [mobileMoneyFallbackMode, setMobileMoneyFallbackMode] = useState(null); // null | 'manual'
+  const otpWaitRef = useRef(null);
   const [variantPickerProduct, setVariantPickerProduct] = useState(null);
   const [customItemDialogOpen, setCustomItemDialogOpen] = useState(false);
   const [customItemForm, setCustomItemForm] = useState({
@@ -487,6 +489,23 @@ const POS = () => {
   /** When waiting for MoMo, WebSocket can push sale completed so we stop polling and show success immediately */
   const waitingMoMoSaleIdRef = useRef(null);
   const wsCompletedSaleIdRef = useRef(null);
+
+  const waitForMobileMoneyOtp = useCallback(() => {
+    return new Promise((resolve, reject) => {
+      if (otpWaitRef.current?.reject) {
+        otpWaitRef.current.reject(new Error('OTP entry cancelled'));
+      }
+      otpWaitRef.current = { resolve, reject };
+    });
+  }, []);
+
+  const handleSubmitMobileMoneyOtp = useCallback((otp) => {
+    const cleaned = String(otp || '').trim();
+    if (!cleaned || !otpWaitRef.current?.resolve) return;
+    const { resolve } = otpWaitRef.current;
+    otpWaitRef.current = null;
+    resolve(cleaned);
+  }, []);
 
   const handleSaleCreated = useCallback((data) => {
     if (waitingMoMoSaleIdRef.current && data?.sale?.id === waitingMoMoSaleIdRef.current && data?.sale?.status === 'completed') {
@@ -1243,8 +1262,53 @@ const POS = () => {
             }
             return;
           }
+
+          let charge = paystackRes?.data ?? paystackRes;
+          const needsOtp = (payload) =>
+            payload?.requiresOtp === true
+            || String(payload?.status || '').toLowerCase() === 'send_otp';
+
+          while (needsOtp(charge)) {
+            setMobileMoneyState('awaiting_otp');
+            setMobileMoneyOtpHint(
+              charge?.message
+              || charge?.displayText
+              || 'Enter the OTP sent to the customer to continue payment.'
+            );
+            setMobileMoneyError('');
+            setIsProcessingPayment(false);
+            // eslint-disable-next-line no-await-in-loop
+            const otp = await waitForMobileMoneyOtp();
+            setIsProcessingPayment(true);
+            setMobileMoneyState('initiating');
+            // eslint-disable-next-line no-await-in-loop
+            const otpRes = await saleService.submitPaystackOtp(saleId, {
+              otp,
+              reference: charge?.reference
+            });
+            if (!otpRes?.success) {
+              const message =
+                otpRes?.message
+                || otpRes?.error
+                || 'Invalid or expired OTP. Try again or restart the payment.';
+              showError(message);
+              setMobileMoneyError(message);
+              setMobileMoneyState('failed');
+              return;
+            }
+            charge = otpRes?.data ?? otpRes;
+            const status = String(charge?.status || '').toLowerCase();
+            if (status === 'failed' || status === 'abandoned') {
+              const message = charge?.message || 'Mobile money payment failed.';
+              showError(message);
+              setMobileMoneyError(message);
+              setMobileMoneyState('failed');
+              return;
+            }
+          }
         }
 
+        setMobileMoneyOtpHint('');
         setMobileMoneyState('waiting');
 
         const maxAttempts = 30;
@@ -1328,6 +1392,8 @@ const POS = () => {
       } finally {
         waitingMoMoSaleIdRef.current = null;
         wsCompletedSaleIdRef.current = null;
+        otpWaitRef.current = null;
+        setMobileMoneyOtpHint('');
         setIsProcessingPayment(false);
       }
     },
@@ -1341,7 +1407,8 @@ const POS = () => {
       quickCustomerPhone,
       clearCart,
       buildSaleItemPayload,
-      refreshSaleQueries
+      refreshSaleQueries,
+      waitForMobileMoneyOtp
     ]
   );
 
@@ -1873,8 +1940,10 @@ const POS = () => {
         }}
         onConfirmPayment={handleConfirmPayment}
         onRequestMobileMoney={handleRequestMobileMoneyPayment}
+        onSubmitMobileMoneyOtp={handleSubmitMobileMoneyOtp}
         mobileMoneyState={mobileMoneyState}
         mobileMoneyError={mobileMoneyError}
+        mobileMoneyOtpHint={mobileMoneyOtpHint}
         mobileMoneyFallbackMode={mobileMoneyFallbackMode}
         isProcessing={isProcessingPayment}
         isRestaurant={isRestaurant}

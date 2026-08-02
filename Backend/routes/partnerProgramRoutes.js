@@ -12,6 +12,11 @@ const {
   revokePartnership,
   listPartnerCommissions,
   markPartnerCommissionsPaid,
+  listTenantPartnerReferrals,
+  listTenantPartnerCashouts,
+  approvePartnerCashout,
+  rejectPartnerCashout,
+  markPartnerCashoutPaid,
 } = require('../controllers/partnerProgramController');
 
 const router = express.Router();
@@ -32,5 +37,11 @@ router.post('/partnerships/:id/revoke', authorize('admin', 'manager'), revokePar
 
 router.get('/commissions', authorize('admin', 'manager'), listPartnerCommissions);
 router.post('/commissions/mark-paid', authorize('admin', 'manager'), markPartnerCommissionsPaid);
+
+router.get('/referrals', authorize('admin', 'manager'), listTenantPartnerReferrals);
+router.get('/cashouts', authorize('admin', 'manager'), listTenantPartnerCashouts);
+router.post('/cashouts/:id/approve', authorize('admin', 'manager'), approvePartnerCashout);
+router.post('/cashouts/:id/reject', authorize('admin', 'manager'), rejectPartnerCashout);
+router.post('/cashouts/:id/mark-paid', authorize('admin', 'manager'), markPartnerCashoutPaid);
 
 module.exports = router;

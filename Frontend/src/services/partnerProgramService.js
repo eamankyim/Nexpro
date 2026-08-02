@@ -11,6 +11,12 @@ const listPartnerships = (params) => api.get('/partner-program/partnerships', { 
 const revokePartnership = (id) => api.post(`/partner-program/partnerships/${id}/revoke`);
 const listCommissions = (params) => api.get('/partner-program/commissions', { params });
 const markCommissionsPaid = (payload) => api.post('/partner-program/commissions/mark-paid', payload);
+const listReferrals = (params) => api.get('/partner-program/referrals', { params });
+const listCashouts = (params) => api.get('/partner-program/cashouts', { params });
+const approveCashout = (id) => api.post(`/partner-program/cashouts/${id}/approve`);
+const rejectCashout = (id, payload) => api.post(`/partner-program/cashouts/${id}/reject`, payload || {});
+const markCashoutPaid = (id, payload) =>
+  api.post(`/partner-program/cashouts/${id}/mark-paid`, payload || {});
 
 const partnerProgramService = {
   getSettings,
@@ -23,6 +29,11 @@ const partnerProgramService = {
   revokePartnership,
   listCommissions,
   markCommissionsPaid,
+  listReferrals,
+  listCashouts,
+  approveCashout,
+  rejectCashout,
+  markCashoutPaid,
 };
 
 export default partnerProgramService;

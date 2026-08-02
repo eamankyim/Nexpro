@@ -1,6 +1,7 @@
 const { classifyIntent, isAnalysisIntent } = require('./intentClassifier');
 const { FALLBACK_SUGGESTED_QUESTIONS } = require('./intentCatalog');
 const { buildAnswerMarkdown, buildDashboardInsightCard, templateUnsupported } = require('./answerTemplates');
+const { buildPeriodMismatchLeadIn } = require('./periodMention');
 const { buildSalesDropReasons } = require('./reasons/salesDrop');
 const {
   getSalesToday,
@@ -166,7 +167,11 @@ async function runAnalysis(message, context = {}) {
     reasons = reasonsResult.reasons;
   }
 
-  const answerMarkdown = buildAnswerMarkdown(classification.intent, metrics, { reasonsResult });
+  let answerMarkdown = buildAnswerMarkdown(classification.intent, metrics, { reasonsResult });
+  const mismatchLeadIn = buildPeriodMismatchLeadIn(message, resolvedPeriod.label);
+  if (mismatchLeadIn) {
+    answerMarkdown = `${mismatchLeadIn}\n\n${answerMarkdown}`;
+  }
   const insight =
     classification.intent === 'performance_summary'
       ? buildDashboardInsightCard(metrics)
@@ -187,6 +192,7 @@ async function runAnalysis(message, context = {}) {
         periodLabel: resolvedPeriod.label,
         startDate: resolvedPeriod.startDate,
         endDate: resolvedPeriod.endDate,
+        periodMismatch: Boolean(mismatchLeadIn),
       },
     }),
   };

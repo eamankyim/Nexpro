@@ -115,6 +115,8 @@ const Marketer = require('./Marketer');
 const PartnershipApplication = require('./PartnershipApplication');
 const Partnership = require('./Partnership');
 const PartnerCommission = require('./PartnerCommission');
+const PartnerReferral = require('./PartnerReferral');
+const PartnerCashoutRequest = require('./PartnerCashoutRequest');
 const DeliveryEvent = require('./DeliveryEvent');
 const SystemHealthIssue = require('./SystemHealthIssue');
 const PlatformOpsAsset = require('./PlatformOpsAsset');
@@ -959,6 +961,21 @@ PartnerCommission.belongsTo(Sale, { foreignKey: 'saleId', as: 'sale' });
 PartnerCommission.belongsTo(Invoice, { foreignKey: 'invoiceId', as: 'invoice' });
 PartnerCommission.belongsTo(Payment, { foreignKey: 'paymentId', as: 'payment' });
 
+Marketer.hasMany(PartnerReferral, { foreignKey: 'marketerId', as: 'referrals' });
+PartnerReferral.belongsTo(Marketer, { foreignKey: 'marketerId', as: 'marketer' });
+Tenant.hasMany(PartnerReferral, { foreignKey: 'tenantId', as: 'partnerReferrals' });
+PartnerReferral.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Partnership.hasMany(PartnerReferral, { foreignKey: 'partnershipId', as: 'referrals' });
+PartnerReferral.belongsTo(Partnership, { foreignKey: 'partnershipId', as: 'partnership' });
+PartnerReferral.belongsTo(Customer, { foreignKey: 'customerId', as: 'customer' });
+
+Marketer.hasMany(PartnerCashoutRequest, { foreignKey: 'marketerId', as: 'cashouts' });
+PartnerCashoutRequest.belongsTo(Marketer, { foreignKey: 'marketerId', as: 'marketer' });
+Tenant.hasMany(PartnerCashoutRequest, { foreignKey: 'tenantId', as: 'partnerCashouts' });
+PartnerCashoutRequest.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+PartnerCashoutRequest.hasMany(PartnerCommission, { foreignKey: 'cashoutRequestId', as: 'commissions' });
+PartnerCommission.belongsTo(PartnerCashoutRequest, { foreignKey: 'cashoutRequestId', as: 'cashoutRequest' });
+
 Customer.belongsTo(Marketer, { foreignKey: 'partnerMarketerId', as: 'partnerMarketer' });
 Customer.belongsTo(Partnership, { foreignKey: 'partnershipId', as: 'partnership' });
 Sale.belongsTo(Marketer, { foreignKey: 'partnerMarketerId', as: 'partnerMarketer' });
@@ -1084,6 +1101,8 @@ module.exports = {
   PartnershipApplication,
   Partnership,
   PartnerCommission,
+  PartnerReferral,
+  PartnerCashoutRequest,
   DeliveryEvent,
   SystemHealthIssue,
   PlatformOpsAsset,

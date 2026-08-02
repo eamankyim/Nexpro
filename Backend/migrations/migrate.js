@@ -427,6 +427,10 @@ const migrate = async () => {
     const createPartnerProgramTables = require('./create-partner-program-tables');
     await createPartnerProgramTables({ closeConnection: false });
 
+    // Sabito marketer referrals + cashout ledger
+    const createPartnerReferralCashoutTables = require('./create-partner-referral-cashout-tables');
+    await createPartnerReferralCashoutTables({ closeConnection: false });
+
     // Online Store hero library (categories / designs / colorways + heroSlides)
     const createOnlineStoreHeroLibraryTables = require('./create-online-store-hero-library-tables');
     await createOnlineStoreHeroLibraryTables({ closeConnection: false });

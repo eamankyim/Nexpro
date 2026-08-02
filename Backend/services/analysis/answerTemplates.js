@@ -255,6 +255,23 @@ function templatePerformanceSummary(metrics) {
     lines.push(`- Transactions: ${current.saleCount}`);
   }
 
+  const focus = [];
+  if (direction === 'down') {
+    focus.push('Review what slowed sales vs the prior period (volume, average order, or top products).');
+  }
+  if (receivables?.totalOutstanding > 0) {
+    focus.push('Chase outstanding invoices to improve cash flow.');
+  }
+  if (lowStockCount > 0) {
+    focus.push('Restock low items so you do not miss sales.');
+  }
+  if (direction === 'up' && focus.length === 0) {
+    focus.push('Double down on what is working — keep pushing your best sellers and repeat buyers.');
+  }
+  if (focus.length) {
+    lines.push('', 'What to work on:', ...focus.map((item) => `- ${item}`));
+  }
+
   return lines.join('\n');
 }
 

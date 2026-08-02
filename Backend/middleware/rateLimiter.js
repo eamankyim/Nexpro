@@ -90,6 +90,20 @@ const registrationLimiter = rateLimit({
 });
 
 /**
+ * Marketer write rate limiter (referrals, cashouts, applications)
+ * 30 writes per 15 minutes per IP
+ */
+const marketerWriteLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip || req.connection?.remoteAddress || 'unknown',
+  handler: createErrorHandler('Too many marketer requests. Please try again later.'),
+  validate: false,
+});
+
+/**
  * File upload rate limiter
  * 20 uploads per minute per tenant
  */
@@ -202,4 +216,5 @@ module.exports = {
   publicTrackingLookupLimiter,
   publicTrackBrandingLimiter,
   publicFeedbackSubmitLimiter,
+  marketerWriteLimiter,
 };

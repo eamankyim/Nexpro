@@ -107,7 +107,12 @@ function classifyIntent(message, options = {}) {
   ) {
     return { intent: 'sales_today', confidence: 0.9, route: 'analysis' };
   }
-  if (/^(how much (did i )?(sell|make)|sales today|today'?s sales)\b/.test(text)) {
+  // Bare "how much did I sell" defaults to today only when no other timeframe is named
+  if (
+    (/^(how much (did i )?(sell|make))\b/.test(text)
+      && !/\b(this (week|month|quarter|year+)|year[- ]?to[- ]?date|\bytd\b|yesterday|last (week|month|quarter|year)|this period)\b/.test(text))
+    || /^(sales today|today'?s sales)\b/.test(text)
+  ) {
     return { intent: 'sales_today', confidence: 0.88, route: 'analysis' };
   }
 
@@ -117,6 +122,22 @@ function classifyIntent(message, options = {}) {
     && /\b(sales?|sold|revenue|performance|earn(ed|ings)?|how (are|is)|summarize)\b/.test(text)
   ) {
     return { intent: 'sales_this_month', confidence: 0.88, route: 'analysis' };
+  }
+
+  // "What should I work on / focus on" based on sales or business performance
+  if (
+    /\b(work on|focus on|improve|priorit(y|ies)|what (do|should) i (need to )?(work|focus|improve))\b/.test(text)
+    && /\b(sales?|revenue|business|performance)\b/.test(text)
+  ) {
+    return { intent: 'performance_summary', confidence: 0.86, route: 'analysis' };
+  }
+
+  // Sales for week / quarter / year / YTD — analysis uses the selected period chip
+  if (
+    /\b(this (week|quarter|year+)|year[- ]?to[- ]?date|\bytd\b|this period)\b/.test(text)
+    && /\b(sales?|sell|sold|revenue|performance|earn(ed|ings)?|how (are|is)|summarize|based on|how much)\b/.test(text)
+  ) {
+    return { intent: 'sales_this_month', confidence: 0.86, route: 'analysis' };
   }
 
   // Performance summary (dashboard-friendly) — before job phrases so "summarize performance" wins

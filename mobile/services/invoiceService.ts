@@ -121,4 +121,14 @@ export const invoiceService = {
     const res = await api.post(`/invoices/${id}/paystack-mobile-money`, payload);
     return res.data;
   },
+
+  submitPaystackOtp: async (
+    id: string,
+    payload: { otp: string; reference?: string }
+  ) => {
+    const body: Record<string, string> = { otp: payload.otp };
+    if (payload.reference) body.reference = payload.reference;
+    const res = await api.post(`/invoices/${id}/paystack-submit-otp`, body);
+    return res.data;
+  },
 };

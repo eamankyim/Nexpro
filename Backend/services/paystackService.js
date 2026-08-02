@@ -503,6 +503,75 @@ class PaystackService {
   }
 
   /**
+   * Submit OTP to continue a Paystack charge (e.g. MoMo Automatic send_otp).
+   * @param {{ otp: string, reference: string }} params
+   * @returns {Promise<Object>}
+   */
+  async submitChargeOtp({ otp, reference }) {
+    if (!this.secretKey) {
+      console.warn('[Paystack] submitChargeOtp called without PAYSTACK_SECRET_KEY');
+      return {
+        status: false,
+        message: 'Paystack is not configured'
+      };
+    }
+
+    const cleanedOtp = String(otp || '').trim();
+    const cleanedReference = String(reference || '').trim();
+    if (!cleanedOtp || !cleanedReference) {
+      return {
+        status: false,
+        message: 'otp and reference are required'
+      };
+    }
+
+    try {
+      const response = await axios.post(
+        `${this.baseURL}/charge/submit_otp`,
+        {
+          otp: cleanedOtp,
+          reference: cleanedReference
+        },
+        { headers: this.getHeaders() }
+      );
+      const data = response.data;
+      console.log('[MoMo] Paystack /charge/submit_otp response:', {
+        status: data?.status,
+        message: data?.message,
+        dataStatus: data?.data?.status,
+        hasData: !!data?.data
+      });
+      return data;
+    } catch (error) {
+      logPaystackRequestFailure('submitChargeOtp', error, this);
+      throw error;
+    }
+  }
+
+  /**
+   * Normalize Paystack charge next-action for clients.
+   * @param {Object} result - Paystack charge API envelope
+   * @returns {{ status: string, message: string, reference: string|null, displayText: string|null, requiresOtp: boolean, payOffline: boolean }}
+   */
+  normalizeChargeNextAction(result) {
+    const data = result?.data || {};
+    const status = String(data.status || 'pending').toLowerCase();
+    const displayText = data.display_text || result?.message || null;
+    return {
+      status,
+      message:
+        displayText
+        || (status === 'send_otp'
+          ? 'Enter the OTP sent to the customer to continue payment.'
+          : 'Approve the mobile money prompt on the customer phone.'),
+      reference: data.reference || null,
+      displayText,
+      requiresOtp: status === 'send_otp',
+      payOffline: status === 'pay_offline' || status === 'pending' || status === 'ongoing'
+    };
+  }
+
+  /**
    * Get plan details
    * @param {String} planCode - Paystack plan code
    * @returns {Promise<Object>} Plan object

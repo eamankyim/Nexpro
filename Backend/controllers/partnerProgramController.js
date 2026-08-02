@@ -11,6 +11,8 @@ const {
 const config = require('../config/config');
 const partnerProgramService = require('../services/partnerProgramService');
 const partnerCommissionService = require('../services/partnerCommissionService');
+const partnerReferralService = require('../services/partnerReferralService');
+const partnerCashoutService = require('../services/partnerCashoutService');
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -235,6 +237,101 @@ exports.listMyEarnings = async (req, res, next) => {
   }
 };
 
+exports.getMarketerDashboard = async (req, res, next) => {
+  try {
+    const data = await partnerCashoutService.getMarketerDashboard(req.marketer.id);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.createMarketerReferral = async (req, res, next) => {
+  try {
+    const data = await partnerReferralService.createReferral({
+      marketerId: req.marketer.id,
+      partnershipId: req.body?.partnershipId,
+      clientName: req.body?.clientName,
+      clientEmail: req.body?.clientEmail || req.body?.email,
+      clientPhone: req.body?.clientPhone || req.body?.phone,
+      location: req.body?.location,
+      note: req.body?.note,
+    });
+    res.status(201).json({ success: true, data });
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+        errorCode: error.errorCode,
+      });
+    }
+    next(error);
+  }
+};
+
+exports.listMyReferrals = async (req, res, next) => {
+  try {
+    const data = await partnerReferralService.listReferralsForMarketer(req.marketer.id);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getMyReferral = async (req, res, next) => {
+  try {
+    const data = await partnerReferralService.getReferralForMarketer(req.marketer.id, req.params.id);
+    if (!data) {
+      return res.status(404).json({ success: false, message: 'Referral not found' });
+    }
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.createMarketerCashout = async (req, res, next) => {
+  try {
+    const data = await partnerCashoutService.createCashout({
+      marketerId: req.marketer.id,
+      commissionIds: req.body?.commissionIds || req.body?.ids || [],
+      notes: req.body?.notes,
+    });
+    res.status(201).json({ success: true, data });
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+        errorCode: error.errorCode,
+      });
+    }
+    next(error);
+  }
+};
+
+exports.listMyCashouts = async (req, res, next) => {
+  try {
+    const data = await partnerCashoutService.listCashoutsForMarketer(req.marketer.id);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getMyCashout = async (req, res, next) => {
+  try {
+    const data = await partnerCashoutService.getCashoutById(req.params.id);
+    if (!data || data.marketerId !== req.marketer.id) {
+      return res.status(404).json({ success: false, message: 'Cashout not found' });
+    }
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // ——— Tenant (ABS) admin ———
 
 exports.getPartnerProgramSettings = async (req, res, next) => {
@@ -417,6 +514,91 @@ exports.markPartnerCommissionsPaid = async (req, res, next) => {
   } catch (error) {
     if (error.statusCode) {
       return res.status(error.statusCode).json({ success: false, message: error.message });
+    }
+    next(error);
+  }
+};
+
+exports.listTenantPartnerReferrals = async (req, res, next) => {
+  try {
+    const data = await partnerReferralService.listReferralsForTenant(req.tenantId, {
+      status: req.query.status,
+    });
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.listTenantPartnerCashouts = async (req, res, next) => {
+  try {
+    const data = await partnerCashoutService.listCashoutsForTenant(req.tenantId, {
+      status: req.query.status,
+    });
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.approvePartnerCashout = async (req, res, next) => {
+  try {
+    const data = await partnerCashoutService.approveCashout({
+      tenantId: req.tenantId,
+      cashoutId: req.params.id,
+      processedByUserId: req.user?.id,
+    });
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+        errorCode: error.errorCode,
+      });
+    }
+    next(error);
+  }
+};
+
+exports.rejectPartnerCashout = async (req, res, next) => {
+  try {
+    const data = await partnerCashoutService.rejectCashout({
+      tenantId: req.tenantId,
+      cashoutId: req.params.id,
+      processedByUserId: req.user?.id,
+      notes: req.body?.notes,
+    });
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+        errorCode: error.errorCode,
+      });
+    }
+    next(error);
+  }
+};
+
+exports.markPartnerCashoutPaid = async (req, res, next) => {
+  try {
+    const data = await partnerCashoutService.markCashoutPaid({
+      tenantId: req.tenantId,
+      cashoutId: req.params.id,
+      processedByUserId: req.user?.id,
+      notes: req.body?.notes,
+      payoutReference: req.body?.payoutReference,
+    });
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+        errorCode: error.errorCode,
+      });
     }
     next(error);
   }

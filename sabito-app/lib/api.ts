@@ -50,6 +50,7 @@ async function request<T>(
   const res = await fetch(`${getApiBaseUrl()}${path}`, {
     ...options,
     headers,
+    signal: options.signal ?? AbortSignal.timeout(10000),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -137,9 +138,59 @@ export async function listMyPartnerships() {
   );
 }
 
-export async function listMyEarnings() {
+export async function listMyEarnings(status?: string) {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
   return request<{ success: boolean; data: unknown[] }>(
-    "/public/sabito-marketer/earnings",
+    `/public/sabito-marketer/earnings${qs}`,
+    { auth: true }
+  );
+}
+
+export async function getMarketerDashboard() {
+  return request<{ success: boolean; data: Record<string, unknown> }>(
+    "/public/sabito-marketer/dashboard",
+    { auth: true }
+  );
+}
+
+export async function createReferral(payload: {
+  partnershipId: string;
+  clientName: string;
+  clientEmail?: string;
+  clientPhone?: string;
+  location?: string;
+  note?: string;
+}) {
+  return request<{ success: boolean; data: unknown }>(
+    "/public/sabito-marketer/referrals",
+    { method: "POST", auth: true, body: JSON.stringify(payload) }
+  );
+}
+
+export async function listMyReferrals() {
+  return request<{ success: boolean; data: unknown[] }>(
+    "/public/sabito-marketer/referrals",
+    { auth: true }
+  );
+}
+
+export async function getMyReferral(id: string) {
+  return request<{ success: boolean; data: unknown }>(
+    `/public/sabito-marketer/referrals/${encodeURIComponent(id)}`,
+    { auth: true }
+  );
+}
+
+export async function createCashout(payload: { commissionIds: string[]; notes?: string }) {
+  return request<{ success: boolean; data: unknown }>(
+    "/public/sabito-marketer/cashouts",
+    { method: "POST", auth: true, body: JSON.stringify(payload) }
+  );
+}
+
+export async function listMyCashouts() {
+  return request<{ success: boolean; data: unknown[] }>(
+    "/public/sabito-marketer/cashouts",
     { auth: true }
   );
 }

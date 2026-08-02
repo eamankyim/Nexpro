@@ -3258,17 +3258,123 @@ exports.paystackMobileMoneyForInvoice = async (req, res, next) => {
     const { rememberPendingInvoicePaystackReference } = require('../services/paystackPublicInvoicePayment');
     rememberPendingInvoicePaystackReference(invoice.id, reference);
 
+    const existingMetadata = invoice.metadata && typeof invoice.metadata === 'object' ? invoice.metadata : {};
+    await invoice.update({
+      metadata: {
+        ...existingMetadata,
+        paystackMobileMoney: {
+          ...(existingMetadata.paystackMobileMoney || {}),
+          reference,
+          provider: logicalProvider,
+          phoneNumber,
+          amount: balanceDue,
+          initiatedAt: new Date().toISOString()
+        }
+      }
+    });
+
+    const nextAction = paystackService.normalizeChargeNextAction(result);
     res.status(200).json({
       success: true,
       data: {
         reference,
         provider: logicalProvider,
-        status: result?.data?.status || 'PENDING',
-        message: result?.data?.display_text || result?.message || 'Approve the mobile money prompt on the customer phone.'
+        status: nextAction.status || 'PENDING',
+        message: nextAction.message,
+        displayText: nextAction.displayText,
+        requiresOtp: nextAction.requiresOtp,
       }
     });
   } catch (error) {
     console.error('[Invoice] paystackMobileMoneyForInvoice error:', {
+      invoiceId: req.params?.id,
+      error: error.message
+    });
+    next(error);
+  }
+};
+
+/**
+ * Submit Paystack charge OTP for invoice MoMo Automatic.
+ * @route POST /api/invoices/:id/paystack-submit-otp
+ */
+exports.submitPaystackOtpForInvoice = async (req, res, next) => {
+  try {
+    const invoiceId = req.params.id;
+    const { otp, reference: bodyReference } = sanitizePayload(req.body || {});
+    const cleanedOtp = String(otp || '').trim();
+    if (!cleanedOtp) {
+      return res.status(400).json({ success: false, message: 'OTP is required' });
+    }
+
+    const invoice = await Invoice.findOne({
+      where: applyTenantFilter(req.tenantId, { id: invoiceId }),
+      include: [{ model: Customer, as: 'customer' }, ...invoiceBranchIncludes()]
+    });
+    if (!invoice) {
+      return res.status(404).json({ success: false, message: 'Invoice not found' });
+    }
+
+    try {
+      assertShopRecordAccess(req, invoice);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
+    }
+
+    const reference = String(
+      bodyReference
+      || invoice.metadata?.paystackMobileMoney?.reference
+      || ''
+    ).trim();
+    if (!reference) {
+      return res.status(400).json({
+        success: false,
+        message: 'No Paystack mobile money reference found for this invoice. Start the payment again.'
+      });
+    }
+
+    const paystackService = require('../services/paystackService');
+    if (!paystackService.secretKey) {
+      return res.status(503).json({ success: false, message: 'Paystack is not configured' });
+    }
+
+    const result = await paystackService.submitChargeOtp({ otp: cleanedOtp, reference });
+    if (!result || result.status === false) {
+      return res.status(400).json({
+        success: false,
+        message: result?.message || 'Invalid or expired OTP. Try again or restart the payment.'
+      });
+    }
+
+    const existingMetadata = invoice.metadata && typeof invoice.metadata === 'object' ? invoice.metadata : {};
+    await invoice.update({
+      metadata: {
+        ...existingMetadata,
+        paystackMobileMoney: {
+          ...(existingMetadata.paystackMobileMoney || {}),
+          reference,
+          otpSubmittedAt: new Date().toISOString(),
+          lastChargeStatus: result?.data?.status || null
+        }
+      }
+    });
+
+    const nextAction = paystackService.normalizeChargeNextAction(result);
+    return res.status(200).json({
+      success: true,
+      data: {
+        reference,
+        status: nextAction.status || 'PENDING',
+        message: nextAction.message,
+        displayText: nextAction.displayText,
+        requiresOtp: nextAction.requiresOtp,
+      }
+    });
+  } catch (error) {
+    console.error('[Invoice] submitPaystackOtpForInvoice error:', {
       invoiceId: req.params?.id,
       error: error.message
     });

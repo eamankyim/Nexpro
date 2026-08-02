@@ -17,6 +17,7 @@ const {
   updateDeliveryStatus,
   initializePaystackForSale,
   paystackMobileMoneyForSale,
+  submitPaystackOtpForSale,
   checkPaystackChargeForSale,
   exportSales
 } = require('../controllers/saleController');
@@ -87,6 +88,9 @@ router.route('/:id/initialize-paystack')
 
 router.route('/:id/paystack-mobile-money')
   .post(authorize('admin', 'manager', 'staff'), paystackMobileMoneyForSale);
+
+router.route('/:id/paystack-submit-otp')
+  .post(authorize('admin', 'manager', 'staff'), submitPaystackOtpForSale);
 
 router.route('/:id/check-paystack-charge')
   .get(authorize('admin', 'manager', 'staff'), checkPaystackChargeForSale);

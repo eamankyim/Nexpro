@@ -25,7 +25,7 @@ const PAYMENT_METHODS = [
 
 type PaymentMethod = (typeof PAYMENT_METHODS)[number]['value'];
 type PaymentFlow = 'direct' | 'manual';
-type DirectPaymentStatus = 'idle' | 'pending' | 'success' | 'failed';
+type DirectPaymentStatus = 'idle' | 'pending' | 'awaiting_otp' | 'success' | 'failed';
 
 type SaleRecordPaymentSheetProps = {
   visible: boolean;
@@ -37,6 +37,7 @@ type SaleRecordPaymentSheetProps = {
     referenceNumber?: string;
   }) => void;
   onDirectPayment?: (payload: { phoneNumber: string; provider: DirectMomoProvider }) => void;
+  onSubmitDirectOtp?: (otp: string) => void;
   onCheckDirectStatus?: () => void;
   directProviders?: DirectMomoProvider[];
   directStatus?: DirectPaymentStatus;
@@ -59,6 +60,7 @@ export function SaleRecordPaymentSheet({
   onClose,
   onSubmit,
   onDirectPayment,
+  onSubmitDirectOtp,
   onCheckDirectStatus,
   directProviders = [],
   directStatus = 'idle',
@@ -80,6 +82,7 @@ export function SaleRecordPaymentSheet({
   const [paymentFlow, setPaymentFlow] = useState<PaymentFlow>('manual');
   const [directPhoneNumber, setDirectPhoneNumber] = useState('');
   const [directProvider, setDirectProvider] = useState<DirectMomoProvider>('MTN');
+  const [directOtp, setDirectOtp] = useState('');
   const isLocked = disabled || isSubmitting;
   const availableDirectProviders = useMemo(
     () => DIRECT_MOMO_PROVIDERS.filter((provider) => directProviders.includes(provider.value)),
@@ -89,7 +92,10 @@ export function SaleRecordPaymentSheet({
   const isDirectSelected = paymentFlow === 'direct';
   const normalizedDirectPhone = directPhoneNumber.trim();
   const canStartDirect = canUseDirect && isValidDirectMomoPhone(normalizedDirectPhone);
-  const hasPendingDirectPayment = directStatus === 'pending' && Boolean(directReference);
+  const isAwaitingOtp = directStatus === 'awaiting_otp';
+  const hasPendingDirectPayment =
+    (directStatus === 'pending' || isAwaitingOtp) && Boolean(directReference);
+  const otpReady = directOtp.trim().length >= 4;
 
   useEffect(() => {
     if (!visible) return;
@@ -99,7 +105,12 @@ export function SaleRecordPaymentSheet({
     setPaymentFlow(canUseDirect ? 'direct' : 'manual');
     setDirectPhoneNumber('');
     setDirectProvider(availableDirectProviders[0]?.value ?? 'MTN');
+    setDirectOtp('');
   }, [availableDirectProviders, balance, canUseDirect, visible]);
+
+  useEffect(() => {
+    if (!isAwaitingOtp) setDirectOtp('');
+  }, [isAwaitingOtp]);
 
   const handleSubmit = () => {
     const amount = parseFloat(paymentAmount);
@@ -113,6 +124,10 @@ export function SaleRecordPaymentSheet({
 
   const handlePrimaryAction = () => {
     if (isDirectSelected) {
+      if (isAwaitingOtp) {
+        onSubmitDirectOtp?.(directOtp.trim());
+        return;
+      }
       onDirectPayment?.({
         phoneNumber: normalizedDirectPhone,
         provider: directProvider,
@@ -147,19 +162,30 @@ export function SaleRecordPaymentSheet({
           </Pressable>
           <Pressable
             onPress={handlePrimaryAction}
-            disabled={isLocked || (isDirectSelected && !canStartDirect)}
+            disabled={
+              isLocked
+              || (isDirectSelected && isAwaitingOtp && !otpReady)
+              || (isDirectSelected && !isAwaitingOtp && !canStartDirect)
+            }
             style={[
               styles.sheetButton,
               styles.sheetButtonPrimary,
               { backgroundColor: tintColor, borderColor: tintColor },
-              (isLocked || (isDirectSelected && !canStartDirect)) && styles.disabledButton,
+              (isLocked
+                || (isDirectSelected && isAwaitingOtp && !otpReady)
+                || (isDirectSelected && !isAwaitingOtp && !canStartDirect))
+                && styles.disabledButton,
             ]}
           >
             {isSubmitting ? (
               <ActivityIndicator color="#fff" size="small" />
             ) : (
               <Text style={styles.sheetButtonPrimaryText}>
-                {isDirectSelected ? 'Start Direct Payment' : 'Record Payment'}
+                {isDirectSelected
+                  ? isAwaitingOtp
+                    ? 'Submit OTP'
+                    : 'Start Direct Payment'
+                  : 'Record Payment'}
               </Text>
             )}
           </Pressable>
@@ -261,15 +287,40 @@ export function SaleRecordPaymentSheet({
           {hasPendingDirectPayment || directStatusMessage ? (
             <View style={[styles.directInfo, { borderColor }]}>
               <Text style={[styles.directInfoTitle, { color: textColor }]}>
-                {directStatus === 'success' ? 'Payment confirmed' : directStatus === 'failed' ? 'Payment not completed' : 'Waiting for approval'}
+                {directStatus === 'success'
+                  ? 'Payment confirmed'
+                  : directStatus === 'failed'
+                    ? 'Payment not completed'
+                    : isAwaitingOtp
+                      ? 'OTP required'
+                      : 'Waiting for approval'}
               </Text>
               <Text style={[styles.directInfoCopy, { color: mutedColor }]}>
-                {directStatusMessage || 'Ask the customer to approve the prompt, then check the status.'}
+                {directStatusMessage
+                  || (isAwaitingOtp
+                    ? 'Enter the OTP sent to the customer to continue payment.'
+                    : 'Ask the customer to approve the prompt, then check the status.')}
               </Text>
               {directReference ? (
                 <Text style={[styles.referenceText, { color: mutedColor }]}>Reference: {directReference}</Text>
               ) : null}
-              {onCheckDirectStatus && directStatus !== 'success' ? (
+              {isAwaitingOtp ? (
+                <View style={styles.formGroup}>
+                  <Text style={[styles.label, { color: mutedColor }]}>OTP</Text>
+                  <TextInput
+                    style={[styles.input, { color: textColor, borderColor, backgroundColor: cardBg }]}
+                    value={directOtp}
+                    onChangeText={(value) => setDirectOtp(value.replace(/\s/g, ''))}
+                    keyboardType="number-pad"
+                    placeholder="Enter OTP"
+                    placeholderTextColor={mutedColor}
+                    returnKeyType="done"
+                    editable={!isLocked}
+                    autoComplete="one-time-code"
+                  />
+                </View>
+              ) : null}
+              {onCheckDirectStatus && directStatus !== 'success' && !isAwaitingOtp ? (
                 <Pressable
                   onPress={onCheckDirectStatus}
                   disabled={isLocked}

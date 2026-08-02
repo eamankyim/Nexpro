@@ -109,7 +109,8 @@ const {
   publicTrackingLookupLimiter,
   publicTrackBrandingLimiter,
   publicFeedbackSubmitLimiter,
-  registrationLimiter
+  registrationLimiter,
+  marketerWriteLimiter,
 } = require('../middleware/rateLimiter');
 
 const router = express.Router();
@@ -288,6 +289,13 @@ const {
   listMyApplications,
   listMyPartnerships,
   listMyEarnings,
+  getMarketerDashboard,
+  createMarketerReferral,
+  listMyReferrals,
+  getMyReferral,
+  createMarketerCashout,
+  listMyCashouts,
+  getMyCashout,
 } = require('../controllers/partnerProgramController');
 const { requireMarketer } = require('../middleware/marketerAuth');
 
@@ -297,10 +305,17 @@ router.post('/sabito-marketer/auth/register', registrationLimiter, registerMarke
 router.post('/sabito-marketer/auth/login', authLimiter, loginMarketer);
 router.get('/sabito-marketer/auth/me', requireMarketer, getMarketerSession);
 router.patch('/sabito-marketer/auth/profile', requireMarketer, updateMarketerProfile);
-router.post('/sabito-marketer/applications', requireMarketer, applyToPartner);
+router.post('/sabito-marketer/applications', requireMarketer, marketerWriteLimiter, applyToPartner);
 router.get('/sabito-marketer/applications', requireMarketer, listMyApplications);
 router.get('/sabito-marketer/partnerships', requireMarketer, listMyPartnerships);
 router.get('/sabito-marketer/earnings', requireMarketer, listMyEarnings);
+router.get('/sabito-marketer/dashboard', requireMarketer, getMarketerDashboard);
+router.post('/sabito-marketer/referrals', requireMarketer, marketerWriteLimiter, createMarketerReferral);
+router.get('/sabito-marketer/referrals', requireMarketer, listMyReferrals);
+router.get('/sabito-marketer/referrals/:id', requireMarketer, getMyReferral);
+router.post('/sabito-marketer/cashouts', requireMarketer, marketerWriteLimiter, createMarketerCashout);
+router.get('/sabito-marketer/cashouts', requireMarketer, listMyCashouts);
+router.get('/sabito-marketer/cashouts/:id', requireMarketer, getMyCashout);
 
 // "Online Store" custom domain resolution: storefront app calls this on boot to check
 // whether the current Host is a merchant's connected custom domain (single-store mode)

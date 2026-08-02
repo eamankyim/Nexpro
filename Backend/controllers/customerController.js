@@ -226,6 +226,14 @@ exports.createCustomer = async (req, res, next) => {
     );
     invalidateCustomerListCache(req.tenantId);
 
+    try {
+      const partnerReferralService = require('../services/partnerReferralService');
+      await partnerReferralService.matchPendingReferralsForCustomer(customer);
+      await customer.reload();
+    } catch (matchError) {
+      console.error('[CustomerController] partner referral match failed:', matchError?.message || matchError);
+    }
+
     runCustomerCreatedAutomations({
       tenantId: req.tenantId,
       customer,
@@ -281,6 +289,14 @@ exports.updateCustomer = async (req, res, next) => {
     });
     await customer.update(payload);
     invalidateCustomerListCache(req.tenantId);
+
+    try {
+      const partnerReferralService = require('../services/partnerReferralService');
+      await partnerReferralService.matchPendingReferralsForCustomer(customer);
+      await customer.reload();
+    } catch (matchError) {
+      console.error('[CustomerController] partner referral match on update failed:', matchError?.message || matchError);
+    }
 
     res.status(200).json({
       success: true,

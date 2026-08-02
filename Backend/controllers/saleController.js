@@ -3548,18 +3548,110 @@ exports.paystackMobileMoneyForSale = async (req, res, next) => {
 
     await sale.update({ metadata: updatedMetadata });
 
+    const next = paystackService.normalizeChargeNextAction(result);
     const payload = {
       success: true,
       data: {
         reference,
         provider: logicalProvider,
-        status: 'PENDING'
+        status: next.status || 'PENDING',
+        message: next.message,
+        displayText: next.displayText,
+        requiresOtp: next.requiresOtp,
       }
     };
     console.log('[MoMo] Returning 200 success:', { saleId: sale.id, payload });
     res.status(200).json(payload);
   } catch (error) {
     console.error('[MoMo] paystackMobileMoneyForSale error:', { saleId: req.params?.id, error: error.message, stack: error.stack });
+    next(error);
+  }
+};
+
+/**
+ * Submit Paystack charge OTP for a pending POS MoMo sale.
+ * @route POST /api/sales/:id/paystack-submit-otp
+ */
+exports.submitPaystackOtpForSale = async (req, res, next) => {
+  try {
+    const saleId = req.params.id;
+    const { otp, reference: bodyReference } = sanitizePayload(req.body || {});
+    const cleanedOtp = String(otp || '').trim();
+    if (!cleanedOtp) {
+      return res.status(400).json({ success: false, message: 'OTP is required' });
+    }
+
+    const sale = await Sale.findOne({
+      where: applyTenantFilter(req.tenantId, { id: saleId }),
+      include: [{ model: Customer, as: 'customer' }]
+    });
+    if (!sale) {
+      return res.status(404).json({ success: false, message: 'Sale not found' });
+    }
+
+    try {
+      assertShopRecordAccess(req, sale);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
+    }
+
+    const reference = String(
+      bodyReference
+      || sale.metadata?.paystackMobileMoney?.reference
+      || ''
+    ).trim();
+    if (!reference) {
+      return res.status(400).json({
+        success: false,
+        message: 'No Paystack mobile money reference found for this sale. Start the payment again.'
+      });
+    }
+
+    const paystackService = require('../services/paystackService');
+    if (!paystackService.secretKey) {
+      return res.status(503).json({ success: false, message: 'Paystack is not configured' });
+    }
+
+    const result = await paystackService.submitChargeOtp({ otp: cleanedOtp, reference });
+    if (!result || result.status === false) {
+      return res.status(400).json({
+        success: false,
+        message: result?.message || 'Invalid or expired OTP. Try again or restart the payment.'
+      });
+    }
+
+    const existingMetadata = sale.metadata || {};
+    await sale.update({
+      metadata: {
+        ...existingMetadata,
+        paystackMobileMoney: {
+          ...(existingMetadata.paystackMobileMoney || {}),
+          reference,
+          otpSubmittedAt: new Date().toISOString(),
+          lastChargeStatus: result?.data?.status || null
+        }
+      }
+    });
+
+    const next = paystackService.normalizeChargeNextAction(result);
+    return res.status(200).json({
+      success: true,
+      data: {
+        reference,
+        status: next.status || 'PENDING',
+        message: next.message,
+        displayText: next.displayText,
+        requiresOtp: next.requiresOtp,
+      }
+    });
+  } catch (error) {
+    console.error('[MoMo] submitPaystackOtpForSale error:', {
+      saleId: req.params?.id,
+      error: error.message
+    });
     next(error);
   }
 };
