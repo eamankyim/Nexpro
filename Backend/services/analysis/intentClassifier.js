@@ -56,6 +56,22 @@ function classifyIntent(message, options = {}) {
     return { intent: 'draft_message', confidence: 0.85, route: 'draft' };
   }
 
+  // Predictions / forecasts — advisory BEFORE sales period patterns
+  // ("Predict next month's revenue" must not match sales_this_month via month's + revenue)
+  if (
+    /\b(predict|forecast|projection|projected)\b/.test(text)
+    || /\b(will i sell|next week'?s? (sales?|revenue)|what will (sales?|revenue))\b/.test(text)
+    || (/\bnext (month|week|quarter|year)\b/.test(text)
+      && /\b(sales?|revenue|profit|earn|predict|forecast)\b/.test(text))
+  ) {
+    return {
+      intent: 'business_advisory',
+      confidence: 0.7,
+      route: 'advisory',
+      suggestedQuestions: suggestions,
+    };
+  }
+
   // Why sales down — check before generic sales compare
   if (
     /\b(why|what caused|reason|reasons)\b/.test(text)
@@ -63,6 +79,38 @@ function classifyIntent(message, options = {}) {
     && /\b(down|drop(ped|ping)?|declin(e|ed|ing)|lower|fell|fall(ing)?|decreas(e|ed|ing)|slow)\b/.test(text)
   ) {
     return { intent: 'why_sales_down', confidence: 0.92, route: 'analysis' };
+  }
+
+  // Expenses by category — before top_products ("top expenses" must not misroute)
+  if (
+    /\b(top expenses?|expense categories?|expenses? by category|biggest expenses?|spending by category|where (is|does) (my |the )?money go)\b/.test(text)
+    || (/\bexpenses?\b/.test(text) && /\b(top|category|categories|breakdown|split)\b/.test(text))
+  ) {
+    return { intent: 'expenses_by_category', confidence: 0.9, route: 'analysis' };
+  }
+
+  // Inactive customers (30d default)
+  if (
+    /\b(inactive customers?|haven'?t (ordered|bought|purchased|shopped)|customers? who haven'?t|no (orders?|purchases?) in|dormant customers?)\b/.test(text)
+    || (/\bcustomers?\b/.test(text) && /\b(30 days?|inactive|haven'?t|not (ordered|bought))\b/.test(text))
+  ) {
+    return { intent: 'inactive_customers', confidence: 0.9, route: 'analysis' };
+  }
+
+  // New customers for period
+  if (
+    /\b(new customers?|customers? (this|today|yesterday|last)|how many customers? (did i |have i )?(get|gain|add))\b/.test(text)
+    || (/\bcustomers?\b/.test(text) && /\b(new|acquired|signed up|joined)\b/.test(text)
+      && !/\b(get more|attract|acquisition)\b/.test(text))
+  ) {
+    return { intent: 'new_customers', confidence: 0.88, route: 'analysis' };
+  }
+
+  // Studio job pipeline — analysis (not support/Anthropic)
+  if (
+    /\b(open jobs?|job pipeline|jobs? (still )?need|which jobs|outstanding jobs?|summarize (my )?open jobs?|jobs? (awaiting|pending|in progress))\b/.test(text)
+  ) {
+    return { intent: 'job_pipeline', confidence: 0.9, route: 'analysis' };
   }
 
   // Receivables / who owes
@@ -78,32 +126,47 @@ function classifyIntent(message, options = {}) {
 
   // Low stock / restock
   if (
-    /\b(low stock|out of stock|restock|reorder|running low|stock alerts?|what (should|can) i (restock|reorder)|drugs? or products are low)\b/.test(text)
-    || (/\b(stock|inventory)\b/.test(text) && /\b(low|alert|short|need)\b/.test(text))
+    /\b(low stock|out of stock|restock|reorder|running low|stock alerts?|what (should|can) i (restock|reorder)|drugs? or products are low|ingredients? (are )?(running )?low)\b/.test(text)
+    || (/\b(stock|inventory|ingredients?)\b/.test(text) && /\b(low|alert|short|need)\b/.test(text))
   ) {
     return { intent: 'low_stock', confidence: 0.9, route: 'analysis' };
   }
 
-  // Top products
+  // Top products / best sellers (plural) — exclude expense phrasing
   if (
-    /\b(top products?|best[- ]?sell(er|ing)|top sell(er|ing)|biggest (revenue )?drivers?|what('s| is| are) (my )?top)\b/.test(text)
-    || (/\bproducts?\b/.test(text) && /\b(top|best|leading|highest)\b/.test(text))
+    !/\bexpenses?\b/.test(text)
+    && (
+      /\b(top products?|best[- ]?sellers?|best[- ]?sell(er|ing)|top sell(er|ing)|biggest (revenue )?drivers?|meals? sold best|what meals? sold)\b/.test(text)
+      || (/\b(products?|meals?)\b/.test(text) && /\b(top|best|leading|highest)\b/.test(text))
+      || /\bwhat('s| is| are) (my )?top\b/.test(text)
+    )
   ) {
     return { intent: 'top_products', confidence: 0.9, route: 'analysis' };
   }
 
-  // Sales vs prior period
+  // Sales vs prior period — include quarter / last week / last quarter wording
   if (
-    /\b(compare|vs\.?|versus|against|previous period|prior period|last (month|week|period)|vs last)\b/.test(text)
-    && /\b(sales?|revenue|period|performance|this (month|week|period))\b/.test(text)
+    /\b(compare|vs\.?|versus|against|previous period|prior period|last (month|week|quarter|period|year)|vs last)\b/.test(text)
+    && /\b(sales?|revenue|period|performance|this (month|week|quarter|period|year)|quarter)\b/.test(text)
   ) {
     return { intent: 'sales_vs_prior_period', confidence: 0.88, route: 'analysis' };
+  }
+
+  // Profit questions → period sales metrics (not advisory)
+  if (
+    /\b(how much profit|what('s| is) (my |the )?profit|net profit|profit (this|today|yesterday|last|for)|how profitable|profit for)\b/.test(text)
+    || (/\bprofit\b/.test(text) && /\b(how much|make|made|earn|earned|did i)\b/.test(text))
+  ) {
+    if (/\b(today|todays)\b/.test(text)) {
+      return { intent: 'sales_today', confidence: 0.9, route: 'analysis' };
+    }
+    return { intent: 'sales_this_month', confidence: 0.88, route: 'analysis' };
   }
 
   // Sales today
   if (
     /\b(today|todays)\b/.test(text)
-    && /\b(sales?|sold|revenue|performance|earn(ed|ings)?|take[- ]?home|how much|did i make)\b/.test(text)
+    && /\b(sales?|sold|revenue|performance|earn(ed|ings)?|take[- ]?home|how much|did i make|food sales)\b/.test(text)
   ) {
     return { intent: 'sales_today', confidence: 0.9, route: 'analysis' };
   }
@@ -116,12 +179,21 @@ function classifyIntent(message, options = {}) {
     return { intent: 'sales_today', confidence: 0.88, route: 'analysis' };
   }
 
-  // Sales this month
+  // Sales this month — exclude "next month" (forecast) and prefer last/yesterday via period align
   if (
     /\b(this month|month'?s)\b/.test(text)
+    && !/\bnext month\b/.test(text)
     && /\b(sales?|sold|revenue|performance|earn(ed|ings)?|how (are|is)|summarize)\b/.test(text)
   ) {
     return { intent: 'sales_this_month', confidence: 0.88, route: 'analysis' };
+  }
+
+  // Yesterday / last week / last month sales → period sales (dates resolved in orchestrator)
+  if (
+    /\b(yesterday|last week|last month|last quarter)\b/.test(text)
+    && /\b(sales?|sold|revenue|performance|earn(ed|ings)?|how much|profit|make|made)\b/.test(text)
+  ) {
+    return { intent: 'sales_this_month', confidence: 0.87, route: 'analysis' };
   }
 
   // "What should I work on / focus on" based on sales or business performance
@@ -132,7 +204,7 @@ function classifyIntent(message, options = {}) {
     return { intent: 'performance_summary', confidence: 0.86, route: 'analysis' };
   }
 
-  // Sales for week / quarter / year / YTD — analysis uses the selected period chip
+  // Sales for week / quarter / year / YTD — analysis uses selected or mentioned period
   if (
     /\b(this (week|quarter|year+)|year[- ]?to[- ]?date|\bytd\b|this period)\b/.test(text)
     && /\b(sales?|sell|sold|revenue|performance|earn(ed|ings)?|how (are|is)|summarize|based on|how much)\b/.test(text)
@@ -140,15 +212,11 @@ function classifyIntent(message, options = {}) {
     return { intent: 'sales_this_month', confidence: 0.86, route: 'analysis' };
   }
 
-  // Performance summary (dashboard-friendly) — before job phrases so "summarize performance" wins
+  // Performance summary (dashboard-friendly)
   if (
     /\b(summarize|summary|overview|how (is|are) (my |the )?business|performance summary|dashboard insight)\b/.test(text)
     || (options.pageContext === 'dashboard' && /\b(summarize|insight|focus|performance)\b/.test(text))
   ) {
-    // Job-pipeline phrasing without performance → leave for support/Anthropic
-    if (/\b(open jobs?|job pipeline|jobs? (still )?need|which jobs)\b/.test(text) && !/\bperformance\b/.test(text)) {
-      return { intent: 'support_howto', confidence: 0.55, route: 'support' };
-    }
     return { intent: 'performance_summary', confidence: 0.82, route: 'analysis' };
   }
 
@@ -157,23 +225,8 @@ function classifyIntent(message, options = {}) {
     return { intent: 'performance_summary', confidence: 0.99, route: 'analysis' };
   }
 
-  // Job / pipeline phrasing (studio) — Anthropic support path until dedicated job metrics exist
-  if (/\b(open jobs?|job pipeline|jobs? (still )?need|which jobs|outstanding jobs?)\b/.test(text)) {
-    return { intent: 'support_howto', confidence: 0.6, route: 'support' };
-  }
-
   // Bare greetings are handled by smallTalk in assistant chat (before this classifier).
   // Analysis API still maps advisory/unsupported to suggestion-only responses.
-
-  // Predictions / forecasts — advisory (tenant key) in Ask AI; analysis API stays suggestion-only
-  if (/\b(predict|forecast|next week|will i sell)\b/.test(text)) {
-    return {
-      intent: 'business_advisory',
-      confidence: 0.55,
-      route: 'advisory',
-      suggestedQuestions: suggestions,
-    };
-  }
 
   // Open-ended / unknown questions → advisory for Ask AI (tenant Anthropic key required)
   return {

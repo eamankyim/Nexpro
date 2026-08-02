@@ -1,7 +1,7 @@
 const { classifyIntent, isAnalysisIntent } = require('./intentClassifier');
 const { FALLBACK_SUGGESTED_QUESTIONS } = require('./intentCatalog');
 const { buildAnswerMarkdown, buildDashboardInsightCard, templateUnsupported } = require('./answerTemplates');
-const { buildPeriodMismatchLeadIn } = require('./periodMention');
+const { resolvePeriodAutoAlign } = require('./periodMention');
 const { buildSalesDropReasons } = require('./reasons/salesDrop');
 const {
   getSalesToday,
@@ -11,6 +11,9 @@ const {
 const { getTopProducts, getTopProductCompare } = require('./metrics/topProducts');
 const { getReceivables } = require('./metrics/receivables');
 const { getLowStock } = require('./metrics/lowStock');
+const { getExpensesByCategory } = require('./metrics/expensesByCategory');
+const { getNewCustomers, getInactiveCustomers } = require('./metrics/customers');
+const { getJobPipeline } = require('./metrics/jobs');
 const {
   resolveAnalysisPeriod,
   getEqualLengthPriorPeriod,
@@ -81,6 +84,14 @@ async function fetchMetricsForIntent(intent, ctx) {
     }
     case 'top_products':
       return getTopProducts(ctx);
+    case 'expenses_by_category':
+      return getExpensesByCategory(ctx);
+    case 'new_customers':
+      return getNewCustomers(ctx);
+    case 'inactive_customers':
+      return getInactiveCustomers(ctx);
+    case 'job_pipeline':
+      return getJobPipeline(ctx);
     case 'receivables_summary':
     case 'who_owes_me':
       return getReceivables(ctx);
@@ -109,6 +120,10 @@ async function fetchMetricsForIntent(intent, ctx) {
  * Run classify → fetch → reasons → templated DTO.
  * Never calls Anthropic.
  *
+ * Period choice (#7 / #15): when the user names a resolvable relative period
+ * (yesterday / last week / last month / this year / …) that differs from the
+ * Ask AI chip, auto-align analysis dates to that mention and note the chip change.
+ *
  * @param {string} message
  * @param {{
  *   tenantId: string,
@@ -135,14 +150,27 @@ async function runAnalysis(message, context = {}) {
     return { route: classification.route, classification };
   }
 
-  const resolvedPeriod = resolveAnalysisPeriod({
-    period: context.period,
-    startDate: context.startDate,
-    endDate: context.endDate,
-    periodLabel: context.periodLabel,
-    defaultPeriod:
-      classification.intent === 'sales_today' ? 'today' : 'month',
-  });
+  const chipLabel = context.periodLabel;
+  const autoAlign = resolvePeriodAutoAlign(message, chipLabel, context.now);
+  const periodInput = autoAlign?.override
+    ? {
+      period: autoAlign.override.period,
+      startDate: autoAlign.override.startDate,
+      endDate: autoAlign.override.endDate,
+      periodLabel: autoAlign.override.periodLabel,
+      defaultPeriod:
+        classification.intent === 'sales_today' ? 'today' : 'month',
+    }
+    : {
+      period: context.period,
+      startDate: context.startDate,
+      endDate: context.endDate,
+      periodLabel: context.periodLabel,
+      defaultPeriod:
+        classification.intent === 'sales_today' ? 'today' : 'month',
+    };
+
+  const resolvedPeriod = resolveAnalysisPeriod(periodInput, context.now);
 
   const ctx = {
     tenantId: context.tenantId,
@@ -152,6 +180,7 @@ async function runAnalysis(message, context = {}) {
     startDate: resolvedPeriod.startDate,
     endDate: resolvedPeriod.endDate,
     periodLabel: resolvedPeriod.label,
+    now: context.now,
   };
 
   const metrics = await fetchMetricsForIntent(classification.intent, ctx);
@@ -168,9 +197,8 @@ async function runAnalysis(message, context = {}) {
   }
 
   let answerMarkdown = buildAnswerMarkdown(classification.intent, metrics, { reasonsResult });
-  const mismatchLeadIn = buildPeriodMismatchLeadIn(message, resolvedPeriod.label);
-  if (mismatchLeadIn) {
-    answerMarkdown = `${mismatchLeadIn}\n\n${answerMarkdown}`;
+  if (autoAlign?.leadIn) {
+    answerMarkdown = `${autoAlign.leadIn}\n\n${answerMarkdown}`;
   }
   const insight =
     classification.intent === 'performance_summary'
@@ -192,7 +220,8 @@ async function runAnalysis(message, context = {}) {
         periodLabel: resolvedPeriod.label,
         startDate: resolvedPeriod.startDate,
         endDate: resolvedPeriod.endDate,
-        periodMismatch: Boolean(mismatchLeadIn),
+        periodMismatch: Boolean(autoAlign?.leadIn),
+        periodAutoAligned: Boolean(autoAlign?.override),
       },
     }),
   };

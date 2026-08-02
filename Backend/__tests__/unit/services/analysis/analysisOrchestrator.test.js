@@ -17,6 +17,19 @@ jest.mock('../../../../services/analysis/metrics/lowStock', () => ({
   getLowStock: jest.fn(),
 }));
 
+jest.mock('../../../../services/analysis/metrics/expensesByCategory', () => ({
+  getExpensesByCategory: jest.fn(),
+}));
+
+jest.mock('../../../../services/analysis/metrics/customers', () => ({
+  getNewCustomers: jest.fn(),
+  getInactiveCustomers: jest.fn(),
+}));
+
+jest.mock('../../../../services/analysis/metrics/jobs', () => ({
+  getJobPipeline: jest.fn(),
+}));
+
 const {
   getSalesToday,
   getSalesThisMonth,
@@ -25,6 +38,8 @@ const {
 const { getTopProductCompare } = require('../../../../services/analysis/metrics/topProducts');
 const { getReceivables } = require('../../../../services/analysis/metrics/receivables');
 const { getLowStock } = require('../../../../services/analysis/metrics/lowStock');
+const { getExpensesByCategory } = require('../../../../services/analysis/metrics/expensesByCategory');
+const { getJobPipeline } = require('../../../../services/analysis/metrics/jobs');
 const { runAnalysis } = require('../../../../services/analysis/analysisOrchestrator');
 const { computeAlignedProfit } = require('../../../../services/analysis/profitFormulas');
 
@@ -158,5 +173,56 @@ describe('analysisOrchestrator happy paths', () => {
     expect(aligned.netProfit).toBe(340);
     expect(aligned.grossProfit).toBe(380);
     expect(aligned.totalExpenses).toBe(160);
+  });
+
+  it('auto-aligns yesterday mention over chip period', async () => {
+    getSalesThisMonth.mockResolvedValue({
+      period: {
+        label: 'Yesterday',
+        revenue: 200,
+        expenses: 50,
+        profit: 150,
+        saleCount: 2,
+        aov: 100,
+      },
+    });
+
+    const out = await runAnalysis('How much did I sell yesterday?', {
+      ...ctx,
+      period: 'month',
+      periodLabel: 'This month',
+      startDate: '2026-07-01',
+      endDate: '2026-07-31',
+      now: new Date('2026-07-16T12:00:00'),
+    });
+    expect(out.route).toBe('analysis');
+    expect(out.result.meta.periodAutoAligned).toBe(true);
+    expect(out.result.meta.periodLabel).toBe('Yesterday');
+    expect(out.result.answerMarkdown).toMatch(/yesterday/i);
+  });
+
+  it('returns expenses_by_category analysis', async () => {
+    getExpensesByCategory.mockResolvedValue({
+      periodLabel: 'This month',
+      totalAmount: 500,
+      categories: [{ category: 'Rent', count: 1, totalAmount: 500 }],
+    });
+    const out = await runAnalysis('What are my top expense categories?', ctx);
+    expect(out.result.intent).toBe('expenses_by_category');
+    expect(out.result.answerMarkdown).toMatch(/Rent/);
+  });
+
+  it('returns job_pipeline analysis', async () => {
+    getJobPipeline.mockResolvedValue({
+      isStudio: true,
+      pendingCount: 2,
+      inProgressCount: 1,
+      onHoldCount: 0,
+      openCount: 3,
+      samples: [],
+    });
+    const out = await runAnalysis('Summarize my open jobs', ctx);
+    expect(out.result.intent).toBe('job_pipeline');
+    expect(out.result.answerMarkdown).toMatch(/open job/i);
   });
 });

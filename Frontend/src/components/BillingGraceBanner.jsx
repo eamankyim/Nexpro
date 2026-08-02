@@ -3,6 +3,7 @@ import dayjs from 'dayjs';
 import { AlertTriangle } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { isPricingUiEnabled } from '../utils/showPricing';
 
 /**
  * Shown when workspace is in billing grace (trial or subscription ended, still has access).
@@ -16,11 +17,14 @@ const BillingGraceBanner = ({ billing }) => {
     billing.lockReason === 'trial_expired'
       ? 'Your free trial has ended.'
       : 'Your subscription period has ended.';
+  const showRenewCta = isPricingUiEnabled();
 
   return (
     <Alert className="mx-4 sm:mx-4 lg:mx-6 mt-2 border-amber-600/50 bg-amber-500/10">
       <AlertTriangle className="h-4 w-4 text-amber-700" />
-      <AlertTitle className="text-amber-900 dark:text-amber-100">Renew to keep access</AlertTitle>
+      <AlertTitle className="text-amber-900 dark:text-amber-100">
+        {showRenewCta ? 'Renew to keep access' : 'Access ending soon'}
+      </AlertTitle>
       <AlertDescription className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <span className="text-sm text-muted-foreground">
           {reason}{' '}
@@ -30,12 +34,14 @@ const BillingGraceBanner = ({ billing }) => {
               locked.
             </>
           ) : (
-            <>Renew soon to avoid interruption.</>
+            <>Contact support soon to avoid interruption.</>
           )}
         </span>
-        <Button asChild size="sm" className="shrink-0 bg-[#166534] hover:bg-[#14532d]">
-          <Link to="/checkout">Renew plan</Link>
-        </Button>
+        {showRenewCta && (
+          <Button asChild size="sm" className="shrink-0 bg-[#166534] hover:bg-[#14532d]">
+            <Link to="/checkout">Renew plan</Link>
+          </Button>
+        )}
       </AlertDescription>
     </Alert>
   );

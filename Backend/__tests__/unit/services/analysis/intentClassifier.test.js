@@ -19,6 +19,12 @@ describe('intentClassifier', () => {
     expect(r.intent).toBe('sales_vs_prior_period');
   });
 
+  it('classifies compare this quarter to last quarter', () => {
+    expect(classifyIntent('Compare this quarter to last quarter').intent).toBe(
+      'sales_vs_prior_period'
+    );
+  });
+
   it('classifies why sales down before generic sales', () => {
     const r = classifyIntent('Why are sales down?');
     expect(r.intent).toBe('why_sales_down');
@@ -26,6 +32,62 @@ describe('intentClassifier', () => {
 
   it('classifies top products', () => {
     expect(classifyIntent('What are my top products?').intent).toBe('top_products');
+  });
+
+  it('classifies best sellers plural as top_products', () => {
+    expect(classifyIntent('Best sellers this month').intent).toBe('top_products');
+    expect(classifyIntent('What are my best sellers?').intent).toBe('top_products');
+  });
+
+  it('does not route top expenses to top_products', () => {
+    const r = classifyIntent('What are my top expenses?');
+    expect(r.intent).toBe('expenses_by_category');
+    expect(r.route).toBe('analysis');
+  });
+
+  it('classifies expense categories', () => {
+    expect(classifyIntent('What are my top expense categories?').intent).toBe(
+      'expenses_by_category'
+    );
+  });
+
+  it('routes profit questions to analysis not advisory', () => {
+    const r = classifyIntent('How much profit did I make this month?');
+    expect(r.route).toBe('analysis');
+    expect(r.intent).toBe('sales_this_month');
+  });
+
+  it('routes profit today to sales_today', () => {
+    expect(classifyIntent("What's my profit today?").intent).toBe('sales_today');
+  });
+
+  it('routes predict next month revenue to advisory not sales', () => {
+    const r = classifyIntent("Predict next month's revenue");
+    expect(r.route).toBe('advisory');
+    expect(r.intent).toBe('business_advisory');
+  });
+
+  it('classifies inactive customers', () => {
+    expect(
+      classifyIntent("Show me customers who haven't ordered in 30 days").intent
+    ).toBe('inactive_customers');
+  });
+
+  it('classifies new customers', () => {
+    expect(classifyIntent('How many new customers this month?').intent).toBe(
+      'new_customers'
+    );
+  });
+
+  it('classifies job pipeline as analysis', () => {
+    expect(classifyIntent('Summarize my open jobs').intent).toBe('job_pipeline');
+    expect(classifyIntent('Which jobs still need attention?').intent).toBe(
+      'job_pipeline'
+    );
+  });
+
+  it('classifies meals sold best as top_products', () => {
+    expect(classifyIntent('What meals sold best today?').intent).toBe('top_products');
   });
 
   it('classifies who owes me', () => {
@@ -52,6 +114,12 @@ describe('intentClassifier', () => {
     const r = classifyIntent('How much did I sell this quarter?');
     expect(r.route).toBe('analysis');
     expect(r.intent).toBe('sales_this_month');
+  });
+
+  it('classifies yesterday sales as period sales analysis', () => {
+    expect(classifyIntent('How much did I sell yesterday?').intent).toBe(
+      'sales_this_month'
+    );
   });
 
   it('routes how-to to support', () => {

@@ -2,21 +2,38 @@
  * Date-range helpers for analysis metrics.
  * Aligns with Dashboard presets (ISO week Mon–Sun, calendar quarter/year).
  * Uses local calendar days (Ghana / Africa/Accra is GMT+0 — matches typical server UTC day bounds).
+ *
+ * Relative periods (yesterday / last week / last month / last quarter) are first-class
+ * so Ask AI can auto-align when the user names a timeframe that differs from the chip.
  */
 
-const PERIOD_KEYS = ['today', 'week', 'month', 'quarter', 'year'];
+const PERIOD_KEYS = [
+  'today',
+  'yesterday',
+  'week',
+  'last_week',
+  'month',
+  'last_month',
+  'quarter',
+  'last_quarter',
+  'year',
+];
 
 const PERIOD_LABELS = {
   today: 'Today',
+  yesterday: 'Yesterday',
   week: 'This week',
+  last_week: 'Last week',
   month: 'This month',
+  last_month: 'Last month',
   quarter: 'This quarter',
+  last_quarter: 'Last quarter',
   year: 'This year',
 };
 
 /**
  * @param {string|undefined} period
- * @returns {'today'|'week'|'month'|'quarter'|'year'|null}
+ * @returns {string|null}
  */
 function normalizePeriodKey(period) {
   if (!period || typeof period !== 'string') return null;
@@ -24,25 +41,35 @@ function normalizePeriodKey(period) {
   const aliases = {
     today: 'today',
     day: 'today',
+    yesterday: 'yesterday',
     week: 'week',
     thisweek: 'week',
-    'this_week': 'week',
+    this_week: 'week',
     'this-week': 'week',
+    lastweek: 'last_week',
+    last_week: 'last_week',
+    'last-week': 'last_week',
     month: 'month',
     thismonth: 'month',
-    'this_month': 'month',
+    this_month: 'month',
     'this-month': 'month',
+    lastmonth: 'last_month',
+    last_month: 'last_month',
+    'last-month': 'last_month',
     quarter: 'quarter',
     thisquarter: 'quarter',
-    'this_quarter': 'quarter',
+    this_quarter: 'quarter',
     'this-quarter': 'quarter',
+    lastquarter: 'last_quarter',
+    last_quarter: 'last_quarter',
+    'last-quarter': 'last_quarter',
     year: 'year',
     thisyear: 'year',
-    'this_year': 'year',
+    this_year: 'year',
     'this-year': 'year',
   };
-  const key = aliases[raw.replace(/\s+/g, '')] || aliases[raw] || (PERIOD_KEYS.includes(raw) ? raw : null);
-  return key;
+  const compact = raw.replace(/\s+/g, '');
+  return aliases[compact] || aliases[raw] || (PERIOD_KEYS.includes(raw) ? raw : null);
 }
 
 /**
@@ -69,6 +96,19 @@ function getTodayRange(now = new Date()) {
 }
 
 /**
+ * @param {Date} [now]
+ * @returns {{ start: Date, end: Date, label: string }}
+ */
+function getYesterdayRange(now = new Date()) {
+  const start = new Date(now);
+  start.setDate(start.getDate() - 1);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setHours(23, 59, 59, 999);
+  return { start, end, label: PERIOD_LABELS.yesterday };
+}
+
+/**
  * ISO week: Monday–Sunday (matches Dashboard dayjs startOf('isoWeek')).
  * @param {Date} [now]
  * @returns {{ start: Date, end: Date, label: string }}
@@ -88,6 +128,22 @@ function getThisWeekRange(now = new Date()) {
 }
 
 /**
+ * Previous ISO week (Mon–Sun before the current week).
+ * @param {Date} [now]
+ * @returns {{ start: Date, end: Date, label: string }}
+ */
+function getLastWeekRange(now = new Date()) {
+  const thisWeek = getThisWeekRange(now);
+  const start = new Date(thisWeek.start);
+  start.setDate(start.getDate() - 7);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+  return { start, end, label: PERIOD_LABELS.last_week };
+}
+
+/**
  * @param {Date} [now]
  * @returns {{ start: Date, end: Date, label: string }}
  */
@@ -97,6 +153,18 @@ function getThisMonthRange(now = new Date()) {
   const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
   end.setHours(23, 59, 59, 999);
   return { start, end, label: PERIOD_LABELS.month };
+}
+
+/**
+ * @param {Date} [now]
+ * @returns {{ start: Date, end: Date, label: string }}
+ */
+function getLastMonthRange(now = new Date()) {
+  const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth(), 0);
+  end.setHours(23, 59, 59, 999);
+  return { start, end, label: PERIOD_LABELS.last_month };
 }
 
 /**
@@ -111,6 +179,19 @@ function getThisQuarterRange(now = new Date()) {
   const end = new Date(now.getFullYear(), qStartMonth + 3, 0);
   end.setHours(23, 59, 59, 999);
   return { start, end, label: PERIOD_LABELS.quarter };
+}
+
+/**
+ * @param {Date} [now]
+ * @returns {{ start: Date, end: Date, label: string }}
+ */
+function getLastQuarterRange(now = new Date()) {
+  const qStartMonth = Math.floor(now.getMonth() / 3) * 3;
+  const start = new Date(now.getFullYear(), qStartMonth - 3, 1);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(now.getFullYear(), qStartMonth, 0);
+  end.setHours(23, 59, 59, 999);
+  return { start, end, label: PERIOD_LABELS.last_quarter };
 }
 
 /**
@@ -185,6 +266,37 @@ function parseSelectedPeriod(startDate, endDate, periodLabel) {
 }
 
 /**
+ * Resolve a normalized period key to a concrete range.
+ * @param {string} key
+ * @param {Date} [now]
+ * @returns {{ start: Date, end: Date, label: string } | null}
+ */
+function rangeForPeriodKey(key, now = new Date()) {
+  switch (key) {
+    case 'yesterday':
+      return getYesterdayRange(now);
+    case 'week':
+      return getThisWeekRange(now);
+    case 'last_week':
+      return getLastWeekRange(now);
+    case 'month':
+      return getThisMonthRange(now);
+    case 'last_month':
+      return getLastMonthRange(now);
+    case 'quarter':
+      return getThisQuarterRange(now);
+    case 'last_quarter':
+      return getLastQuarterRange(now);
+    case 'year':
+      return getThisYearRange(now);
+    case 'today':
+      return getTodayRange(now);
+    default:
+      return null;
+  }
+}
+
+/**
  * Resolve Ask AI period chip / explicit dates to a concrete range.
  * Preference: explicit start/end → period key → defaultToday (or defaultMonth).
  *
@@ -226,31 +338,12 @@ function resolveAnalysisPeriod(options = {}, now = new Date()) {
     normalizePeriodKey(options.period) ||
     (options.defaultPeriod === 'month' ? 'month' : 'today');
 
-  let range;
-  switch (key) {
-    case 'week':
-      range = getThisWeekRange(now);
-      break;
-    case 'month':
-      range = getThisMonthRange(now);
-      break;
-    case 'quarter':
-      range = getThisQuarterRange(now);
-      break;
-    case 'year':
-      range = getThisYearRange(now);
-      break;
-    case 'today':
-    default:
-      range = getTodayRange(now);
-      break;
-  }
+  const range = rangeForPeriodKey(key, now) || getTodayRange(now);
+  const periodKey = normalizePeriodKey(key) || 'today';
 
   return {
     ...range,
-    periodKey: key === 'today' || key === 'week' || key === 'month' || key === 'quarter' || key === 'year'
-      ? key
-      : 'today',
+    periodKey,
     startDate: formatDateYmd(range.start),
     endDate: formatDateYmd(range.end),
   };
@@ -262,12 +355,17 @@ module.exports = {
   normalizePeriodKey,
   formatDateYmd,
   getTodayRange,
+  getYesterdayRange,
   getThisWeekRange,
+  getLastWeekRange,
   getThisMonthRange,
+  getLastMonthRange,
   getThisQuarterRange,
+  getLastQuarterRange,
   getThisYearRange,
   countInclusiveDays,
   getEqualLengthPriorPeriod,
   parseSelectedPeriod,
+  rangeForPeriodKey,
   resolveAnalysisPeriod,
 };

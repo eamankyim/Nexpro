@@ -183,12 +183,12 @@ export default function AskAI() {
 
   const emptyStateSubcopy = useMemo(() => {
     if (promptSets.kind === 'studio') {
-      return 'Get quick answers, insights, and help with your business. Ask anything about your sales, collections, jobs, and more.';
+      return 'Ask about live revenue, collections, open jobs, expenses, and performance — answers use your workspace data.';
     }
     if (promptSets.kind === 'restaurant') {
-      return 'Get quick answers, insights, and help with your kitchen. Ask anything about food sales, orders, ingredients, collections, and more.';
+      return 'Ask about food sales, top meals, stock, collections, and expenses — answers use your workspace data.';
     }
-    return 'Get quick answers, insights, and help with your business. Ask anything about your sales, collections, stock, and more.';
+    return 'Ask about sales, profit, top products, expenses, collections, and stock — answers use your workspace data.';
   }, [promptSets.kind]);
 
   const suggestionCards = useMemo(
@@ -633,11 +633,11 @@ export default function AskAI() {
               {messages.map((msg, i) => {
                 const isAnalysis = msg.meta?.source === 'analysis_engine';
                 const needsTenantKey = msg.meta?.source === 'tenant_key_required';
+                // Show structured why_sales_down reasons for analysis answers too
                 const showReasons =
                   msg.role === 'assistant' &&
                   Array.isArray(msg.meta?.reasons) &&
-                  msg.meta.reasons.length > 0 &&
-                  !isAnalysis;
+                  msg.meta.reasons.length > 0;
 
                 return (
                   <div

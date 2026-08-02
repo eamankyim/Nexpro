@@ -11,7 +11,8 @@ router.use(protect);
 router.use(tenantContext);
 router.use(shopContext);
 router.use(studioLocationContext);
-router.use(authorize('admin', 'manager'));
+// Read-only analysis: safe for staff (tenant-scoped metrics, no writes)
+router.use(authorize('admin', 'manager', 'staff'));
 
 router.post('/ask', ask);
 router.get('/intents', listIntents);

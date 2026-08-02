@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
-import { Mail, Loader2, X } from 'lucide-react';
+import { Mail, Loader2, X, MessageCircle } from 'lucide-react';
 import { Sidebar } from '../components/layout/Sidebar';
 import { Header } from '../components/layout/Header';
 import { SmartSearchProvider } from '../context/SmartSearchContext';
@@ -13,6 +13,8 @@ import BillingGraceBanner from '../components/BillingGraceBanner';
 import BillingLockedScreen from '../components/BillingLockedScreen';
 import ShopAccessBanner from '../components/ShopAccessBanner';
 import SupportAccessBanner from '../components/SupportAccessBanner';
+import AssistantChatPanel from '../components/AssistantChatPanel';
+import FloatingActionButton from '../components/FloatingActionButton';
 import { useResponsive, useSafeAreaInsets, BREAKPOINTS } from '../hooks/useResponsive';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -22,7 +24,23 @@ import authService from '../services/authService';
 import { showSuccess, showError } from '../utils/toast';
 import { releaseBodyInteractionLocks } from '../utils/releaseBodyInteractionLocks';
 
-// Floating AI assistant is off for now. To restore: import AssistantChatPanel, FloatingActionButton, MessageCircle; add state + FAB + panel (see git history).
+/**
+ * Map current route to Ask AI pageContext for the floating panel.
+ * @param {string} pathname
+ * @returns {string|undefined}
+ */
+function pageContextFromPath(pathname) {
+  const path = String(pathname || '');
+  if (path === '/' || path.startsWith('/dashboard')) return 'dashboard';
+  if (path.startsWith('/reports')) return 'reports';
+  if (path.startsWith('/sales') || path.startsWith('/pos')) return 'sales';
+  if (path.startsWith('/invoices')) return 'invoices';
+  if (path.startsWith('/expenses')) return 'expenses';
+  if (path.startsWith('/customers')) return 'customers';
+  if (path.startsWith('/products') || path.startsWith('/inventory')) return 'products';
+  if (path.startsWith('/jobs')) return 'jobs';
+  return undefined;
+}
 
 const MainLayout = () => {
   const location = useLocation();
@@ -35,10 +53,19 @@ const MainLayout = () => {
     needsEmailVerification,
     billingStatus,
     isSupportAccessActive,
+    isDriver,
   } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const wasBelowTabletRef = useRef(isBelowTablet);
+
+  const assistantPageContext = useMemo(
+    () => pageContextFromPath(location.pathname),
+    [location.pathname]
+  );
+  const showAssistantFab = !isDriver && !assistantOpen && location.pathname !== '/ask-ai';
+  const openAssistant = useCallback(() => setAssistantOpen(true), []);
 
   const showVerifyEmailBanner = useMemo(() => Boolean(needsEmailVerification), [needsEmailVerification]);
   const isDashboardRoute = location.pathname === '/' || location.pathname === '/dashboard';
@@ -191,6 +218,22 @@ const MainLayout = () => {
         </div>
 
       </div>
+      {showAssistantFab && (
+        <FloatingActionButton
+          icon={MessageCircle}
+          label="AI Assistant"
+          tooltip="Ask AI"
+          onClick={openAssistant}
+          position="bottom-left"
+          showOnAllSizes
+          hideOnScroll={false}
+        />
+      )}
+      <AssistantChatPanel
+        open={assistantOpen}
+        onOpenChange={setAssistantOpen}
+        pageContext={assistantPageContext}
+      />
       </ShopProvider>
       </StudioLocationProvider>
     </SmartSearchProvider>

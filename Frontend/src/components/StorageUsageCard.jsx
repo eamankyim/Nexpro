@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Cloud, Info, Rocket, Database, Loader2 } from 'lucide-react';
 import inviteService from '../services/inviteService';
+import { isPricingUiEnabled } from '../utils/showPricing';
 import { useAuth } from '../context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -13,7 +14,7 @@ import { formatStorageAmount, formatStoragePercentage } from '../utils/storageFo
 /**
  * Reusable component to display storage usage and limits
  */
-function StorageUsageCard({ style, showUpgradeButton = true }) {
+function StorageUsageCard({ style, showUpgradeButton = isPricingUiEnabled() }) {
   const { activeTenantId } = useAuth();
   const [storageUsage, setStorageUsage] = useState(null);
   const [loading, setLoading] = useState(true);

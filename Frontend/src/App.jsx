@@ -24,6 +24,7 @@ import { useSwipeBack } from './hooks/useSwipeBack';
 import { useIOSKeyboardFix } from './hooks/useKeyboardHandling';
 import { isBootstrapPlatformSuperAdmin } from './utils/platformAdminBootstrap';
 import { getStorefrontBaseUrl } from './utils/storefrontUrl';
+import { isPricingUiEnabled } from './utils/showPricing';
 // Lazy load heavy pages for code splitting
 const Products = lazy(() => import('./pages/Products'));
 const TourProvider = lazy(() => import('./components/tour/TourProvider'));
@@ -316,7 +317,7 @@ function AppContent() {
             <Route path="marketing/campaigns/:id" element={<FeatureRoute featureKey="marketing"><RequireWorkspaceManager><Marketing /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="marketing/campaigns/:id/edit" element={<FeatureRoute featureKey="marketing"><RequireWorkspaceManager><CampaignEditRedirect /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="automations" element={<FeatureRoute featureKey="automations"><RequireWorkspaceManager><Automations /></RequireWorkspaceManager></FeatureRoute>} />
-            <Route path="ask-ai" element={<RequireWorkspaceManager><AskAI /></RequireWorkspaceManager>} />
+            <Route path="ask-ai" element={<AskAI />} />
             <Route path="vendors" element={<FeatureRoute featureKey="crm"><Vendors /></FeatureRoute>} />
             <Route path="jobs" element={<FeatureRoute featureKey="jobAutomation"><Jobs /></FeatureRoute>} />
             <Route path="deliveries" element={<FeatureRoute featureKey="deliveries"><Deliveries /></FeatureRoute>} />
@@ -374,17 +375,17 @@ function AppContent() {
               <Route path="delivery" element={<RequireWorkspaceManager><SettingsDeliveryPage /></RequireWorkspaceManager>} />
               <Route path="inventory" element={<RequireWorkspaceManager><SettingsInventoryPage /></RequireWorkspaceManager>} />
               <Route path="ai" element={<RequireWorkspaceManager><SettingsAiPage /></RequireWorkspaceManager>} />
-              <Route path="billing" element={<RequireWorkspaceManager><SettingsBillingPage /></RequireWorkspaceManager>} />
-              <Route path="sms" element={<RequireWorkspaceManager><SettingsSmsPage /></RequireWorkspaceManager>} />
-              <Route path="invoices-receipts" element={<RequireWorkspaceManager><SettingsInvoicesReceiptsPage /></RequireWorkspaceManager>} />
-              <Route path="payments" element={<RequireWorkspaceManager><SettingsPaymentsPage /></RequireWorkspaceManager>} />
-              <Route path="sabito-partners" element={<RequireWorkspaceManager><SettingsSabitoPartnersPage /></RequireWorkspaceManager>} />
-              <Route path="whatsapp" element={<RequireWorkspaceManager><SettingsWhatsAppPage /></RequireWorkspaceManager>} />
-              <Route path="email" element={<RequireWorkspaceManager><SettingsEmailPage /></RequireWorkspaceManager>} />
-              <Route path="delivery-rules" element={<RequireWorkspaceManager><SettingsDeliveryRulesPage /></RequireWorkspaceManager>} />
+            <Route path="billing" element={<RequireWorkspaceManager>{isPricingUiEnabled() ? <SettingsBillingPage /> : <Navigate to="/settings" replace />}</RequireWorkspaceManager>} />
+            <Route path="sms" element={<RequireWorkspaceManager><SettingsSmsPage /></RequireWorkspaceManager>} />
+            <Route path="invoices-receipts" element={<RequireWorkspaceManager><SettingsInvoicesReceiptsPage /></RequireWorkspaceManager>} />
+            <Route path="payments" element={<RequireWorkspaceManager><SettingsPaymentsPage /></RequireWorkspaceManager>} />
+            <Route path="sabito-partners" element={<RequireWorkspaceManager><SettingsSabitoPartnersPage /></RequireWorkspaceManager>} />
+            <Route path="whatsapp" element={<RequireWorkspaceManager><SettingsWhatsAppPage /></RequireWorkspaceManager>} />
+            <Route path="email" element={<RequireWorkspaceManager><SettingsEmailPage /></RequireWorkspaceManager>} />
+            <Route path="delivery-rules" element={<RequireWorkspaceManager><SettingsDeliveryRulesPage /></RequireWorkspaceManager>} />
             </Route>
-            <Route path="plans" element={<RequireWorkspaceManager><Plans /></RequireWorkspaceManager>} />
-            <Route path="checkout" element={<RequireWorkspaceManager><Checkout /></RequireWorkspaceManager>} />
+            <Route path="plans" element={<RequireWorkspaceManager>{isPricingUiEnabled() ? <Plans /> : <Navigate to="/dashboard" replace />}</RequireWorkspaceManager>} />
+            <Route path="checkout" element={<RequireWorkspaceManager>{isPricingUiEnabled() ? <Checkout /> : <Navigate to="/dashboard" replace />}</RequireWorkspaceManager>} />
           </Route>
 
           <Route

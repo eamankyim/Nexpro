@@ -12,7 +12,8 @@ router.use(protect);
 router.use(tenantContext);
 router.use(shopContext);
 router.use(studioLocationContext);
-router.use(authorize('admin', 'manager'));
+// Chat + analysis routing: tenant-scoped reads / drafts; no privileged writes
+router.use(authorize('admin', 'manager', 'staff'));
 
 router.post('/chat', chat);
 

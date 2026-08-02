@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/form';
 import africanWomanImage from '../assets/African focused woman.webp';
 import { AuthBrandMark } from '@/components/AppLogo';
+import { isPricingUiEnabled } from '../utils/showPricing';
 
 const loginSchema = z.object({
   email: z.string().min(1, 'Enter your email').email('Enter a valid email'),
@@ -59,7 +60,10 @@ const Login = () => {
   const reasonParam = searchParams.get('reason');
   const validPlans = ['starter', 'professional'];
   const validPeriods = ['monthly', 'yearly'];
-  const hasCheckoutParams = validPlans.includes(planParam) && validPeriods.includes(billingPeriodParam);
+  const hasCheckoutParams =
+    isPricingUiEnabled() &&
+    validPlans.includes(planParam) &&
+    validPeriods.includes(billingPeriodParam);
   const { isMobile } = useResponsive();
   const form = useForm({
     resolver: zodResolver(loginSchema),
@@ -407,7 +411,8 @@ const Login = () => {
               </div>
 
               <div className="relative w-full h-full z-10">
-                {/* Integration Cards Overlay */}
+                {/* Integration Cards Overlay — money amounts hidden while pricing UI is off */}
+                {isPricingUiEnabled() && (
                 <div className="absolute top-8 right-8 space-y-3">
                   <div className="bg-card border border-border p-4 w-48">
                     <div className="flex items-center gap-2 mb-2">
@@ -429,6 +434,7 @@ const Login = () => {
                     </div>
                   </div>
                 </div>
+                )}
 
               </div>
             </div>

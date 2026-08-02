@@ -213,6 +213,84 @@ function templateLowStock(metrics) {
   ].join('\n');
 }
 
+function templateExpensesByCategory(metrics) {
+  const categories = metrics.categories || [];
+  const label = metrics.periodLabel || 'This period';
+  if (!categories.length || !(metrics.totalAmount > 0)) {
+    return `No approved expenses recorded for **${label}** yet. Once you log expenses, I'll break them down by category.`;
+  }
+  const top = categories[0];
+  const lines = categories.map(
+    (c, i) => `${i + 1}. **${c.category}** — ${money(c.totalAmount)} (${c.count} expense${c.count === 1 ? '' : 's'})`
+  );
+  return [
+    `For **${label}**, you've spent **${money(metrics.totalAmount)}** across expense categories. Your largest is **${top.category}** at **${money(top.totalAmount)}**.`,
+    '',
+    ...lines,
+  ].join('\n');
+}
+
+function templateNewCustomers(metrics) {
+  const n = Number(metrics.count) || 0;
+  const label = metrics.periodLabel || 'This period';
+  if (n === 0) {
+    return `No new customers were added during **${label}**.`;
+  }
+  const lines = (metrics.customers || []).map(
+    (c, i) => `${i + 1}. ${c.name}`
+  );
+  return [
+    `You added **${n}** new customer${n === 1 ? '' : 's'} in **${label}**.`,
+    ...(lines.length ? ['', 'Most recent:', ...lines] : []),
+  ].join('\n');
+}
+
+function templateInactiveCustomers(metrics) {
+  const n = Number(metrics.count) || 0;
+  const days = metrics.inactiveDays || 30;
+  if (n === 0) {
+    return `Nice — no active customers look inactive over the last **${days}** days.`;
+  }
+  const lines = (metrics.customers || []).map((c, i) => {
+    const when = c.lastActivityAt
+      ? new Date(c.lastActivityAt).toISOString().slice(0, 10)
+      : 'no recent activity';
+    return `${i + 1}. ${c.name} — last activity ${when}`;
+  });
+  return [
+    `**${n}** active customer${n === 1 ? '' : 's'} ${n === 1 ? "hasn't" : "haven't"} purchased or had job/invoice activity in the last **${days}** days.`,
+    ...(lines.length ? ['', 'Examples:', ...lines] : []),
+    '',
+    'Consider a friendly check-in or payment reminder if they still owe you.',
+  ].join('\n');
+}
+
+function templateJobPipeline(metrics) {
+  if (!metrics.isStudio) {
+    return 'Job pipeline summaries are available for studio-style workspaces (print, mechanic, salon, barber). Try asking about sales or receivables instead.';
+  }
+  const open = Number(metrics.openCount) || 0;
+  if (open === 0) {
+    return 'Your job pipeline is clear — no open jobs pending, in progress, or on hold.';
+  }
+  const lines = [
+    `You have **${open}** open job${open === 1 ? '' : 's'} in the pipeline:`,
+    `- New / pending: **${metrics.pendingCount || 0}**`,
+    `- In progress: **${metrics.inProgressCount || 0}**`,
+    `- On hold: **${metrics.onHoldCount || 0}**`,
+  ];
+  const samples = metrics.samples || [];
+  if (samples.length) {
+    lines.push('', 'Needs attention:');
+    samples.slice(0, 5).forEach((j, i) => {
+      const label = j.jobNumber || j.title || j.id;
+      const who = j.customerName ? ` — ${j.customerName}` : '';
+      lines.push(`${i + 1}. ${label} (${String(j.status).replace(/_/g, ' ')})${who}`);
+    });
+  }
+  return lines.join('\n');
+}
+
 function templatePerformanceSummary(metrics) {
   const { current, prior, changes, lowStockCount, receivables } = metrics;
   const revPct = Number(changes.revenuePct) || 0;
@@ -304,6 +382,14 @@ function buildAnswerMarkdown(intent, metrics, extra = {}) {
       return templateWhySalesDown(metrics, extra.reasonsResult);
     case 'top_products':
       return templateTopProducts(metrics);
+    case 'expenses_by_category':
+      return templateExpensesByCategory(metrics);
+    case 'new_customers':
+      return templateNewCustomers(metrics);
+    case 'inactive_customers':
+      return templateInactiveCustomers(metrics);
+    case 'job_pipeline':
+      return templateJobPipeline(metrics);
     case 'receivables_summary':
       return templateReceivables(metrics);
     case 'who_owes_me':

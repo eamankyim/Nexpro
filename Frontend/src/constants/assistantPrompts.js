@@ -11,6 +11,7 @@ export const ASSISTANT_RETAIL_BUSINESS_PROMPTS = [
   'How are sales this month?',
   'Who owes me money?',
   'What are my top products?',
+  'What are my top expense categories?',
   'What should I restock?',
   'Why are sales down?',
   'Compare this period to the previous period',
@@ -29,13 +30,13 @@ export const ASSISTANT_STUDIO_BUSINESS_PROMPTS = [
   'Summarize performance',
 ];
 
-/** Restaurant shop-type chips (mobile + web when shopType is restaurant). */
+/** Restaurant shop-type chips — aligned with analysis intents (top products / sales / stock). */
 export const ASSISTANT_RESTAURANT_BUSINESS_PROMPTS = [
   'What meals sold best today?',
-  'How many kitchen orders are waiting?',
-  'What ingredients are running low?',
   "Summarize today's food sales",
+  'What ingredients are running low?',
   'Who owes me money?',
+  'What are my top expense categories?',
   'Summarize performance',
 ];
 
@@ -94,8 +95,12 @@ export const ASSISTANT_PAGE_PROMPTS = {
   ],
   sales: ['How are sales this month?', 'What are my top products?'],
   invoices: ['Who owes me money?', 'Draft a payment reminder'],
-  expenses: ['How are sales this month?', 'Summarize performance'],
-  customers: ['Who owes me money?', 'How are sales this month?'],
+  expenses: ['What are my top expense categories?', 'Summarize performance'],
+  customers: [
+    'Who owes me money?',
+    "Show me customers who haven't ordered in 30 days",
+    'How many new customers this month?',
+  ],
   products: ['What products are low on stock?', 'What are my top products?'],
   jobs: ['Summarize my open jobs', 'Who owes me money?', 'Summarize performance'],
 };
@@ -227,14 +232,17 @@ function suggestionMetaForPrompt(prompt) {
   if (/meals sold|sold best/i.test(p)) {
     return { title: 'Top meals', icon: 'utensils' };
   }
-  if (/top products/i.test(p)) {
+  if (/expense categor|top expenses/i.test(p)) {
+    return { title: 'Expenses', icon: 'wallet' };
+  }
+  if (/top products|best sellers/i.test(p)) {
     return { title: 'Top products', icon: 'award' };
   }
   if (/open jobs|still need attention|job pipeline/i.test(p)) {
     return { title: 'Open jobs', icon: 'briefcase' };
   }
-  if (/kitchen orders|orders are waiting/i.test(p)) {
-    return { title: 'Kitchen orders', icon: 'utensils' };
+  if (/new customers|inactive customers|haven'?t ordered/i.test(p)) {
+    return { title: 'Customers', icon: 'users' };
   }
   if (/today|sold today|revenue did I make today|food sales/i.test(p)) {
     return { title: "Today's revenue", icon: 'trending' };
@@ -279,9 +287,9 @@ export function getAssistantSuggestionCards(ctx = {}) {
       : kind === 'restaurant'
         ? [
             /sold best today|food sales/i,
-            /kitchen orders/i,
             /ingredients|running low/i,
             /owe|collect/i,
+            /expense categor|top expenses/i,
             /summarize performance/i,
           ]
         : [
@@ -289,7 +297,7 @@ export function getAssistantSuggestionCards(ctx = {}) {
             /owe|collect/i,
             /restock|low on stock/i,
             /top products/i,
-            /summarize performance/i,
+            /expense categor|top expenses/i,
           ];
 
   const picked = [];

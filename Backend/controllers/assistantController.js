@@ -18,7 +18,9 @@ const {
   runAnalysis,
   buildUnsupportedResponse,
   classifyIntent,
+  computeAlignedProfit,
 } = require('../services/analysis');
+const { fetchRetailCogs } = require('../services/analysis/metrics/sales');
 const { trySmallTalk } = require('../services/assistant/smallTalk');
 
 const sendAssistantError = (res, error) => {
@@ -421,26 +423,65 @@ async function getAssistantContext(tenantId, options = {}) {
       : Promise.resolve(0),
   ]);
 
+  // Align retail profit with analysis/dashboard (revenue − COGS − operating expenses)
+  const cogsScope = { tenantId, shopFilterId };
+  const [thisMonthCogs, todayCogs, last3MonthsCogs] = await Promise.all([
+    isShopOrPharmacy
+      ? fetchRetailCogs(cogsScope, firstDayOfMonth, lastDayOfMonth)
+      : Promise.resolve(0),
+    isShopOrPharmacy
+      ? fetchRetailCogs(cogsScope, todayStart, todayEnd)
+      : Promise.resolve(0),
+    isShopOrPharmacy
+      ? fetchRetailCogs(cogsScope, firstDayThreeMonthsAgo, lastDayOfMonth)
+      : Promise.resolve(0),
+  ]);
+
+  const thisMonthAligned = computeAlignedProfit({
+    revenue: thisMonthRevenue,
+    operatingExpenses: thisMonthExpenses,
+    cogs: thisMonthCogs,
+    isRetail: isShopOrPharmacy,
+  });
+  const todayAligned = computeAlignedProfit({
+    revenue: todayRevenue,
+    operatingExpenses: todayExpenses,
+    cogs: todayCogs,
+    isRetail: isShopOrPharmacy,
+  });
+  const last3MonthsAligned = computeAlignedProfit({
+    revenue: last3MonthsRevenue,
+    operatingExpenses: last3MonthsExpenses,
+    cogs: last3MonthsCogs,
+    isRetail: isShopOrPharmacy,
+  });
+
   const thisMonth = {
     totalCustomers,
     newCustomersThisMonth,
-    revenue: Number(parseFloat(thisMonthRevenue).toFixed(2)),
-    expenses: Number(parseFloat(thisMonthExpenses).toFixed(2)),
-    profit: Number(parseFloat(thisMonthRevenue - thisMonthExpenses).toFixed(2)),
+    revenue: thisMonthAligned.revenue,
+    expenses: thisMonthAligned.totalExpenses,
+    operatingExpenses: thisMonthAligned.operatingExpenses,
+    cogs: thisMonthAligned.cogs,
+    profit: thisMonthAligned.netProfit,
     range: { start: firstDayOfMonth.toISOString(), end: lastDayOfMonth.toISOString() },
   };
 
   const todaySummary = {
-    revenue: Number(parseFloat(todayRevenue).toFixed(2)),
-    expenses: Number(parseFloat(todayExpenses).toFixed(2)),
-    profit: Number(parseFloat(todayRevenue - todayExpenses).toFixed(2)),
+    revenue: todayAligned.revenue,
+    expenses: todayAligned.totalExpenses,
+    operatingExpenses: todayAligned.operatingExpenses,
+    cogs: todayAligned.cogs,
+    profit: todayAligned.netProfit,
     newCustomers: newCustomersToday,
   };
 
   const last3Months = {
-    revenue: Number(parseFloat(last3MonthsRevenue).toFixed(2)),
-    expenses: Number(parseFloat(last3MonthsExpenses).toFixed(2)),
-    profit: Number(parseFloat(last3MonthsRevenue - last3MonthsExpenses).toFixed(2)),
+    revenue: last3MonthsAligned.revenue,
+    expenses: last3MonthsAligned.totalExpenses,
+    operatingExpenses: last3MonthsAligned.operatingExpenses,
+    cogs: last3MonthsAligned.cogs,
+    profit: last3MonthsAligned.netProfit,
     newCustomers: last3MonthsNewCustomers,
     range: { start: firstDayThreeMonthsAgo.toISOString(), end: lastDayOfMonth.toISOString() },
   };
@@ -571,13 +612,22 @@ async function getAssistantContext(tenantId, options = {}) {
         : Promise.resolve([]),
     ]);
 
-    const selectedRevenue = Number(parseFloat(selectedRevenueRaw || 0).toFixed(2));
-    const selectedExpenses = Number(parseFloat(selectedExpensesRaw || 0).toFixed(2));
+    const selectedCogs = isShopOrPharmacy
+      ? await fetchRetailCogs(cogsScope, selectedStart, selectedEnd)
+      : 0;
+    const selectedAligned = computeAlignedProfit({
+      revenue: selectedRevenueRaw,
+      operatingExpenses: selectedExpensesRaw,
+      cogs: selectedCogs,
+      isRetail: isShopOrPharmacy,
+    });
     selectedPeriod = {
       label: options.periodLabel || 'Selected period',
-      revenue: selectedRevenue,
-      expenses: selectedExpenses,
-      profit: Number(parseFloat(selectedRevenue - selectedExpenses).toFixed(2)),
+      revenue: selectedAligned.revenue,
+      expenses: selectedAligned.totalExpenses,
+      operatingExpenses: selectedAligned.operatingExpenses,
+      cogs: selectedAligned.cogs,
+      profit: selectedAligned.netProfit,
       newCustomers: Number(selectedNewCustomers || 0),
       range: {
         start: selectedStart.toISOString(),

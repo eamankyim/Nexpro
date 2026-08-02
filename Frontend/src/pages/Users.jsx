@@ -7,6 +7,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { showSuccess, showError, showInfo, handleApiError } from '../utils/toast';
+import { isPricingUiEnabled } from '../utils/showPricing';
 import { Button } from '@/components/ui/button';
 import { SecondaryButton } from '@/components/ui/secondary-button';
 import { Input } from '@/components/ui/input';
@@ -1214,6 +1215,7 @@ const Users = () => {
           size="wide"
           seatUsage={seatUsage}
           loading={seatUsageLoading}
+          showUpgradeButton={isPricingUiEnabled()}
           onUpgradePlan={handleUpgradePlan}
         />
       )}
@@ -1230,23 +1232,29 @@ const Users = () => {
                     {seatUsage.limit} seat{seatUsage.limit === 1 ? '' : 's'}
                   </strong>
                   . You have <strong>{seatUsage.current}</strong> active user
-                  {seatUsage.current === 1 ? '' : 's'}, so you cannot invite more team members until you
-                  upgrade your plan.
+                  {seatUsage.current === 1 ? '' : 's'}, so you cannot invite more team members
+                  {isPricingUiEnabled()
+                    ? ' until you upgrade your plan.'
+                    : '. Contact support if you need more seats.'}
                 </>
               ) : (
                 <>
-                  You have reached your plan&apos;s seat limit. Upgrade your plan to invite more team
-                  members.
+                  You have reached your plan&apos;s seat limit.
+                  {isPricingUiEnabled()
+                    ? ' Upgrade your plan to invite more team members.'
+                    : ' Contact support if you need more seats.'}
                 </>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleUpgradePlan}>
-              <Rocket className="h-4 w-4 mr-2" />
-              Upgrade Plan
-            </AlertDialogAction>
+            {isPricingUiEnabled() && (
+              <AlertDialogAction onClick={handleUpgradePlan}>
+                <Rocket className="h-4 w-4 mr-2" />
+                Upgrade Plan
+              </AlertDialogAction>
+            )}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

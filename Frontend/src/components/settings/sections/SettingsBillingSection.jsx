@@ -6,12 +6,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import StatusChip from '../../StatusChip';
 import { useSettingsBilling } from '../../../hooks/useSettingsBilling';
+import { isPricingUiEnabled } from '../../../utils/showPricing';
 
 /**
  * ABS subscription plan, seats, and payment history.
  */
 const SettingsBillingSection = () => {
   const navigate = useNavigate();
+  const showPricingUi = isPricingUiEnabled();
   const {
     canManageOrganization,
     loadingSubscription,
@@ -72,7 +74,7 @@ const SettingsBillingSection = () => {
                   ? `${isTrialSubscription ? 'Trial ends' : 'Renews'} on ${currentPeriodEndDate.format('MMMM D, YYYY')}`
                   : 'No renewal date set'}
               </p>
-              {isTrialSubscription && (
+              {showPricingUi && isTrialSubscription && (
                 <Button
                   type="button"
                   variant="outline"
@@ -117,6 +119,7 @@ const SettingsBillingSection = () => {
           </div>
         </div>
 
+        {showPricingUi && (
         <div className="rounded-lg border border-border p-4 space-y-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
@@ -183,6 +186,7 @@ const SettingsBillingSection = () => {
             </Table>
           )}
         </div>
+        )}
       </CardContent>
     </Card>
   );

@@ -1,5 +1,5 @@
 /**
- * Starter intents for the owned analysis engine (Phase 1).
+ * Starter intents for the owned analysis engine (Phase 1+).
  * Numbers always come from DB/queries — never from an LLM.
  */
 
@@ -36,7 +36,7 @@ const ANALYSIS_INTENTS = [
     suggestedQuestions: [
       'Compare this period to the previous period',
       'Sales vs last month',
-      'How do sales compare to last period?',
+      'Compare this quarter to last quarter',
     ],
     category: 'analysis',
   },
@@ -59,6 +59,50 @@ const ANALYSIS_INTENTS = [
       'What are my top products?',
       'Best sellers this month',
       'Top selling products',
+    ],
+    category: 'analysis',
+  },
+  {
+    id: 'expenses_by_category',
+    label: 'Expenses by category',
+    description: 'Spending breakdown by expense category for the period',
+    suggestedQuestions: [
+      'What are my top expense categories?',
+      'Top expenses this month',
+      'Expenses by category',
+    ],
+    category: 'analysis',
+  },
+  {
+    id: 'new_customers',
+    label: 'New customers',
+    description: 'Customers acquired in the selected period',
+    suggestedQuestions: [
+      'How many new customers this month?',
+      'New customers today',
+      'How many customers did I get?',
+    ],
+    category: 'analysis',
+  },
+  {
+    id: 'inactive_customers',
+    label: 'Inactive customers',
+    description: 'Active customers with no purchase/activity in the last 30 days',
+    suggestedQuestions: [
+      "Show me customers who haven't ordered in 30 days",
+      'Inactive customers',
+      "Who hasn't bought recently?",
+    ],
+    category: 'analysis',
+  },
+  {
+    id: 'job_pipeline',
+    label: 'Job pipeline',
+    description: 'Open studio jobs pending and in progress',
+    suggestedQuestions: [
+      'Summarize my open jobs',
+      'Which jobs still need attention?',
+      'Job pipeline',
     ],
     category: 'analysis',
   },
@@ -115,6 +159,7 @@ const FALLBACK_SUGGESTED_QUESTIONS = [
   'How are sales this month?',
   'Who owes me money?',
   'What are my top products?',
+  'What are my top expense categories?',
   'What should I restock?',
   'Why are sales down?',
 ];
@@ -123,6 +168,7 @@ const FALLBACK_SUGGESTED_QUESTIONS_STUDIO = [
   'How much revenue did I make today?',
   'How is revenue this month?',
   'Who owes me money?',
+  'Summarize my open jobs',
   'Summarize performance',
   'Why is revenue down?',
   'Compare this period to the previous period',

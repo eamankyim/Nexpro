@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Users, Info, Rocket, Loader2 } from 'lucide-react';
 import inviteService from '../services/inviteService';
+import { isPricingUiEnabled } from '../utils/showPricing';
 import { useAuth } from '../context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -15,7 +16,7 @@ import DashboardStatsCard from './DashboardStatsCard';
 function SeatUsageCard({
   style,
   size = 'default',
-  showUpgradeButton = true,
+  showUpgradeButton = isPricingUiEnabled(),
   className = '',
   seatUsage: seatUsageProp,
   loading: loadingProp,

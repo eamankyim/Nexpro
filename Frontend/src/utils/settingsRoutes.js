@@ -2,6 +2,8 @@
  * Settings hub card configuration and legacy tab → route mapping.
  */
 
+import { isPricingUiEnabled } from './showPricing';
+
 export const PAYMENT_COLLECTION_TAB = 'payment-collections';
 
 export const SETTINGS_GROUPS = {
@@ -237,7 +239,7 @@ export const legacyTabToRoute = (tab, subtab, smsSection, canManageOrganization 
   }
 
   if (rawTab === 'billing' || rawTab === 'subscription') {
-    return '/settings/billing';
+    return isPricingUiEnabled() ? '/settings/billing' : '/settings';
   }
 
   if (rawTab === 'invoices-receipts' || rawTab === 'invoices' || rawTab === 'receipts') {
@@ -305,6 +307,7 @@ export const getSettingsCardHref = (card) => {
  */
 export const getVisibleSettingsCards = ({ isManager, hasFeature }) => {
   return SETTINGS_HUB_CARDS.filter((card) => {
+    if (card.slug === 'billing' && !isPricingUiEnabled()) return false;
     if (card.managerOnly && !isManager) return false;
     if (card.featureKey && typeof hasFeature === 'function' && !hasFeature(card.featureKey)) {
       return false;

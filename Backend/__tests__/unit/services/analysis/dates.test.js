@@ -3,6 +3,9 @@ const {
   getThisWeekRange,
   getThisQuarterRange,
   getThisYearRange,
+  getYesterdayRange,
+  getLastWeekRange,
+  getLastMonthRange,
   normalizePeriodKey,
 } = require('../../../../services/analysis/metrics/dates');
 
@@ -23,6 +26,17 @@ describe('analysis dates / resolveAnalysisPeriod', () => {
     expect(r.startDate).toBe('2026-07-13');
     expect(r.endDate).toBe('2026-07-19');
     expect(getThisWeekRange(now).label).toBe('This week');
+  });
+
+  it('resolves yesterday / last week / last month', () => {
+    expect(resolveAnalysisPeriod({ period: 'yesterday' }, now).startDate).toBe('2026-07-15');
+    expect(getYesterdayRange(now).label).toBe('Yesterday');
+    expect(resolveAnalysisPeriod({ period: 'last_week' }, now).startDate).toBe('2026-07-06');
+    expect(resolveAnalysisPeriod({ period: 'last_week' }, now).endDate).toBe('2026-07-12');
+    expect(getLastWeekRange(now).label).toBe('Last week');
+    expect(resolveAnalysisPeriod({ period: 'last_month' }, now).startDate).toBe('2026-06-01');
+    expect(resolveAnalysisPeriod({ period: 'last_month' }, now).endDate).toBe('2026-06-30');
+    expect(getLastMonthRange(now).label).toBe('Last month');
   });
 
   it('resolves quarter and year', () => {
@@ -52,5 +66,6 @@ describe('analysis dates / resolveAnalysisPeriod', () => {
   it('normalizes period aliases', () => {
     expect(normalizePeriodKey('this_week')).toBe('week');
     expect(normalizePeriodKey('This Month')).toBe('month');
+    expect(normalizePeriodKey('last-week')).toBe('last_week');
   });
 });

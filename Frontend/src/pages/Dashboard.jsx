@@ -71,6 +71,7 @@ import { queryKeys } from '../utils/queryKeys';
 import { useScopedWorkspaceName } from '../hooks/useScopedWorkspaceName';
 import { useDismissibleDashboardBanner } from '../hooks/useDismissibleDashboardBanner';
 import { isSabitoStoreEnabled } from '../utils/sabitoStoreFeature';
+import { isPricingUiEnabled } from '../utils/showPricing';
 import { matchesSearchQuery } from '../utils/searchEmptyState';
 import dayjs from 'dayjs';
 import weekOfYear from 'dayjs/plugin/weekOfYear';
@@ -954,30 +955,41 @@ const Dashboard = () => {
   if (overviewError && !overview && subscriptionLocked) {
     const errorData = overviewQueryError?.response?.data || {};
     const checkoutUrl = errorData.checkoutUrl || '/checkout';
+    const showPricingUi = isPricingUiEnabled();
     const lockMessage =
       errorData.message ||
-      'Your subscription needs attention before this workspace can load dashboard data.';
+      (showPricingUi
+        ? 'Your subscription needs attention before this workspace can load dashboard data.'
+        : 'This workspace needs attention before dashboard data can load. Contact support for help.');
 
     return (
       <Card className="border-border">
         <CardContent className="flex flex-col items-center justify-center py-12 px-6 text-center">
           <Wallet className="h-12 w-12 text-primary mb-4" />
-          <h3 className="text-lg font-semibold text-foreground mb-1">Renew your subscription</h3>
+          <h3 className="text-lg font-semibold text-foreground mb-1">
+            {showPricingUi ? 'Renew your subscription' : 'Access restricted'}
+          </h3>
           <p className="text-sm text-muted-foreground mb-6 max-w-md">
             {lockMessage}
           </p>
-          <Button
-            onClick={() => {
-              if (/^https?:\/\//i.test(checkoutUrl)) {
-                window.location.assign(checkoutUrl);
-                return;
-              }
-              navigate(checkoutUrl);
-            }}
-            className="bg-brand hover:bg-brand-dark text-white"
-          >
-            Go to billing
-          </Button>
+          {showPricingUi ? (
+            <Button
+              onClick={() => {
+                if (/^https?:\/\//i.test(checkoutUrl)) {
+                  window.location.assign(checkoutUrl);
+                  return;
+                }
+                navigate(checkoutUrl);
+              }}
+              className="bg-brand hover:bg-brand-dark text-white"
+            >
+              Go to billing
+            </Button>
+          ) : (
+            <Button asChild className="bg-brand hover:bg-brand-dark text-white">
+              <a href="mailto:support@africanbusinesssuite.com">Contact support</a>
+            </Button>
+          )}
         </CardContent>
       </Card>
     );

@@ -40,7 +40,7 @@ import { cn } from '@/lib/utils';
 
 export function Header() {
   const navigate = useNavigate();
-  const { user, logout, activeTenant, isManager } = useAuth();
+  const { user, logout, activeTenant, isManager, isDriver } = useAuth();
   const { hintMode, toggleHintMode } = useHintMode();
   const {
     placeholder,
@@ -409,8 +409,8 @@ export function Header() {
               <TooltipContent side="bottom">Hard refresh</TooltipContent>
             </Tooltip>
 
-            {/* Ask AI */}
-            {isManager && (
+            {/* Ask AI — staff+ (read-only analysis); drivers excluded */}
+            {!isDriver && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button

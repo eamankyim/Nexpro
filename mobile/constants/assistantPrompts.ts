@@ -10,6 +10,7 @@ export const ASSISTANT_RETAIL_BUSINESS_PROMPTS = [
   'How are sales this month?',
   'Who owes me money?',
   'What are my top products?',
+  'What are my top expense categories?',
   'What should I restock?',
   'Why are sales down?',
   'Summarize performance',
@@ -25,12 +26,13 @@ export const ASSISTANT_STUDIO_BUSINESS_PROMPTS = [
   'Summarize performance',
 ];
 
+/** Aligned with analysis: meals → top_products; kitchen waiting removed (not in analysis engine). */
 export const ASSISTANT_RESTAURANT_PROMPTS = [
   'What meals sold best today?',
-  'How many kitchen orders are waiting?',
-  'What ingredients are running low?',
   "Summarize today's food sales",
+  'What ingredients are running low?',
   'Who owes me money?',
+  'What are my top expense categories?',
   'Summarize performance',
 ];
 
@@ -80,11 +82,11 @@ export const ASSISTANT_DRAFT_PROMPTS = ASSISTANT_RETAIL_DRAFT_PROMPTS;
 
 export const ASSISTANT_PAGE_PROMPTS: Record<string, string[]> = {
   dashboard: ['Summarize performance', 'What should I restock?', 'Who owes me money?'],
-  orders: ['How many orders are in the kitchen?', 'What is taking longest to prepare?'],
+  orders: ["Summarize today's food sales", 'What meals sold best today?'],
   sales: ['How are sales this month?', 'What are my top products?'],
   invoices: ['Who owes me money?', 'Draft a payment reminder'],
-  expenses: ['Summarize performance'],
-  customers: ['Who owes me money?', 'How are sales this month?'],
+  expenses: ['What are my top expense categories?', 'Summarize performance'],
+  customers: ['Who owes me money?', "Show me customers who haven't ordered in 30 days"],
   products: ['What is low on stock?', 'What are my top products?'],
   jobs: ['Summarize my open jobs', 'Who owes me money?', 'Summarize performance'],
 };

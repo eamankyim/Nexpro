@@ -438,6 +438,10 @@ export default function DashboardScreen() {
       const response = await assistantService.askAnalysis('Summarize performance', {
         intent: 'performance_summary',
         pageContext: 'dashboard',
+        period: filterType,
+        startDate: dateRange.start,
+        endDate: dateRange.end,
+        periodLabel: getFilterLabel(filterType),
       });
       if (response?.insight?.title && response?.insight?.body) {
         return {

@@ -28,6 +28,7 @@ import {
 } from '../constants/legal';
 import { calculatePasswordStrength } from '../utils/passwordStrength';
 import africanWomanImage from '../assets/African focused woman.webp';
+import { isPricingUiEnabled } from '../utils/showPricing';
 import { AuthBrandMark } from '@/components/AppLogo';
 import confetti from 'canvas-confetti';
 
@@ -1090,7 +1091,8 @@ const Signup = () => {
               </div>
 
               <div className="relative w-full h-full z-10">
-                {/* Integration Cards Overlay */}
+                {/* Integration Cards Overlay — money amounts hidden while pricing UI is off */}
+                {isPricingUiEnabled() && (
                 <div className="absolute top-8 right-8 space-y-3">
                   <div className="bg-card border border-border p-4 w-48">
                     <div className="flex items-center gap-2 mb-2">
@@ -1112,6 +1114,7 @@ const Signup = () => {
                     </div>
                   </div>
                 </div>
+                )}
 
               </div>
             </div>

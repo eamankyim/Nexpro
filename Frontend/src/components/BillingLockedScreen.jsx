@@ -4,6 +4,7 @@ import { CreditCard, Headphones, Lock, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { isPricingUiEnabled } from '../utils/showPricing';
 
 const BRAND_GREEN = '#166534';
 
@@ -15,16 +16,23 @@ const BillingLockedScreen = ({ billing }) => {
   const trialEnded = billing?.lockReason === 'trial_expired';
   const graceEnded = billing?.graceEndsAt ? dayjs().isAfter(dayjs(billing.graceEndsAt)) : true;
   const platformLocked = billing?.lockReason === 'platform_locked';
+  const showPricingUi = isPricingUiEnabled();
 
   const description = platformLocked
     ? 'Workspace access has been restricted by your administrator. Contact support to restore access.'
     : isEnterprise
       ? 'Your Enterprise workspace needs billing attention. Contact your account manager or support to restore access.'
       : trialEnded
-        ? 'Your free trial has ended and the grace period is over. Renew your subscription to continue using all features.'
+        ? showPricingUi
+          ? 'Your free trial has ended and the grace period is over. Renew your subscription to continue using all features.'
+          : 'Your free trial has ended and the grace period is over. Contact support to restore access.'
         : graceEnded
-          ? 'Your workspace subscription is not active. Renew your subscription to continue using all features.'
-          : 'Renew your subscription to continue using all features.';
+          ? showPricingUi
+            ? 'Your workspace subscription is not active. Renew your subscription to continue using all features.'
+            : 'Your workspace subscription is not active. Contact support to restore access.'
+          : showPricingUi
+            ? 'Renew your subscription to continue using all features.'
+            : 'Contact support to continue using all features.';
 
   return (
     <div className="min-h-[60vh] flex items-center justify-center p-4 bg-muted/30">
@@ -59,40 +67,62 @@ const BillingLockedScreen = ({ billing }) => {
             </div>
           </div>
 
-          <h1 className="text-xl font-semibold tracking-tight text-foreground">Subscription required</h1>
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">
+            {showPricingUi ? 'Subscription required' : 'Access restricted'}
+          </h1>
           <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{description}</p>
 
           <div className="mt-8 flex flex-col gap-3">
-            <Button
-              asChild
-              className={cn(
-                'h-11 w-full rounded-lg text-base font-medium',
-                'bg-[#166534] text-white hover:bg-[#14532d] hover:text-white'
-              )}
-            >
-              <Link to="/plans" className="text-white hover:text-white">
-                <CreditCard className="mr-2 h-4 w-4 shrink-0" />
-                Renew subscription
-              </Link>
-            </Button>
+            {showPricingUi ? (
+              <>
+                <Button
+                  asChild
+                  className={cn(
+                    'h-11 w-full rounded-lg text-base font-medium',
+                    'bg-[#166534] text-white hover:bg-[#14532d] hover:text-white'
+                  )}
+                >
+                  <Link to="/plans" className="text-white hover:text-white">
+                    <CreditCard className="mr-2 h-4 w-4 shrink-0" />
+                    Renew subscription
+                  </Link>
+                </Button>
 
-            <Button
-              asChild
-              variant="outline"
-              className={cn(
-                'h-11 w-full rounded-lg text-base font-medium',
-                'border-[#166534] bg-background text-[#166534]',
-                'hover:border-[#166534] hover:bg-[#166534] hover:text-white'
-              )}
-            >
-              <Link
-                to="/settings?tab=billing"
-                className="text-[#166534] hover:text-white focus:text-white"
+                <Button
+                  asChild
+                  variant="outline"
+                  className={cn(
+                    'h-11 w-full rounded-lg text-base font-medium',
+                    'border-[#166534] bg-background text-[#166534]',
+                    'hover:border-[#166534] hover:bg-[#166534] hover:text-white'
+                  )}
+                >
+                  <Link
+                    to="/settings?tab=billing"
+                    className="text-[#166534] hover:text-white focus:text-white"
+                  >
+                    <Settings className="mr-2 h-4 w-4 shrink-0" />
+                    Billing settings
+                  </Link>
+                </Button>
+              </>
+            ) : (
+              <Button
+                asChild
+                className={cn(
+                  'h-11 w-full rounded-lg text-base font-medium',
+                  'bg-[#166534] text-white hover:bg-[#14532d] hover:text-white'
+                )}
               >
-                <Settings className="mr-2 h-4 w-4 shrink-0" />
-                Billing settings
-              </Link>
-            </Button>
+                <a
+                  href="mailto:support@africanbusinesssuite.com"
+                  className="text-white hover:text-white"
+                >
+                  <Headphones className="mr-2 h-4 w-4 shrink-0" />
+                  Contact support
+                </a>
+              </Button>
+            )}
           </div>
 
           <div className="mt-8 border-t border-border pt-6">
