@@ -21,6 +21,7 @@ import CustomDialog from '../../components/common/CustomDialog';
 import useDialog from '../../hooks/useDialog';
 import { createPassword, completeGoogleSignup } from '../../api/auth';
 import apiClient from '../../services/apiClient';
+import { PAYSTACK_CONFIG } from '../../config/env';
 import type { AuthStackScreenProps } from '../../types/navigation';
 import type { PricingPlan } from '../../types/api';
 
@@ -618,7 +619,7 @@ const PlanConfirmationScreen: React.FC<PlanConfirmationScreenProps> = ({ navigat
       {/* Paystack WebView (hidden, triggered programmatically for paid plans) */}
       {!isFree && displayPrice > 0 && email && fullName && (
         <Paystack
-          paystackKey="pk_test_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          paystackKey={PAYSTACK_CONFIG.publicKey}
           billingEmail={email}
           billingName={fullName}
           amount={displayPrice * 100} // Convert to pesewas (smallest unit)

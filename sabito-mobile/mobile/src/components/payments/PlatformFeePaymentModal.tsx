@@ -16,6 +16,7 @@ import { getTheme } from '../../constants/themes';
 import COLORS from '../../constants/colors';
 import { SPACING, FONT_SIZES, FONT_WEIGHTS } from '../../constants/sizes';
 import apiClient from '../../services/apiClient';
+import { PAYSTACK_CONFIG } from '../../config/env';
 import type { Project, Business } from '../../types/api';
 
 interface Fee {
@@ -203,7 +204,7 @@ const PlatformFeePaymentModal: React.FC<PlatformFeePaymentModalProps> = ({ visib
           {/* Hidden Paystack WebView */}
           <Paystack
             ref={paystackWebViewRef}
-            paystackKey="pk_test_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            paystackKey={PAYSTACK_CONFIG.publicKey}
             billingEmail={fee.business?.email || 'business@example.com'}
             amount={fee.amount * 100} // Convert to pesewas
             currency="GHS"

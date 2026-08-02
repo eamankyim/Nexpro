@@ -19,6 +19,7 @@ import { ICON_SIZES } from '../../constants/icons';
 import StepIndicator from '../../components/common/StepIndicator';
 import AccountCreatedModal from '../../components/common/AccountCreatedModal';
 import { createPassword } from '../../api/auth';
+import { PAYSTACK_CONFIG } from '../../config/env';
 import { useTheme } from '../../context/ThemeContext';
 import { getTheme } from '../../constants/themes';
 import type { AuthStackScreenProps } from '../../types/navigation';
@@ -293,7 +294,7 @@ const SignupPaymentScreen: React.FC<SignupPaymentScreenProps> = ({ navigation, r
         {/* Paystack WebView (hidden, triggered programmatically) */}
         {displayPrice > 0 && (
           <Paystack
-            paystackKey="pk_test_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            paystackKey={PAYSTACK_CONFIG.publicKey}
             billingEmail={email!}
             billingName={fullName!}
             amount={displayPrice * 100} // Convert to pesewas (smallest currency unit)

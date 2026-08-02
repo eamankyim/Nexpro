@@ -11,10 +11,7 @@ import type { User } from '../types/api';
 export const initSentry = (): void => {
   console.log('[Sentry] 🔍 Checking Sentry configuration...');
   
-  // Hardcoded Sentry DSN
-  const HARDCODED_DSN = 'YOUR_SENTRY_DSN';
-  
-  // Try multiple ways to get SENTRY_DSN (fallback to hardcoded)
+  // Prefer local .env / EAS env — never hardcode DSNs in source
   let dsn: string | null = getEnvVar('SENTRY_DSN', '') || null;
   
   // Also try from Constants directly (for EAS builds)
@@ -34,11 +31,10 @@ export const initSentry = (): void => {
   if (!dsn && typeof process !== 'undefined' && process.env) {
     dsn = (process.env.SENTRY_DSN || process.env.EXPO_PUBLIC_SENTRY_DSN) || null;
   }
-  
-  // Fallback to hardcoded DSN if nothing else found
-  if (!dsn) {
-    dsn = HARDCODED_DSN;
-    console.log('[Sentry] 📋 Using hardcoded DSN (no environment variable found)');
+
+  if (!dsn || dsn === 'YOUR_SENTRY_DSN') {
+    console.log('[Sentry] ⏭️ Skipping init — SENTRY_DSN not set in .env / EAS');
+    return;
   }
   
   const environment = getEnvVar('APP_ENV', __DEV__ ? 'development' : 'production');
@@ -46,17 +42,11 @@ export const initSentry = (): void => {
   console.log('[Sentry] 📋 Configuration check:', {
     hasDsn: Boolean(dsn),
     dsnPrefix: dsn ? dsn.substring(0, 20) + '...' : 'NOT FOUND',
-    dsnSource: dsn === HARDCODED_DSN ? 'HARDCODED' : 'ENVIRONMENT',
+    dsnSource: 'ENVIRONMENT',
     environment,
     isDev: __DEV__,
     nodeEnv: typeof process !== 'undefined' ? process.env.NODE_ENV : 'unknown',
   });
-  
-  // DSN is always available now (hardcoded as fallback)
-  if (!dsn) {
-    console.error('❌ [Sentry] DSN is missing even with hardcoded fallback. This should not happen.');
-    return;
-  }
 
   try {
     // Check if we're in Expo Go (which doesn't support native Sentry modules)
