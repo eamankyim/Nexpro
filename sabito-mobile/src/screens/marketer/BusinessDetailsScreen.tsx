@@ -9,7 +9,6 @@ import {
   ActivityIndicator,
   Image,
   Linking,
-  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { 
@@ -24,7 +23,6 @@ import {
   Info,
   ExternalLink,
   Phone,
-  Ban
 } from 'lucide-react-native';
 import { useTheme } from '../../context/ThemeContext';
 import { getTheme } from '../../constants/themes';
