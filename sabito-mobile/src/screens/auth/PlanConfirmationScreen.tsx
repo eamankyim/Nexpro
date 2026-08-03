@@ -32,7 +32,6 @@ interface GoogleSignupData {
   name: string;
   picture?: string;
   googleSub: string;
-  accountType: string;
   isVerified: boolean;
 }
 
@@ -281,29 +280,22 @@ const PlanConfirmationScreen: React.FC<PlanConfirmationScreenProps> = ({ navigat
           name: googleSignupData.name,
           picture: googleSignupData.picture,
           googleSub: googleSignupData.googleSub,
-          accountType: accountType! as 'business' | 'marketer',
           planSlug: planSlug!,
           planType: planType!,
           billingCycle: selectedBillingCycle,
           paymentReference: response.transactionRef?.reference || response.reference,
-        });
+        } as any);
         
         // Clear pending Google signup data
         await AsyncStorage.removeItem('pendingGoogleSignup');
         
       } else {
-        // Regular email signup - create account with password and payment
+        // Regular email signup - create account with password (ABS marketer)
         accountResponse = await createPassword({
+          name: fullName!,
           email: email!,
           password: password!,
-          confirmPassword: confirmPassword!,
-          accountType: accountType! as 'business' | 'marketer',
-          planSlug: planSlug!,
-          planType: planType!,
-          billingCycle: selectedBillingCycle,
-          paymentReference: response.transactionRef?.reference || response.reference,
-          paymentStatus: 'completed',
-        } as any);
+        });
       }
       // Store tokens
       if (accountResponse.accessToken) {
