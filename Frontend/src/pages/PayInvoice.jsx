@@ -330,15 +330,7 @@ export default function PayInvoice() {
     let provider = (momoProvider || 'MTN').toUpperCase();
     if (provider === 'UNKNOWN' || !provider) {
       const d = detectMoMoProviderLocal(raw);
-      if (d === 'VODAFONE') {
-        setError('Vodafone Cash automated payment is not available yet. Use MTN or AirtelTigo, or pay by card.');
-        return;
-      }
       if (d !== 'UNKNOWN') provider = d;
-    }
-    if (provider === 'VODAFONE') {
-      setError('Vodafone Cash automated payment is not available yet. Use MTN or AirtelTigo, or pay by card.');
-      return;
     }
 
     setMomoLoading(true);
@@ -363,10 +355,19 @@ export default function PayInvoice() {
       }
       if (!res.ok || !data.success) {
         const rawMoMo = data?.message || data?.error;
+        const allowPaystack = data?.allowPaystackFallback === true;
+        const invoicePaystackOk =
+          invoice?.paymentOptions == null ? true : invoice?.paymentOptions?.paystack === true;
+        const fallbackHint =
+          allowPaystack && invoicePaystackOk
+            ? ' Direct MoMo is unavailable for this network — use Pay with card / MoMo (Paystack) below, or ask the business to set up Hubtel.'
+            : allowPaystack
+              ? ' Set up Hubtel or Paystack in Settings → Payments, or pay another way.'
+              : '';
         setError(
           safeInvoiceApiMessage(
-            typeof rawMoMo === 'string' ? rawMoMo : null,
-            'Could not start mobile money payment.'
+            typeof rawMoMo === 'string' ? `${rawMoMo}${fallbackHint}` : null,
+            `Could not start mobile money payment.${fallbackHint}`
           )
         );
         return;
@@ -441,9 +442,14 @@ export default function PayInvoice() {
   const isFullyPaid = balance <= 0 || invoice?.status === 'paid';
   const po = invoice?.paymentOptions;
   const paystackEnabled = po == null ? true : po.paystack === true;
+  const directHubtel = po == null ? false : po.directHubtel === true;
   const directMtn = po == null ? true : po.directMtnMoMo === true;
   const directAirtel = po == null ? true : po.directAirtelMoMo === true;
   const directMoMo = po == null ? true : po.directMoMo === true;
+  const showDirectMtn = directHubtel || directMtn;
+  const showDirectAirtel = directHubtel || directAirtel;
+  /** Hubtel Receive Money supports Vodafone; Paystack checkout is a separate CTA (not this modal). */
+  const showDirectVodafone = directHubtel;
 
   const paystackEmailCandidate = (form.customerEmail || invoice?.customer?.email || '').trim();
   /** Paystack-only flow with a known-good email: top “Pay” can skip scrolling and go straight to Paystack’s page. */
@@ -588,8 +594,9 @@ export default function PayInvoice() {
                       const v = e.target.value;
                       setForm((f) => ({ ...f, mobileNumber: v }));
                       const d = detectMoMoProviderLocal(v);
-                      if (d === 'MTN' && directMtn) setMomoProvider('MTN');
-                      if (d === 'AIRTEL' && directAirtel) setMomoProvider('AIRTEL');
+                      if (d === 'MTN' && showDirectMtn) setMomoProvider('MTN');
+                      if (d === 'AIRTEL' && showDirectAirtel) setMomoProvider('AIRTEL');
+                      if (d === 'VODAFONE' && showDirectVodafone) setMomoProvider('VODAFONE');
                     }}
                     placeholder="0XX XXX XXXX"
                     className="mt-1"
@@ -606,8 +613,9 @@ export default function PayInvoice() {
                     value={momoProvider}
                     onChange={(e) => setMomoProvider(e.target.value)}
                   >
-                    {directMtn ? <option value="MTN">MTN Mobile Money</option> : null}
-                    {directAirtel ? <option value="AIRTEL">AirtelTigo Money</option> : null}
+                    {showDirectMtn ? <option value="MTN">MTN Mobile Money</option> : null}
+                    {showDirectAirtel ? <option value="AIRTEL">AirtelTigo Money</option> : null}
+                    {showDirectVodafone ? <option value="VODAFONE">Vodafone Cash</option> : null}
                   </select>
                 </div>
                 <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2">

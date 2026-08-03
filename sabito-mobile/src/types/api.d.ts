@@ -27,7 +27,8 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  accountType: 'marketer' | 'business' | 'admin';
+  /** Legacy Sabito role field — unused in ABS marketer-only app. */
+  accountType?: 'marketer' | 'business' | 'admin';
   profileImage?: string;
   isVerified: boolean;
   subscriptionPlan?: string;

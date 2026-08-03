@@ -2100,6 +2100,15 @@ export function sameAutomationBranchScope(a = {}, b = {}) {
 }
 
 /**
+ * Normalize automation rule ids for duplicate-exclusion comparisons.
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function normalizeAutomationRuleId(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+/**
  * Find an existing automation with the same trigger + messaging channel(s) + branch scope.
  * Prevents repeated birthday/email (etc.) rules.
  * @param {Array<object>} existingRules
@@ -2114,10 +2123,13 @@ export function findDuplicateAutomationRule(existingRules, candidate, options = 
   const candidateChannels = getMessagingActionTypesFromRule(candidate);
   if (!candidateChannels.length) return null;
 
-  const excludeRuleId = options.excludeRuleId || null;
+  const excludeRuleId = normalizeAutomationRuleId(
+    options.excludeRuleId ?? candidate?.id ?? null
+  );
   const match = (existingRules || []).find((rule) => {
     if (!rule) return false;
-    if (excludeRuleId && String(rule.id) === String(excludeRuleId)) return false;
+    const ruleId = normalizeAutomationRuleId(rule.id);
+    if (excludeRuleId && ruleId && ruleId === excludeRuleId) return false;
     if (String(rule.triggerType || '').trim() !== triggerType) return false;
     if (!sameAutomationBranchScope(rule, candidate)) return false;
     const existingChannels = getMessagingActionTypesFromRule(rule);

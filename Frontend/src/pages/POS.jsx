@@ -1156,13 +1156,6 @@ const POS = () => {
         showError('Customer MoMo number is required');
         return;
       }
-      if (logicalProvider === 'VODAFONE') {
-        showError(
-          'Vodafone Cash automated collection is not available yet. Choose MTN or AirtelTigo, or use card, cash, or manual MoMo.'
-        );
-        setMobileMoneyState('failed');
-        return;
-      }
       if (!isOnline) {
         showError(ONLINE_REQUIRED_MESSAGE);
         setMobileMoneyFallbackMode('manual');
@@ -1222,12 +1215,14 @@ const POS = () => {
           if (!directOk) {
             const errMsg = String(momoRes?.error || momoRes?.message || '').toLowerCase();
             const canTryPaystack =
+              momoRes?.allowPaystackFallback === true ||
               errMsg.includes('not configured') ||
+              errMsg.includes('not connected') ||
               errMsg.includes('authenticate') ||
               errMsg.includes('failed to initiate') ||
               errMsg.includes('unavailable') ||
               errMsg.includes('use paystack') ||
-              momoRes?.allowPaystackFallback === true;
+              errMsg.includes('vodafone');
             if (!canTryPaystack) {
               const message = momoRes?.error || momoRes?.message || 'Failed to initiate mobile money payment';
               showError(message);
@@ -1237,27 +1232,47 @@ const POS = () => {
             }
           }
         } catch (directErr) {
+          // 503 / allowPaystackFallback failures throw via axios — fall through to Paystack MoMo
           directOk = false;
         }
 
         if (!directOk) {
-          const paystackRes = await saleService.paystackMobileMoneyPay(saleId, {
-            phoneNumber,
-            provider: logicalProvider
-          });
-
-          if (!paystackRes?.success) {
-            const message =
-              paystackRes?.message ||
-              paystackRes?.error ||
-              'Failed to initiate mobile money payment';
+          let paystackRes;
+          try {
+            paystackRes = await saleService.paystackMobileMoneyPay(saleId, {
+              phoneNumber,
+              provider: logicalProvider
+            });
+          } catch (paystackErr) {
+            const raw =
+              paystackErr?.response?.data?.message ||
+              paystackErr?.response?.data?.error ||
+              paystackErr?.message ||
+              '';
+            const lower = String(raw).toLowerCase();
+            const message = lower.includes('not configured')
+              ? 'Set up Hubtel or Paystack in Settings → Payments, or use manual MoMo.'
+              : raw || 'Failed to initiate mobile money payment';
             showError(message);
             setMobileMoneyError(message);
             setMobileMoneyState('failed');
-            if (
-              message.toLowerCase().includes('not configured') ||
-              message.toLowerCase().includes('paystack')
-            ) {
+            setMobileMoneyFallbackMode('manual');
+            return;
+          }
+
+          if (!paystackRes?.success) {
+            const raw =
+              paystackRes?.message ||
+              paystackRes?.error ||
+              'Failed to initiate mobile money payment';
+            const lower = String(raw).toLowerCase();
+            const message = lower.includes('not configured')
+              ? 'Set up Hubtel or Paystack in Settings → Payments, or use manual MoMo.'
+              : raw;
+            showError(message);
+            setMobileMoneyError(message);
+            setMobileMoneyState('failed');
+            if (lower.includes('not configured') || lower.includes('paystack')) {
               setMobileMoneyFallbackMode('manual');
             }
             return;
@@ -1386,9 +1401,16 @@ const POS = () => {
           message: error?.message
         });
         const message = error?.response?.data?.message || error.message || 'Failed to process mobile money payment';
-        showError(message);
-        setMobileMoneyError(message);
+        const lower = String(message).toLowerCase();
+        const setupMsg = lower.includes('not configured')
+          ? 'Set up Hubtel or Paystack in Settings → Payments, or use manual MoMo.'
+          : message;
+        showError(setupMsg);
+        setMobileMoneyError(setupMsg);
         setMobileMoneyState('failed');
+        if (lower.includes('not configured') || lower.includes('paystack')) {
+          setMobileMoneyFallbackMode('manual');
+        }
       } finally {
         waitingMoMoSaleIdRef.current = null;
         wsCompletedSaleIdRef.current = null;

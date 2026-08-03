@@ -48,7 +48,6 @@ type PlanIconComponent = typeof Zap;
 const PlanConfirmationScreen: React.FC<PlanConfirmationScreenProps> = ({ navigation, route }) => {
   const { dialog, showDialog, hideDialog } = useDialog();
   const {
-    accountType,
     fullName,
     email,
     password,
@@ -190,26 +189,21 @@ const PlanConfirmationScreen: React.FC<PlanConfirmationScreenProps> = ({ navigat
           name: googleSignupData.name,
           picture: googleSignupData.picture,
           googleSub: googleSignupData.googleSub,
-          accountType: accountType! as 'business' | 'marketer',
           planSlug: planSlug!,
           planType: 'free',
           billingCycle: selectedBillingCycle,
-        });
+        } as any);
         
         // Clear pending Google signup data
         await AsyncStorage.removeItem('pendingGoogleSignup');
         
       } else {
-        // Regular email signup - create account with password and free plan
+        // Regular email signup - create account with password (ABS marketer)
         response = await createPassword({
+          name: fullName!,
           email: email!,
           password: password!,
-          confirmPassword: confirmPassword!,
-          accountType: accountType! as 'business' | 'marketer',
-          planSlug: planSlug!,
-          planType: 'free',
-          billingCycle: selectedBillingCycle,
-        } as any);
+        });
       }
 
       // Store tokens
@@ -646,7 +640,6 @@ const PlanConfirmationScreen: React.FC<PlanConfirmationScreenProps> = ({ navigat
       {/* Account Created Success Modal */}
       <AccountCreatedModal
         visible={showSuccessModal}
-        accountType={accountType}
         onLoginPress={handleLoginPress}
       />
 

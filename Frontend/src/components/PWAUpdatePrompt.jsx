@@ -1,6 +1,11 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+
+const REFRESH_PENDING_KEY = 'pwa-refresh-pending';
+/** Must sit above react-toastify (z-index 9999) so Refresh stays clickable. */
+const PROMPT_Z_INDEX = 10050;
+const RELOAD_FALLBACK_MS = 200;
 
 /**
  * Registers the PWA service worker (prod only) and shows a banner when a new version is available.
@@ -8,32 +13,77 @@ import { Button } from '@/components/ui/button';
  */
 export default function PWAUpdatePrompt() {
   const [needRefresh, setNeedRefresh] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const registrationRef = useRef(null);
-  const REFRESH_PENDING_KEY = 'pwa-refresh-pending';
+  const reloadFallbackRef = useRef(null);
+
+  const clearReloadFallback = useCallback(() => {
+    if (reloadFallbackRef.current != null) {
+      window.clearTimeout(reloadFallbackRef.current);
+      reloadFallbackRef.current = null;
+    }
+  }, []);
+
+  const reloadNow = useCallback(() => {
+    clearReloadFallback();
+    sessionStorage.removeItem(REFRESH_PENDING_KEY);
+    window.location.reload();
+  }, [clearReloadFallback]);
 
   useEffect(() => {
     if (!import.meta.env.PROD || typeof window === 'undefined' || !('serviceWorker' in navigator)) {
-      return;
+      return undefined;
     }
+
     let intervalId;
+    let cancelled = false;
+
     const onControllerChange = () => {
       // Avoid reload loops: only reload after user explicitly accepted refresh.
       if (sessionStorage.getItem(REFRESH_PENDING_KEY) === '1') {
-        sessionStorage.removeItem(REFRESH_PENDING_KEY);
-        window.location.reload();
+        reloadNow();
       }
     };
+
+    const onSwMessage = (event) => {
+      if (event.data?.type === 'CHUNK_LOAD_FAILED') {
+        setNeedRefresh(true);
+      }
+    };
+
+    const watchWaiting = (registration) => {
+      if (cancelled || !registration) return;
+      if (registration.waiting) {
+        setNeedRefresh(true);
+      }
+    };
+
+    const onUpdateFound = (registration) => {
+      const installing = registration.installing;
+      if (!installing) return;
+      installing.addEventListener('statechange', () => {
+        if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+          setNeedRefresh(true);
+        }
+      });
+    };
+
+    navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
+    navigator.serviceWorker.addEventListener('message', onSwMessage);
 
     navigator.serviceWorker
       .register('/sw.js')
       .then((registration) => {
+        if (cancelled) return;
         registrationRef.current = registration;
-        navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
+        registration.addEventListener('updatefound', () => onUpdateFound(registration));
+        watchWaiting(registration);
 
         const checkUpdate = () => {
           const reg = registrationRef.current;
-          if (reg?.waiting) setNeedRefresh(true);
-          else reg?.update?.();
+          if (!reg) return;
+          watchWaiting(reg);
+          reg.update?.().catch(() => {});
         };
         checkUpdate();
         intervalId = setInterval(checkUpdate, 60 * 60 * 1000);
@@ -41,26 +91,42 @@ export default function PWAUpdatePrompt() {
       .catch(() => {});
 
     return () => {
+      cancelled = true;
       clearInterval(intervalId);
+      clearReloadFallback();
       navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
+      navigator.serviceWorker.removeEventListener('message', onSwMessage);
     };
-  }, []);
+  }, [clearReloadFallback, reloadNow]);
 
   const handleRefresh = useCallback(() => {
-    const reg = registrationRef.current;
+    if (isRefreshing) return;
+    setIsRefreshing(true);
     sessionStorage.setItem(REFRESH_PENDING_KEY, '1');
-    if (reg?.waiting) {
-      reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-    } else {
-      window.location.reload();
+
+    const waiting = registrationRef.current?.waiting;
+    // Always fall back to a hard reload so Refresh never appears dead if controllerchange never fires.
+    clearReloadFallback();
+    reloadFallbackRef.current = window.setTimeout(reloadNow, RELOAD_FALLBACK_MS);
+
+    if (waiting) {
+      try {
+        waiting.postMessage({ type: 'SKIP_WAITING' });
+      } catch {
+        reloadNow();
+      }
+      return;
     }
-  }, [REFRESH_PENDING_KEY]);
+
+    reloadNow();
+  }, [clearReloadFallback, isRefreshing, reloadNow]);
 
   if (!needRefresh) return null;
 
   return (
     <div
-      className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 max-w-[280px] rounded-lg border border-gray-200 bg-white px-3 py-2.5"
+      className="fixed bottom-4 right-4 flex flex-col gap-2 max-w-[280px] rounded-lg border border-gray-200 bg-white px-3 py-2.5"
+      style={{ zIndex: PROMPT_Z_INDEX }}
       role="alert"
       aria-live="polite"
     >
@@ -68,16 +134,27 @@ export default function PWAUpdatePrompt() {
         A new version is available. Refresh to get the latest.
       </span>
       <div className="flex gap-2 justify-end">
-        <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => setNeedRefresh(false)}>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 text-xs"
+          disabled={isRefreshing}
+          onClick={() => setNeedRefresh(false)}
+        >
           Later
         </Button>
         <Button
           size="sm"
           className="h-8 text-xs bg-brand text-white hover:bg-brand-dark"
+          disabled={isRefreshing}
           onClick={handleRefresh}
         >
-          <RefreshCw className="mr-1 h-3.5 w-3.5" />
-          Refresh
+          {isRefreshing ? (
+            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="mr-1 h-3.5 w-3.5" />
+          )}
+          {isRefreshing ? 'Refreshing…' : 'Refresh'}
         </Button>
       </div>
     </div>

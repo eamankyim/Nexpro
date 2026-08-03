@@ -62,7 +62,6 @@ const SignupProfileScreen: React.FC<SignupProfileScreenProps> = ({ navigation })
     if (!validateForm()) return;
 
     navigation.navigate('SignupPassword' as any, {
-      accountType: 'marketer',
       fullName: fullName.trim(),
       email: email.trim().toLowerCase(),
       phone: phone.trim() || undefined,

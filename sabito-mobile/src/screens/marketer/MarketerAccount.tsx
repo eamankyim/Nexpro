@@ -52,7 +52,6 @@ const MarketerAccount: React.FC<MarketerAccountProps> = ({ navigation, onLogout 
           const nextUser = {
             ...session.marketer,
             id: session.marketer.id,
-            accountType: 'marketer',
           } as UserType;
           setUser(nextUser);
           await AsyncStorage.setItem('user', JSON.stringify(nextUser));

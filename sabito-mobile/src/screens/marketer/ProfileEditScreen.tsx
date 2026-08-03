@@ -73,7 +73,6 @@ const ProfileEditScreen: React.FC<Props> = ({ navigation }) => {
       });
       const user = {
         ...res.marketer,
-        accountType: 'marketer',
         userID: res.marketer.id,
       };
       await AsyncStorage.setItem('user', JSON.stringify(user));

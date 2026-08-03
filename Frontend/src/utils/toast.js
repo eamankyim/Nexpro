@@ -1,6 +1,10 @@
+import { createElement } from 'react';
 import { toast } from 'react-toastify';
+import ChunkLoadRefreshToast from '../components/ChunkLoadRefreshToast';
 import { CHUNK_LOAD_REFRESH_MESSAGE, hasChunkLoadError } from './chunkLoadError';
 import { getAiProviderErrorMessage } from './aiProviderErrors';
+
+const CHUNK_LOAD_TOAST_ID = 'chunk-load-refresh';
 
 /**
  * Extracts a clear, user-friendly error message from an error object.
@@ -108,6 +112,21 @@ export const showSuccess = (msg, duration = 3) => {
  */
 export const showError = (error, defaultMessage = 'Something went wrong. Please try again.', duration = 5) => {
   const errorMessage = getErrorMessage(error, defaultMessage);
+  const isChunkRefreshToast =
+    hasChunkLoadError(error) || errorMessage === CHUNK_LOAD_REFRESH_MESSAGE;
+
+  if (isChunkRefreshToast) {
+    toast.error(createElement(ChunkLoadRefreshToast, { message: errorMessage }), {
+      toastId: CHUNK_LOAD_TOAST_ID,
+      autoClose: false,
+      hideProgressBar: false,
+      closeButton: true,
+      closeOnClick: false,
+      draggable: false,
+    });
+    return;
+  }
+
   toast.error(errorMessage, {
     autoClose: duration > 0 ? duration * 1000 : 5000,
     hideProgressBar: false,

@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
@@ -3582,6 +3582,8 @@ export default function Automations() {
   const [rawJson, setRawJson] = useState(INITIAL_RAW_JSON);
   const [taskAutomationDraft, setTaskAutomationDraft] = useState(DEFAULT_TASK_AUTOMATION);
   const [editingRuleId, setEditingRuleId] = useState('');
+  const editingRuleIdRef = useRef(editingRuleId);
+  editingRuleIdRef.current = editingRuleId;
   const [aiInstruction, setAiInstruction] = useState('');
   const [activeTab, setActiveTab] = useState('rules');
   const [templateChannel, setTemplateChannel] = useState('all');
@@ -4592,7 +4594,9 @@ export default function Automations() {
 
   const editRule = useCallback((rule) => {
     const tt = rule.triggerType || 'invoice_due_in_days';
-    setEditingRuleId(rule.id);
+    const ruleId = rule?.id != null ? String(rule.id) : '';
+    setEditingRuleId(ruleId);
+    editingRuleIdRef.current = ruleId;
     setBuilder({
       name: rule.name || '',
       triggerType: tt,
@@ -4851,6 +4855,7 @@ export default function Automations() {
 
   const handleCreateRule = useCallback((options = {}) => {
     const enabled = options.enabled !== false;
+    const currentEditingRuleId = editingRuleIdRef.current || editingRuleId;
     let payload;
     try {
       payload = buildAutomationPayloadFromCurrentForm(enabled);
@@ -4859,22 +4864,19 @@ export default function Automations() {
       return;
     }
 
-    if (!editingRuleId) {
+    // Create-only client guard. On edit, skip the local uniqueness toast and PATCH;
+    // the API excludes the current rule id from the duplicate check.
+    if (!currentEditingRuleId) {
       const duplicate = findDuplicateAutomationRule(rules, payload);
       if (duplicate) {
         showWarning(describeAutomationDuplicateConflict(duplicate, payload));
         return;
       }
-    } else {
-      const duplicate = findDuplicateAutomationRule(rules, payload, { excludeRuleId: editingRuleId });
-      if (duplicate) {
-        showWarning(describeAutomationDuplicateConflict(duplicate, payload));
-        return;
-      }
+      createMutation.mutate(payload);
+      return;
     }
 
-    if (editingRuleId) updateMutation.mutate({ id: editingRuleId, payload });
-    else createMutation.mutate(payload);
+    updateMutation.mutate({ id: currentEditingRuleId, payload });
   }, [buildAutomationPayloadFromCurrentForm, createMutation, editingRuleId, rules, updateMutation]);
 
   const handleRunTest = useCallback(async () => {

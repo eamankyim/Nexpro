@@ -66,6 +66,70 @@ describe('findDuplicateAutomationRule', () => {
     }, { excludeRuleId: 'rule-1' });
     expect(duplicate).toBeNull();
   });
+
+  it('ignores the rule being edited when ids differ only by case', () => {
+    const withUuid = [{
+      ...existing[0],
+      id: 'A1B2C3D4-E5F6-7890-ABCD-EF1234567890',
+    }];
+    const duplicate = findDuplicateAutomationRule(withUuid, {
+      triggerType: 'customer_birthday',
+      actionConfig: { actions: [{ type: 'send_email_platform' }] },
+    }, { excludeRuleId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' });
+    expect(duplicate).toBeNull();
+  });
+
+  it('ignores candidate.id when excludeRuleId is omitted', () => {
+    const duplicate = findDuplicateAutomationRule(existing, {
+      id: 'rule-1',
+      triggerType: 'customer_birthday',
+      actionConfig: { actions: [{ type: 'send_email_platform' }] },
+    });
+    expect(duplicate).toBeNull();
+  });
+
+  it('still flags a different rule while editing', () => {
+    const twoRules = [
+      ...existing,
+      {
+        id: 'rule-2',
+        name: 'Other birthday SMS',
+        triggerType: 'customer_birthday',
+        shopId: null,
+        studioLocationId: null,
+        actionConfig: { actions: [{ type: 'send_sms', body: 'Hi' }] },
+      },
+    ];
+    const duplicate = findDuplicateAutomationRule(twoRules, {
+      triggerType: 'customer_birthday',
+      actionConfig: { actions: [{ type: 'send_sms' }] },
+    }, { excludeRuleId: 'rule-2' });
+    // email-only rule-1 is not an SMS duplicate
+    expect(duplicate).toBeNull();
+
+    const smsDup = findDuplicateAutomationRule([
+      {
+        id: 'rule-1',
+        name: 'Birthday greeting',
+        triggerType: 'customer_birthday',
+        shopId: null,
+        studioLocationId: null,
+        actionConfig: { actions: [{ type: 'send_sms' }] },
+      },
+      {
+        id: 'rule-2',
+        name: 'Other birthday SMS',
+        triggerType: 'customer_birthday',
+        shopId: null,
+        studioLocationId: null,
+        actionConfig: { actions: [{ type: 'send_sms' }] },
+      },
+    ], {
+      triggerType: 'customer_birthday',
+      actionConfig: { actions: [{ type: 'send_sms' }] },
+    }, { excludeRuleId: 'rule-2' });
+    expect(smsDup?.id).toBe('rule-1');
+  });
 });
 
 describe('automationForm action prefill', () => {

@@ -15,7 +15,6 @@ export const loginUser = async (email: string, password: string) => {
   const user = {
     ...data.marketer,
     id: data.marketer.id,
-    accountType: 'marketer',
     userID: data.marketer.id,
   };
   await AsyncStorage.setItem('user', JSON.stringify(user));
@@ -40,7 +39,6 @@ export const createPassword = async (data: {
   });
   const user = {
     ...result.marketer,
-    accountType: 'marketer',
     userID: result.marketer.id,
   };
   await AsyncStorage.setItem('user', JSON.stringify(user));
@@ -55,7 +53,6 @@ export const getCurrentUser = async () => {
   const data = await getMarketerSession();
   return {
     ...data.marketer,
-    accountType: 'marketer',
     userID: data.marketer.id,
   };
 };

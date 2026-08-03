@@ -32,7 +32,7 @@ const SignupPlanScreen: React.FC<SignupPlanScreenProps> = ({ navigation, route }
   const { theme, effectiveTheme } = useTheme();
   const { colors, isDark } = getTheme(effectiveTheme || theme);
   const { dialog, showDialog, hideDialog } = useDialog();
-  const { accountType, fullName, email, password, confirmPassword, isUpgrade, currentPlan, googleSignup } = route?.params || {};
+  const { fullName, email, password, confirmPassword, isUpgrade, currentPlan, googleSignup } = route?.params || {};
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
   const [selectedBilling, setSelectedBilling] = useState<'monthly' | 'yearly'>('monthly');
   const [plans, setPlans] = useState<PricingPlan[]>([]);
@@ -103,7 +103,6 @@ const SignupPlanScreen: React.FC<SignupPlanScreenProps> = ({ navigation, route }
 
     // For ALL plans, go to confirmation screen first
     navigation.navigate('PlanConfirmation', {
-      accountType: accountType!,
       fullName: fullName!,
       email: email!,
       password,

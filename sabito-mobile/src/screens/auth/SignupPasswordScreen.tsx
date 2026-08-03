@@ -245,7 +245,6 @@ const SignupPasswordScreen: React.FC<SignupPasswordScreenProps> = ({ navigation,
       {/* Account Created Success Modal */}
       <AccountCreatedModal
         visible={showSuccessModal}
-        accountType={accountType}
         onLoginPress={handleLoginPress}
       />
 

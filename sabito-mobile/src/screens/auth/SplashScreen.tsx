@@ -14,43 +14,42 @@ interface SplashScreenProps {
   onAnimationComplete?: () => void;
 }
 
+const SPLASH_FALLBACK_MS = 3500;
+
 const SplashScreen: React.FC<SplashScreenProps> = ({ onAnimationComplete }) => {
   // Animation values
   const logoPosition = useRef(new Animated.Value(0)).current; // Logo starts at center
   const textPosition = useRef(new Animated.Value(0)).current; // Text also starts at center
   const textOpacity = useRef(new Animated.Value(0)).current;
+  const finishedRef = useRef(false);
 
   useEffect(() => {
-    // Start animation sequence
-    startAnimation();
-  }, []);
+    let cancelled = false;
+    finishedRef.current = false;
 
-  const startAnimation = (): void => {
-    // Step 1: Logo starts centered alone
-    // Step 2: Logo moves left
-    // Step 3: Text fades in as logo moves, ending together with 8px gap
-    // Step 4: After completion, navigate to next screen
+    const finish = () => {
+      if (cancelled || finishedRef.current) return;
+      finishedRef.current = true;
+      onAnimationComplete?.();
+    };
+
+    // Failsafe: never leave the user on splash if the animation callback is missed
+    const fallback = setTimeout(finish, SPLASH_FALLBACK_MS);
 
     Animated.sequence([
-      // Wait a bit before starting (500ms)
       Animated.delay(500),
-      
-      // Logo and text separate from center
       Animated.parallel([
-        // Logo moves left
         Animated.timing(logoPosition, {
-          toValue: -50, // Move left
+          toValue: -50,
           duration: 600,
           useNativeDriver: true,
         }),
-        // Text moves right
         Animated.timing(textPosition, {
-          toValue: 50, // Move right
+          toValue: 50,
           duration: 600,
-          delay: 200, // Slight delay
+          delay: 200,
           useNativeDriver: true,
         }),
-        // Text fades in
         Animated.timing(textOpacity, {
           toValue: 1,
           duration: 600,
@@ -58,16 +57,16 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ onAnimationComplete }) => {
           useNativeDriver: true,
         }),
       ]),
-      
-      // Hold the final position for 800ms
       Animated.delay(800),
-    ]).start(() => {
-      // Animation complete, trigger callback
-      if (onAnimationComplete) {
-        onAnimationComplete();
-      }
+    ]).start(({ finished }) => {
+      if (finished) finish();
     });
-  };
+
+    return () => {
+      cancelled = true;
+      clearTimeout(fallback);
+    };
+  }, [logoPosition, textPosition, textOpacity, onAnimationComplete]);
 
   return (
     <View style={styles.container}>

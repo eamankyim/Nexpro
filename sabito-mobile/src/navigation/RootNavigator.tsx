@@ -1,4 +1,4 @@
-import React, { useState, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
@@ -14,6 +14,9 @@ import SignupScreen from '../screens/auth/SignupScreen';
 import SignupProfileScreen from '../screens/auth/SignupProfileScreen';
 import SignupPasswordScreen from '../screens/auth/SignupPasswordScreen';
 import MarketerTabNavigator from './MarketerTabNavigator';
+
+/** Fail boot session validation quickly so a bad/hanging API cannot pin the splash. */
+const SESSION_BOOT_TIMEOUT_MS = 8000;
 
 const BusinessDetailsScreen = lazy(() => import('../screens/marketer/BusinessDetailsScreen'));
 const AddReferralScreen = lazy(() => import('../screens/marketer/AddReferralScreen'));
@@ -31,6 +34,22 @@ const ScreenLoader = () => (
   </View>
 );
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
 const Stack = createStackNavigator();
 
 const RootNavigator: React.FC = () => {
@@ -39,11 +58,7 @@ const RootNavigator: React.FC = () => {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
-  useEffect(() => {
-    checkAuthAndOnboardingStatus();
-  }, []);
-
-  const checkAuthAndOnboardingStatus = async () => {
+  const checkAuthAndOnboardingStatus = useCallback(async () => {
     try {
       const seen = await hasSeenOnboarding();
       setShowOnboarding(!seen);
@@ -51,8 +66,14 @@ const RootNavigator: React.FC = () => {
       const token = await AsyncStorage.getItem(TOKEN_KEY);
       if (token) {
         try {
-          await getMarketerSession();
+          await withTimeout(
+            getMarketerSession(),
+            SESSION_BOOT_TIMEOUT_MS,
+            'Marketer session check'
+          );
           setIsLoggedIn(true);
+          // Returning users with a valid session skip onboarding
+          setShowOnboarding(false);
         } catch {
           await AsyncStorage.removeItem(TOKEN_KEY);
           setIsLoggedIn(false);
@@ -65,24 +86,34 @@ const RootNavigator: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
-  const handleSplashFinish = () => setShowSplash(false);
+  useEffect(() => {
+    checkAuthAndOnboardingStatus();
+  }, [checkAuthAndOnboardingStatus]);
 
-  const handleOnboardingComplete = async () => {
+  const handleSplashComplete = useCallback(() => setShowSplash(false), []);
+
+  const handleOnboardingComplete = useCallback(async () => {
     await setOnboardingCompleted();
     setShowOnboarding(false);
-  };
+  }, []);
 
-  const handleLoginSuccess = () => setIsLoggedIn(true);
+  const handleLoginSuccess = useCallback(() => setIsLoggedIn(true), []);
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     await AsyncStorage.removeItem(TOKEN_KEY);
     setIsLoggedIn(false);
-  };
+  }, []);
 
-  if (isLoading || showSplash) {
-    return <SplashScreen onFinish={handleSplashFinish} />;
+  // SplashScreen callback is `onAnimationComplete` (not `onFinish`).
+  // Keep splash and auth loading separate so a hanging session check cannot pin the brand splash.
+  if (showSplash) {
+    return <SplashScreen onAnimationComplete={handleSplashComplete} />;
+  }
+
+  if (isLoading) {
+    return <ScreenLoader />;
   }
 
   return (

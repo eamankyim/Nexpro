@@ -15,11 +15,11 @@ export type AuthStackParamList = {
   AccountType: undefined;
   Login: undefined;
   Signup: undefined;
-  SignupOTP: { email: string; fullName: string; accountType: string };
-  SignupPassword: { email: string; fullName: string; accountType: string };
+  SignupOTP: { email: string; fullName: string; accountType?: string };
+  SignupPassword: { email: string; fullName: string; phone?: string; accountType?: string };
   SignupProfile: { accountType?: string };
   SignupPlan: { 
-    accountType: string; 
+    accountType?: string; 
     fullName: string; 
     email: string; 
     password?: string; 
@@ -29,7 +29,7 @@ export type AuthStackParamList = {
     googleSignup?: boolean;
   };
   SignupPayment: { 
-    accountType: string; 
+    accountType?: string; 
     fullName: string; 
     email: string; 
     password: string; 
@@ -41,7 +41,7 @@ export type AuthStackParamList = {
     billingCycle: string;
   };
   PlanConfirmation: { 
-    accountType: string; 
+    accountType?: string; 
     fullName: string; 
     email: string; 
     password?: string; 

@@ -13,6 +13,7 @@ const AFRICA_MOMO_MARKETS = [
     operators: [
       { code: 'MTN', label: 'MTN Mobile Money', prefixes: ['24', '54', '55', '59'] },
       { code: 'AIRTEL', label: 'AirtelTigo Money', prefixes: ['26', '27', '57'] },
+      // apiReady: false = direct Telecel Collection API only; Hubtel/Paystack still collect Vodafone
       { code: 'VODAFONE', label: 'Vodafone Cash', prefixes: ['20', '50'], apiReady: false }
     ]
   },

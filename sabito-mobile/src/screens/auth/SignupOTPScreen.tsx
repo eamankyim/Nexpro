@@ -29,7 +29,7 @@ const SignupOTPScreen: React.FC<SignupOTPScreenProps> = ({ navigation, route }) 
   const { theme, effectiveTheme } = useTheme();
   const { colors, isDark } = getTheme(effectiveTheme || theme);
   const { dialog, showDialog, hideDialog } = useDialog();
-  const { accountType, fullName, email } = route.params || {};
+  const { fullName, email } = route.params || {};
   const [otp, setOtp] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [resendCooldown, setResendCooldown] = useState<number>(60); // 60 seconds cooldown
@@ -37,10 +37,10 @@ const SignupOTPScreen: React.FC<SignupOTPScreenProps> = ({ navigation, route }) 
 
   // Log route params on mount
   useEffect(() => {
-    if (!email || !accountType) {
-      console.warn('SignupOTPScreen - Missing required params:', { email, accountType });
+    if (!email) {
+      console.warn('SignupOTPScreen - Missing required params:', { email });
     }
-  }, [email, accountType]);
+  }, [email]);
 
   // Start cooldown timer on mount
   useEffect(() => {
@@ -67,7 +67,7 @@ const SignupOTPScreen: React.FC<SignupOTPScreenProps> = ({ navigation, route }) 
       return;
     }
 
-    if (!email || !accountType) {
+    if (!email) {
       showDialog({
         title: 'Missing Information',
         message: 'Please go back and try again.',
@@ -80,16 +80,14 @@ const SignupOTPScreen: React.FC<SignupOTPScreenProps> = ({ navigation, route }) 
     setOtpError('');
 
     try {
-      // Verify OTP with backend
+      // Verify OTP with backend (legacy screen; ABS signup skips OTP)
       await verifyOtp({
         email,
         otp,
-        accountType,
-      });
+      } as any);
 
       // Navigate to password creation
       navigation.navigate('SignupPassword', {
-        accountType,
         fullName,
         email,
       });
@@ -108,7 +106,7 @@ const SignupOTPScreen: React.FC<SignupOTPScreenProps> = ({ navigation, route }) 
       return;
     }
 
-    if (!email || !accountType || !fullName) {
+    if (!email || !fullName) {
       showDialog({
         title: 'Missing Information',
         message: 'Please go back and try again.',
@@ -118,12 +116,11 @@ const SignupOTPScreen: React.FC<SignupOTPScreenProps> = ({ navigation, route }) 
     }
 
     try {
-      // Resend OTP
+      // Resend OTP (legacy screen; ABS signup skips OTP)
       const response = await sendOtp({
         name: fullName,
         email,
-        accountType,
-      });
+      } as any);
 
       // Show OTP in dev mode
       if (response.isDevelopmentMode && response.otp) {

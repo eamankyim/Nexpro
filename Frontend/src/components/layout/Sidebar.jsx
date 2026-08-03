@@ -557,7 +557,7 @@ export function Sidebar({ collapsed, onCollapse }) {
     <aside 
       data-tour="sidebar"
       className={cn(
-        "fixed left-0 top-0 bottom-0 z-[120] flex flex-col bg-card text-foreground transition-all duration-300 border-r border-border overflow-hidden pointer-events-auto",
+        "fixed left-0 top-0 bottom-0 z-40 flex flex-col bg-card text-foreground transition-all duration-300 border-r border-border overflow-hidden pointer-events-auto",
         collapsed ? "w-20" : "w-64"
       )}
     >

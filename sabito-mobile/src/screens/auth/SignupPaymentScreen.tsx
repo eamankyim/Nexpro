@@ -38,7 +38,6 @@ const SignupPaymentScreen: React.FC<SignupPaymentScreenProps> = ({ navigation, r
   const { theme, effectiveTheme } = useTheme();
   const { colors, isDark } = getTheme(effectiveTheme || theme);
   const { 
-    accountType, 
     fullName, 
     email, 
     password, 
@@ -78,16 +77,10 @@ const SignupPaymentScreen: React.FC<SignupPaymentScreenProps> = ({ navigation, r
     try {
       // Create account with payment reference
       const accountResponse = await createPassword({
+        name: fullName!,
         email: email!,
         password: password!,
-        confirmPassword: confirmPassword!,
-        accountType: accountType! as 'business' | 'marketer',
-        planSlug: planSlug!,
-        planType: planType!,
-        billingCycle: billingCycle!,
-        paymentReference: response.transactionRef?.reference || response.reference,
-        paymentStatus: 'completed',
-      } as any);
+      });
       // Store tokens
       if (accountResponse.accessToken) {
         await AsyncStorage.setItem('accessToken', accountResponse.accessToken);
@@ -273,7 +266,7 @@ const SignupPaymentScreen: React.FC<SignupPaymentScreenProps> = ({ navigation, r
             </View>
             <View style={styles.summaryRow}>
               <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Account Type:</Text>
-              <Text style={[styles.summaryValue, { color: colors.text }]}>{accountType}</Text>
+              <Text style={[styles.summaryValue, { color: colors.text }]}>Marketer</Text>
             </View>
           </View>
         </View>
@@ -311,7 +304,6 @@ const SignupPaymentScreen: React.FC<SignupPaymentScreenProps> = ({ navigation, r
       {/* Account Created Success Modal */}
       <AccountCreatedModal
         visible={showSuccessModal}
-        accountType={accountType}
         onLoginPress={handleLoginPress}
       />
     </View>

@@ -12,7 +12,6 @@ import { Input } from '@/components/ui/input';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from '@/components/ui/form';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { Checkbox } from '@/components/ui/checkbox';
 import api from '../services/api';
 import { useQueryClient } from '@tanstack/react-query';
 import authService from '../services/authService';
@@ -21,7 +20,6 @@ import ReactCountryFlag from 'react-country-flag';
 import { BUSINESS_OPTIONS, BUSINESS_GROUPS, getCoreTypeForBusinessSubType } from '@/constants/businessTypes';
 import {
   PRIVACY_POLICY_URL,
-  TERMS_ACCEPTANCE_MESSAGE,
   TERMS_PATH,
   TERMS_VERSION,
 } from '../constants/legal';
@@ -50,7 +48,6 @@ const onboardingSchema = z.object({
     },
     { message: 'Enter a valid URL' }
   ).optional().or(z.literal('')),
-  acceptedTerms: z.boolean().optional()
 });
 
 const countryCodes = [
@@ -120,7 +117,6 @@ const Onboarding = () => {
       phoneCountryCode: '+233', // Default to Ghana, required field
       companyPhone: '',
       companyWebsite: '',
-      acceptedTerms: false
     }
   });
   
@@ -266,8 +262,8 @@ const Onboarding = () => {
       }
       if (values.companyAddress) formData.append('companyAddress', values.companyAddress);
       if (values.companyLogo) formData.append('companyLogo', values.companyLogo);
-      if (requiresTermsAcceptance || values.acceptedTerms) {
-        formData.append('acceptedTerms', values.acceptedTerms ? 'true' : 'false');
+      if (requiresTermsAcceptance) {
+        formData.append('acceptedTerms', 'true');
         formData.append('termsVersion', TERMS_VERSION);
       }
 
@@ -430,12 +426,7 @@ const Onboarding = () => {
       return form.formState.errors[field] !== undefined;
     });
 
-    const hasAcceptedRequiredTerms =
-      currentStepData.id !== 'contactInfo' ||
-      !requiresTermsAcceptance ||
-      watchedValues.acceptedTerms === true;
-    
-    return allRequiredFieldsFilled && !hasErrors && hasAcceptedRequiredTerms;
+    return allRequiredFieldsFilled && !hasErrors;
   };
 
   const getTimelineStepStatus = (stepId) => {
@@ -471,13 +462,6 @@ const Onboarding = () => {
       if (currentStep < steps.length - 1) {
         setCurrentStep(currentStep + 1);
       } else {
-        if (requiresTermsAcceptance && !form.getValues('acceptedTerms')) {
-          form.setError('acceptedTerms', {
-            type: 'manual',
-            message: TERMS_ACCEPTANCE_MESSAGE,
-          });
-          return;
-        }
         form.handleSubmit(onSubmit)();
       }
     }
@@ -1078,47 +1062,27 @@ const Onboarding = () => {
                     />
 
                     {requiresTermsAcceptance && (
-                      <FormField
-                        control={form.control}
-                        name="acceptedTerms"
-                        render={({ field }) => (
-                          <FormItem>
-                            <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/40 p-3">
-                              <FormControl>
-                                <Checkbox
-                                  checked={field.value}
-                                  onCheckedChange={(checked) => field.onChange(Boolean(checked))}
-                                  className="mt-0.5"
-                                />
-                              </FormControl>
-                              <div className="space-y-1 leading-none">
-                                <FormLabel className="text-sm font-normal leading-5 text-gray-700">
-                                  I have read and agree to the ABS{' '}
-                                  <Link
-                                    to={TERMS_PATH}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="font-medium text-primary hover:underline"
-                                  >
-                                    Terms and Conditions
-                                  </Link>{' '}
-                                  and{' '}
-                                  <a
-                                    href={PRIVACY_POLICY_URL}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="font-medium text-primary hover:underline"
-                                  >
-                                    Privacy Policy
-                                  </a>
-                                  .
-                                </FormLabel>
-                                <FormMessage />
-                              </div>
-                            </div>
-                          </FormItem>
-                        )}
-                      />
+                      <p className="text-sm leading-5 text-gray-700">
+                        By continuing, you agree to our{' '}
+                        <Link
+                          to={TERMS_PATH}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-medium text-primary hover:underline"
+                        >
+                          Terms and Conditions
+                        </Link>{' '}
+                        and{' '}
+                        <a
+                          href={PRIVACY_POLICY_URL}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-medium text-primary hover:underline"
+                        >
+                          Privacy Policy
+                        </a>
+                        .
+                      </p>
                     )}
                   </div>
                 )}

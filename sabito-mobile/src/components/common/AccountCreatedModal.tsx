@@ -17,11 +17,10 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 interface AccountCreatedModalProps {
   visible: boolean;
-  accountType: 'business' | 'marketer';
   onLoginPress: () => void;
 }
 
-const AccountCreatedModal: React.FC<AccountCreatedModalProps> = ({ visible, accountType, onLoginPress }) => {
+const AccountCreatedModal: React.FC<AccountCreatedModalProps> = ({ visible, onLoginPress }) => {
   // Animation values
   const scaleAnim = useRef(new Animated.Value(0.8)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
@@ -59,13 +58,8 @@ const AccountCreatedModal: React.FC<AccountCreatedModalProps> = ({ visible, acco
     }
   }, [visible]);
 
-  const getMessage = (): string => {
-    if (accountType === 'business') {
-      return 'Your account has been successfully created and your subscription is now active.';
-    } else {
-      return 'Your marketer account has been successfully created and is ready to use.';
-    }
-  };
+  const getMessage = (): string =>
+    'Your marketer account has been successfully created and is ready to use.';
 
   return (
     <Modal

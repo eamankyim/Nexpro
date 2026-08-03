@@ -52,7 +52,7 @@ async function findDuplicateMessagingAutomationRule({
     studioLocationId: studioLocationId || null,
   };
   if (excludeId) {
-    where.id = { [Op.ne]: excludeId };
+    where.id = { [Op.ne]: String(excludeId) };
   }
 
   const rows = await AutomationRule.findAll({
@@ -549,7 +549,7 @@ exports.updateRule = async (req, res, next) => {
       actionConfig: rule.actionConfig,
       shopId: rule.shopId,
       studioLocationId: rule.studioLocationId,
-      excludeId: rule.id,
+      excludeId: String(rule.id),
     });
     if (duplicate) {
       return res.status(409).json({

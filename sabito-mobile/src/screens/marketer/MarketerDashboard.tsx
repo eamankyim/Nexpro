@@ -149,15 +149,14 @@ const MarketerDashboard: React.FC<MarketerDashboardScreenProps> = ({ navigation 
       try {
         const session = await getMarketerSession();
         const marketer = session.marketer as any;
+        // Marketer-only app: ABS session has no accountType role field.
         setUser({
           ...marketer,
           id: marketer.id,
-          accountType: 'marketer',
         } as User);
         await AsyncStorage.setItem('user', JSON.stringify({
           ...marketer,
           id: marketer.id,
-          accountType: 'marketer',
         }));
         await Promise.all([fetchDashboardStats(), fetchRecentActivities()]);
       } catch (error: any) {
@@ -250,16 +249,6 @@ const MarketerDashboard: React.FC<MarketerDashboardScreenProps> = ({ navigation 
         <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
         <ActivityIndicator size="large" color={COLORS.APP_GREEN} />
         <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading dashboard...</Text>
-      </SafeAreaView>
-    );
-  }
-
-  // Security check: Ensure only marketers can access
-  if (user.accountType?.toLowerCase() !== 'marketer') {
-    return (
-      <SafeAreaView style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
-        <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
-        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Access Denied: Not a marketer account.</Text>
       </SafeAreaView>
     );
   }

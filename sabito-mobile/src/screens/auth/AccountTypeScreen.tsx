@@ -28,7 +28,7 @@ const AccountTypeScreen: React.FC<AccountTypeScreenProps> = ({ navigation }) => 
   const handleContinue = (): void => {
     if (selectedType) {
       // Navigate to signup profile screen with selected account type
-      navigation.navigate('SignupProfile', { accountType: selectedType });
+      navigation.navigate('SignupProfile');
     }
   };
 

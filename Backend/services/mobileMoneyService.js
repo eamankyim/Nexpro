@@ -463,10 +463,13 @@ const mobileMoneyService = {
       return airtelMoney.requestPayment(paymentParams);
     }
     if (provider === 'VODAFONE') {
+      // Direct Telecel/Vodafone Collection API is not wired; Hubtel/Paystack handle Vodafone upstream.
       return {
         success: false,
-        error: 'Vodafone Cash API is not connected yet. Use MTN or AirtelTigo, or pay by card.',
-        provider: 'VODAFONE'
+        error:
+          'Direct Vodafone Cash API is not connected. Use Hubtel or Paystack collection, or pay by card.',
+        provider: 'VODAFONE',
+        allowPaystackFallback: true
       };
     }
 
@@ -492,7 +495,8 @@ const mobileMoneyService = {
         success: false,
         referenceId,
         status: 'UNKNOWN',
-        error: 'Vodafone Cash status checks are not available yet.',
+        error:
+          'Direct Vodafone Cash status checks are not available (use Hubtel or Paystack polling).',
         provider: 'VODAFONE'
       };
     }

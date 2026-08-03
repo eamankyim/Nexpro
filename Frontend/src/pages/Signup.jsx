@@ -18,11 +18,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { Checkbox } from '@/components/ui/checkbox';
 import { AlertCircle } from 'lucide-react';
 import {
   PRIVACY_POLICY_URL,
-  TERMS_ACCEPTANCE_MESSAGE,
   TERMS_PATH,
   TERMS_VERSION,
 } from '../constants/legal';
@@ -71,45 +69,25 @@ const formatInviteRole = (role) => {
   return label;
 };
 
-const TermsAcceptanceField = ({ control, isMobile }) => (
-  <FormField
-    control={control}
-    name="acceptedTerms"
-    render={({ field }) => (
-      <FormItem>
-        <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/40 p-3">
-          <FormControl>
-            <Checkbox
-              checked={field.value}
-              onCheckedChange={(checked) => field.onChange(Boolean(checked))}
-              className="mt-0.5"
-            />
-          </FormControl>
-          <div className="space-y-1 leading-none">
-            <FormLabel className={`${isMobile ? 'text-xs' : 'text-sm'} font-normal leading-5 text-gray-700`}>
-              I have read and agree to the ABS{' '}
-              <Link to={TERMS_PATH} target="_blank" rel="noreferrer" className="font-medium text-brand hover:underline">
-                Terms and Conditions
-              </Link>{' '}
-              and{' '}
-              <a href={PRIVACY_POLICY_URL} target="_blank" rel="noreferrer" className="font-medium text-brand hover:underline">
-                Privacy Policy
-              </a>
-              .
-            </FormLabel>
-            <FormMessage />
-          </div>
-        </div>
-      </FormItem>
-    )}
-  />
+/** Continuing/submitting implies agreement; links stay available for review. */
+const TermsAgreementNotice = ({ isMobile }) => (
+  <p className={`${isMobile ? 'text-xs' : 'text-sm'} leading-5 text-gray-700`}>
+    By continuing, you agree to our{' '}
+    <Link to={TERMS_PATH} target="_blank" rel="noreferrer" className="font-medium text-brand hover:underline">
+      Terms and Conditions
+    </Link>{' '}
+    and{' '}
+    <a href={PRIVACY_POLICY_URL} target="_blank" rel="noreferrer" className="font-medium text-brand hover:underline">
+      Privacy Policy
+    </a>
+    .
+  </p>
 );
 
 const signupSchema = z.object({
   name: z.string().min(2, 'Enter your full name'),
   email: z.string().email('Enter a valid email'),
   agentCode: z.string().optional().or(z.literal('')),
-  acceptedTerms: z.boolean().refine((value) => value === true, TERMS_ACCEPTANCE_MESSAGE),
 });
 
 const passwordSchema = z.object({
@@ -126,7 +104,6 @@ const inviteStep2Schema = z.object({
   password: z.string().min(6, 'Use at least 6 characters'),
   confirmPassword: z.string().min(6, 'Confirm your password'),
   agentCode: z.string().optional().or(z.literal('')),
-  acceptedTerms: z.boolean().refine((value) => value === true, TERMS_ACCEPTANCE_MESSAGE),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
   path: ["confirmPassword"],
@@ -214,7 +191,6 @@ const Signup = () => {
       name: '',
       email: '',
       agentCode: agentCodeFromUrl,
-      acceptedTerms: false,
     },
   });
 
@@ -255,7 +231,6 @@ const Signup = () => {
       password: '',
       confirmPassword: '',
       agentCode: agentCodeFromUrl,
-      acceptedTerms: false,
     },
   });
 
@@ -369,7 +344,6 @@ const Signup = () => {
     setSignupData({
       name: trimmedName,
       email: trimmedEmail,
-      acceptedTerms: values.acceptedTerms,
       agentCode: trimmedAgentCode,
     });
     setCurrentStep(2);
@@ -389,7 +363,7 @@ const Signup = () => {
         email: inviteData.email,
         password: values.password,
         inviteToken: token,
-        acceptedTerms: values.acceptedTerms,
+        acceptedTerms: true,
         termsVersion: TERMS_VERSION,
         ...(trimmedAgentCode ? { agentCode: trimmedAgentCode } : {}),
       };
@@ -427,7 +401,7 @@ const Signup = () => {
         adminEmail: signupData.email,
         password: values.password,
         plan: 'trial',
-        acceptedTerms: signupData.acceptedTerms,
+        acceptedTerms: true,
         termsVersion: TERMS_VERSION,
         ...(trimmedAgentCode ? { agentCode: trimmedAgentCode } : {}),
       };
@@ -450,13 +424,6 @@ const Signup = () => {
     async (credentialResponse) => {
       const idToken = credentialResponse?.credential;
       if (!idToken) return;
-      if (!form.getValues('acceptedTerms')) {
-        form.setError('acceptedTerms', {
-          type: 'manual',
-          message: TERMS_ACCEPTANCE_MESSAGE,
-        });
-        return;
-      }
       overlayStartTimeRef.current = Date.now();
       setShowWelcomeScreen(true);
       setWelcomeStatus('loading');
@@ -818,14 +785,14 @@ const Signup = () => {
                               />
                             </FormControl>
                             <FormDescription className="text-xs text-muted-foreground">
-                              Have a sales agent code? Enter it for 3 months free.
+                              Have a sales agent code? Enter it here.
                             </FormDescription>
                             <FormMessage />
                           </FormItem>
                         )}
                       />
                     )}
-                    <TermsAcceptanceField control={inviteStep2Form.control} isMobile={isMobile} />
+                    <TermsAgreementNotice isMobile={isMobile} />
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
@@ -923,13 +890,13 @@ const Signup = () => {
                               />
                             </FormControl>
                             <FormDescription className="text-xs text-muted-foreground">
-                              Have a sales agent code? Enter it for 3 months free.
+                              Have a sales agent code? Enter it here.
                             </FormDescription>
                             <FormMessage />
                           </FormItem>
                         )}
                       />
-                      <TermsAcceptanceField control={form.control} isMobile={isMobile} />
+                      <TermsAgreementNotice isMobile={isMobile} />
                       {(googleClientId || !configLoaded) && (
                         <>
                           <div className={`relative ${isMobile ? 'my-4' : 'my-6'}`}>

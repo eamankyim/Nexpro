@@ -26,7 +26,6 @@ import {
   Phone,
   Ban
 } from 'lucide-react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../context/ThemeContext';
 import { getTheme } from '../../constants/themes';
 import COLORS from '../../constants/colors';
@@ -65,12 +64,6 @@ const BusinessDetailsScreen: React.FC<BusinessDetailsScreenProps> = ({ navigatio
   const [showSuccessModal, setShowSuccessModal] = useState<boolean>(false);
   const [portfolioItems, setPortfolioItems] = useState<PortfolioItem[]>([]);
   const [portfolioLoading, setPortfolioLoading] = useState<boolean>(false);
-  const [isAdmin, setIsAdmin] = useState<boolean>(false);
-  const [suspending, setSuspending] = useState<boolean>(false);
-
-  useEffect(() => {
-    checkIfAdmin();
-  }, []);
 
   useEffect(() => {
     // Only fetch if we don't have initial data
@@ -81,19 +74,7 @@ const BusinessDetailsScreen: React.FC<BusinessDetailsScreenProps> = ({ navigatio
     }
     // If we have initialData, we use it directly without background refresh
     // since the list already provides up-to-date data
-  }, [businessId, isAdmin]);
-
-  const checkIfAdmin = async (): Promise<void> => {
-    try {
-      const userStr = await AsyncStorage.getItem('user');
-      if (userStr) {
-        const user = JSON.parse(userStr);
-        setIsAdmin(user.accountType?.toLowerCase() === 'admin');
-      }
-    } catch (error) {
-      // Ignore error
-    }
-  };
+  }, [businessId]);
 
   useEffect(() => {
     if (business?.id) {
