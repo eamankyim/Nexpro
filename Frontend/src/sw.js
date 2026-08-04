@@ -32,7 +32,7 @@ registerRoute(
 );
 
 self.addEventListener('install', () => {
-  // PWAUpdatePrompt posts SKIP_WAITING when the user chooses to refresh
+  // PWAUpdatePrompt posts SKIP_WAITING when a waiting worker is ready
 });
 
 self.addEventListener('activate', (event) => {

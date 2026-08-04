@@ -65,6 +65,11 @@ export const googleSignIn = async () => {
   throw new Error('Google sign-in is not available. Use email and password.');
 };
 
+/** Legacy Sabito Google signup — not supported on ABS marketer auth. */
+export const completeGoogleSignup = async (_data?: unknown) => {
+  throw new Error('Google signup is not available. Use email and password.');
+};
+
 export default {
   loginUser,
   createPassword,
@@ -72,4 +77,5 @@ export default {
   updateProfile,
   logout,
   googleSignIn,
+  completeGoogleSignup,
 };

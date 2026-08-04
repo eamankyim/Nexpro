@@ -26,29 +26,40 @@ import { useTheme } from '../../context/ThemeContext';
 import { getTheme } from '../../constants/themes';
 import type { AuthStackScreenProps } from '../../types/navigation';
 
-type SignupPasswordScreenProps = AuthStackScreenProps<'SignupPassword'>;
+type SignupPasswordScreenProps = AuthStackScreenProps<'SignupPassword'> & {
+  /** Injected by RootNavigator so success can enter marketer tabs. */
+  onLoginSuccess?: () => void;
+};
 
-const SignupPasswordScreen: React.FC<SignupPasswordScreenProps> = ({ navigation, route }) => {
+/** Marketer-only ABS signup step 2: set password and register via registerMarketer. */
+const SignupPasswordScreen: React.FC<SignupPasswordScreenProps> = ({
+  navigation,
+  route,
+  onLoginSuccess,
+}) => {
   const { theme, effectiveTheme } = useTheme();
   const { colors, isDark } = getTheme(effectiveTheme || theme);
   const { dialog, showDialog, hideDialog } = useDialog();
-  const { fullName, email, phone } = (route?.params || {}) as {
-    fullName?: string;
-    email?: string;
-    phone?: string;
-  };
+
+  const params = route?.params ?? {};
+  const fullName = typeof params.fullName === 'string' ? params.fullName : undefined;
+  const email = typeof params.email === 'string' ? params.email : undefined;
+  const phone = typeof params.phone === 'string' ? params.phone : undefined;
+
   const [password, setPassword] = useState<string>('');
   const [confirmPassword, setConfirmPassword] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [showSuccessModal, setShowSuccessModal] = useState<boolean>(false);
   const [passwordError, setPasswordError] = useState<string>('');
-  const onLoginSuccess = (route?.params as any)?.onLoginSuccess as (() => void) | undefined;
 
   const handleBack = (): void => {
     navigation.goBack();
   };
 
-  const getPasswordValidationError = (pwd: string = password, confirmPwd: string = confirmPassword): string => {
+  const getPasswordValidationError = (
+    pwd: string = password,
+    confirmPwd: string = confirmPassword
+  ): string => {
     if (!pwd || pwd.length < 8) {
       return 'Password must be at least 8 characters long.';
     }
@@ -71,6 +82,7 @@ const SignupPasswordScreen: React.FC<SignupPasswordScreenProps> = ({ navigation,
 
   const handleLoginPress = (): void => {
     setShowSuccessModal(false);
+    // registerMarketer already stored sabito_marketer_token — enter app when possible
     if (typeof onLoginSuccess === 'function') {
       onLoginSuccess();
     } else {
@@ -110,43 +122,43 @@ const SignupPasswordScreen: React.FC<SignupPasswordScreenProps> = ({ navigation,
       }
 
       setShowSuccessModal(true);
-
     } catch (error: any) {
       let errorMessage = 'Unable to create your account. Please try again.';
       let errorTitle = 'Signup Error';
-      
-      // Check if account already exists
-      if (error?.response?.data?.code === 'USER_EXISTS' || 
-          error?.response?.data?.message?.toLowerCase().includes('already exists') ||
-          error?.response?.data?.message?.toLowerCase().includes('account exists') ||
-          error?.message?.toLowerCase().includes('already exists')) {
+
+      if (
+        error?.response?.data?.code === 'USER_EXISTS' ||
+        error?.response?.data?.message?.toLowerCase().includes('already exists') ||
+        error?.response?.data?.message?.toLowerCase().includes('account exists') ||
+        error?.message?.toLowerCase().includes('already exists')
+      ) {
         errorTitle = 'Account Already Exists';
         errorMessage = 'An account with this email already exists. Please sign in instead.';
         showDialog({
           title: errorTitle,
           message: errorMessage,
           buttons: [
-            { 
-              text: 'Sign In', 
-              style: 'default', 
+            {
+              text: 'Sign In',
+              style: 'default',
               onPress: () => {
                 hideDialog();
                 navigation.replace('Login');
-              }
+              },
             },
-            { 
-              text: 'OK', 
-              style: 'cancel', 
-              onPress: hideDialog 
-            }
-          ]
+            {
+              text: 'OK',
+              style: 'cancel',
+              onPress: hideDialog,
+            },
+          ],
         });
       } else {
         errorMessage = error?.response?.data?.message || error?.message || errorMessage;
         showDialog({
           title: errorTitle,
           message: errorMessage,
-          buttons: [{ text: 'OK', style: 'default', onPress: hideDialog }]
+          buttons: [{ text: 'OK', style: 'default', onPress: hideDialog }],
         });
       }
     } finally {
@@ -157,15 +169,11 @@ const SignupPasswordScreen: React.FC<SignupPasswordScreenProps> = ({ navigation,
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
-      
-      {/* Top Navigation Bar */}
+
       <View style={styles.topNav}>
-        {/* Back Button */}
         <TouchableOpacity onPress={handleBack} style={[styles.backButton, { borderColor: colors.border }]}>
           <ArrowLeft size={ICON_SIZES.md} color={colors.text} strokeWidth={1.5} />
         </TouchableOpacity>
-
-        {/* Step Indicators */}
         <StepIndicator currentStep={2} totalSteps={2} />
       </View>
 
@@ -173,22 +181,20 @@ const SignupPasswordScreen: React.FC<SignupPasswordScreenProps> = ({ navigation,
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardView}
       >
-        <ScrollView 
+        <ScrollView
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Centered Content Section */}
           <View style={styles.topSection}>
-            {/* Header */}
             <View style={styles.header}>
               <Text style={[styles.title, { color: colors.text }]}>Protect your account</Text>
-              <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Setup password for your account.</Text>
+              <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
+                Setup password for your account.
+              </Text>
             </View>
 
-            {/* Form Fields */}
             <View style={styles.formContainer}>
-              {/* Password Input */}
               <PasswordInput
                 label="Password"
                 placeholder="Enter password"
@@ -201,7 +207,6 @@ const SignupPasswordScreen: React.FC<SignupPasswordScreenProps> = ({ navigation,
                 }}
               />
 
-              {/* Confirm Password Input */}
               <PasswordInput
                 label="Confirm password"
                 placeholder="Re-enter password"
@@ -214,19 +219,14 @@ const SignupPasswordScreen: React.FC<SignupPasswordScreenProps> = ({ navigation,
                 }}
               />
 
-              {/* Password Requirements */}
               <PasswordRequirements password={password} />
               {passwordError ? (
-                <Text style={[styles.errorText, { color: COLORS.ERROR }]}>
-                  {passwordError}
-                </Text>
+                <Text style={[styles.errorText, { color: COLORS.ERROR }]}>{passwordError}</Text>
               ) : null}
             </View>
           </View>
 
-          {/* Bottom Section */}
           <View style={styles.bottomSection}>
-            {/* Continue Button */}
             <Button
               mode="contained"
               onPress={handleContinue}
@@ -242,11 +242,7 @@ const SignupPasswordScreen: React.FC<SignupPasswordScreenProps> = ({ navigation,
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Account Created Success Modal */}
-      <AccountCreatedModal
-        visible={showSuccessModal}
-        onLoginPress={handleLoginPress}
-      />
+      <AccountCreatedModal visible={showSuccessModal} onLoginPress={handleLoginPress} />
 
       <CustomDialog
         visible={dialog.visible}
@@ -337,9 +333,3 @@ const styles = StyleSheet.create({
 });
 
 export default SignupPasswordScreen;
-
-
-
-
-
-

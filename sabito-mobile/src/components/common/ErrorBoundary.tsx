@@ -78,7 +78,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
           <ScrollView contentContainerStyle={styles.scrollContent}>
             <View style={styles.content}>
               <View style={styles.iconContainer}>
-                <AlertTriangle size={64} color={COLORS.RED} strokeWidth={1.5} />
+                <AlertTriangle size={64} color={COLORS.ERROR} strokeWidth={1.5} />
               </View>
               
               <Text style={styles.title}>Something went wrong</Text>
@@ -150,7 +150,7 @@ const styles = StyleSheet.create({
   },
   errorDetails: {
     width: '100%',
-    backgroundColor: COLORS.BACKGROUND_GRAY,
+    backgroundColor: COLORS.LIGHT_GRAY,
     borderRadius: 8,
     padding: SPACING.md,
     marginBottom: SPACING.xl,
@@ -158,7 +158,7 @@ const styles = StyleSheet.create({
   errorTitle: {
     fontSize: FONT_SIZES.sm,
     fontWeight: FONT_WEIGHTS.bold,
-    color: COLORS.RED,
+    color: COLORS.ERROR,
     marginBottom: SPACING.sm,
   },
   errorText: {

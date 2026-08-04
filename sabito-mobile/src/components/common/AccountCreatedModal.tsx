@@ -108,7 +108,7 @@ const AccountCreatedModal: React.FC<AccountCreatedModalProps> = ({ visible, onLo
             contentStyle={styles.buttonContent}
             labelStyle={styles.buttonLabel}
           >
-            Continue to Login page
+            Continue
           </Button>
         </Animated.View>
       </View>

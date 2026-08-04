@@ -15,9 +15,9 @@ export type AuthStackParamList = {
   AccountType: undefined;
   Login: undefined;
   Signup: undefined;
-  SignupOTP: { email: string; fullName: string; accountType?: string };
-  SignupPassword: { email: string; fullName: string; phone?: string; accountType?: string };
-  SignupProfile: { accountType?: string };
+  SignupOTP: { email: string; fullName: string };
+  SignupPassword: { email: string; fullName: string; phone?: string };
+  SignupProfile: undefined;
   SignupPlan: { 
     accountType?: string; 
     fullName: string; 

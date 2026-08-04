@@ -135,13 +135,7 @@ const RootNavigator: React.FC = () => {
               <Stack.Screen name="SignupProfile" component={SignupProfileScreen} />
               <Stack.Screen name="SignupPassword">
                 {(props) => (
-                  <SignupPasswordScreen
-                    {...props}
-                    route={{
-                      ...props.route,
-                      params: { ...(props.route.params || {}), onLoginSuccess: handleLoginSuccess },
-                    }}
-                  />
+                  <SignupPasswordScreen {...props} onLoginSuccess={handleLoginSuccess} />
                 )}
               </Stack.Screen>
             </>
