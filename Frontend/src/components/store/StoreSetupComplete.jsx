@@ -22,6 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import ConnectDomainDialog, {
   DomainStatusBadge,
   buildDnsRecord,
+  getDomainActionLabel,
 } from './ConnectDomainDialog';
 import OnlineStoreHelpBanner from './OnlineStoreHelpBanner';
 
@@ -260,7 +261,7 @@ const StoreSetupComplete = ({ publicStoreUrl, isStudioStore = false, onEditStep 
               onClick={() => setDomainDialogOpen(true)}
             >
               <Globe className="mr-2 h-4 w-4" />
-              Connect Domain
+              {getDomainActionLabel(domainStatus)}
             </Button>
             <Button
               type="button"

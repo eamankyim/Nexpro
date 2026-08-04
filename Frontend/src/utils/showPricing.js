@@ -1,10 +1,9 @@
 /**
- * Whether ABS subscription pricing / plan-checkout UI is shown.
- * Off by default — set VITE_SHOW_PRICING=true (or 1) to show again.
- * Backend billing is unaffected; this is UI-only.
+ * In-app ABS billing / plans / checkout UI is always available.
+ * Public marketing pricing is gated separately via
+ * marketing-site `NEXT_PUBLIC_SHOW_PRICING` (see lib/featureFlags.ts).
  * @returns {boolean}
  */
 export function isPricingUiEnabled() {
-  const raw = import.meta.env.VITE_SHOW_PRICING?.trim().toLowerCase();
-  return raw === 'true' || raw === '1';
+  return true;
 }

@@ -34,6 +34,25 @@ import {
 import OnlineStoreHelpBanner from './OnlineStoreHelpBanner';
 
 /**
+ * True when a domain has been submitted (awaiting verification or live).
+ * @param {string|null|undefined} status
+ * @returns {boolean}
+ */
+export const isDomainConfigured = (status) => {
+  const normalized = String(status || '').trim().toLowerCase();
+  return normalized === 'pending' || normalized === 'verified';
+};
+
+/**
+ * Primary CTA / dialog title for domain actions.
+ * Avoids "Connect domain" once a domain is pending or verified.
+ * @param {string|null|undefined} status
+ * @returns {string}
+ */
+export const getDomainActionLabel = (status) =>
+  (isDomainConfigured(status) ? 'Manage domain' : 'Connect domain');
+
+/**
  * Status pill for the connected custom domain (none / pending / verified).
  * @param {{ status: 'none'|'pending'|'verified' }} props
  */
@@ -168,10 +187,12 @@ const ConnectDomainDialog = ({
       <DialogHeader>
         <DialogTitle className="flex items-center gap-2">
           <Globe className="h-4 w-4 text-emerald-700" aria-hidden />
-          Connect domain
+          {getDomainActionLabel(domainStatus)}
         </DialogTitle>
         <DialogDescription>
-          Point a domain you own at your storefront. Status:{' '}
+          {isDomainConfigured(domainStatus)
+            ? 'Update DNS, change the domain, or disconnect it. Status: '
+            : 'Point a domain you own at your storefront. Status: '}
           <span className="inline-flex align-middle">
             <DomainStatusBadge status={domainStatus} />
           </span>
@@ -285,7 +306,7 @@ const ConnectDomainDialog = ({
           {customDomain ? (
             <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
               <p className="text-sm text-muted-foreground">
-                Connected domain:{' '}
+                {domainStatus === 'verified' ? 'Connected domain' : 'Saved domain'}:{' '}
                 <span className="font-medium text-foreground">{customDomain}</span>
               </p>
               <Button

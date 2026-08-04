@@ -946,35 +946,55 @@ const SettingsPaymentsSection = () => {
                   </div>
                   <div className="flex flex-wrap gap-2 items-center">
                     {pc?.mtn_collection?.configured || pc?.mtn_collection?.merchantId ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={handleMtnDisconnect}
-                        disabled={mtnDisconnecting}
-                      >
-                        {mtnDisconnecting ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
-                        Disconnect
-                      </Button>
-                    ) : null}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={handleMtnTest}
-                      disabled={
-                        mtnTesting ||
-                        pc?.mtn_collection?.encryptionConfigured === false ||
-                        !mtnCredForm.subscriptionKey ||
-                        !mtnCredForm.apiUser ||
-                        !mtnCredForm.apiKey
-                      }
-                    >
-                      {mtnTesting ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
-                      Test connection
-                    </Button>
-                    <Button type="button" onClick={handleMtnSave} disabled={mtnSaving || !mtnCredForm.merchantId.trim()}>
-                      {mtnSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
-                      Connect Merchant ID
-                    </Button>
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={handleMtnDisconnect}
+                          disabled={mtnDisconnecting}
+                        >
+                          {mtnDisconnecting ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
+                          Disconnect
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={handleMtnTest}
+                          disabled={
+                            mtnTesting ||
+                            pc?.mtn_collection?.encryptionConfigured === false ||
+                            !mtnCredForm.subscriptionKey ||
+                            !mtnCredForm.apiUser ||
+                            !mtnCredForm.apiKey
+                          }
+                        >
+                          {mtnTesting ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
+                          Test connection
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={handleMtnTest}
+                          disabled={
+                            mtnTesting ||
+                            pc?.mtn_collection?.encryptionConfigured === false ||
+                            !mtnCredForm.subscriptionKey ||
+                            !mtnCredForm.apiUser ||
+                            !mtnCredForm.apiKey
+                          }
+                        >
+                          {mtnTesting ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
+                          Test connection
+                        </Button>
+                        <Button type="button" onClick={handleMtnSave} disabled={mtnSaving || !mtnCredForm.merchantId.trim()}>
+                          {mtnSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
+                          Connect Merchant ID
+                        </Button>
+                      </>
+                    )}
                   </div>
                   <p className="text-xs text-muted-foreground">
                     Connect your Merchant ID with the email verification code. API credentials are optional and only needed for automated collection.
@@ -1109,36 +1129,52 @@ const SettingsPaymentsSection = () => {
                   </div>
                   <div className="flex flex-wrap gap-2 items-center">
                     {pc?.hubtel_collection?.configured ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={handleHubtelDisconnect}
-                        disabled={hubtelDisconnecting || pc?.hubtel_collection?.encryptionConfigured === false}
-                      >
-                        {hubtelDisconnecting ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
-                        Disconnect
-                      </Button>
-                    ) : null}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={handleHubtelTest}
-                      disabled={hubtelTesting || pc?.hubtel_collection?.encryptionConfigured === false}
-                    >
-                      {hubtelTesting ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
-                      Test connection
-                    </Button>
-                    <Button
-                      type="button"
-                      onClick={handleHubtelSave}
-                      disabled={hubtelSaving || pc?.hubtel_collection?.encryptionConfigured === false}
-                    >
-                      {hubtelSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
-                      Save credentials
-                    </Button>
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={handleHubtelDisconnect}
+                          disabled={hubtelDisconnecting || pc?.hubtel_collection?.encryptionConfigured === false}
+                        >
+                          {hubtelDisconnecting ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
+                          Disconnect
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={handleHubtelTest}
+                          disabled={hubtelTesting || pc?.hubtel_collection?.encryptionConfigured === false}
+                        >
+                          {hubtelTesting ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
+                          Test connection
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={handleHubtelTest}
+                          disabled={hubtelTesting || pc?.hubtel_collection?.encryptionConfigured === false}
+                        >
+                          {hubtelTesting ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
+                          Test connection
+                        </Button>
+                        <Button
+                          type="button"
+                          onClick={handleHubtelSave}
+                          disabled={hubtelSaving || pc?.hubtel_collection?.encryptionConfigured === false}
+                        >
+                          {hubtelSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
+                          Save credentials
+                        </Button>
+                      </>
+                    )}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Test, save, and disconnect require the email verification code. Saving replaces previously stored Hubtel credentials.
+                    {pc?.hubtel_collection?.configured
+                      ? 'Test and disconnect require the email verification code. Disconnect before saving new credentials.'
+                      : 'Test and save require the email verification code. Saving replaces previously stored Hubtel credentials.'}
                   </p>
                 </div>
               )}

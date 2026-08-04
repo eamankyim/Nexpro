@@ -35,6 +35,7 @@ import {
 import ConnectDomainDialog, {
   DomainStatusBadge,
   buildDnsRecord,
+  getDomainActionLabel,
 } from './ConnectDomainDialog';
 import OnlineStoreHelpBanner from './OnlineStoreHelpBanner';
 import StoreHeroSetupPanel from './StoreHeroSetupPanel';
@@ -46,7 +47,8 @@ import StoreTestimonialsPanel from './StoreTestimonialsPanel';
 export { DomainStatusBadge, buildDnsRecord };
 
 /**
- * Browser-chrome frame with a live storefront iframe and click-through overlay.
+ * Browser-chrome frame with a scrollable live storefront iframe.
+ * Open-store control is pinned on the hero band only (no full-frame hover overlay).
  * @param {{
  *   liveStoreUrl: string,
  *   displayUrl: string,
@@ -93,26 +95,27 @@ const LiveStorePreviewFrame = ({ liveStoreUrl, displayUrl, storeName }) => {
             </div>
           </div>
 
-          <div className="relative min-h-[300px] bg-white sm:min-h-[380px] lg:min-h-[420px]">
+          <div className="relative h-[300px] bg-white sm:h-[380px] lg:h-[420px]">
             <iframe
               title={`${storeName} live preview`}
               src={liveStoreUrl}
-              className="pointer-events-none absolute inset-0 h-full w-full border-0"
+              className="h-full w-full border-0"
               loading="lazy"
               referrerPolicy="no-referrer-when-downgrade"
             />
-            <a
-              href={liveStoreUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="absolute inset-0 z-10 flex items-end justify-center bg-gradient-to-t from-slate-900/40 via-transparent to-transparent p-4 opacity-0 transition-opacity hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none"
-              aria-label={`Open ${storeName}`}
-            >
-              <span className="inline-flex items-center gap-2 rounded-xl border border-white/30 bg-[#166534] px-4 py-2.5 text-sm font-semibold text-white">
+            {/* Hero-band only: button captures clicks; rest of preview stays scrollable */}
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-end p-3 sm:p-4">
+              <a
+                href={liveStoreUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="pointer-events-auto inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#166534]"
+                aria-label={`Open ${storeName}`}
+              >
                 Open store
                 <ExternalLink className="h-4 w-4" aria-hidden />
-              </span>
-            </a>
+              </a>
+            </div>
           </div>
         </div>
       </div>
@@ -423,7 +426,7 @@ const OnlineStoreDashboard = ({
                   className="h-11 rounded-xl border-slate-300 bg-white px-5 text-sm font-semibold text-slate-800 hover:bg-slate-50"
                 >
                   <Globe className="mr-2 h-4 w-4" />
-                  Connect domain
+                  {getDomainActionLabel(domainStatus)}
                 </Button>
                 {liveStoreUrl ? (
                   <Button
