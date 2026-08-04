@@ -19,6 +19,10 @@ const {
   DEFAULT_SHOP_TYPE,
   normalizeTenantClassification,
 } = require('../utils/tenantClassification');
+const {
+  resolveSignupPlanAssignment,
+  buildSignupSubscriptionSettingValue,
+} = require('../utils/signupPlanAssignment');
 
 const generateToken = (userId) =>
   jwt.sign({ id: userId }, config.jwt.secret, {
@@ -138,13 +142,19 @@ exports.signupTenant = async (req, res, next) => {
       }
     }
 
+    const { SubscriptionPlan } = require('../models');
+    const planAssignment = await resolveSignupPlanAssignment({
+      req,
+      SubscriptionPlan,
+    });
+    // Channel-driven only — ignore any client-supplied plan body field.
+    const initialPlan = planAssignment.planId;
+    const trialEndDate = new Date(planAssignment.trialEndsAt);
+
     const transaction = await sequelize.transaction();
 
     try {
       const slug = generateUniqueSlug(trimmedCompanyName);
-
-      const initialPlan = 'trial';
-      const trialEndDate = dayjs().add(1, 'month').toDate();
 
       // Build metadata object with business information
       const metadata = {
@@ -156,6 +166,7 @@ exports.signupTenant = async (req, res, next) => {
           source: 'self_service_signup',
           termsVersion,
         }),
+        ...planAssignment.metadataExtras,
       };
 
       // Add shopType to metadata if provided (only for shop business type)
@@ -310,16 +321,12 @@ exports.signupTenant = async (req, res, next) => {
           {
             tenantId: tenant.id,
             key: 'subscription',
-            value: {
-              plan: initialPlan,
-              status: 'trialing',
+            value: buildSignupSubscriptionSettingValue(planAssignment, {
               trialEndsAt: trialEndDate,
-              paymentMethod: null,
-              seats: 1,
               ...(tenant.referredByAgentId
                 ? { salesAgentFreeMonths: salesAgentService.AGENT_FREE_MONTHS }
                 : {}),
-            },
+            }),
             description: 'Subscription and billing information',
           },
           {

@@ -38,6 +38,10 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
     'X-Requested-With': 'XMLHttpRequest',
+    // Explicit client flag for signup-channel plan assignment (mobile → free_plan).
+    // Prefer these headers over User-Agent sniffing on the backend.
+    'X-Client': 'mobile',
+    'X-App': 'abs-mobile',
     'Cache-Control': 'no-cache',
     Pragma: 'no-cache',
   },

@@ -169,18 +169,19 @@ export const authService = {
     adminName: string;
     adminEmail: string;
     password: string;
-    plan?: string;
     acceptedTerms?: boolean;
     termsVersion?: string;
   }) => {
     logger.info('Auth', 'Tenant signup attempt:', payload.adminEmail);
+    // Plan is assigned by signup channel on the backend (mobile → free_plan).
+    // Do not send planId from the client.
     const body = {
       companyName: payload.companyName ?? 'My Business',
       companyEmail: payload.companyEmail,
       adminName: payload.adminName,
       adminEmail: payload.adminEmail,
       password: payload.password,
-      plan: payload.plan ?? 'trial',
+      client: 'mobile',
       ...(payload.acceptedTerms !== undefined && { acceptedTerms: payload.acceptedTerms }),
       ...(payload.termsVersion && { termsVersion: payload.termsVersion }),
     };
@@ -210,6 +211,7 @@ export const authService = {
     const response = await api.post('/auth/google', {
       idToken,
       signUp,
+      client: 'mobile',
       ...(companyName && { companyName }),
       ...(acceptedTerms !== undefined && { acceptedTerms }),
       ...(termsVersion && { termsVersion }),

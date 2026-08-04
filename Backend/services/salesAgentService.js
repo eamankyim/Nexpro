@@ -155,7 +155,13 @@ async function applyAgentCodeToTenant({ tenant, rawCode, transaction, requireCod
     });
   }
 
-  const trialEndsAt = computeAgentFreeTrialEndsAt();
+  // Never shorten an existing access window (e.g. mobile free_plan = 12 months vs agent = 3).
+  const agentEndsAt = computeAgentFreeTrialEndsAt();
+  const existingEndsAt = tenant.trialEndsAt ? new Date(tenant.trialEndsAt) : null;
+  const trialEndsAt =
+    existingEndsAt && !Number.isNaN(existingEndsAt.getTime()) && existingEndsAt > agentEndsAt
+      ? existingEndsAt
+      : agentEndsAt;
   const metadata = {
     ...(tenant.metadata || {}),
     salesAgentAttribution: {
@@ -185,10 +191,15 @@ async function applyAgentCodeToTenant({ tenant, rawCode, transaction, requireCod
     transaction,
   });
   if (setting) {
+    const planId = String(setting.value?.plan || tenant.plan || '').toLowerCase();
     const value = {
       ...(setting.value || {}),
       plan: valuePlanOrTrial(setting.value?.plan || tenant.plan),
-      status: setting.value?.status === 'active' ? setting.value.status : 'trialing',
+      // Keep free_plan complimentary as active; do not force trialing.
+      status:
+        setting.value?.status === 'active' || planId === 'free_plan'
+          ? 'active'
+          : 'trialing',
       trialEndsAt,
       salesAgentFreeMonths: AGENT_FREE_MONTHS,
     };

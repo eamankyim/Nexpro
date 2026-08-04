@@ -121,6 +121,51 @@ describe('subscriptionBillingService', () => {
       expect(billing.lockReason).toBe('platform_locked');
     });
 
+    it('keeps free_plan active during complimentary access window (not remapped to trial)', async () => {
+      const accessEndsAt = new Date('2027-06-15');
+      const billing = await resolveBillingStatus(
+        baseTenant({
+          plan: 'free_plan',
+          trialEndsAt: accessEndsAt,
+        }),
+        { at: new Date('2026-08-01'), subscriptionSetting: {} }
+      );
+      expect(billing.billingStatus).toBe('active');
+      expect(billing.canAccessApp).toBe(true);
+      expect(billing.plan).toBe('free_plan');
+      expect(billing.lockReason).toBeNull();
+    });
+
+    it('locks free_plan after complimentary window and grace (not as trial_expired)', async () => {
+      const accessEndsAt = new Date('2026-01-01');
+      const at = new Date(accessEndsAt);
+      at.setDate(at.getDate() + DEFAULT_GRACE_DAYS + 1);
+      const billing = await resolveBillingStatus(
+        baseTenant({
+          plan: 'free_plan',
+          trialEndsAt: accessEndsAt,
+        }),
+        { at, subscriptionSetting: {} }
+      );
+      expect(billing.billingStatus).toBe('locked');
+      expect(billing.canAccessApp).toBe(false);
+      expect(billing.plan).toBe('free_plan');
+      expect(billing.lockReason).toBe('complimentary_expired');
+    });
+
+    it('keeps free_plan unlocked when access end is cleared', async () => {
+      const billing = await resolveBillingStatus(
+        baseTenant({
+          plan: 'free_plan',
+          trialEndsAt: null,
+        }),
+        { at: new Date('2026-08-01'), subscriptionSetting: {} }
+      );
+      expect(billing.billingStatus).toBe('active');
+      expect(billing.canAccessApp).toBe(true);
+      expect(billing.plan).toBe('free_plan');
+    });
+
     it('returns locked after trial and grace', async () => {
       const trialEndsAt = new Date('2026-01-01');
       const at = new Date(trialEndsAt);

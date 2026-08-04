@@ -67,7 +67,6 @@ type TenantSignupPayload = {
   adminName: string;
   adminEmail: string;
   password: string;
-  plan?: string;
   acceptedTerms?: boolean;
   termsVersion?: string;
 };

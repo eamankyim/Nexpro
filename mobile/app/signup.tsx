@@ -192,7 +192,6 @@ export default function SignupScreen() {
         adminName: trimmedName,
         adminEmail: trimmedEmail,
         password,
-        plan: 'trial',
         acceptedTerms: true,
         termsVersion: TERMS_VERSION,
       });

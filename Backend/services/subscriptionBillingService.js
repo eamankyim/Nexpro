@@ -9,10 +9,17 @@ const {
 } = require('../utils/subscriptionDefaults');
 
 const PAID_PLANS = new Set(['starter', 'professional', 'enterprise']);
+/**
+ * Complimentary / Free-tier plan ids (admin-created). Not product trials.
+ * Do NOT include planId `free` — that aliases to trial elsewhere.
+ * Access window uses tenant.trialEndsAt as complimentary end (see signupPlanAssignment).
+ */
+const COMPLIMENTARY_PLANS = new Set(['free_plan']);
 const PAYMENT_STATUSES = new Set(['success', 'pending', 'failed', 'refunded']);
 const DEFAULT_GRACE_DAYS = Number(process.env.SUBSCRIPTION_GRACE_DAYS || 7);
 
 const normalizePlan = (plan = '') => String(plan || '').trim().toLowerCase();
+const isComplimentaryPlan = (plan = '') => COMPLIMENTARY_PLANS.has(normalizePlan(plan));
 const normalizeBillingPeriod = (value = '') =>
   String(value).trim().toLowerCase() === 'yearly' ? 'yearly' : 'monthly';
 const normalizePaymentStatus = (value = '') => {
@@ -190,7 +197,43 @@ async function resolveBillingStatus(tenantOrId, options = {}) {
     };
   }
 
-  const isTrialPlan = plan === 'trial' || !PAID_PLANS.has(plan);
+  // Mobile Free (`free_plan`): complimentary access until trialEndsAt (12-month window at signup).
+  // Keep plan id as free_plan so entitlements use Free limits — do not remap to "trial".
+  // No access end → treat as ongoing complimentary (admin cleared date / legacy).
+  // After access end → grace then lock (same unpaid path), lockReason complimentary_expired.
+  if (isComplimentaryPlan(plan)) {
+    if (!trialEndsAt) {
+      return {
+        billingStatus: 'active',
+        lockReason: null,
+        canAccessApp: true,
+        trialEndsAt: null,
+        currentPeriodEnd: null,
+        graceEndsAt: null,
+        daysRemaining: null,
+        plan,
+        activePayment: null,
+      };
+    }
+    if (at < trialEndsAt) {
+      return {
+        billingStatus: 'active',
+        lockReason: null,
+        canAccessApp: true,
+        trialEndsAt,
+        currentPeriodEnd: null,
+        graceEndsAt: null,
+        daysRemaining: daysBetween(at, trialEndsAt),
+        plan,
+        activePayment: null,
+      };
+    }
+  }
+
+  // Product trial only. Unknown non-paid plans still follow trial-like gating but keep their plan id
+  // when not the canonical trial alias — complimentary plans are handled above.
+  const isTrialPlan =
+    plan === 'trial' || plan === 'free' || (!PAID_PLANS.has(plan) && !isComplimentaryPlan(plan));
   if (isTrialPlan && !trialEndsAt) {
     return {
       billingStatus: 'trialing',
@@ -224,11 +267,17 @@ async function resolveBillingStatus(tenantOrId, options = {}) {
       : DEFAULT_GRACE_DAYS;
   const periodEndForGrace = trialEndsAt || currentPeriodEnd;
   const graceEndsAt = periodEndForGrace ? addDays(periodEndForGrace, graceDays) : addDays(at, graceDays);
+  const complimentaryExpired = isComplimentaryPlan(plan) && trialEndsAt && at >= trialEndsAt;
+  const trialExpired = !complimentaryExpired && trialEndsAt && at >= trialEndsAt;
 
   if (periodEndForGrace && at < graceEndsAt) {
     return {
       billingStatus: 'grace',
-      lockReason: trialEndsAt && at >= trialEndsAt ? 'trial_expired' : 'subscription_expired',
+      lockReason: complimentaryExpired
+        ? 'complimentary_expired'
+        : trialExpired
+          ? 'trial_expired'
+          : 'subscription_expired',
       canAccessApp: true,
       trialEndsAt,
       currentPeriodEnd,
@@ -241,7 +290,11 @@ async function resolveBillingStatus(tenantOrId, options = {}) {
 
   return {
     billingStatus: 'locked',
-    lockReason: trialEndsAt && at >= trialEndsAt ? 'trial_expired' : 'payment_required',
+    lockReason: complimentaryExpired
+      ? 'complimentary_expired'
+      : trialExpired
+        ? 'trial_expired'
+        : 'payment_required',
     canAccessApp: false,
     trialEndsAt,
     currentPeriodEnd,
@@ -630,8 +683,10 @@ function toBillingPayload(billing) {
 
 module.exports = {
   PAID_PLANS,
+  COMPLIMENTARY_PLANS,
   DEFAULT_GRACE_DAYS,
   normalizePlan,
+  isComplimentaryPlan,
   normalizeBillingPeriod,
   normalizePaymentStatus,
   addPeriod,

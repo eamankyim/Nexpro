@@ -125,6 +125,10 @@ const normalizeMembershipsForResponse = (memberships = []) =>
   (memberships || []).map((membership) => normalizeMembershipForResponse(membership));
 
 const { buildTrialSubscriptionSettingValue } = require('../utils/subscriptionDefaults');
+const {
+  resolveSignupPlanAssignment,
+  buildSignupSubscriptionSettingValue,
+} = require('../utils/signupPlanAssignment');
 
 const ensureTrialSubscriptionSetting = async (tenantId, trialEndDate, options = {}) =>
   Setting.findOrCreate({
@@ -913,7 +917,12 @@ exports.googleAuth = async (req, res, next) => {
     try {
       const trimmedCompanyName = (companyName || 'My Business').trim();
       const slug = await generateUniqueSlug(trimmedCompanyName, transaction);
-      const trialEndDate = dayjs().add(1, 'month').toDate();
+      const { SubscriptionPlan } = require('../models');
+      const planAssignment = await resolveSignupPlanAssignment({
+        req,
+        SubscriptionPlan,
+      });
+      const trialEndDate = new Date(planAssignment.trialEndsAt);
       finalBusinessType = resolveBusinessType(businessType);
       metadata = {
         signupSource: 'google_oauth',
@@ -921,6 +930,7 @@ exports.googleAuth = async (req, res, next) => {
           source: 'google_oauth_signup',
           termsVersion,
         }),
+        ...planAssignment.metadataExtras,
       };
       if (['printing_press', 'mechanic', 'barber', 'salon'].includes(businessType)) {
         metadata.studioType = businessType;
@@ -933,7 +943,7 @@ exports.googleAuth = async (req, res, next) => {
         {
           name: trimmedCompanyName,
           slug,
-          plan: 'trial',
+          plan: planAssignment.planId,
           businessType: finalBusinessType,
           status: 'active',
           metadata,
@@ -1006,16 +1016,12 @@ exports.googleAuth = async (req, res, next) => {
           {
             tenantId: tenant.id,
             key: 'subscription',
-            value: {
-              plan: 'trial',
-              status: 'trialing',
+            value: buildSignupSubscriptionSettingValue(planAssignment, {
               trialEndsAt: trialEndDate,
-              paymentMethod: null,
-              seats: 1,
               ...(tenant.referredByAgentId
                 ? { salesAgentFreeMonths: salesAgentService.AGENT_FREE_MONTHS }
                 : {}),
-            },
+            }),
             description: 'Subscription and billing information',
           },
           {
