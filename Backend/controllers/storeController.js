@@ -64,6 +64,7 @@ const {
   getPublicReviewSummary,
 } = require('../services/storefrontReviewService');
 const { dispatchExpoPushToStorefrontCustomers } = require('../services/pushNotificationService');
+const { notifyOrderStatusChangedForCustomer } = require('../services/orderCustomerNotificationService');
 const {
   CUSTOMER_CONFIRMED_DELIVERY_ERROR_CODE,
   CUSTOMER_CONFIRMED_DELIVERY_ERROR_MESSAGE,
@@ -3514,11 +3515,20 @@ exports.updateStoreOrderStatus = async (req, res, next) => {
     const orderSnapshot = order;
     const pushAction = action;
     const pushTenantId = req.tenantId;
+    const previousFulfillment = fulfillmentStateForOrder(previous);
     setImmediate(() => {
       dispatchBuyerOrderStatusPush({ tenantId: pushTenantId, order: orderSnapshot, action: pushAction })
         .catch((err) =>
           console.error('[Store] dispatchBuyerOrderStatusPush failed:', err?.message || err)
         );
+      notifyOrderStatusChangedForCustomer({
+        tenantId: pushTenantId,
+        sale: orderSnapshot,
+        newStatus: pushAction,
+        previousStatus: previousFulfillment,
+      }).catch((err) =>
+        console.error('[Store] notifyOrderStatusChangedForCustomer failed:', err?.message || err)
+      );
     });
 
     const updatedOrder = await Sale.findOne({

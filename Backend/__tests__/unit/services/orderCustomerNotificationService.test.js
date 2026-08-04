@@ -1,5 +1,6 @@
 jest.mock('../../../models', () => ({
   Tenant: { findByPk: jest.fn() },
+  Customer: { findByPk: jest.fn() },
 }));
 
 jest.mock('../../../services/emailService', () => ({
@@ -139,5 +140,70 @@ describe('orderCustomerNotificationService', () => {
     expect(result.skipped).toBe(true);
     expect(smsService.sendMessage).not.toHaveBeenCalled();
     expect(emailService.sendMessage).not.toHaveBeenCalled();
+  });
+
+  describe('notifyOrderStatusChangedForCustomer', () => {
+    beforeEach(() => {
+      isChannelEnabledForEvent.mockImplementation((_t, eventKey, channel) =>
+        Promise.resolve(eventKey === 'order_status' && channel === 'sms')
+      );
+    });
+
+    it('sends SMS with order number and new status', async () => {
+      const { notifyOrderStatusChangedForCustomer } = require('../../../services/orderCustomerNotificationService');
+      const result = await notifyOrderStatusChangedForCustomer({
+        tenantId: 't1',
+        sale,
+        newStatus: 'out_for_delivery',
+        previousStatus: 'processing',
+      });
+
+      expect(result.sent).toBe(true);
+      expect(smsService.sendMessage).toHaveBeenCalledWith(
+        't1',
+        '+233241234567',
+        expect.stringMatching(/ORD-42[\s\S]*out for delivery/)
+      );
+    });
+
+    it('skips when status is unchanged', async () => {
+      const { notifyOrderStatusChangedForCustomer } = require('../../../services/orderCustomerNotificationService');
+      const result = await notifyOrderStatusChangedForCustomer({
+        tenantId: 't1',
+        sale,
+        newStatus: 'ready',
+        previousStatus: 'ready',
+      });
+      expect(result.skipped).toBe(true);
+      expect(result.reason).toBe('unchanged_status');
+      expect(smsService.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('skips gracefully when phone is missing', async () => {
+      const { notifyOrderStatusChangedForCustomer } = require('../../../services/orderCustomerNotificationService');
+      const result = await notifyOrderStatusChangedForCustomer({
+        tenantId: 't1',
+        sale: { ...sale, customer: { ...sale.customer, phone: null } },
+        newStatus: 'delivered',
+        previousStatus: 'out_for_delivery',
+      });
+      expect(result.skipped).toBe(true);
+      expect(result.reason).toBe('missing_phone');
+      expect(smsService.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('skips when SMS channel is disabled for order_status', async () => {
+      isChannelEnabledForEvent.mockResolvedValue(false);
+      const { notifyOrderStatusChangedForCustomer } = require('../../../services/orderCustomerNotificationService');
+      const result = await notifyOrderStatusChangedForCustomer({
+        tenantId: 't1',
+        sale,
+        newStatus: 'delivered',
+        previousStatus: 'ready',
+      });
+      expect(result.skipped).toBe(true);
+      expect(result.reason).toBe('sms_channel_disabled');
+      expect(smsService.sendMessage).not.toHaveBeenCalled();
+    });
   });
 });

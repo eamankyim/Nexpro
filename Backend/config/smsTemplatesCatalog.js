@@ -12,6 +12,7 @@ const SMS_TEMPLATE_VARIABLES = [
   'paymentLink',
   'quoteNumber',
   'orderNumber',
+  'orderStatus',
   'jobNumber',
   'jobTitle',
   'trackingLink',
@@ -84,6 +85,16 @@ const SMS_TEMPLATES_CATALOG = {
     requiredVariables: ['orderNumber', 'amount'],
     defaultBody:
       'Hi {customerName}, we received order {orderNumber} at {businessName}. Total: {amount}. Track your order: {trackingLink}',
+  },
+  order_status: {
+    key: 'order_status',
+    label: 'Order status update',
+    description: 'SMS when an order fulfillment or kitchen status changes.',
+    category: 'operations',
+    variables: ['customerName', 'businessName', 'branchName', 'orderNumber', 'orderStatus', 'trackingLink'],
+    requiredVariables: ['orderNumber', 'orderStatus'],
+    defaultBody:
+      'Hi {customerName}, order {orderNumber} from {businessName} is now {orderStatus}.',
   },
   job_tracking_created: {
     key: 'job_tracking_created',

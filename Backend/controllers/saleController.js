@@ -2482,6 +2482,21 @@ exports.updateOrderStatus = async (req, res, next) => {
     }
 
     const oldOrderStatus = sale.orderStatus || null;
+    if (oldOrderStatus === orderStatus) {
+      const unchangedSale = await Sale.findByPk(sale.id, {
+        include: [
+          { model: Shop, as: 'shop' },
+          { model: Customer, as: 'customer' },
+          { model: User, as: 'seller' },
+          saleItemDetailInclude
+        ]
+      });
+      return res.status(200).json({
+        success: true,
+        data: unchangedSale || sale,
+      });
+    }
+
     const updateData = { orderStatus };
     if (orderStatus === 'completed' && sale.status === 'pending') {
       updateData.status = 'completed';
@@ -2512,6 +2527,21 @@ exports.updateOrderStatus = async (req, res, next) => {
         });
       } catch (automationErr) {
         console.error('[updateOrderStatus] order_status_staff automations failed:', automationErr?.message || automationErr);
+      }
+
+      try {
+        const { notifyOrderStatusChangedForCustomer } = require('../services/orderCustomerNotificationService');
+        const saleForSms = await Sale.findByPk(sale.id, {
+          include: [{ model: Customer, as: 'customer' }],
+        });
+        await notifyOrderStatusChangedForCustomer({
+          tenantId: req.tenantId,
+          sale: saleForSms || { ...sale.toJSON(), orderStatus },
+          newStatus: orderStatus,
+          previousStatus: oldOrderStatus,
+        });
+      } catch (smsErr) {
+        console.error('[updateOrderStatus] customer status SMS failed:', smsErr?.message || smsErr);
       }
     });
 

@@ -68,6 +68,10 @@ jest.mock('../../../services/pushNotificationService', () => ({
   }),
 }));
 
+jest.mock('../../../services/orderCustomerNotificationService', () => ({
+  notifyOrderStatusChangedForCustomer: jest.fn().mockResolvedValue({ sent: false, results: [] }),
+}));
+
 const { sequelize } = require('../../../config/database');
 const { Sale, SaleActivity, Job, OnlineStoreSettings } = require('../../../models');
 const { invalidateSaleListCache } = require('../../../middleware/cache');
@@ -88,6 +92,11 @@ describe('storeController online orders', () => {
     res.json = jest.fn().mockReturnValue(res);
     return res;
   };
+
+  afterEach(async () => {
+    // Flush fire-and-forget setImmediate work from status updates before Jest teardown.
+    await new Promise((resolve) => setImmediate(resolve));
+  });
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -451,6 +460,7 @@ describe('storeController online orders', () => {
     const next = jest.fn();
 
     await storeController.updateStoreOrderStatus(req, res, next);
+    await new Promise((resolve) => setImmediate(resolve));
 
     expect(Sale.findOne).toHaveBeenNthCalledWith(1, expect.objectContaining({
       where: expect.objectContaining({ id: 'sale-1', tenantId: 'tenant-1' }),
@@ -490,6 +500,14 @@ describe('storeController online orders', () => {
         source: 'online_store',
       }),
       link: '/order/sale-1',
+    }));
+    const {
+      notifyOrderStatusChangedForCustomer,
+    } = require('../../../services/orderCustomerNotificationService');
+    expect(notifyOrderStatusChangedForCustomer).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'tenant-1',
+      newStatus: 'out_for_delivery',
+      previousStatus: 'pending',
     }));
     expect(res.status).toHaveBeenCalledWith(200);
     expect(next).not.toHaveBeenCalled();

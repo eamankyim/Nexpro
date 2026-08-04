@@ -1,4 +1,4 @@
-const { Tenant } = require('../models');
+const { Tenant, Customer } = require('../models');
 const emailService = require('./emailService');
 const emailTemplates = require('./emailTemplates');
 const smsService = require('./smsService');
@@ -16,8 +16,56 @@ const {
 } = require('./customerNotificationBridgeService');
 
 const EVENT_KEY = 'order_created';
+const STATUS_EVENT_KEY = 'order_status';
+
+const ORDER_STATUS_LABELS = {
+  received: 'received',
+  preparing: 'being prepared',
+  processing: 'being prepared',
+  ready: 'ready',
+  packed: 'packed',
+  shipped: 'shipped',
+  out_for_delivery: 'out for delivery',
+  delivered: 'delivered',
+  completed: 'completed',
+  cancelled: 'cancelled',
+};
 
 const customerDisplayName = (customer = {}) => customer.name || customer.company || 'Customer';
+
+/**
+ * Human-readable label for an order / fulfillment status key.
+ * @param {string|null|undefined} status
+ * @returns {string}
+ */
+const formatOrderStatusLabel = (status) => {
+  const key = String(status || '').trim().toLowerCase();
+  if (!key) return 'updated';
+  if (ORDER_STATUS_LABELS[key]) return ORDER_STATUS_LABELS[key];
+  return key.replace(/_/g, ' ');
+};
+
+/**
+ * Resolve customer phone from sale association, delivery address, or DB lookup.
+ * @param {object} sale
+ * @returns {Promise<{ customer: object|null, phone: string }>}
+ */
+const resolveSaleCustomerContact = async (sale) => {
+  let customer = sale?.customer || null;
+  if (!customer && sale?.customerId) {
+    customer = await Customer.findByPk(sale.customerId, {
+      attributes: ['id', 'name', 'company', 'phone', 'email', 'shopId', 'studioLocationId'],
+    });
+  }
+  const metadata = sale?.metadata && typeof sale.metadata === 'object' ? sale.metadata : {};
+  const phone = String(
+    customer?.phone
+    || metadata.deliveryAddress?.phone
+    || metadata.storefrontCustomerPhone
+    || ''
+  ).trim();
+  return { customer, phone };
+};
 
 /**
  * @param {object} sale
@@ -144,9 +192,140 @@ const notifyOrderCreatedForCustomer = async ({ tenantId, sale }) => {
   };
 };
 
+/**
+ * @param {object} sale
+ * @param {string} companyName
+ * @param {string} statusLabel
+ * @param {string|null} [trackingLink]
+ * @returns {string}
+ */
+const buildOrderStatusSmsMessageFallback = (sale, companyName, statusLabel, trackingLink = null) => {
+  const orderNumber = sale?.saleNumber || 'your order';
+  const trackText = trackingLink ? ` Track: ${trackingLink}` : '';
+  return `Hi ${customerDisplayName(sale?.customer)}, order ${orderNumber} from ${companyName} is now ${statusLabel}.${trackText}`;
+};
+
+/**
+ * @param {string} tenantId
+ * @param {object} sale
+ * @param {{ name: string }} company
+ * @param {string} statusLabel
+ * @param {string|null} trackingLink
+ * @returns {Promise<string>}
+ */
+const buildOrderStatusSmsMessage = async (tenantId, sale, company, statusLabel, trackingLink) => {
+  const branchName = sale.shop?.name || sale.studioLocation?.name || '';
+  const variables = {
+    customerName: customerDisplayName(sale?.customer),
+    businessName: company.name,
+    branchName,
+    orderNumber: sale?.saleNumber || String(sale?.id || ''),
+    orderStatus: statusLabel,
+    trackingLink: trackingLink || '',
+  };
+  const rendered = await smsTemplateService.renderForTenant(tenantId, STATUS_EVENT_KEY, variables);
+  return rendered || buildOrderStatusSmsMessageFallback(sale, company.name, statusLabel, trackingLink);
+};
+
+/**
+ * SMS the customer when an order status / fulfillment state changes.
+ * Skips when status is unchanged, phone is missing, SMS is disabled, or entitlement/config is absent.
+ * @param {{
+ *   tenantId: string,
+ *   sale: object,
+ *   newStatus: string,
+ *   previousStatus?: string|null,
+ * }} params
+ * @returns {Promise<{ sent: boolean, results: object[], skipped?: boolean, reason?: string }>}
+ */
+const notifyOrderStatusChangedForCustomer = async ({
+  tenantId,
+  sale,
+  newStatus,
+  previousStatus = null,
+}) => {
+  if (!tenantId || !sale) {
+    return { sent: false, results: [], skipped: true, reason: 'missing_sale' };
+  }
+
+  const normalizedNew = String(newStatus || '').trim().toLowerCase();
+  const normalizedPrevious = previousStatus == null || previousStatus === ''
+    ? null
+    : String(previousStatus).trim().toLowerCase();
+
+  if (!normalizedNew) {
+    return { sent: false, results: [], skipped: true, reason: 'missing_status' };
+  }
+
+  if (normalizedPrevious != null && normalizedPrevious === normalizedNew) {
+    return { sent: false, results: [], skipped: true, reason: 'unchanged_status' };
+  }
+
+  const { customer, phone } = await resolveSaleCustomerContact(sale);
+  if (!phone) {
+    return { sent: false, results: [], skipped: true, reason: 'missing_phone' };
+  }
+
+  const saleWithCustomer = customer ? { ...sale, customer } : sale;
+  const statusLabel = formatOrderStatusLabel(normalizedNew);
+  const orderNumber = saleWithCustomer?.saleNumber || String(saleWithCustomer?.id || '');
+
+  const smsAllowed = await isChannelEnabledForEvent(tenantId, STATUS_EVENT_KEY, 'sms');
+  if (!smsAllowed) {
+    return { sent: false, results: [], skipped: true, reason: 'sms_channel_disabled' };
+  }
+
+  const smsConfig = await smsService.getResolvedConfig(tenantId);
+  const smsPhone = smsService.validatePhoneNumber(phone);
+  if (!smsConfig || !smsPhone) {
+    return { sent: false, results: [], skipped: true, reason: !smsConfig ? 'sms_not_configured' : 'invalid_phone' };
+  }
+
+  const tenant = await Tenant.findByPk(tenantId);
+  const resolvedNames = await resolveBusinessNameForContext(tenantId, {
+    shopId: saleWithCustomer.shopId || saleWithCustomer.shop?.id || customer?.shopId || null,
+    studioLocationId:
+      saleWithCustomer.studioLocationId
+      || saleWithCustomer.studioLocation?.id
+      || customer?.studioLocationId
+      || null,
+    customer,
+    sale: saleWithCustomer,
+  });
+  const company = {
+    name: resolvedNames.businessName || saleWithCustomer.shop?.name || tenant?.name || 'Business',
+  };
+
+  let trackingLink = null;
+  try {
+    trackingLink = await resolveOrderTrackingLink(tenantId, { orderNumber });
+  } catch (err) {
+    console.warn('[orderCustomerNotification] tracking link resolve failed:', err?.message || err);
+  }
+
+  const smsBody = await buildOrderStatusSmsMessage(
+    tenantId,
+    saleWithCustomer,
+    company,
+    statusLabel,
+    trackingLink
+  );
+  const result = await smsService.sendMessage(tenantId, smsPhone, smsBody);
+  const results = [{ channel: 'sms', success: result.success === true, error: result.error || null }];
+
+  return {
+    sent: results.some((row) => row.success),
+    results,
+  };
+};
+
 module.exports = {
   EVENT_KEY,
+  STATUS_EVENT_KEY,
   notifyOrderCreatedForCustomer,
+  notifyOrderStatusChangedForCustomer,
   buildSmsMessageFallback,
   buildOrderCreatedSmsMessage,
+  buildOrderStatusSmsMessageFallback,
+  formatOrderStatusLabel,
 };
