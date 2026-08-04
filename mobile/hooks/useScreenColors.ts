@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 
 import { useTheme } from '@/context/ThemeContext';
 import Colors from '@/constants/Colors';
+import { useWorkspaceBranding } from '@/hooks/useWorkspaceBranding';
 
 export type ScreenColors = {
   resolvedTheme: 'light' | 'dark';
@@ -15,18 +16,27 @@ export type ScreenColors = {
   headerBg: string;
   danger: string;
   success: string;
+  /** Contrasting text/icons on `colors.tint` fills (filter chips, primary buttons). */
+  onTint: string;
 };
 
 /**
- * Single source of truth for screen-level colors (light/dark + brand tint).
+ * Single source of truth for screen-level colors (light/dark + workspace brand tint).
  */
 export function useScreenColors(): ScreenColors {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
-  const colors = Colors[resolvedTheme ?? 'light'];
+  const baseColors = Colors[resolvedTheme ?? 'light'];
+  const { primaryColor, onPrimary } = useWorkspaceBranding();
 
-  return useMemo(
-    () => ({
+  return useMemo(() => {
+    const colors = {
+      ...baseColors,
+      tint: primaryColor,
+      tabIconSelected: primaryColor,
+    };
+
+    return {
       resolvedTheme: resolvedTheme ?? 'light',
       colors,
       bg: isDark ? colors.background : '#f9fafb',
@@ -38,7 +48,7 @@ export function useScreenColors(): ScreenColors {
       headerBg: isDark ? colors.background : '#fff',
       danger: '#ef4444',
       success: '#10b981',
-    }),
-    [resolvedTheme, isDark, colors]
-  );
+      onTint: onPrimary,
+    };
+  }, [resolvedTheme, isDark, baseColors, primaryColor, onPrimary]);
 }

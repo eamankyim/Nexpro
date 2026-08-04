@@ -15,9 +15,9 @@ type FilterChipProps = {
   onPress: () => void;
 };
 
-/** Solid green active state — standard filter pill across list screens. */
+/** Active state uses workspace brand tint from Organization settings. */
 export function FilterChip({ label, active, onPress }: FilterChipProps) {
-  const { colors, borderColor, textColor } = useScreenColors();
+  const { colors, borderColor, textColor, onTint } = useScreenColors();
 
   return (
     <Pressable
@@ -29,7 +29,7 @@ export function FilterChip({ label, active, onPress }: FilterChipProps) {
       ]}
       accessibilityRole="button"
     >
-      <Text style={[styles.chipText, { color: active ? '#fff' : textColor }]}>{label}</Text>
+      <Text style={[styles.chipText, { color: active ? onTint : textColor }]}>{label}</Text>
     </Pressable>
   );
 }

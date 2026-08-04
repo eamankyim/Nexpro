@@ -43,15 +43,24 @@ type TaskRow = {
   status?: string;
   priority?: string;
   dueDate?: string;
-  assignee?: { name?: string };
+  assigneeId?: string | null;
+  assignee?: { id?: string; name?: string };
+};
+
+type TaskMember = {
+  id: string;
+  name?: string;
+  email?: string;
 };
 
 export default function TasksScreen() {
   const router = useRouter();
   const { user, activeTenantId, hasFeature } = useAuth();
-  const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
+  const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg, onTint } = useScreenColors();
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<string>('all');
+  /** Matches web Tasks.jsx: all | me | unassigned | member uuid */
+  const [assigneeFilter, setAssigneeFilter] = useState<string>('all');
   const [addOpen, setAddOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -67,6 +76,13 @@ export default function TasksScreen() {
     enabled: !!activeTenantId && hasFeature('jobAutomation') && user?.isPlatformAdmin !== true,
   });
 
+  const { data: membersResponse } = useQuery({
+    queryKey: ['task-members', activeTenantId],
+    queryFn: () => userWorkspaceService.getTaskMembers(),
+    enabled: !!activeTenantId && hasFeature('jobAutomation') && user?.isPlatformAdmin !== true,
+    staleTime: 5 * 60 * 1000,
+  });
+
   const loadErrorMessage = useMemo(
     () => getApiErrorMessage(error, 'Could not load tasks. Pull to refresh.'),
     [error]
@@ -76,8 +92,21 @@ export default function TasksScreen() {
     return parseApiListResponse(data);
   }, [data]);
 
+  const members = useMemo(
+    () => parseApiListResponse<TaskMember>(membersResponse),
+    [membersResponse]
+  );
+
   const filtered = useMemo(() => {
     let list = status === 'all' ? tasks : tasks.filter((t) => (t.status || 'todo') === status);
+    // Same client-side assignee rules as Frontend/src/pages/Tasks.jsx
+    if (assigneeFilter === 'me') {
+      list = list.filter((task) => task.assigneeId === user?.id);
+    } else if (assigneeFilter === 'unassigned') {
+      list = list.filter((task) => !task.assigneeId);
+    } else if (assigneeFilter !== 'all') {
+      list = list.filter((task) => task.assigneeId === assigneeFilter);
+    }
     if (!debouncedSearch.trim()) return list;
     return list.filter((task) =>
       matchesSearchQuery(debouncedSearch, [
@@ -87,9 +116,10 @@ export default function TasksScreen() {
         task.assignee?.name,
       ])
     );
-  }, [tasks, status, debouncedSearch]);
+  }, [tasks, status, assigneeFilter, debouncedSearch, user?.id]);
 
-  const hasActiveFilter = status !== 'all' || !!debouncedSearch.trim();
+  const hasActiveFilter =
+    status !== 'all' || assigneeFilter !== 'all' || !!debouncedSearch.trim();
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -133,6 +163,19 @@ export default function TasksScreen() {
     []
   );
 
+  const assigneeFilterOptions = useMemo(
+    () => [
+      { value: 'all', label: 'All assignees' },
+      { value: 'me', label: 'Me' },
+      { value: 'unassigned', label: 'Unassigned' },
+      ...members.map((m) => ({
+        value: m.id,
+        label: m.name || m.email || 'User',
+      })),
+    ],
+    [members]
+  );
+
   const renderItem = ({ item }: { item: TaskRow }) => (
     <Pressable
       onPress={() => router.push(`/task/${item.id}` as never)}
@@ -166,11 +209,19 @@ export default function TasksScreen() {
           label="Add Task"
           onPress={() => setAddOpen(true)}
           backgroundColor={colors.tint}
+          contentColor={onTint}
         />
       )}
 
       {showListFilters(isLoading, isError, tasks.length, hasActiveFilter) && (
-        <FilterChipRow options={filterOptions} value={status} onChange={setStatus} />
+        <>
+          <FilterChipRow options={filterOptions} value={status} onChange={setStatus} />
+          <FilterChipRow
+            options={assigneeFilterOptions}
+            value={assigneeFilter}
+            onChange={setAssigneeFilter}
+          />
+        </>
       )}
 
       {isLoading && !data ? (
@@ -184,18 +235,25 @@ export default function TasksScreen() {
           keyExtractor={(item) => item.id}
           renderItem={renderItem}
           contentContainerStyle={listContentStyleWhenEmpty(styles.list, filtered.length === 0)}
-          refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={onRefresh} />}
+          refreshControl={
+            <RefreshControl refreshing={isRefetching} onRefresh={onRefresh} tintColor={colors.tint} />
+          }
           ListEmptyComponent={
             <ListEmptyState
               imageKey="TASKS"
-              title={status === 'all' ? 'No tasks yet' : 'No tasks in this filter'}
-              subtitle={status === 'all' ? 'Create a task to track work in your workspace' : 'Try another filter'}
+              title={!hasActiveFilter ? 'No tasks yet' : 'No tasks in this filter'}
+              subtitle={
+                !hasActiveFilter
+                  ? 'Create a task to track work in your workspace'
+                  : 'Try another status or assignee'
+              }
             >
-              {status === 'all' ? (
+              {!hasActiveFilter ? (
                 <EmptyStateActionButton
                   label="Add Task"
                   onPress={() => setAddOpen(true)}
                   backgroundColor={colors.tint}
+                  contentColor={onTint}
                 />
               ) : null}
             </ListEmptyState>
@@ -220,9 +278,9 @@ export default function TasksScreen() {
             style={[styles.primaryBtn, { backgroundColor: colors.tint }]}
           >
             {createMutation.isPending ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={onTint} />
             ) : (
-              <Text style={styles.primaryTxt}>{FORM_LABELS.task.create}</Text>
+              <Text style={[styles.primaryTxt, { color: onTint }]}>{FORM_LABELS.task.create}</Text>
             )}
           </Pressable>
         }
@@ -281,5 +339,5 @@ const styles = StyleSheet.create({
   actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 8 },
   secondaryBtn: { paddingVertical: 12, paddingHorizontal: 16, borderRadius: 10, borderWidth: 1 },
   primaryBtn: { paddingVertical: 14, paddingHorizontal: 20, borderRadius: 10, alignItems: 'center' },
-  primaryTxt: { color: '#fff', fontWeight: '700' },
+  primaryTxt: { fontWeight: '700' },
 });

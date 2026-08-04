@@ -32,6 +32,8 @@ type ActionButtonProps = {
   label: string;
   onPress: () => void;
   backgroundColor?: string;
+  /** Text/icon color on the button fill (defaults to white). */
+  contentColor?: string;
   disabled?: boolean;
   style?: StyleProp<ViewStyle>;
 };
@@ -51,7 +53,7 @@ const actionButtonStyles = StyleSheet.create({
   },
   buttonPressed: { opacity: 0.88 },
   buttonDisabled: { opacity: 0.6 },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  buttonText: { fontSize: 16, fontWeight: '600' },
 });
 
 /** Primary CTA placed after empty-state title/subtitle. */
@@ -59,6 +61,7 @@ export function EmptyStateActionButton({
   label,
   onPress,
   backgroundColor = BRAND_GREEN,
+  contentColor = '#fff',
   disabled = false,
   style,
 }: ActionButtonProps) {
@@ -74,8 +77,8 @@ export function EmptyStateActionButton({
         disabled && actionButtonStyles.buttonDisabled,
       ]}
     >
-      <AppIcon name="plus" size={18} color="#fff" />
-      <Text style={actionButtonStyles.buttonText}>{label}</Text>
+      <AppIcon name="plus" size={18} color={contentColor} />
+      <Text style={[actionButtonStyles.buttonText, { color: contentColor }]}>{label}</Text>
     </Pressable>
   );
 }
@@ -85,6 +88,7 @@ export function ListActionButton({
   label,
   onPress,
   backgroundColor = BRAND_GREEN,
+  contentColor = '#fff',
   disabled = false,
   style,
 }: ActionButtonProps) {
@@ -100,8 +104,8 @@ export function ListActionButton({
         disabled && actionButtonStyles.buttonDisabled,
       ]}
     >
-      <AppIcon name="plus" size={18} color="#fff" />
-      <Text style={actionButtonStyles.buttonText}>{label}</Text>
+      <AppIcon name="plus" size={18} color={contentColor} />
+      <Text style={[actionButtonStyles.buttonText, { color: contentColor }]}>{label}</Text>
     </Pressable>
   );
 }
