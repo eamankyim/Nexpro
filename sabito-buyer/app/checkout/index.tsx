@@ -334,7 +334,7 @@ export default function CheckoutScreen() {
       ) : null}
 
       <PrimaryButton
-        label="Pay with Paystack"
+        label="Pay Now"
         onPress={handlePay}
         disabled={previewQuery.isError || !preview}
         loading={payMutation.isPending || previewQuery.isFetching}

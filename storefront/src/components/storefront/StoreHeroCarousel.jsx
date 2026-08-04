@@ -130,7 +130,7 @@ export default function StoreHeroCarousel({
     : new Set([activeIndex]);
 
   return (
-    <section className="relative w-full overflow-hidden border-b border-slate-200" aria-label={`${storeName} hero`}>
+    <section className="relative w-full overflow-hidden rounded-2xl border-b border-slate-200" aria-label={`${storeName} hero`}>
       <div className="relative aspect-[16/5] w-full bg-slate-100 sm:aspect-[21/6]">
         {items.map((slide, i) => {
           const isActive = i === activeIndex;

@@ -566,7 +566,7 @@ const CheckoutPage = () => {
             aria-describedby={checkoutPreviewError ? 'checkout-preview-error' : submitBlockedReason ? 'checkout-submit-helper' : undefined}
           >
             {isPlacingOrder || isLoadingPreview ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-            {paymentPhase === 'redirecting' ? 'Redirecting to Paystack...' : paymentPhase === 'initializing' ? 'Starting Paystack...' : 'Pay with Paystack'}
+            {paymentPhase === 'redirecting' ? 'Redirecting...' : paymentPhase === 'initializing' ? 'Starting payment...' : 'Pay Now'}
           </Button>
           {submitBlockedReason ? (
             <p id="checkout-submit-helper" className="mt-2 text-center text-xs font-semibold leading-5 text-slate-500">
