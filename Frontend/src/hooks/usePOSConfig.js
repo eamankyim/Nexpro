@@ -1,10 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 import settingsService from '../services/settingsService';
+import { mergeScanningConfig, isScanningEnabled, SCANNING_CONFIG_DEFAULTS } from '../utils/posScanningConfig';
 
 const POS_CONFIG_DEFAULTS = {
   receipt: { mode: 'ask', channels: ['sms', 'print'] },
   print: { format: 'a4', showLogo: true, color: true, fontSize: 'normal' },
   customer: { phoneRequired: false, nameRequired: false },
+  scanning: SCANNING_CONFIG_DEFAULTS,
 };
 
 const DEFAULT_AUTOMATION_COVERAGE = { sms: false, email: false, whatsapp: false };
@@ -25,6 +27,7 @@ export const usePOSConfig = () => {
         receipt: { ...POS_CONFIG_DEFAULTS.receipt, ...(data.data.receipt || {}) },
         print: { ...POS_CONFIG_DEFAULTS.print, ...(data.data.print || {}) },
         customer: { ...POS_CONFIG_DEFAULTS.customer, ...(data.data.customer || {}) },
+        scanning: mergeScanningConfig(data.data.scanning),
         receiptChannelsAvailable: data.data.receiptChannelsAvailable || { sms: false, whatsapp: false, email: false },
         automationReceiptCoverage: {
           ...DEFAULT_AUTOMATION_COVERAGE,
@@ -33,9 +36,25 @@ export const usePOSConfig = () => {
       }
     : {
         ...POS_CONFIG_DEFAULTS,
+        scanning: mergeScanningConfig(),
         receiptChannelsAvailable: { sms: false, whatsapp: false, email: false },
         automationReceiptCoverage: DEFAULT_AUTOMATION_COVERAGE,
       };
 
   return { posConfig, isLoading };
+};
+
+/**
+ * Whether barcode/camera scanning is enabled for the workspace (opt-in).
+ * @returns {{ scanningEnabled: boolean, allowManualBarcodeEntry: boolean, isLoading: boolean }}
+ */
+export const useScanningEnabled = () => {
+  const { posConfig, isLoading } = usePOSConfig();
+  const scanning = mergeScanningConfig(posConfig?.scanning);
+
+  return {
+    scanningEnabled: isScanningEnabled(posConfig),
+    allowManualBarcodeEntry: scanning.allowManualBarcodeEntry,
+    isLoading,
+  };
 };

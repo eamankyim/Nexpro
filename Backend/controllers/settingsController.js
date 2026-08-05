@@ -2225,7 +2225,8 @@ exports.updateEmailSettings = async (req, res, next) => {
 const POS_CONFIG_DEFAULTS = {
   receipt: { mode: 'ask', channels: ['sms', 'print'] },
   print: { format: 'a4', showLogo: true, color: true, fontSize: 'normal' },
-  customer: { phoneRequired: false, nameRequired: false }
+  customer: { phoneRequired: false, nameRequired: false },
+  scanning: { enabled: false, allowManualBarcodeEntry: true, allowExternalScanner: true },
 };
 
 const VALID_RECEIPT_MODES = ['ask', 'auto_send', 'auto_print', 'auto_both'];
@@ -2239,7 +2240,8 @@ exports.getPOSConfig = async (req, res, next) => {
     const merged = {
       receipt: { ...POS_CONFIG_DEFAULTS.receipt, ...(config.receipt || {}) },
       print: { ...POS_CONFIG_DEFAULTS.print, ...(config.print || {}) },
-      customer: { ...POS_CONFIG_DEFAULTS.customer, ...(config.customer || {}) }
+      customer: { ...POS_CONFIG_DEFAULTS.customer, ...(config.customer || {}) },
+      scanning: { ...POS_CONFIG_DEFAULTS.scanning, ...(config.scanning || {}) },
     };
 
     // Check which receipt channels (SMS, WhatsApp, Email) are actually integrated
@@ -2308,7 +2310,18 @@ exports.updatePOSConfig = async (req, res, next) => {
       customer.nameRequired = Boolean(customer.nameRequired);
     }
 
-    const merged = { receipt, print, customer };
+    const scanning = { ...(existing.scanning || POS_CONFIG_DEFAULTS.scanning), ...(incoming.scanning || {}) };
+    if (typeof scanning.enabled !== 'undefined') {
+      scanning.enabled = Boolean(scanning.enabled);
+    }
+    if (typeof scanning.allowManualBarcodeEntry !== 'undefined') {
+      scanning.allowManualBarcodeEntry = Boolean(scanning.allowManualBarcodeEntry);
+    }
+    if (typeof scanning.allowExternalScanner !== 'undefined') {
+      scanning.allowExternalScanner = Boolean(scanning.allowExternalScanner);
+    }
+
+    const merged = { receipt, print, customer, scanning };
     const updated = await upsertSettingValue(req.tenantId, 'pos_config', merged, 'POS and checkout configuration');
     res.status(200).json({ success: true, data: updated });
   } catch (error) {

@@ -108,4 +108,9 @@ export const settingsService = {
     const res = await api.post('/settings/data-deletion-request', payload);
     return res.data;
   },
+
+  getPOSConfig: async () => {
+    const res = await api.get('/settings/pos-config');
+    return res?.data?.data ?? res?.data ?? res;
+  },
 };

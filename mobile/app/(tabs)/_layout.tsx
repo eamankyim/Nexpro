@@ -10,6 +10,7 @@ import { SmartSearchProvider } from '@/context/SmartSearchContext';
 import Colors from '@/constants/Colors';
 import { FontFamily, FontSize } from '@/constants/typography';
 import { useTheme } from '@/context/ThemeContext';
+import { useScanningEnabled } from '@/hooks/useScanningEnabled';
 import { resolveBusinessType } from '@/constants';
 import { OPEN_SCAN_CAMERA_EVENT } from '@/utils/scanTabEvents';
 
@@ -47,6 +48,7 @@ export default function TabLayout() {
   const pathname = usePathname();
   const { resolvedTheme } = useTheme();
   const colors = Colors[resolvedTheme ?? 'light'];
+  const { scanningEnabled } = useScanningEnabled();
   const { activeTenant, hasFeature, isDriver } = useAuth();
   const resolvedType = resolveBusinessType(activeTenant?.businessType);
   const isShop = resolvedType === 'shop';
@@ -117,7 +119,7 @@ export default function TabLayout() {
           tabBarButton: (props) => (
             <Pressable
               onPress={(event) => {
-                if (!isStudio && isScanRoute) {
+                if (!isStudio && isScanRoute && scanningEnabled) {
                   DeviceEventEmitter.emit(OPEN_SCAN_CAMERA_EVENT);
                   return;
                 }

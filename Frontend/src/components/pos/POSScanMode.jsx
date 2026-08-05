@@ -306,6 +306,7 @@ const CartItemRow = ({ item, onUpdateQuantity, onRemove, onEditPrice, onEditQuan
  * @param {Object} props.automationReceiptCoverage - { sms, email, whatsapp } booleans for automation-covered channels
  * @param {boolean} props.isOnline - Whether device is online
  * @param {boolean} props.isRestaurant - If true, show Send to kitchen option
+ * @param {boolean} [props.scanningEnabled] - When false, camera scanner is not mounted
  */
 const POSScanMode = ({
   isOpen,
@@ -318,7 +319,8 @@ const POSScanMode = ({
   receiptChannelsAvailable = { sms: false, whatsapp: false, email: false },
   automationReceiptCoverage = { sms: false, email: false, whatsapp: false },
   isOnline = true,
-  isRestaurant = false
+  isRestaurant = false,
+  scanningEnabled = true,
 }) => {
   const { isMobile } = useResponsive();
   // Step state
@@ -720,7 +722,7 @@ const POSScanMode = ({
       {/* Content */}
       <div className="flex-1 overflow-hidden">
         {/* SCANNING STEP */}
-        {currentStep === STEPS.SCANNING && (
+        {currentStep === STEPS.SCANNING && scanningEnabled && (
           <QRCodeScanner
             isOpen={true}
             onClose={onClose}
@@ -729,6 +731,7 @@ const POSScanMode = ({
             scannedCount={totals.itemCount}
             lastScannedItem={lastScannedItem}
             onDone={handleDoneScanning}
+            cameraEnabled={scanningEnabled}
           />
         )}
 

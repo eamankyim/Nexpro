@@ -329,7 +329,7 @@ const ProductCard = memo(function ProductCard({
  * @param {boolean} props.continuousMode - If true, keeps scanning after each scan
  * @param {number} props.scannedCount - Number of items already scanned (for display)
  * @param {string} props.lastScannedItem - Name of last scanned item (for display)
- * @param {function} props.onDone - Called when "Done" is pressed in continuous mode
+ * @param {boolean} [props.cameraEnabled] - When false, camera UI is not mounted
  */
 const QRCodeScanner = ({
   isOpen,
@@ -338,7 +338,8 @@ const QRCodeScanner = ({
   continuousMode = false,
   scannedCount = 0,
   lastScannedItem = null,
-  onDone
+  onDone,
+  cameraEnabled = true,
 }) => {
   const { isMobile } = useResponsive();
   const scannerRef = useRef(null);
@@ -795,13 +796,14 @@ const QRCodeScanner = ({
 
   // Auto-start scanner when dialog opens
   useEffect(() => {
+    if (!cameraEnabled) return undefined;
     if (isOpen && !hasStarted && !isStarting && !error) {
       const timer = setTimeout(() => {
         handleStartScanner();
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [isOpen, hasStarted, isStarting, error, handleStartScanner]);
+  }, [isOpen, hasStarted, isStarting, error, handleStartScanner, cameraEnabled]);
 
   // Cleanup when component unmounts or scanner closes
   useEffect(() => {
@@ -902,6 +904,10 @@ const QRCodeScanner = ({
       onClose();
     }
   }, [onDone, onClose]);
+
+  if (!isOpen || !cameraEnabled) {
+    return null;
+  }
 
   // For mobile in continuous mode, use full-screen layout
   if (isMobile && continuousMode) {
@@ -1348,6 +1354,7 @@ function POSVirtualProductGrid({
  * @param {function} [props.onAdjustProductQuantity] - Optional: (productId, delta) => void, for mobile +/- quantity controls
  * @param {function} [props.onAddCustomItem] - Optional: open custom item flow
  * @param {Object} [props.dealerPriceByProductId] - Map of productId -> { unitPrice, source, retailPrice } when selling to a dealer
+ * @param {boolean} [props.scanningEnabled] - When false, barcode camera scanner is not available
  */
 const POSProductSearch = ({
   onSearch,
@@ -1362,6 +1369,7 @@ const POSProductSearch = ({
   onAdjustProductQuantity,
   onAddCustomItem,
   dealerPriceByProductId = {},
+  scanningEnabled = false,
 }) => {
   const navigate = useNavigate();
   const { isMobile, isDesktop } = useResponsive();
@@ -1722,11 +1730,14 @@ const POSProductSearch = ({
       </CardContent>
 
       {/* Barcode + QR Scanner Modal */}
-      <QRCodeScanner
-        isOpen={scannerOpen}
-        onClose={() => setScannerOpen(false)}
-        onScan={handleScan}
-      />
+      {scanningEnabled && (
+        <QRCodeScanner
+          isOpen={scannerOpen}
+          onClose={() => setScannerOpen(false)}
+          onScan={handleScan}
+          cameraEnabled={scanningEnabled}
+        />
+      )}
     </Card>
   );
 };

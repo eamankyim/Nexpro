@@ -57,7 +57,7 @@ import FeatureNotAvailable from '../components/FeatureNotAvailable';
 // Hooks and Services
 import { usePOS } from '../hooks/usePOS';
 import { usePOSDealerMode } from '../hooks/usePOSDealerMode';
-import { usePOSConfig } from '../hooks/usePOSConfig';
+import { usePOSConfig, useScanningEnabled } from '../hooks/usePOSConfig';
 import { usePaymentSettings } from '../hooks/usePaymentSettings';
 import { useAuth } from '../context/AuthContext';
 import { useShopOptional } from '../context/ShopContext';
@@ -413,6 +413,7 @@ const POS = () => {
   const queryClient = useQueryClient();
 
   const { posConfig } = usePOSConfig();
+  const { scanningEnabled } = useScanningEnabled();
 
   const {
     isOnline,
@@ -873,11 +874,13 @@ const POS = () => {
 
   // When navigating from dashboard "Add sale" with openModal, open scan mode and clear state
   useEffect(() => {
-    if (location.state?.openModal) {
+    if (location.state?.openModal && scanningEnabled) {
       navigateRef(location.pathname, { replace: true, state: {} });
       setScanModeOpen(true);
+    } else if (location.state?.openModal) {
+      navigateRef(location.pathname, { replace: true, state: {} });
     }
-  }, [location.state?.openModal, location.pathname, navigateRef]);
+  }, [location.state?.openModal, location.pathname, navigateRef, scanningEnabled]);
 
   useEffect(() => {
     const addProductId = location.state?.addProductId;
@@ -1602,20 +1605,22 @@ const POS = () => {
         {isMobile ? (
           <div className="flex flex-col gap-2 w-full">
             <div className="flex items-center justify-between gap-3 w-full">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    onClick={() => setScanModeOpen(true)}
-                    className="bg-green-700 hover:bg-green-800 h-12 px-4 text-base flex-1"
-                  >
-                    <Camera className="h-5 w-5 mr-2 flex-shrink-0" />
-                    <span className="truncate">Scan</span>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Open barcode scanner for quick add</TooltipContent>
-              </Tooltip>
+              {scanningEnabled && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      onClick={() => setScanModeOpen(true)}
+                      className="bg-green-700 hover:bg-green-800 h-12 px-4 text-base flex-1"
+                    >
+                      <Camera className="h-5 w-5 mr-2 flex-shrink-0" />
+                      <span className="truncate">Scan</span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Open barcode scanner for quick add</TooltipContent>
+                </Tooltip>
+              )}
 
-              <div className="flex-shrink-0">
+              <div className={`flex-shrink-0${scanningEnabled ? '' : ' ml-auto'}`}>
                 <POSConnectionStatus isOnline={isOnline} />
               </div>
             </div>
@@ -1651,18 +1656,20 @@ const POS = () => {
             </div>
 
             {/* Start Scanning Button - desktop */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  onClick={() => setScanModeOpen(true)}
-                  className="bg-green-700 hover:bg-green-800 h-10"
-                >
-                  <Camera className="h-5 w-5 mr-2 flex-shrink-0" />
-                  <span className="truncate">Start Scanning</span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Open barcode scanner for quick add</TooltipContent>
-            </Tooltip>
+            {scanningEnabled && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    onClick={() => setScanModeOpen(true)}
+                    className="bg-green-700 hover:bg-green-800 h-10"
+                  >
+                    <Camera className="h-5 w-5 mr-2 flex-shrink-0" />
+                    <span className="truncate">Start Scanning</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Open barcode scanner for quick add</TooltipContent>
+              </Tooltip>
+            )}
 
             {isManager && (
               <Tooltip>
@@ -1837,6 +1844,7 @@ const POS = () => {
             onAdjustProductQuantity={adjustProductQuantity}
             onAddCustomItem={handleOpenCustomItemDialog}
             dealerPriceByProductId={isDealerMode ? dealerPriceByProductId : {}}
+            scanningEnabled={scanningEnabled}
           />
         </div>
 
@@ -2064,19 +2072,22 @@ const POS = () => {
       />
 
       {/* Mobile Scan Mode - Full screen scanning interface */}
-      <POSScanMode
-        isOpen={scanModeOpen}
-        onClose={() => setScanModeOpen(false)}
-        getProductByBarcode={getProductByBarcode}
-        resolveProductFromQRPayload={resolveProductFromQRPayload}
-        onProcessSale={handleProcessSaleForScanMode}
-        onFindOrCreateCustomer={handleFindOrCreateCustomer}
-        onSendReceipt={handleSendReceiptForScanMode}
-        receiptChannelsAvailable={posConfig?.receiptChannelsAvailable || { sms: false, whatsapp: false, email: false }}
-        automationReceiptCoverage={posConfig?.automationReceiptCoverage || { sms: false, email: false, whatsapp: false }}
-        isOnline={isOnline}
-        isRestaurant={isRestaurant}
-      />
+      {scanningEnabled && (
+        <POSScanMode
+          isOpen={scanModeOpen}
+          onClose={() => setScanModeOpen(false)}
+          getProductByBarcode={getProductByBarcode}
+          resolveProductFromQRPayload={resolveProductFromQRPayload}
+          onProcessSale={handleProcessSaleForScanMode}
+          onFindOrCreateCustomer={handleFindOrCreateCustomer}
+          onSendReceipt={handleSendReceiptForScanMode}
+          receiptChannelsAvailable={posConfig?.receiptChannelsAvailable || { sms: false, whatsapp: false, email: false }}
+          automationReceiptCoverage={posConfig?.automationReceiptCoverage || { sms: false, email: false, whatsapp: false }}
+          isOnline={isOnline}
+          isRestaurant={isRestaurant}
+          scanningEnabled={scanningEnabled}
+        />
+      )}
 
       <FindSaleForReturnDialog
         open={findSaleReturnOpen}

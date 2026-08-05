@@ -33,6 +33,7 @@ import { CartQuantitySheet } from '@/components/CartQuantitySheet';
 import { parseProductQRPayload, isProductQRCode } from '@/utils/productQR';
 import { parseApiEntity, parseApiListResponse } from '@/utils/parseApiListResponse';
 import { useDebounce } from '@/hooks/useDebounce';
+import { useScanningEnabled } from '@/hooks/useScanningEnabled';
 import { resolveImageUrl } from '@/utils/fileUtils';
 import { refreshAfterJobChange, QUERY_STALE } from '@/utils/queryInvalidation';
 import { OPEN_SCAN_CAMERA_EVENT } from '@/utils/scanTabEvents';
@@ -62,6 +63,7 @@ export default function ScanScreen() {
   const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { items: cartItems, getItemCount, addItem, updateQuantity } = useCart();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
+  const { scanningEnabled } = useScanningEnabled();
   const cartItemCount = getItemCount();
   const selectedCartItemByProductId = useMemo(() => {
     const map = new Map<string, string>();
@@ -116,12 +118,12 @@ export default function ScanScreen() {
 
   useEffect(() => {
     const subscription = DeviceEventEmitter.addListener(OPEN_SCAN_CAMERA_EVENT, () => {
-      if (!isStudio) {
+      if (!isStudio && scanningEnabled) {
         setScannerVisible(true);
       }
     });
     return () => subscription.remove();
-  }, [isStudio]);
+  }, [isStudio, scanningEnabled]);
 
   // Debounce search query for unified search (name or barcode)
   const debouncedSearch = useDebounce(searchQuery, 500);
@@ -707,12 +709,14 @@ export default function ScanScreen() {
                 <AppIcon name="times" size={16} color={mutedColor} />
               </Pressable>
             )}
-            <Pressable
-              onPress={() => setScannerVisible(true)}
-              style={[styles.scanBtn, { backgroundColor: colors.tint }]}
-            >
-              <AppIcon name="camera" size={18} color="#fff" />
-            </Pressable>
+            {scanningEnabled && (
+              <Pressable
+                onPress={() => setScannerVisible(true)}
+                style={[styles.scanBtn, { backgroundColor: colors.tint }]}
+              >
+                <AppIcon name="camera" size={18} color="#fff" />
+              </Pressable>
+            )}
           </View>
         </View>
 
@@ -1008,11 +1012,13 @@ export default function ScanScreen() {
         )}
       </ScreenShell>
 
-      <BarcodeScanner
-        visible={scannerVisible}
-        onClose={() => setScannerVisible(false)}
-        onScan={handleScan}
-      />
+      {scanningEnabled && (
+        <BarcodeScanner
+          visible={scannerVisible}
+          onClose={() => setScannerVisible(false)}
+          onScan={handleScan}
+        />
+      )}
 
       <CartQuantitySheet
         visible={!!quantityEditItem}

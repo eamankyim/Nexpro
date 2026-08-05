@@ -10,12 +10,13 @@ import { Button } from '@/components/ui/button';
 import { SecondaryButton } from '@/components/ui/secondary-button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Barcode, Camera, Loader2, Package, Search } from 'lucide-react';
+import { Barcode, Loader2, Package, Search } from 'lucide-react';
 import productService from '../services/productService';
 import { parseProductQRPayload } from '../utils/productQR';
 import { showSuccess, showError } from '../utils/toast';
 import { numberInputValue } from '../utils/formUtils';
 import { formatInteger } from '../utils/formatNumber';
+import { useScanningEnabled } from '../hooks/usePOSConfig';
 
 const SCANNER_ID = 'receive-stock-scanner';
 
@@ -26,6 +27,7 @@ const SCANNER_ID = 'receive-stock-scanner';
  * @param {() => void} [onSuccess] – Called after adding stock (refresh list, etc.)
  */
 export default function ReceiveStockModal({ open, onClose, onSuccess, initialProduct = null }) {
+  const { scanningEnabled } = useScanningEnabled();
   const html5QrcodeRef = useRef(null);
   const [step, setStep] = useState('scan');
   const [product, setProduct] = useState(null);
@@ -71,7 +73,7 @@ export default function ReceiveStockModal({ open, onClose, onSuccess, initialPro
   }, [open, initialProduct, resetToScan]);
 
   useEffect(() => {
-    if (!open || step !== 'scan') return;
+    if (!open || step !== 'scan' || !scanningEnabled) return;
 
     let mounted = true;
     setCameraError(null);
@@ -157,7 +159,7 @@ export default function ReceiveStockModal({ open, onClose, onSuccess, initialPro
         html5QrcodeRef.current = null;
       }
     };
-  }, [open, step]);
+  }, [open, step, scanningEnabled]);
 
   const handleSearch = useCallback(async () => {
     const q = (searchQuery || '').trim();
@@ -256,34 +258,44 @@ export default function ReceiveStockModal({ open, onClose, onSuccess, initialPro
         <DialogBody>
         {step === 'scan' && (
           <div className="space-y-4">
-            {cameraError ? (
-              <div className="p-4 bg-red-50 rounded-lg text-center border border-red-200">
-                <p className="text-red-700 font-medium">Camera error</p>
-                <p className="text-sm text-red-600 mt-1">{cameraError}</p>
-              </div>
-            ) : (
-              <>
-                <div className="relative w-full rounded-lg overflow-hidden min-h-[200px] bg-muted border border-border">
-                  {isStarting && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-background/90 z-10">
-                      <div className="text-center">
-                        <Loader2 className="h-8 w-8 animate-spin text-brand mx-auto" />
-                        <p className="text-sm text-gray-600 mt-2">Starting camera...</p>
+            {scanningEnabled && (
+              cameraError ? (
+                <div className="p-4 bg-red-50 rounded-lg text-center border border-red-200">
+                  <p className="text-red-700 font-medium">Camera error</p>
+                  <p className="text-sm text-red-600 mt-1">{cameraError}</p>
+                </div>
+              ) : (
+                <>
+                  <div className="relative w-full rounded-lg overflow-hidden min-h-[200px] bg-muted border border-border">
+                    {isStarting && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-background/90 z-10">
+                        <div className="text-center">
+                          <Loader2 className="h-8 w-8 animate-spin text-brand mx-auto" />
+                          <p className="text-sm text-gray-600 mt-2">Starting camera...</p>
+                        </div>
                       </div>
+                    )}
+                    <div id={SCANNER_ID} className="w-full min-h-[200px]" />
+                  </div>
+                  {scanError && (
+                    <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-center">
+                      <p className="text-sm text-amber-800">{scanError}</p>
                     </div>
                   )}
-                  <div id={SCANNER_ID} className="w-full min-h-[200px]" />
-                </div>
-                {scanError && (
-                  <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-center">
-                    <p className="text-sm text-amber-800">{scanError}</p>
-                  </div>
-                )}
-                <p className="text-sm text-gray-500 text-center">
-                  Scan product QR code or barcode, or enter barcode / search below.
-                </p>
+                  <p className="text-sm text-gray-500 text-center">
+                    Scan product QR code or barcode, or enter barcode / search below.
+                  </p>
+                </>
+              )
+            )}
 
-                <div className="border-t border-gray-200 pt-4 space-y-3">
+            {!scanningEnabled && (
+              <p className="text-sm text-gray-500 text-center">
+                Camera scanning is disabled for this workspace. Enter a barcode or search for a product below.
+              </p>
+            )}
+
+            <div className={`border-t border-gray-200 pt-4 space-y-3${scanningEnabled ? '' : ' border-t-0 pt-0'}`}>
                   <div className="space-y-2">
                     <Label className="flex items-center gap-1.5">
                       <Barcode className="h-4 w-4" />
@@ -339,8 +351,6 @@ export default function ReceiveStockModal({ open, onClose, onSuccess, initialPro
                     )}
                   </div>
                 </div>
-              </>
-            )}
             <div className="flex justify-end">
               <SecondaryButton onClick={onClose}>
                 Cancel
