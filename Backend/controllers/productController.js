@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { Product, ProductVariant, Shop, ProductCategory, Barcode, SaleItem, Sale, Customer, User } = require('../models');
+const { Product, ProductVariant, ProductStockMovement, Shop, ProductCategory, Barcode, SaleItem, Sale, Customer, User } = require('../models');
 const { Op } = require('sequelize');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const { getPagination } = require('../utils/paginationUtils');
@@ -16,6 +16,9 @@ const { resolveCatalogProductCode } = require('../utils/documentLineItemUtils');
 const {
   applyEffectiveProductQuantity,
   syncParentQuantityFromVariants,
+  parseQuantity,
+  recordProductStockMovement,
+  resolveStockMovementType,
 } = require('../utils/productStockUtils');
 
 const PRODUCT_STAFF_SENSITIVE_FIELDS = [
@@ -512,7 +515,7 @@ exports.getProduct = async (req, res, next) => {
   }
 };
 
-// @desc    Get sales/movement history for a product
+// @desc    Get sales + stock movement history for a product
 // @route   GET /api/products/:id/sales
 // @access  Private
 exports.getProductSales = async (req, res, next) => {
@@ -529,25 +532,99 @@ exports.getProductSales = async (req, res, next) => {
     }
 
     const { page, limit, offset } = getPagination(req, { defaultPageSize: 20 });
-    const { count, rows } = await SaleItem.findAndCountAll({
-      where: { productId: req.params.id },
-      limit,
-      offset,
-      include: [
-        {
-          model: Sale,
-          as: 'sale',
-          required: true,
-          attributes: ['id', 'saleNumber', 'createdAt', 'status', 'total', 'soldBy'],
-          where: applyTenantFilter(req.tenantId),
-          include: [
-            { model: Customer, as: 'customer', attributes: ['id', 'name'], required: false },
-            { model: User, as: 'seller', attributes: ['id', 'name'], required: false }
-          ]
-        }
-      ],
-      order: [[{ model: Sale, as: 'sale' }, 'createdAt', 'DESC']]
+    // Fetch a window large enough to merge sales + stock movements, then paginate in memory.
+    const fetchLimit = Math.min(Math.max(limit * 3, 50), 200);
+
+    const [saleItems, stockMovements] = await Promise.all([
+      SaleItem.findAll({
+        where: { productId: req.params.id },
+        limit: fetchLimit,
+        include: [
+          {
+            model: Sale,
+            as: 'sale',
+            required: true,
+            attributes: ['id', 'saleNumber', 'createdAt', 'status', 'total', 'soldBy'],
+            where: applyTenantFilter(req.tenantId),
+            include: [
+              { model: Customer, as: 'customer', attributes: ['id', 'name'], required: false },
+              { model: User, as: 'seller', attributes: ['id', 'name'], required: false }
+            ]
+          }
+        ],
+        order: [[{ model: Sale, as: 'sale' }, 'createdAt', 'DESC']]
+      }),
+      ProductStockMovement.findAll({
+        where: applyTenantFilter(req.tenantId, { productId: req.params.id }),
+        limit: fetchLimit,
+        include: [
+          { model: User, as: 'createdByUser', attributes: ['id', 'name'], required: false },
+          { model: ProductVariant, as: 'variant', attributes: ['id', 'name'], required: false },
+        ],
+        order: [['occurredAt', 'DESC']],
+      }),
+    ]);
+
+    const saleRows = saleItems.map((item) => {
+      const plain = typeof item.get === 'function' ? item.get({ plain: true }) : item;
+      const qty = parseQuantity(plain.quantity);
+      return {
+        // Keep legacy SaleItem fields for older clients
+        ...plain,
+        id: plain.id,
+        kind: 'sale',
+        movementType: 'sale',
+        quantityChange: -Math.abs(qty),
+        quantity: qty,
+        quantityAfter: null,
+        occurredAt: plain.sale?.createdAt || plain.createdAt,
+        label: plain.sale?.saleNumber ? `Sale ${plain.sale.saleNumber}` : 'Sale',
+        reason: null,
+        variantName: null,
+        actorName: plain.sale?.seller?.name || null,
+        total: plain.total,
+        sale: plain.sale,
+      };
     });
+
+    const movementRows = stockMovements.map((row) => {
+      const plain = typeof row.get === 'function' ? row.get({ plain: true }) : row;
+      const delta = parseQuantity(plain.quantityDelta);
+      const typeLabels = {
+        receive: 'Receive stock',
+        adjustment: 'Stock adjustment',
+        transfer_in: 'Transfer in',
+        transfer_out: 'Transfer out',
+        return: 'Return / restock',
+      };
+      return {
+        id: plain.id,
+        kind: 'stock_movement',
+        movementType: plain.type,
+        quantityChange: delta,
+        quantity: Math.abs(delta),
+        quantityAfter: parseQuantity(plain.newQuantity),
+        previousQuantity: parseQuantity(plain.previousQuantity),
+        occurredAt: plain.occurredAt || plain.createdAt,
+        label: typeLabels[plain.type] || 'Stock movement',
+        reason: plain.reason || null,
+        variantName: plain.variant?.name || null,
+        actorName: plain.createdByUser?.name || null,
+        total: null,
+        sale: null,
+        reference: plain.reference || null,
+        metadata: plain.metadata || {},
+      };
+    });
+
+    const merged = [...saleRows, ...movementRows].sort((a, b) => {
+      const aTime = new Date(a.occurredAt || 0).getTime();
+      const bTime = new Date(b.occurredAt || 0).getTime();
+      return bTime - aTime;
+    });
+
+    const count = merged.length;
+    const data = merged.slice(offset, offset + limit);
 
     res.status(200).json({
       success: true,
@@ -555,11 +632,156 @@ exports.getProductSales = async (req, res, next) => {
       pagination: {
         page,
         limit,
-        totalPages: Math.ceil(count / limit)
+        totalPages: Math.ceil(count / limit) || 1
       },
-      data: rows
+      data
     });
   } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Adjust product or variant stock and log a movement
+ * @route   POST /api/products/:id/adjust-stock
+ * @access  Private
+ */
+exports.adjustProductStock = async (req, res, next) => {
+  const transaction = await Product.sequelize.transaction();
+  let transactionFinished = false;
+  try {
+    const product = await Product.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      transaction,
+    });
+
+    if (!product) {
+      await transaction.rollback();
+      transactionFinished = true;
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found',
+      });
+    }
+
+    try {
+      assertShopRecordAccess(req, product);
+    } catch (accessErr) {
+      await transaction.rollback();
+      transactionFinished = true;
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
+    }
+
+    const {
+      quantity,
+      mode = 'delta',
+      reason = '',
+      type,
+      variantId = null,
+    } = req.body || {};
+
+    const qtyInput = parseQuantity(quantity);
+    if (quantity === undefined || quantity === null || quantity === '') {
+      await transaction.rollback();
+      transactionFinished = true;
+      return res.status(400).json({
+        success: false,
+        message: 'quantity is required',
+      });
+    }
+
+    let previousQuantity;
+    let newQuantity;
+    let targetVariant = null;
+
+    if (variantId) {
+      targetVariant = await ProductVariant.findOne({
+        where: { id: variantId, productId: product.id },
+        transaction,
+      });
+      if (!targetVariant) {
+        await transaction.rollback();
+        transactionFinished = true;
+        return res.status(404).json({
+          success: false,
+          message: 'Variant not found for this product',
+        });
+      }
+      previousQuantity = parseQuantity(targetVariant.quantityOnHand);
+      newQuantity = mode === 'set'
+        ? Math.max(0, qtyInput)
+        : Math.max(0, previousQuantity + qtyInput);
+      await targetVariant.update({ quantityOnHand: newQuantity }, { transaction });
+      await syncParentQuantityFromVariants(product.id, transaction);
+    } else {
+      if (product.hasVariants) {
+        await transaction.rollback();
+        transactionFinished = true;
+        return res.status(400).json({
+          success: false,
+          message: 'This product has variants. Provide variantId to adjust stock.',
+        });
+      }
+      previousQuantity = parseQuantity(product.quantityOnHand);
+      newQuantity = mode === 'set'
+        ? Math.max(0, qtyInput)
+        : Math.max(0, previousQuantity + qtyInput);
+      await product.update({ quantityOnHand: newQuantity }, { transaction });
+    }
+
+    const quantityDelta = newQuantity - previousQuantity;
+    const movementType = resolveStockMovementType({
+      type,
+      reason,
+      quantityDelta,
+    });
+
+    let movement = null;
+    if (quantityDelta !== 0) {
+      movement = await recordProductStockMovement({
+        tenantId: req.tenantId,
+        productId: product.id,
+        productVariantId: targetVariant?.id || null,
+        shopId: product.shopId || null,
+        type: movementType,
+        quantityDelta,
+        previousQuantity,
+        newQuantity,
+        reason: reason || null,
+        createdBy: req.user?.id || null,
+        metadata: { mode },
+        transaction,
+      });
+    }
+
+    await transaction.commit();
+    transactionFinished = true;
+    invalidateProductListCache(req.tenantId);
+
+    const refreshed = await Product.findOne({
+      where: { id: product.id },
+      include: [
+        { model: Shop, as: 'shop', attributes: ['id', 'name'] },
+        { model: ProductCategory, as: 'category', attributes: ['id', 'name'] },
+        { model: ProductVariant, as: 'variants' },
+        { model: Barcode, as: 'barcodes' },
+      ],
+    });
+
+    res.status(200).json({
+      success: true,
+      data: stripSensitiveProductFields(refreshed, req),
+      movement: movement
+        ? (typeof movement.get === 'function' ? movement.get({ plain: true }) : movement)
+        : null,
+    });
+  } catch (error) {
+    if (!transactionFinished) {
+      await transaction.rollback();
+    }
     next(error);
   }
 };
@@ -876,8 +1098,11 @@ exports.updateProduct = async (req, res, next) => {
         message: 'You do not have access to this shop',
       });
     }
-    const oldQuantity = parseFloat(product.quantity || 0);
-    const newQuantity = parseFloat(payload.quantity || oldQuantity);
+    const oldQuantity = parseQuantity(product.quantityOnHand);
+    const hasQtyPayload = Object.prototype.hasOwnProperty.call(payload, 'quantityOnHand');
+    const newQuantity = hasQtyPayload
+      ? parseQuantity(payload.quantityOnHand)
+      : oldQuantity;
     const reorderLevel = parseFloat(product.reorderLevel || 0);
     
     await product.update(payload, { transaction });
@@ -889,6 +1114,34 @@ exports.updateProduct = async (req, res, next) => {
         transaction
       });
     }
+
+    // Log stock change when quantityOnHand is updated via product edit (skip if adjust-stock handles it)
+    const quantityDelta = newQuantity - oldQuantity;
+    if (hasQtyPayload && quantityDelta !== 0 && !product.hasVariants) {
+      const metaReason = payload.metadata?.lastStockAdjustment?.reason
+        || payload.metadata?.stockAdjustmentReason
+        || null;
+      await recordProductStockMovement({
+        tenantId: req.tenantId,
+        productId: product.id,
+        shopId: product.shopId || payload.shopId || null,
+        type: resolveStockMovementType({
+          reason: metaReason,
+          quantityDelta,
+        }),
+        quantityDelta,
+        previousQuantity: oldQuantity,
+        newQuantity,
+        reason: metaReason,
+        createdBy: req.user?.id || null,
+        metadata: {
+          source: 'updateProduct',
+          ...(payload.metadata?.lastStockAdjustment || {}),
+        },
+        transaction,
+      });
+    }
+
     invalidateProductListCache(req.tenantId);
 
     await product.reload({
@@ -1326,9 +1579,35 @@ exports.updateProductVariant = async (req, res, next) => {
         message: validationErr.message,
       });
     }
+    const previousQuantity = parseQuantity(variant.quantityOnHand);
+    const hasQtyPayload = Object.prototype.hasOwnProperty.call(payload, 'quantityOnHand');
+    const newQuantity = hasQtyPayload
+      ? parseQuantity(payload.quantityOnHand)
+      : previousQuantity;
+
     await variant.update(payload);
     await syncParentQuantityFromVariants(variant.productId);
     invalidateProductListCache(req.tenantId);
+
+    const quantityDelta = newQuantity - previousQuantity;
+    if (hasQtyPayload && quantityDelta !== 0) {
+      await recordProductStockMovement({
+        tenantId: req.tenantId,
+        productId: variant.productId,
+        productVariantId: variant.id,
+        shopId: variant.product?.shopId || null,
+        type: resolveStockMovementType({
+          reason: payload.reason || payload.metadata?.reason,
+          quantityDelta,
+        }),
+        quantityDelta,
+        previousQuantity,
+        newQuantity,
+        reason: payload.reason || payload.metadata?.reason || null,
+        createdBy: req.user?.id || null,
+        metadata: { source: 'updateProductVariant' },
+      });
+    }
 
     res.status(200).json({
       success: true,
@@ -1682,6 +1961,25 @@ exports.bulkUpdateStock = async (req, res, next) => {
         const newQuantity = oldQuantity + parseFloat(adjustment);
 
         await product.update({ quantityOnHand: newQuantity }, { transaction });
+        const quantityDelta = newQuantity - oldQuantity;
+        if (quantityDelta !== 0) {
+          await recordProductStockMovement({
+            tenantId: req.tenantId,
+            productId: product.id,
+            shopId: product.shopId || null,
+            type: resolveStockMovementType({
+              type: type === 'receive' ? 'receive' : 'adjustment',
+              quantityDelta,
+            }),
+            quantityDelta,
+            previousQuantity: oldQuantity,
+            newQuantity,
+            reason: item.reason || null,
+            createdBy: req.user?.id || null,
+            metadata: { source: 'bulkUpdateStock', type },
+            transaction,
+          });
+        }
         updated.push({ productId, oldQuantity, newQuantity, adjustment });
       } catch (error) {
         errors.push({ productId: item.productId, error: error.message });

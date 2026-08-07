@@ -4,6 +4,7 @@ const {
   getProductStats,
   getProduct,
   getProductSales,
+  adjustProductStock,
   createProduct,
   updateProduct,
   deleteProduct,
@@ -94,6 +95,9 @@ router.route('/:id/variants')
 
 router.route('/:id/sales')
   .get(getProductSales);
+
+router.route('/:id/adjust-stock')
+  .post(authorize('admin', 'manager', 'staff'), timeCrudAction('products.adjust_stock'), adjustProductStock);
 
 router.route('/:id/store-listing')
   .post(authorize('admin', 'manager', 'staff'), timeCrudAction('products.store_listing.upsert'), createOrUpdateListingFromProduct);

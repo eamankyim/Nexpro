@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Send, Loader2, X, MessageSquarePlus } from 'lucide-react';
+import { CheckCheck, Loader2, MessageSquarePlus, Send, Smile, Sparkles, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import assistantService from '@/services/assistantService';
 import { showError } from '@/utils/toast';
@@ -14,14 +13,47 @@ import {
   ASSISTANT_PERIOD_OPTIONS,
   resolveAssistantPeriod,
 } from '@/utils/assistantPeriod';
+import { IBIS_ASK_LABEL, IBIS_NAME } from '@/constants/ibis';
 
 const PERIOD_SELECTED = { backgroundColor: '#166534', color: '#fff', borderColor: '#166534' };
+
+/** Soft WhatsApp-style chat wallpaper (no external asset). */
+const CHAT_WALLPAPER = {
+  backgroundColor: '#efeae2',
+  backgroundImage: `url("data:image/svg+xml,${encodeURIComponent(`
+    <svg xmlns='http://www.w3.org/2000/svg' width='180' height='180' viewBox='0 0 180 180'>
+      <g fill='none' stroke='%23d4cbc0' stroke-width='1.2' opacity='0.55'>
+        <path d='M30 40c8-12 26-12 34 0'/>
+        <circle cx='48' cy='28' r='4'/>
+        <rect x='110' y='24' width='28' height='20' rx='4'/>
+        <path d='M124 24v-6m0 32v-6m-14-10h6m22 0h6'/>
+        <path d='M28 120l12-8 12 8v14H28z'/>
+        <circle cx='140' cy='120' r='10'/>
+        <path d='M134 120h12M140 114v12'/>
+        <path d='M70 150c10 0 18-6 18-14s-8-14-18-14-18 6-18 14 8 14 18 14z'/>
+      </g>
+    </svg>
+  `)}")`,
+  backgroundRepeat: 'repeat',
+  backgroundSize: '180px 180px',
+};
+
+/**
+ * Format message clock time like WhatsApp (e.g. 10:58 AM).
+ * @param {number|string|Date|undefined} value
+ * @returns {string}
+ */
+function formatBubbleTime(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
 
 function PromptList({ title, prompts, onSelect, loading }) {
   if (!prompts?.length) return null;
   return (
-    <>
-      <p className="text-xs font-medium text-foreground pt-1">{title}</p>
+    <div className="space-y-2">
+      <p className="text-xs font-semibold uppercase tracking-wide text-[#667781]">{title}</p>
       <ul className="space-y-2">
         {prompts.map((prompt) => (
           <li key={prompt}>
@@ -30,8 +62,7 @@ function PromptList({ title, prompts, onSelect, loading }) {
               onClick={() => onSelect(prompt)}
               disabled={loading}
               className={cn(
-                'text-left text-sm w-full px-3 py-2 rounded-lg border border-gray-200',
-                'bg-muted hover:bg-muted/80 text-foreground',
+                'w-full rounded-2xl border border-[#e9edef] bg-white px-3 py-2.5 text-left text-sm text-[#111b21]',
                 'disabled:opacity-50 disabled:pointer-events-none'
               )}
             >
@@ -40,12 +71,61 @@ function PromptList({ title, prompts, onSelect, loading }) {
           </li>
         ))}
       </ul>
-    </>
+    </div>
+  );
+}
+
+function ChatBubble({ role, content, createdAt, isHtml }) {
+  const isUser = role === 'user';
+  const timeLabel = formatBubbleTime(createdAt);
+
+  return (
+    <div className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
+      <div
+        className={cn(
+          'relative max-w-[85%] px-3 pt-2 pb-1.5 text-[13.5px] leading-[1.4] text-[#111b21]',
+          isUser
+            ? 'rounded-2xl rounded-br-md bg-[#d9fdd3]'
+            : 'rounded-2xl rounded-tl-md bg-white'
+        )}
+      >
+        {/* Bubble tails */}
+        {isUser ? (
+          <span
+            aria-hidden
+            className="absolute -right-1.5 bottom-0 h-3 w-3 bg-[#d9fdd3]"
+            style={{ clipPath: 'polygon(0 0, 0 100%, 100% 100%)' }}
+          />
+        ) : (
+          <span
+            aria-hidden
+            className="absolute -left-1.5 top-0 h-3 w-3 bg-white"
+            style={{ clipPath: 'polygon(100% 0, 0 0, 100% 100%)' }}
+          />
+        )}
+
+        {isHtml ? (
+          <div
+            className="[&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-4 [&_strong]:font-semibold [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-4"
+            dangerouslySetInnerHTML={{ __html: formatAssistantMessage(content) }}
+          />
+        ) : (
+          <div className="whitespace-pre-wrap">{content}</div>
+        )}
+
+        <div className="mt-1 flex items-center justify-end gap-1">
+          <span className="text-[10px] leading-none text-[#667781]">{timeLabel}</span>
+          {isUser ? (
+            <CheckCheck className="h-3.5 w-3.5 text-[#53bdeb]" aria-hidden />
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }
 
 /**
- * Floating ABS Assistant chat panel (web).
+ * Floating iBIS chat panel (web) — WhatsApp-style layout.
  */
 export default function AssistantChatPanel({ open, onOpenChange, pageContext }) {
   const { activeTenant } = useAuth();
@@ -111,14 +191,15 @@ export default function AssistantChatPanel({ open, onOpenChange, pageContext }) 
       if (now - lastSendAtRef.current < SEND_DEBOUNCE_MS) return;
       lastSendAtRef.current = now;
 
-      const userMessage = { role: 'user', content: trimmed };
+      const userMessage = { role: 'user', content: trimmed, createdAt: Date.now() };
       const conversation = [...messagesRef.current, userMessage];
       setMessages(conversation);
       setInputValue('');
       setLoading(true);
 
       try {
-        const result = await assistantService.chat(conversation, contextOptions);
+        const apiMessages = conversation.map(({ role, content }) => ({ role, content }));
+        const result = await assistantService.chat(apiMessages, contextOptions);
         const assistantContent = result?.message ?? result?.error ?? 'No response from the assistant.';
         setMessages((prev) => [
           ...prev,
@@ -126,13 +207,17 @@ export default function AssistantChatPanel({ open, onOpenChange, pageContext }) 
             role: 'assistant',
             content: assistantContent,
             meta: result?.meta || null,
+            createdAt: Date.now(),
           },
         ]);
         scrollToBottom();
       } catch (err) {
         const aiMessage = getAiProviderErrorMessage(err);
         if (aiMessage) {
-          setMessages((prev) => [...prev, { role: 'assistant', content: aiMessage }]);
+          setMessages((prev) => [
+            ...prev,
+            { role: 'assistant', content: aiMessage, createdAt: Date.now() },
+          ]);
           scrollToBottom();
         } else {
           showError(err, 'Failed to get a response. Please try again.');
@@ -193,13 +278,17 @@ export default function AssistantChatPanel({ open, onOpenChange, pageContext }) 
               intent: res?.intent || intent || res?.meta?.intent,
               periodRefresh: true,
             },
+            createdAt: Date.now(),
           },
         ]);
         scrollToBottom();
       } catch (err) {
         const aiMessage = getAiProviderErrorMessage(err);
         if (aiMessage) {
-          setMessages((prev) => [...prev, { role: 'assistant', content: aiMessage }]);
+          setMessages((prev) => [
+            ...prev,
+            { role: 'assistant', content: aiMessage, createdAt: Date.now() },
+          ]);
         } else {
           showError(err, 'Failed to refresh for the selected period');
         }
@@ -238,6 +327,22 @@ export default function AssistantChatPanel({ open, onOpenChange, pageContext }) 
     setInputValue('');
   }, [loading]);
 
+  // Lock page scroll while the floating chat is open
+  useEffect(() => {
+    if (!open) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const previousPaddingRight = document.body.style.paddingRight;
+    const scrollbarGap = window.innerWidth - document.documentElement.clientWidth;
+    document.body.style.overflow = 'hidden';
+    if (scrollbarGap > 0) {
+      document.body.style.paddingRight = `${scrollbarGap}px`;
+    }
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.paddingRight = previousPaddingRight;
+    };
+  }, [open]);
+
   if (!open) return null;
 
   return (
@@ -245,33 +350,39 @@ export default function AssistantChatPanel({ open, onOpenChange, pageContext }) 
       <button
         type="button"
         aria-label="Close overlay"
-        className="fixed inset-0 z-40 bg-black/40"
+        className="fixed inset-0 z-[100] bg-black/40 overscroll-none"
         onClick={() => onOpenChange(false)}
+        onWheel={(e) => e.preventDefault()}
+        onTouchMove={(e) => e.preventDefault()}
       />
       <div
         role="dialog"
-        aria-label="ABS Assistant"
+        aria-label={IBIS_NAME}
         className={cn(
-          'fixed z-50 flex flex-col w-full max-w-md h-[70vh] max-h-[70vh]',
+          'fixed z-[110] flex flex-col w-full max-w-md h-[70vh] max-h-[70vh]',
           'right-4 bottom-4 left-4 sm:left-auto',
-          'rounded-lg border border-gray-200 bg-card overflow-hidden',
+          'overflow-hidden rounded-xl border border-[#d1d7db] bg-white',
           'flex flex-col p-0 gap-0'
         )}
       >
-        <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-200 shrink-0">
-          <h2 className="text-base font-semibold truncate">ABS Assistant</h2>
-          <div className="flex items-center gap-1 shrink-0">
+        {/* Header */}
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[#e9edef] bg-white px-3 py-2.5">
+          <div className="flex min-w-0 items-center gap-2">
+            <Sparkles className="h-4 w-4 shrink-0 text-[#166534]" aria-hidden />
+            <h2 className="truncate text-[15px] font-semibold text-[#111b21]">{IBIS_NAME}</h2>
+          </div>
+          <div className="flex shrink-0 items-center gap-0.5">
             {messages.length > 0 && (
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
                 aria-label="New chat"
-                className="h-8 px-2 text-xs"
+                className="h-8 px-2 text-xs text-[#54656f]"
                 onClick={handleNewChat}
                 disabled={loading}
               >
-                <MessageSquarePlus className="h-3.5 w-3.5 mr-1" />
+                <MessageSquarePlus className="mr-1 h-3.5 w-3.5" />
                 New chat
               </Button>
             )}
@@ -280,7 +391,7 @@ export default function AssistantChatPanel({ open, onOpenChange, pageContext }) 
               variant="ghost"
               size="icon"
               aria-label="Close"
-              className="h-8 w-8"
+              className="h-8 w-8 text-[#54656f]"
               onClick={() => onOpenChange(false)}
             >
               <X className="h-4 w-4" />
@@ -288,8 +399,9 @@ export default function AssistantChatPanel({ open, onOpenChange, pageContext }) 
           </div>
         </div>
 
+        {/* Period chips */}
         <div
-          className="px-4 py-2 border-b border-gray-200 shrink-0 overflow-x-auto"
+          className="shrink-0 overflow-x-auto border-b border-[#e9edef] bg-white px-3 py-2"
           role="group"
           aria-label="Analysis period"
         >
@@ -303,9 +415,9 @@ export default function AssistantChatPanel({ open, onOpenChange, pageContext }) 
                   disabled={loading}
                   onClick={() => handlePeriodSelect(opt.key)}
                   className={cn(
-                    'shrink-0 rounded-md border px-2.5 py-1 text-xs font-medium',
+                    'shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium',
                     'disabled:opacity-50',
-                    !selected && 'border-gray-200 bg-background text-foreground'
+                    !selected && 'border-[#d1d7db] bg-white text-[#111b21]'
                   )}
                   style={selected ? PERIOD_SELECTED : undefined}
                   aria-pressed={selected}
@@ -317,62 +429,55 @@ export default function AssistantChatPanel({ open, onOpenChange, pageContext }) 
           </div>
         </div>
 
-        <ScrollArea ref={scrollRef} className="flex-1 min-h-0 px-4 py-3">
+        {/* Chat canvas */}
+        <ScrollArea ref={scrollRef} className="min-h-0 flex-1" style={CHAT_WALLPAPER}>
           {messages.length === 0 ? (
-            <div className="space-y-4">
-              <p className="text-sm text-gray-500">
+            <div className="space-y-4 px-3 py-4">
+              <div className="mx-auto max-w-[92%] rounded-2xl bg-white/90 px-3 py-2 text-center text-xs text-[#667781]">
                 Say hi or ask about today’s sales, collections, stock or jobs, ABS how-tos, and drafts.
-              </p>
+              </div>
               <PromptList
                 title="Business insights"
-                prompts={promptSets.business}
+                prompts={promptSets.business.slice(0, 4)}
                 onSelect={handleSuggestionClick}
                 loading={loading}
               />
               <PromptList
                 title="ABS support"
-                prompts={promptSets.support}
+                prompts={promptSets.support.slice(0, 3)}
                 onSelect={handleSuggestionClick}
                 loading={loading}
               />
               <PromptList
                 title="Draft messages"
-                prompts={promptSets.draft}
+                prompts={promptSets.draft.slice(0, 2)}
                 onSelect={handleSuggestionClick}
                 loading={loading}
               />
             </div>
           ) : (
-            <div className="space-y-4 pb-4">
+            <div className="space-y-2 px-3 py-3 pb-4">
               {messages.map((msg, i) => (
-                <div
-                  key={i}
-                  className={cn('flex', msg.role === 'user' ? 'justify-end' : 'justify-start')}
-                >
-                  <div
-                    className={cn(
-                      'max-w-[85%] rounded-lg px-3 py-2 text-sm',
-                      msg.role === 'user'
-                        ? 'bg-brand text-white'
-                        : 'bg-muted text-foreground border border-border'
-                    )}
-                  >
-                    {msg.role === 'assistant' ? (
-                      <div
-                        className="leading-relaxed [&_strong]:font-semibold [&_br]:block [&_br]:h-1"
-                        dangerouslySetInnerHTML={{ __html: formatAssistantMessage(msg.content) }}
-                      />
-                    ) : (
-                      <div className="whitespace-pre-wrap">{msg.content}</div>
-                    )}
-                  </div>
-                </div>
+                <ChatBubble
+                  key={`${msg.role}-${i}-${msg.createdAt || i}`}
+                  role={msg.role}
+                  content={msg.content}
+                  createdAt={msg.createdAt}
+                  isHtml={msg.role === 'assistant'}
+                />
               ))}
               {loading && (
                 <div className="flex justify-start">
-                  <div className="rounded-lg px-3 py-2 bg-muted border border-border flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Thinking...
+                  <div className="relative rounded-2xl rounded-tl-md bg-white px-3 py-2.5 text-sm text-[#667781]">
+                    <span
+                      aria-hidden
+                      className="absolute -left-1.5 top-0 h-3 w-3 bg-white"
+                      style={{ clipPath: 'polygon(100% 0, 0 0, 100% 100%)' }}
+                    />
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Thinking…
+                    </span>
                   </div>
                 </div>
               )}
@@ -380,31 +485,46 @@ export default function AssistantChatPanel({ open, onOpenChange, pageContext }) 
           )}
         </ScrollArea>
 
-        <div className="px-4 py-3 border-t border-gray-200 space-y-2 shrink-0">
-          <p className="text-xs text-gray-400">
-            Business numbers come from your workspace data. Drafts are guidance.
-          </p>
-          <div className="flex gap-2">
-            <Input
+        {/* Composer */}
+        <div className="shrink-0 border-t border-[#e9edef] bg-[#f0f2f5] px-2.5 py-2">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled
+              title="Coming soon"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[#54656f] opacity-60"
+              aria-label="Emoji (coming soon)"
+            >
+              <Smile className="h-5 w-5" />
+            </button>
+            <input
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask ABS Assistant..."
+              placeholder={`${IBIS_ASK_LABEL}...`}
               disabled={loading}
-              className="flex-1"
+              className={cn(
+                'h-10 flex-1 rounded-full border border-transparent bg-white px-4 text-sm text-[#111b21]',
+                'placeholder:text-[#8696a0] outline-none focus:border-[#d1d7db]',
+                'disabled:opacity-60'
+              )}
             />
-            <Button
+            <button
               type="button"
               onClick={() => handleSend()}
-              disabled={!inputValue.trim()}
-              loading={loading}
-              size="icon"
-              className="bg-brand hover:bg-brand-dark"
+              disabled={loading || !inputValue.trim()}
+              className={cn(
+                'flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#166534] text-white',
+                'disabled:opacity-50'
+              )}
+              aria-label="Send"
             >
-              <Send className="h-4 w-4" />
-              <span className="sr-only">Send</span>
-            </Button>
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            </button>
           </div>
+          <p className="mt-1.5 px-1 text-center text-[10px] leading-snug text-[#8696a0]">
+            Business numbers come from your workspace data. Drafts are guidance.
+          </p>
         </div>
       </div>
     </>

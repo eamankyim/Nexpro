@@ -259,7 +259,7 @@ const buildFallbackInsight = ({ businessHealthContext }) => {
 
   return {
     title: 'Your dashboard is ready',
-    body: 'Ask ABS Assistant to explain trends, collections, stock, or next steps for this period.',
+    body: 'Ask iBIS to explain trends, collections, stock, or next steps for this period.',
   };
 };
 
@@ -1188,7 +1188,7 @@ const Dashboard = () => {
                   }))
                 }
               >
-                Ask AI
+                Ask iBIS
                 <ChevronRight className="h-4 w-4 ml-1" />
               </Button>
             </div>

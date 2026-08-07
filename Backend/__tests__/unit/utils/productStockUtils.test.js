@@ -2,6 +2,7 @@ const {
   sumActiveVariantQuantity,
   getEffectiveProductQuantityOnHand,
   applyEffectiveProductQuantity,
+  resolveStockMovementType,
 } = require('../../../utils/productStockUtils');
 
 describe('productStockUtils', () => {
@@ -49,6 +50,20 @@ describe('productStockUtils', () => {
       });
       expect(product.quantityOnHand).toBe(40);
       expect(product.totalVariantStock).toBeUndefined();
+    });
+  });
+
+  describe('resolveStockMovementType', () => {
+    it('uses explicit type when valid', () => {
+      expect(resolveStockMovementType({ type: 'receive', reason: 'other' })).toBe('receive');
+    });
+
+    it('infers receive from reason text', () => {
+      expect(resolveStockMovementType({ reason: 'Receive stock', quantityDelta: 5 })).toBe('receive');
+    });
+
+    it('defaults to adjustment', () => {
+      expect(resolveStockMovementType({ reason: 'Damaged units', quantityDelta: -2 })).toBe('adjustment');
     });
   });
 });

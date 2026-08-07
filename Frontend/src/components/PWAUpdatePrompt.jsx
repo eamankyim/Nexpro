@@ -1,12 +1,76 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import AppUpdateRequiredDialog, {
+  APP_UPDATE_REQUIRED_EVENT,
+  clearAppUpdateSnooze,
+  isAppUpdateSnoozed,
+  snoozeAppUpdateDialog,
+} from './AppUpdateRequiredDialog';
 
 /**
- * Registers the PWA service worker (prod only) and applies waiting updates
- * silently (SKIP_WAITING). No toast/banner — new SW takes effect on the
- * next natural navigation/reload.
+ * Registers the PWA service worker (prod only) and shows a friendly dialog
+ * when a new ABS version is ready (SW update or stale chunks).
  */
 export default function PWAUpdatePrompt() {
   const registrationRef = useRef(null);
+  const reloadingRef = useRef(false);
+  const updateAcceptedRef = useRef(false);
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [updating, setUpdating] = useState(false);
+
+  const markUpdateAvailable = useCallback(() => {
+    if (isAppUpdateSnoozed()) return;
+    setUpdateAvailable(true);
+  }, []);
+
+  const reloadApp = useCallback(() => {
+    if (reloadingRef.current) return;
+    reloadingRef.current = true;
+    clearAppUpdateSnooze();
+    window.location.reload();
+  }, []);
+
+  const handleUpdate = useCallback(() => {
+    if (updating) return;
+    setUpdating(true);
+    updateAcceptedRef.current = true;
+
+    const registration = registrationRef.current;
+    try {
+      if (registration?.waiting) {
+        registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+      }
+    } catch {
+      // Fall through to hard reload
+    }
+
+    window.setTimeout(() => {
+      reloadApp();
+    }, 300);
+  }, [updating, reloadApp]);
+
+  const handleRemindLater = useCallback(() => {
+    snoozeAppUpdateDialog();
+    setUpdateAvailable(false);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const onRequestUpdate = () => markUpdateAvailable();
+    window.addEventListener(APP_UPDATE_REQUIRED_EVENT, onRequestUpdate);
+
+    const onSwMessage = (event) => {
+      if (event.data?.type === 'CHUNK_LOAD_FAILED') {
+        markUpdateAvailable();
+      }
+    };
+    navigator.serviceWorker?.addEventListener?.('message', onSwMessage);
+
+    return () => {
+      window.removeEventListener(APP_UPDATE_REQUIRED_EVENT, onRequestUpdate);
+      navigator.serviceWorker?.removeEventListener?.('message', onSwMessage);
+    };
+  }, [markUpdateAvailable]);
 
   useEffect(() => {
     if (!import.meta.env.PROD || typeof window === 'undefined' || !('serviceWorker' in navigator)) {
@@ -16,12 +80,11 @@ export default function PWAUpdatePrompt() {
     let intervalId;
     let cancelled = false;
 
-    const activateWaiting = (registration) => {
+    const onWaitingReady = (registration) => {
       if (cancelled || !registration?.waiting) return;
-      try {
-        registration.waiting.postMessage({ type: 'SKIP_WAITING' });
-      } catch {
-        // Ignore — next page load will pick up the update.
+      // Only prompt when there is already a controlling SW (true update, not first install).
+      if (navigator.serviceWorker.controller) {
+        markUpdateAvailable();
       }
     };
 
@@ -30,10 +93,19 @@ export default function PWAUpdatePrompt() {
       if (!installing) return;
       installing.addEventListener('statechange', () => {
         if (installing.state === 'installed' && navigator.serviceWorker.controller) {
-          activateWaiting(registration);
+          onWaitingReady(registration);
         }
       });
     };
+
+    const onControllerChange = () => {
+      // Only reload when the user accepted an update — not on first SW install/claim.
+      if (updateAcceptedRef.current) {
+        reloadApp();
+      }
+    };
+
+    navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
 
     navigator.serviceWorker
       .register('/sw.js')
@@ -41,12 +113,12 @@ export default function PWAUpdatePrompt() {
         if (cancelled) return;
         registrationRef.current = registration;
         registration.addEventListener('updatefound', () => onUpdateFound(registration));
-        activateWaiting(registration);
+        onWaitingReady(registration);
 
         const checkUpdate = () => {
           const reg = registrationRef.current;
           if (!reg) return;
-          activateWaiting(reg);
+          onWaitingReady(reg);
           reg.update?.().catch(() => {});
         };
         checkUpdate();
@@ -57,8 +129,16 @@ export default function PWAUpdatePrompt() {
     return () => {
       cancelled = true;
       clearInterval(intervalId);
+      navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
     };
-  }, []);
+  }, [markUpdateAvailable, reloadApp]);
 
-  return null;
+  return (
+    <AppUpdateRequiredDialog
+      open={updateAvailable}
+      updating={updating}
+      onUpdate={handleUpdate}
+      onRemindLater={handleRemindLater}
+    />
+  );
 }

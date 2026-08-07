@@ -404,7 +404,7 @@ export default function ChatScreen() {
     >
       {messages.length > 0 ? (
         <View style={[styles.toolbar, { borderBottomColor: borderColor, backgroundColor: cardBg }]}>
-          <Text style={[styles.toolbarTitle, { color: textColor }]}>ABS Assistant</Text>
+          <Text style={[styles.toolbarTitle, { color: textColor }]}>iBIS</Text>
           <Pressable
             onPress={handleNewChat}
             disabled={loading}
@@ -428,7 +428,7 @@ export default function ChatScreen() {
       {messages.length === 0 ? (
         <ScrollView contentContainerStyle={styles.welcomeScroll} keyboardShouldPersistTaps="handled">
           <AppIcon name="brain" size={48} color={colors.tabIconDefault} />
-          <Text style={[styles.welcomeTitle, { color: textColor }]}>ABS Assistant</Text>
+          <Text style={[styles.welcomeTitle, { color: textColor }]}>Ask iBIS</Text>
           <Text style={[styles.welcomeSubtitle, { color: mutedColor }]}>
             Say hi or ask about today’s sales, collections, stock or jobs, ABS how-tos, and drafts.
           </Text>
@@ -490,7 +490,7 @@ export default function ChatScreen() {
       <View style={[styles.inputRow, { backgroundColor: cardBg, borderTopColor: borderColor }]}>
         <TextInput
           style={[styles.input, { color: textColor, backgroundColor: resolvedTheme === 'dark' ? '#3f3f46' : '#f3f4f6' }]}
-          placeholder="Ask ABS Assistant..."
+          placeholder="Ask iBIS..."
           placeholderTextColor={mutedColor}
           value={input}
           onChangeText={setInput}

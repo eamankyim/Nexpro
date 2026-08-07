@@ -404,29 +404,54 @@ const productService = {
    * @param {string} [reason] - Reason for adjustment
    * @returns {Promise<Object>} - Updated product
    */
-  adjustStock: async (id, quantity, mode = 'set', reason = '') => {
-    const response = await productService.getProductById(id);
-    const product = response.data || response;
-    
-    let newQuantity;
-    if (mode === 'delta') {
-      newQuantity = parseFloat(product.quantityOnHand || 0) + quantity;
-    } else {
-      newQuantity = quantity;
+  /**
+   * Adjust stock for a product (delta or set) and record a stock movement.
+   * @param {string} id
+   * @param {number} quantity - Delta or absolute depending on mode
+   * @param {'set'|'delta'} [mode='set']
+   * @param {string} [reason='']
+   * @param {Object} [options]
+   * @param {string} [options.type] - receive | adjustment | …
+   * @param {string} [options.variantId]
+   * @returns {Promise<Object>}
+   */
+  adjustStock: async (id, quantity, mode = 'set', reason = '', options = {}) => {
+    const { type, variantId } = options;
+    const inferredType = type
+      || (String(reason || '').toLowerCase().includes('receive') ? 'receive' : undefined);
+    return api.post(`/products/${id}/adjust-stock`, {
+      quantity,
+      mode,
+      reason: reason || '',
+      ...(inferredType ? { type: inferredType } : {}),
+      ...(variantId ? { variantId } : {}),
+    });
+  },
+
+  /**
+   * Adjust stock for a product variant (delta or set) and record a stock movement.
+   * Parent product quantity is synced by the API.
+   * @param {string} variantId
+   * @param {number} quantity - Delta or absolute depending on mode
+   * @param {'set'|'delta'} [mode='delta']
+   * @param {Object} [currentVariant] - Optional known variant (productId used when present)
+   * @param {Object} [options]
+   * @param {string} [options.productId] - Required if currentVariant has no productId
+   * @param {string} [options.reason]
+   * @param {string} [options.type]
+   * @returns {Promise<Object>}
+   */
+  adjustVariantStock: async (variantId, quantity, mode = 'delta', currentVariant = null, options = {}) => {
+    const productId = options.productId
+      || currentVariant?.productId
+      || currentVariant?.product?.id;
+    if (!productId) {
+      throw new Error('productId is required to adjust variant stock');
     }
-    
-    return productService.updateProduct(id, {
-      quantityOnHand: Math.max(0, newQuantity),
-      metadata: {
-        ...product.metadata,
-        lastStockAdjustment: {
-          previousQuantity: product.quantityOnHand,
-          newQuantity,
-          mode,
-          reason,
-          timestamp: new Date().toISOString(),
-        },
-      },
+    const reason = options.reason ?? 'Receive stock';
+    return productService.adjustStock(productId, quantity, mode, reason, {
+      type: options.type || (String(reason).toLowerCase().includes('receive') ? 'receive' : undefined),
+      variantId,
     });
   },
 

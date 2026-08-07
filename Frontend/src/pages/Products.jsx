@@ -256,7 +256,7 @@ const formatProductImageProgressLabel = (phase, stageProgress) => {
   return 'Preparing…';
 };
 
-/** Movement tab: shows sales history for a product */
+/** Movement tab: sales (−) and stock receives/adjustments (+/−) */
 const ProductMovementTab = ({ productId, unit = 'pcs', valueFormatter }) => {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -272,7 +272,7 @@ const ProductMovementTab = ({ productId, unit = 'pcs', valueFormatter }) => {
         // API returns { success, count, pagination, data: rows }; axios interceptor returns response.data
         const list = Array.isArray(res?.data) ? res.data : (res?.data?.data ?? []);
         setItems(list);
-        setTotal(res?.count ?? res?.pagination?.total ?? 0);
+        setTotal(res?.count ?? res?.pagination?.total ?? list.length);
       })
       .catch(() => { if (!cancelled) setItems([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -291,7 +291,7 @@ const ProductMovementTab = ({ productId, unit = 'pcs', valueFormatter }) => {
     return (
       <div className="py-8 text-center text-sm text-muted-foreground">
         <Receipt className="h-10 w-10 mx-auto mb-2 opacity-50" />
-        <p>No sales recorded for this product yet</p>
+        <p>No stock movements recorded for this product yet</p>
       </div>
     );
   }
@@ -299,33 +299,55 @@ const ProductMovementTab = ({ productId, unit = 'pcs', valueFormatter }) => {
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        Last {items.length} sale{items.length !== 1 ? 's' : ''} involving this product
+        Last {items.length} movement{items.length !== 1 ? 's' : ''}
+        {total > items.length ? ` (of ${total})` : ''}
       </p>
       <div className="space-y-2 max-h-[360px] overflow-y-auto">
         {items.map((item) => {
+          const isSale = item.kind === 'sale' || item.movementType === 'sale' || Boolean(item.sale);
           const sale = item.sale;
-          if (!sale) return null;
+          const qtyChange = item.quantityChange != null
+            ? Number(item.quantityChange)
+            : (isSale ? -Math.abs(Number(item.quantity || 0)) : Number(item.quantity || 0));
+          const isIncrease = qtyChange > 0;
+          const label = item.label
+            || (isSale ? (sale?.saleNumber || 'Sale') : 'Stock movement');
+          const when = item.occurredAt || sale?.createdAt;
+          const subtitleParts = [
+            when ? dayjs(when).format('MMM D, YYYY HH:mm') : null,
+            isSale && sale?.customer?.name ? sale.customer.name : null,
+            !isSale && item.variantName ? item.variantName : null,
+            !isSale && item.actorName ? `by ${item.actorName}` : null,
+            !isSale && item.reason ? item.reason : null,
+          ].filter(Boolean);
+
           return (
             <div
-              key={item.id}
+              key={`${item.kind || 'row'}-${item.id}`}
               className="flex items-center justify-between gap-2 rounded-lg border border-border p-3 text-sm"
             >
               <div className="min-w-0 flex-1">
                 <div className="font-medium text-foreground truncate">
-                  {sale.saleNumber || 'Sale'}
+                  {label}
                 </div>
                 <div className="text-xs text-muted-foreground mt-0.5">
-                  {dayjs(sale.createdAt).format('MMM D, YYYY HH:mm')}
-                  {sale.customer?.name && ` · ${sale.customer.name}`}
+                  {subtitleParts.join(' · ')}
                 </div>
               </div>
               <div className="text-right shrink-0">
-                <div className="font-medium text-foreground">
-                  -{formatInteger(item.quantity || 0)} {unit}
+                <div className={`font-medium ${isIncrease ? 'text-green-700' : 'text-foreground'}`}>
+                  {isIncrease ? '+' : ''}{formatInteger(qtyChange)} {unit}
                 </div>
-                <div className="text-xs text-muted-foreground">
-                  {valueFormatter ? valueFormatter(item.total) : `${item.total}`}
-                </div>
+                {isSale && (
+                  <div className="text-xs text-muted-foreground">
+                    {valueFormatter ? valueFormatter(item.total) : `${item.total}`}
+                  </div>
+                )}
+                {!isSale && item.quantityAfter != null && (
+                  <div className="text-xs text-muted-foreground">
+                    Bal: {formatInteger(item.quantityAfter)} {unit}
+                  </div>
+                )}
               </div>
             </div>
           );

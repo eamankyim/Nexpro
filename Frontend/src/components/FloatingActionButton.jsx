@@ -210,7 +210,7 @@ const FloatingActionButton = ({
       {hasExpandActions && isExpanded && (
         <div
           className={cn(
-            'fixed z-50 flex flex-col-reverse gap-3 transition-all duration-300',
+            'fixed z-[110] flex flex-col-reverse gap-3 transition-all duration-300',
             isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'
           )}
           style={
@@ -263,7 +263,7 @@ const FloatingActionButton = ({
               onClick={handleMainClick}
               onPointerDown={handlePointerDown}
               className={cn(
-                'fixed z-50 h-14 w-14 rounded-full transition-all duration-300 min-h-[56px] min-w-[56px] touch-none',
+                'fixed z-[110] h-14 w-14 rounded-full transition-all duration-300 min-h-[56px] min-w-[56px] touch-none',
                 !useDragPosition && positionClasses[position],
                 isVisible ? 'opacity-100 scale-100' : 'opacity-0 scale-90 pointer-events-none',
                 isExpanded && hasExpandActions && 'rotate-45'
@@ -287,7 +287,7 @@ const FloatingActionButton = ({
           onClick={handleMainClick}
           onPointerDown={handlePointerDown}
           className={cn(
-            'fixed z-50 h-14 w-14 rounded-full transition-all duration-300 min-h-[56px] min-w-[56px] touch-none',
+            'fixed z-[110] h-14 w-14 rounded-full transition-all duration-300 min-h-[56px] min-w-[56px] touch-none',
             !useDragPosition && positionClasses[position],
             isVisible ? 'opacity-100 scale-100' : 'opacity-0 scale-90 pointer-events-none',
             isExpanded && hasExpandActions && 'rotate-45'

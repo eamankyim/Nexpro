@@ -1,7 +1,6 @@
 /**
  * ReceiveStockModal – Receive stock into products via QR code, barcode scan, or search.
- * Flow: Scan product QR/barcode (or enter barcode or search) → confirm product → enter quantity received → add to stock.
- * Uses html5-qrcode for QR and barcode scanning.
+ * Flow: Scan/search product → if variants, select variant → enter qty → add to stock.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -10,6 +9,13 @@ import { Button } from '@/components/ui/button';
 import { SecondaryButton } from '@/components/ui/secondary-button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Barcode, Loader2, Package, Search } from 'lucide-react';
 import productService from '../services/productService';
 import { parseProductQRPayload } from '../utils/productQR';
@@ -17,8 +23,32 @@ import { showSuccess, showError } from '../utils/toast';
 import { numberInputValue } from '../utils/formUtils';
 import { formatInteger } from '../utils/formatNumber';
 import { useScanningEnabled } from '../hooks/usePOSConfig';
+import { cn } from '@/lib/utils';
 
 const SCANNER_ID = 'receive-stock-scanner';
+
+/**
+ * Normalize product + variants from various API shapes.
+ * @param {Object} product
+ * @returns {Object}
+ */
+const normalizeProduct = (product) => {
+  if (!product || typeof product !== 'object') return product;
+  const variants = Array.isArray(product.variants)
+    ? product.variants.filter((v) => v && v.isActive !== false)
+    : [];
+  return { ...product, variants };
+};
+
+/**
+ * @param {Object} product
+ * @returns {boolean}
+ */
+const productHasVariants = (product) => {
+  if (!product) return false;
+  if (Array.isArray(product.variants) && product.variants.length > 0) return true;
+  return Boolean(product.hasVariants);
+};
 
 /**
  * @param {boolean} open
@@ -31,6 +61,8 @@ export default function ReceiveStockModal({ open, onClose, onSuccess, initialPro
   const html5QrcodeRef = useRef(null);
   const [step, setStep] = useState('scan');
   const [product, setProduct] = useState(null);
+  const [selectedVariantId, setSelectedVariantId] = useState(null);
+  const [variantsLoading, setVariantsLoading] = useState(false);
   const [qtyReceived, setQtyReceived] = useState(1);
   const [loading, setLoading] = useState(false);
   const [scanError, setScanError] = useState(null);
@@ -45,11 +77,90 @@ export default function ReceiveStockModal({ open, onClose, onSuccess, initialPro
   const resetToScan = useCallback(() => {
     setStep('scan');
     setProduct(null);
+    setSelectedVariantId(null);
+    setVariantsLoading(false);
     setQtyReceived(1);
     setScanError(null);
     setSearchQuery('');
     setSearchResults([]);
     setBarcodeInput('');
+  }, []);
+
+  /**
+   * Load full product (with variants) and open confirm step.
+   * @param {Object} rawProduct
+   * @param {Object} [preferredVariant] - Preselected variant (e.g. from barcode match)
+   */
+  const openProductConfirm = useCallback(async (rawProduct, preferredVariant = null) => {
+    if (!rawProduct?.id) return;
+
+    let nextProduct = normalizeProduct(rawProduct);
+    const preferredId = preferredVariant?.id || rawProduct.selectedVariant?.id || null;
+
+    setProduct(nextProduct);
+    setSelectedVariantId(preferredId);
+    setQtyReceived(1);
+    setStep('confirm');
+    setScanError(null);
+
+    const needsVariants =
+      nextProduct.hasVariants ||
+      preferredId ||
+      !Array.isArray(nextProduct.variants) ||
+      nextProduct.variants.length === 0;
+
+    if (!needsVariants && Array.isArray(nextProduct.variants) && nextProduct.variants.length > 0) {
+      if (!preferredId && nextProduct.variants.length === 1) {
+        setSelectedVariantId(nextProduct.variants[0].id);
+      }
+      return;
+    }
+
+    // Always refresh variants when product claims to have them or list is missing.
+    if (nextProduct.hasVariants || preferredId || !nextProduct.variants?.length) {
+      setVariantsLoading(true);
+      try {
+        const [detailRes, variantsRes] = await Promise.all([
+          productService.getProductById(nextProduct.id).catch(() => null),
+          productService.getProductVariants(nextProduct.id).catch(() => null),
+        ]);
+
+        const detail =
+          detailRes?.data?.data ?? detailRes?.data?.product ?? detailRes?.data ?? detailRes;
+        const fromDetail = Array.isArray(detail?.variants) ? detail.variants : null;
+        const fromListRaw = variantsRes?.data?.data ?? variantsRes?.data ?? variantsRes;
+        const fromList = Array.isArray(fromListRaw)
+          ? fromListRaw
+          : Array.isArray(fromListRaw?.variants)
+            ? fromListRaw.variants
+            : null;
+
+        const variants = (fromList || fromDetail || nextProduct.variants || []).filter(
+          (v) => v && v.isActive !== false
+        );
+
+        nextProduct = normalizeProduct({
+          ...(detail?.id ? detail : nextProduct),
+          variants,
+          hasVariants: variants.length > 0 || Boolean(detail?.hasVariants || nextProduct.hasVariants),
+          selectedVariant: preferredVariant || rawProduct.selectedVariant || null,
+        });
+
+        setProduct(nextProduct);
+
+        if (preferredId && variants.some((v) => v.id === preferredId)) {
+          setSelectedVariantId(preferredId);
+        } else if (variants.length === 1) {
+          setSelectedVariantId(variants[0].id);
+        } else if (preferredId) {
+          setSelectedVariantId(preferredId);
+        }
+      } catch (e) {
+        showError(e, 'Failed to load product variants');
+      } finally {
+        setVariantsLoading(false);
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -59,10 +170,7 @@ export default function ReceiveStockModal({ open, onClose, onSuccess, initialPro
     }
 
     if (initialProduct?.id) {
-      setStep('confirm');
-      setProduct(initialProduct);
-      setQtyReceived(1);
-      setScanError(null);
+      openProductConfirm(initialProduct);
       setSearchQuery('');
       setSearchResults([]);
       setBarcodeInput('');
@@ -70,7 +178,7 @@ export default function ReceiveStockModal({ open, onClose, onSuccess, initialPro
     }
 
     resetToScan();
-  }, [open, initialProduct, resetToScan]);
+  }, [open, initialProduct, resetToScan, openProductConfirm]);
 
   useEffect(() => {
     if (!open || step !== 'scan' || !scanningEnabled) return;
@@ -131,9 +239,8 @@ export default function ReceiveStockModal({ open, onClose, onSuccess, initialPro
               return;
             }
             if (navigator.vibrate) navigator.vibrate(100);
-            setProduct(productResolved);
-            setQtyReceived(1);
-            setStep('confirm');
+            const preferred = productResolved.selectedVariant || null;
+            await openProductConfirm(productResolved, preferred);
             if (html5QrcodeRef.current) {
               html5QrcodeRef.current.stop().catch(() => {});
               html5QrcodeRef.current = null;
@@ -159,7 +266,7 @@ export default function ReceiveStockModal({ open, onClose, onSuccess, initialPro
         html5QrcodeRef.current = null;
       }
     };
-  }, [open, step, scanningEnabled]);
+  }, [open, step, scanningEnabled, openProductConfirm]);
 
   const handleSearch = useCallback(async () => {
     const q = (searchQuery || '').trim();
@@ -192,9 +299,7 @@ export default function ReceiveStockModal({ open, onClose, onSuccess, initialPro
       const p = res?.data?.product ?? res?.product ?? res?.data;
       if (p?.id) {
         if (navigator.vibrate) navigator.vibrate(100);
-        setProduct(p);
-        setQtyReceived(1);
-        setStep('confirm');
+        await openProductConfirm(p, p.selectedVariant || null);
         setBarcodeInput('');
       } else {
         setScanError('No product found for this barcode');
@@ -204,33 +309,101 @@ export default function ReceiveStockModal({ open, onClose, onSuccess, initialPro
     } finally {
       setBarcodeLookupLoading(false);
     }
-  }, [barcodeInput]);
+  }, [barcodeInput, openProductConfirm]);
 
   const selectProduct = useCallback((p) => {
-    setProduct(p);
-    setQtyReceived(1);
-    setStep('confirm');
+    openProductConfirm(p);
     setSearchQuery('');
     setSearchResults([]);
-  }, []);
+  }, [openProductConfirm]);
+
+  const variants = useMemo(
+    () => (Array.isArray(product?.variants) ? product.variants.filter((v) => v?.isActive !== false) : []),
+    [product]
+  );
+  const requiresVariant = productHasVariants(product) || variants.length > 0;
+  const selectedVariant = useMemo(
+    () => variants.find((v) => v.id === selectedVariantId) || null,
+    [variants, selectedVariantId]
+  );
+
+  const displayQty = useMemo(() => {
+    if (requiresVariant) {
+      const n = parseFloat(selectedVariant?.quantityOnHand);
+      return Number.isFinite(n) ? n : 0;
+    }
+    const n = parseFloat(product?.quantityOnHand);
+    return Number.isFinite(n) ? n : 0;
+  }, [requiresVariant, selectedVariant, product?.quantityOnHand]);
+
+  const canAddStock =
+    product?.trackStock !== false &&
+    (!requiresVariant || Boolean(selectedVariantId)) &&
+    !variantsLoading;
 
   const handleAddToStock = useCallback(async () => {
     const qty = qtyReceived === '' ? 1 : Number(qtyReceived);
     if (!product?.id || !Number.isFinite(qty) || qty < 1) return;
+
+    if (requiresVariant && !selectedVariantId) {
+      showError('Select a variant before adding stock');
+      return;
+    }
+
     setLoading(true);
     try {
-      await productService.adjustStock(product.id, qty, 'delta', 'Receive stock');
-      const updated = parseFloat(product.quantityOnHand || 0) + qty;
-      showSuccess(`Added ${qty} to ${product.name}. Stock now ${updated} ${product.unit || 'units'}.`);
+      if (requiresVariant) {
+        const variant =
+          selectedVariant ||
+          variants.find((v) => v.id === selectedVariantId) ||
+          { id: selectedVariantId, quantityOnHand: 0 };
+        await productService.adjustVariantStock(
+          selectedVariantId,
+          qty,
+          'delta',
+          { ...variant, productId: product.id },
+          { productId: product.id, reason: 'Receive stock', type: 'receive' }
+        );
+        const updated = parseFloat(variant.quantityOnHand || 0) + qty;
+        const label = variant.name ? `${product.name} — ${variant.name}` : product.name;
+        showSuccess(
+          `Added ${qty} to ${label}. Stock now ${updated} ${product.unit || 'units'}.`
+        );
+
+        // Keep product open so user can receive another variant quickly.
+        setProduct((prev) => {
+          if (!prev) return prev;
+          const nextVariants = (prev.variants || []).map((v) =>
+            v.id === selectedVariantId
+              ? { ...v, quantityOnHand: Math.max(0, parseFloat(v.quantityOnHand || 0) + qty) }
+              : v
+          );
+          return { ...prev, variants: nextVariants };
+        });
+        setQtyReceived(1);
+      } else {
+        await productService.adjustStock(product.id, qty, 'delta', 'Receive stock');
+        const updated = parseFloat(product.quantityOnHand || 0) + qty;
+        showSuccess(`Added ${qty} to ${product.name}. Stock now ${updated} ${product.unit || 'units'}.`);
+        resetToScan();
+        setStep('scan');
+      }
       onSuccess?.();
-      resetToScan();
-      setStep('scan');
     } catch (e) {
       showError(e, 'Failed to add stock');
     } finally {
       setLoading(false);
     }
-  }, [product, qtyReceived, onSuccess, resetToScan]);
+  }, [
+    product,
+    qtyReceived,
+    onSuccess,
+    resetToScan,
+    requiresVariant,
+    selectedVariantId,
+    selectedVariant,
+    variants,
+  ]);
 
   const handleAddAnother = useCallback(() => {
     resetToScan();
@@ -241,10 +414,13 @@ export default function ReceiveStockModal({ open, onClose, onSuccess, initialPro
     onClose();
   }, [onClose]);
 
-  const displayQty = useMemo(() => {
-    const n = parseFloat(product?.quantityOnHand);
-    return Number.isFinite(n) ? n : 0;
-  }, [product?.quantityOnHand]);
+  const variantLabel = (variant) => {
+    const stock = formatInteger(parseFloat(variant.quantityOnHand) || 0);
+    const bits = [variant.name || 'Variant'];
+    if (variant.sku) bits.push(`SKU ${variant.sku}`);
+    bits.push(`Stock ${stock}`);
+    return bits.join(' · ');
+  };
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -283,7 +459,7 @@ export default function ReceiveStockModal({ open, onClose, onSuccess, initialPro
                     </div>
                   )}
                   <p className="text-sm text-gray-500 text-center">
-                    Scan product QR code or barcode, or enter barcode / search below.
+                    Scan product or variant QR/barcode, or enter barcode / search below.
                   </p>
                 </>
               )
@@ -344,6 +520,9 @@ export default function ReceiveStockModal({ open, onClose, onSuccess, initialPro
                               <span className="font-medium">{p.name}</span>
                               {p.sku && <span className="text-gray-500 ml-2">({p.sku})</span>}
                               {p.barcode && <span className="text-gray-400 ml-2">· {p.barcode}</span>}
+                              {(p.hasVariants || (Array.isArray(p.variants) && p.variants.length > 0)) && (
+                                <span className="text-[#166534] ml-2 text-xs">Has variants</span>
+                              )}
                             </button>
                           </li>
                         ))}
@@ -371,10 +550,68 @@ export default function ReceiveStockModal({ open, onClose, onSuccess, initialPro
                 </p>
               ) : (
                 <p className="text-sm mt-1">
-                  Current stock: {formatInteger(displayQty)} {product.unit || 'units'}
+                  {requiresVariant
+                    ? selectedVariant
+                      ? `Current stock (${selectedVariant.name}): ${formatInteger(displayQty)} ${product.unit || 'units'}`
+                      : 'Select a variant to see current stock'
+                    : `Current stock: ${formatInteger(displayQty)} ${product.unit || 'units'}`}
                 </p>
               )}
             </div>
+
+            {product.trackStock !== false && requiresVariant && (
+              <div className="space-y-2">
+                <Label htmlFor="receive-variant">Variant</Label>
+                {variantsLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading variants…
+                  </div>
+                ) : variants.length === 0 ? (
+                  <p className="text-sm text-amber-700">
+                    This product is marked as having variants, but none were found. Add variants on the product first.
+                  </p>
+                ) : (
+                  <>
+                    <Select
+                      value={selectedVariantId || undefined}
+                      onValueChange={setSelectedVariantId}
+                    >
+                      <SelectTrigger id="receive-variant" className="w-full">
+                        <SelectValue placeholder="Select variant to receive" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {variants.map((variant) => (
+                          <SelectItem key={variant.id} value={variant.id}>
+                            {variantLabel(variant)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {variants.length > 1 && (
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {variants.map((variant) => (
+                          <button
+                            key={`chip-${variant.id}`}
+                            type="button"
+                            onClick={() => setSelectedVariantId(variant.id)}
+                            className={cn(
+                              'rounded-full border px-2.5 py-1 text-xs transition-colors',
+                              selectedVariantId === variant.id
+                                ? 'border-[#166534] bg-[#f0fdf4] text-[#166534]'
+                                : 'border-border bg-white text-foreground hover:bg-muted'
+                            )}
+                          >
+                            {variant.name || 'Variant'}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
             {product.trackStock !== false && (
             <div className="space-y-2">
               <Label htmlFor="receive-qty">Quantity received</Label>
@@ -383,6 +620,7 @@ export default function ReceiveStockModal({ open, onClose, onSuccess, initialPro
                 type="number"
                 min={1}
                 value={numberInputValue(qtyReceived)}
+                disabled={requiresVariant && !selectedVariantId}
                 onChange={(e) => {
                   const v = e.target.value;
                   if (v === '' || v === null) {
@@ -397,13 +635,13 @@ export default function ReceiveStockModal({ open, onClose, onSuccess, initialPro
             )}
             <div className="flex flex-wrap gap-2 justify-end">
               <SecondaryButton onClick={handleAddAnother} disabled={loading}>
-                Add another
+                Add another product
               </SecondaryButton>
               <SecondaryButton onClick={handleDone} disabled={loading}>
                 Done
               </SecondaryButton>
               {product.trackStock !== false && (
-              <Button onClick={handleAddToStock} loading={loading}>
+              <Button onClick={handleAddToStock} loading={loading} disabled={!canAddStock}>
                 Add to stock
               </Button>
               )}

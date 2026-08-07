@@ -54,6 +54,7 @@ const SaleReturn = require('./SaleReturn');
 const SaleReturnItem = require('./SaleReturnItem');
 const SaleReturnExchangeItem = require('./SaleReturnExchangeItem');
 const ProductVariant = require('./ProductVariant');
+const ProductStockMovement = require('./ProductStockMovement');
 const Barcode = require('./Barcode');
 const ProductCategory = require('./ProductCategory');
 // Pharmacy Management Models
@@ -623,6 +624,15 @@ OnlineProductListing.belongsTo(Product, { foreignKey: 'productId', as: 'product'
 
 Product.hasMany(ProductVariant, { foreignKey: 'productId', as: 'variants' });
 ProductVariant.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
+
+Tenant.hasMany(ProductStockMovement, { foreignKey: 'tenantId', as: 'productStockMovements' });
+ProductStockMovement.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Product.hasMany(ProductStockMovement, { foreignKey: 'productId', as: 'stockMovements' });
+ProductStockMovement.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
+ProductVariant.hasMany(ProductStockMovement, { foreignKey: 'productVariantId', as: 'stockMovements' });
+ProductStockMovement.belongsTo(ProductVariant, { foreignKey: 'productVariantId', as: 'variant' });
+ProductStockMovement.belongsTo(User, { foreignKey: 'createdBy', as: 'createdByUser' });
+ProductStockMovement.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
 ProductVariant.hasMany(OnlineProductListing, { foreignKey: 'productVariantId', as: 'onlineListings' });
 OnlineProductListing.belongsTo(ProductVariant, { foreignKey: 'productVariantId', as: 'variant' });
 
@@ -1035,6 +1045,7 @@ module.exports = {
   Shop,
   ProductCategory,
   Product,
+  ProductStockMovement,
   Sale,
   SaleItem,
   SaleReturn,

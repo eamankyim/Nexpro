@@ -28,6 +28,7 @@ import { Switch } from '@/components/ui/switch';
 import { useAuth } from '@/context/AuthContext';
 import { useHintMode } from '@/context/HintModeContext';
 import { useSmartSearch } from '@/context/SmartSearchContext';
+import { IBIS_ASK_LABEL } from '@/constants/ibis';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useResponsive, useSafeAreaInsets } from '@/hooks/useResponsive';
 import { RESPONSIVE } from '@/constants';
@@ -409,7 +410,7 @@ export function Header() {
               <TooltipContent side="bottom">Hard refresh</TooltipContent>
             </Tooltip>
 
-            {/* Ask AI — staff+ (read-only analysis); drivers excluded */}
+            {/* Ask iBIS — staff+ (read-only analysis); drivers excluded */}
             {!isDriver && (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -423,10 +424,10 @@ export function Header() {
                     )}
                   >
                     <Sparkles className={cn('h-4 w-4', !isMobile && 'mr-2')} />
-                    {!isMobile && <span>Ask AI</span>}
+                    {!isMobile && <span>{IBIS_ASK_LABEL}</span>}
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">Open AI assistant page</TooltipContent>
+                <TooltipContent side="bottom">Open {IBIS_ASK_LABEL}</TooltipContent>
               </Tooltip>
             )}
 

@@ -154,8 +154,8 @@ function classifyIntent(message, options = {}) {
 
   // Profit questions → period sales metrics (not advisory)
   if (
-    /\b(how much profit|what('s| is) (my |the )?profit|net profit|profit (this|today|yesterday|last|for)|how profitable|profit for)\b/.test(text)
-    || (/\bprofit\b/.test(text) && /\b(how much|make|made|earn|earned|did i)\b/.test(text))
+    /\b(how much profit|what('s| is) (my |the )?profit|net profit|profit (this|today|yesterday|last|for)|how profitable|profit for|show .{0,24}profit)\b/.test(text)
+    || (/\bprofit\b/.test(text) && /\b(how much|make|made|earn|earned|did i|show|this month)\b/.test(text))
   ) {
     if (/\b(today|todays)\b/.test(text)) {
       return { intent: 'sales_today', confidence: 0.9, route: 'analysis' };
@@ -166,7 +166,7 @@ function classifyIntent(message, options = {}) {
   // Sales today
   if (
     /\b(today|todays)\b/.test(text)
-    && /\b(sales?|sold|revenue|performance|earn(ed|ings)?|take[- ]?home|how much|did i make|food sales)\b/.test(text)
+    && /\b(sales?|sold|sell|revenue|performance|earn(ed|ings)?|take[- ]?home|how much|did i make|food sales|what did i)\b/.test(text)
   ) {
     return { intent: 'sales_today', confidence: 0.9, route: 'analysis' };
   }

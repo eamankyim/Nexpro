@@ -11,7 +11,7 @@ export const isChunkLoadError = (error) => {
 };
 
 export const CHUNK_LOAD_REFRESH_MESSAGE =
-  'A new version of the app is available. Refresh the page, then try again.';
+  'A new version of ABS is available. Update now to continue.';
 
 const CHUNK_RELOAD_ATTEMPTED_KEY = 'chunk-reload-attempted';
 

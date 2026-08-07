@@ -23,6 +23,7 @@ import { useDismissibleDashboardBanner } from '../hooks/useDismissibleDashboardB
 import authService from '../services/authService';
 import { showSuccess, showError } from '../utils/toast';
 import { releaseBodyInteractionLocks } from '../utils/releaseBodyInteractionLocks';
+import { IBIS_ASK_LABEL, IBIS_NAME } from '../constants/ibis';
 
 /**
  * Map current route to Ask AI pageContext for the floating panel.
@@ -221,10 +222,10 @@ const MainLayout = () => {
       {showAssistantFab && (
         <FloatingActionButton
           icon={MessageCircle}
-          label="AI Assistant"
-          tooltip="Ask AI"
+          label={IBIS_NAME}
+          tooltip={IBIS_ASK_LABEL}
           onClick={openAssistant}
-          position="bottom-left"
+          position="bottom-right"
           showOnAllSizes
           hideOnScroll={false}
         />

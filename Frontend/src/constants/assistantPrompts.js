@@ -7,14 +7,15 @@ import { STUDIO_LIKE_TYPES } from './studioLikeTypes.js';
 
 /** Shared retail (shop / pharmacy) business insight chips — includes stock & products. */
 export const ASSISTANT_RETAIL_BUSINESS_PROMPTS = [
-  'How much did I sell today?',
+  'What did I sell today?',
   'How are sales this month?',
   'Who owes me money?',
+  'Which products are running low?',
+  "Show this month's profit",
   'What are my top products?',
   'What are my top expense categories?',
-  'What should I restock?',
+  'Compare this month to last month',
   'Why are sales down?',
-  'Compare this period to the previous period',
   'Summarize performance',
 ];
 
@@ -172,7 +173,7 @@ export function getAssistantPromptSets(ctx = {}) {
     return {
       kind,
       business: ASSISTANT_RETAIL_BUSINESS_PROMPTS.map((p) =>
-        p === 'What should I restock?' ? 'What drugs or products are low on stock?' : p
+        p === 'Which products are running low?' ? 'What drugs or products are low on stock?' : p
       ),
       support: ASSISTANT_PHARMACY_SUPPORT_PROMPTS,
       draft: ASSISTANT_RETAIL_DRAFT_PROMPTS,
@@ -224,13 +225,16 @@ export function getPagePrompts(pageContext, opts = {}) {
 function suggestionMetaForPrompt(prompt) {
   const p = String(prompt || '');
   if (/owe|collect|outstanding|overdue/i.test(p)) {
-    return { title: 'Collections', icon: 'wallet' };
+    return { title: 'Collections', icon: 'users' };
   }
   if (/restock|low on stock|running low|ingredients|drugs or products/i.test(p)) {
     return { title: 'Low stock items', icon: 'package' };
   }
   if (/meals sold|sold best/i.test(p)) {
     return { title: 'Top meals', icon: 'utensils' };
+  }
+  if (/profit/i.test(p)) {
+    return { title: 'Profit', icon: 'trending' };
   }
   if (/expense categor|top expenses/i.test(p)) {
     return { title: 'Expenses', icon: 'wallet' };
@@ -244,8 +248,8 @@ function suggestionMetaForPrompt(prompt) {
   if (/new customers|inactive customers|haven'?t ordered/i.test(p)) {
     return { title: 'Customers', icon: 'users' };
   }
-  if (/today|sold today|revenue did I make today|food sales/i.test(p)) {
-    return { title: "Today's revenue", icon: 'trending' };
+  if (/today|sold today|sell today|revenue did I make today|food sales/i.test(p)) {
+    return { title: "Today's sales", icon: 'shopping' };
   }
   if (/this month|sales this month|revenue this month/i.test(p)) {
     return { title: 'This month', icon: 'calendar' };
@@ -253,13 +257,13 @@ function suggestionMetaForPrompt(prompt) {
   if (/summarize|performance|summary/i.test(p)) {
     return { title: 'Monthly summary', icon: 'file' };
   }
-  if (/compare|previous period|why are sales|why is revenue/i.test(p)) {
+  if (/compare|previous period|last month|why are sales|why is revenue/i.test(p)) {
     return { title: 'Performance', icon: 'trending' };
   }
   if (/top customers/i.test(p)) {
     return { title: 'Top customers', icon: 'users' };
   }
-  return { title: 'Ask ABS AI', icon: 'sparkles' };
+  return { title: 'Ask iBIS', icon: 'sparkles' };
 }
 
 /**
@@ -293,11 +297,11 @@ export function getAssistantSuggestionCards(ctx = {}) {
             /summarize performance/i,
           ]
         : [
-            /sell today|sold today|revenue did I make today/i,
+            /sell today|sold today|what did I sell/i,
+            /restock|running low|low on stock/i,
+            /profit|sales this month/i,
             /owe|collect/i,
-            /restock|low on stock/i,
-            /top products/i,
-            /expense categor|top expenses/i,
+            /compare|last month|previous period/i,
           ];
 
   const picked = [];

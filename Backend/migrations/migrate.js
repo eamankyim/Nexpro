@@ -78,6 +78,7 @@ const addStudioLocationIdToOperationalModules = require('./add-studio-location-i
 const addPaymentTokenToInvoices = require('./add-payment-token-to-invoices');
 const addAdminLeadIdToJobs = require('./add-admin-lead-id-to-jobs');
 const createSaleActivitiesTable = require('./create-sale-activities-table');
+const createProductStockMovementsTable = require('./create-product-stock-movements-table');
 const createExpenseActivitiesTable = require('./create-expense-activities-table');
 const createCustomerActivitiesTable = require('./create-customer-activities-table');
 const createEquipmentTables = require('./create-equipment-tables');
@@ -301,6 +302,9 @@ const migrate = async () => {
 
     // Sale activity log (notes, status changes, payments on sales)
     await createSaleActivitiesTable();
+
+    // Product stock movement ledger (receive / adjust / transfer)
+    await createProductStockMovementsTable();
 
     // Expense activity log (notes, approvals, payments on expenses)
     await createExpenseActivitiesTable();
